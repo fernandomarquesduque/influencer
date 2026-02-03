@@ -1,0 +1,21 @@
+{
+  "name": "influencer-extractor",
+  "version": "1.0.0",
+  "description": "Extração de microinfluenciadores Instagram com foco em endereço e baixo uso de memória",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "crawl:hashtag": "tsx src/cli/crawl-hashtag.ts",
+    "crawl:location": "tsx src/cli/crawl-location.ts",
+    "login": "tsx src/cli/login.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
