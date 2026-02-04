@@ -6,6 +6,8 @@ import { crawlLogDiscovery } from '../utils/crawlLogger.js';
 export interface DiscoveredProfileRef {
   handle: string;
   profileUrl: string;
+  /** Seguidores já lidos na página durante a descoberta (quando minFollowers > 0). */
+  followersFromDiscovery?: number;
 }
 
 function randomDelay(minMs: number, maxMs: number): Promise<void> {
@@ -117,7 +119,7 @@ export async function discoverAndProcessByHashtag(
         } else {
           crawlLogDiscovery(`  -> autor: @${handle}. Processando perfil completo (1 por vez)...`);
         }
-        const ref: DiscoveredProfileRef = { handle, profileUrl };
+        const ref: DiscoveredProfileRef = { handle, profileUrl, followersFromDiscovery: followers ?? undefined };
         // Não avança para o próximo post até concluir 100% deste perfil (extrair + salvar).
         const saved = await onProfileQualified(ref);
         if (saved) savedCount++;

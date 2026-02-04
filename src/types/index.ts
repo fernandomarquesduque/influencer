@@ -1,64 +1,7 @@
-/** Perfil normalizado — armazenado em node/documento ≤1MB */
-
-export interface Address {
-  street: string | null;
-  number: string | null;
-  neighborhood: string | null;
-  city: string | null;
-  state: string | null;
-  postal_code: string | null;
-  country: string | null;
-  raw_text: string | null;
-}
+/** Entidade dinâmica: qualquer objeto com pelo menos `handle` para perfis. Sem normalização. */
+export type Entity = Record<string, unknown>;
 
 export type DiscoveredBy = 'hashtag' | 'location' | 'seed' | 'explore' | 'engagement';
-
-/** Insights extraídos dos posts do perfil (hashtags, localidades, categorias inferidas) */
-export interface PostInsights {
-  /** Hashtags usados nos posts (ex.: #tatuapé #sp) */
-  hashtags: string[];
-  /** Localidades mencionadas em legendas (bairros, cidades, ex.: Tatuapé, São Paulo) */
-  locations_mentioned: string[];
-  /** Categorias inferidas das hashtags e do texto para qualificar o influenciador (ex.: Beleza, Fitness) */
-  inferred_categories: string[];
-}
-
-/** Um post extraído do perfil para armazenar na tabela posts + hashtags normalizadas */
-export interface ExtractedPost {
-  post_url: string;
-  shortcode: string;
-  media_url: string | null;
-  media_type: 'image' | 'video';
-  likes_count: number | null;
-  comments_count: number | null;
-  caption: string | null;
-  hashtags: string[];
-}
-
-export interface ExtractedProfile {
-  platform: 'instagram';
-  handle: string;
-  profile_url: string;
-  /** URL da imagem de perfil (avatar) */
-  profile_image_url: string | null;
-  display_name: string | null;
-  bio: string | null;
-  website: string | null;
-  followers: number | null;
-  following: number | null;
-  posts_count: number | null;
-  is_verified: boolean;
-  is_business: boolean;
-  category: string | null;
-  address: Address;
-  public_email: string | null;
-  public_phone: string | null;
-  /** Hashtags e localidades extraídos das legendas dos posts (categorização) */
-  post_insights: PostInsights | null;
-  discovered_by: DiscoveredBy;
-  discovered_value: string;
-  collected_at: string; // ISO date
-}
 
 export interface CrawlConfig {
   maxPostsPerTag: number;

@@ -1,14 +1,14 @@
-import type { ExtractedProfile } from '../types/index.js';
-import { estimatePayloadSize, ensureWithinLimit } from '../utils/estimatePayloadSize.js';
+import type { Entity } from '../types/index.js';
+import { estimatePayloadSize } from '../utils/estimatePayloadSize.js';
 import type { CrawlConfig } from '../types/index.js';
 import { writeFile, mkdir, readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { SqliteStorageAdapter } from './sqlite.js';
+import { RocksDBStorage } from './rocksdb.js';
 
 const NODE_MAX_BYTES_DEFAULT = 1024 * 1024; // 1MB
 
-export type StorageBackend = 'sqlite' | 'json';
+export type StorageBackend = 'rocksdb' | 'json';
 
 export interface StorageAdapterOptions {
   basePath?: string;
@@ -39,29 +39,17 @@ export class StorageAdapter {
   }
 
   /**
-   * Garante que o perfil está dentro do limite e retorna o objeto (possivelmente truncado).
+   * Salva uma entidade dinâmica como arquivo JSON (sem normalização).
    */
-  prepareForSave(profile: ExtractedProfile): ExtractedProfile {
-    const bioMax = this.config?.bioMaxChars ?? 500;
-    const rawMax = this.config?.addressRawTextMaxChars ?? 300;
-    return ensureWithinLimit(profile, this.nodeMaxBytes, bioMax, rawMax) as ExtractedProfile;
-  }
-
-  /**
-   * Salva um perfil como um node (arquivo JSON). Valida tamanho; se exceder, trunca e salva.
-   */
-  async save(profile: ExtractedProfile): Promise<{ path: string; bytes: number }> {
-    const prepared = this.prepareForSave(profile);
-    const size = estimatePayloadSize(prepared);
+  async save(entity: Entity & { handle: string }): Promise<{ path: string; bytes: number }> {
+    const size = estimatePayloadSize(entity);
     if (size > this.nodeMaxBytes) {
-      throw new Error(
-        `Payload ainda excede limite de node (${this.nodeMaxBytes} bytes) após truncar. Size: ${size}`
-      );
+      throw new Error(`Payload excede limite (${this.nodeMaxBytes} bytes). Size: ${size}`);
     }
     await mkdir(this.basePath, { recursive: true });
-    const filename = `instagram_${sanitizeHandle(prepared.handle)}_${Date.now()}.json`;
+    const filename = `instagram_${sanitizeHandle(entity.handle)}_${Date.now()}.json`;
     const path = join(this.basePath, filename);
-    await writeFile(path, JSON.stringify(prepared, null, 0), 'utf-8');
+    await writeFile(path, JSON.stringify(entity, null, 0), 'utf-8');
     return { path, bytes: size };
   }
 
@@ -83,14 +71,14 @@ export class StorageAdapter {
   /**
    * Carrega um node por handle (último arquivo encontrado para esse handle).
    */
-  async loadByHandle(handle: string): Promise<ExtractedProfile | null> {
+  async loadByHandle(handle: string): Promise<Entity | null> {
     if (!existsSync(this.basePath)) return null;
     const files = await readdir(this.basePath).catch(() => []);
     const prefix = `instagram_${sanitizeHandle(handle)}_`;
     const matching = files.filter((f) => f.startsWith(prefix) && f.endsWith('.json')).sort().reverse();
     if (matching.length === 0) return null;
     const content = await readFile(join(this.basePath, matching[0]), 'utf-8');
-    return JSON.parse(content) as ExtractedProfile;
+    return JSON.parse(content) as Entity;
   }
 }
 
@@ -107,11 +95,11 @@ export interface CreateStorageOptions {
 }
 
 /**
- * Cria o adapter de armazenamento. Por padrão usa SQLite (banco local).
- * Use STORAGE_BACKEND=json no .env para voltar a salvar em arquivos JSON.
+ * Cria o adapter de armazenamento. Por padrão usa RocksDB (level) para salvar JSON do response.
+ * Use STORAGE_BACKEND=json no .env para salvar em arquivos JSON.
  */
-export function createStorage(options: CreateStorageOptions = {}): StorageAdapter | SqliteStorageAdapter {
-  const backend = (options.backend ?? process.env.STORAGE_BACKEND ?? 'sqlite') as StorageBackend;
+export function createStorage(options: CreateStorageOptions = {}): StorageAdapter | RocksDBStorage {
+  const backend = (options.backend ?? process.env.STORAGE_BACKEND ?? 'rocksdb') as StorageBackend;
   if (backend === 'json') {
     return new StorageAdapter({
       basePath: options.basePath,
@@ -119,8 +107,8 @@ export function createStorage(options: CreateStorageOptions = {}): StorageAdapte
       config: options.config,
     });
   }
-  return new SqliteStorageAdapter({
-    dbPath: options.dbPath ?? process.env.STORAGE_DB_PATH ?? './data/influencer.db',
+  return new RocksDBStorage({
+    dbPath: options.dbPath ?? process.env.STORAGE_DB_PATH ?? './data/rocksdb',
     nodeMaxBytes: options.nodeMaxBytes,
     config: options.config,
   });
