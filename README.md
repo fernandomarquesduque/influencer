@@ -36,12 +36,6 @@ npm run login
 npm run crawl:hashtag -- --tag barbearia --limit 50
 ```
 
-**Descoberta por local:**
-
-```bash
-npm run crawl:location -- --location atibaia
-```
-
 A sessão é reutilizada: não é necessário logar a cada execução.
 
 ## Estrutura do código
@@ -51,7 +45,7 @@ A sessão é reutilizada: não é necessário logar a cada execução.
 - **profileExtractor**: extrai campos permitidos do perfil (bio, website, followers, etc.) e chama o addressExtractor.
 - **addressExtractor**: (1) bio — padrões de endereço BR; (2) modal Contato/Endereço em perfis comerciais; (3) geotag nos últimos 3 posts. Sempre só texto; nunca HTML.
 - **normalizers**: normalização de números, strings, boolean e endereço a partir de texto.
-- **storage**: adapter que valida tamanho com `estimatePayloadSize` e `ensureWithinLimit`, salva um JSON por perfil em `data/profiles/`.
+- **storage**: por padrão usa **SQLite** (banco local em `./data/influencer.db`). Valida tamanho com `estimatePayloadSize` e `ensureWithinLimit`. Use `STORAGE_BACKEND=json` no `.env` para salvar um JSON por perfil em `data/profiles/`.
 
 ## Campos extraídos (exemplo)
 
@@ -59,6 +53,20 @@ A sessão é reutilizada: não é necessário logar a cada execução.
 - **address**: `street`, `number`, `neighborhood`, `city`, `state`, `postal_code`, `country`, `raw_text` (máx 300 chars)
 - `public_email`, `public_phone` (somente se explícitos na bio)
 - `discovered_by`, `discovered_value`, `collected_at`
+
+## Banco local (SQLite)
+
+Os dados extraídos são salvos por padrão em um banco SQLite em `./data/influencer.db`. Cada perfil vira uma linha na tabela `profiles` (upsert por `handle`). Para usar arquivos JSON em vez do banco, defina no `.env`:
+
+```bash
+STORAGE_BACKEND=json
+```
+
+Opcionalmente defina o caminho do banco:
+
+```bash
+STORAGE_DB_PATH=./data/influencer.db
+```
 
 ## Anti-bloqueio
 

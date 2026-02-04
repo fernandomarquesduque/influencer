@@ -1,76 +1,181 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ override: true });
+import { DEFAULT_CRAWL_CONFIG, type CrawlConfig } from '../types/index.js';
 import { InstagramClient } from '../instagramClient/index.js';
-import { ensureLoggedIn } from '../instagramClient/login.js';
-import { discoverProfilesByHashtag } from '../discoveryService/index.js';
+import { discoverAndProcessByHashtag, type DiscoveredProfileRef } from '../discoveryService/index.js';
 import { extractProfile } from '../profileExtractor/index.js';
-import { StorageAdapter } from '../storage/index.js';
-import { DEFAULT_CRAWL_CONFIG } from '../types/index.js';
-import { randomDelay } from '../utils/delay.js';
+import { createStorage } from '../storage/index.js';
+import type { SqliteStorageAdapter } from '../storage/sqlite.js';
+import { crawlLog, crawlLogExtract } from '../utils/crawlLogger.js';
 
-const tag = process.argv.find((a) => a === '--tag') ? process.argv[process.argv.indexOf('--tag') + 1] : null;
-const limitArg = process.argv.find((a) => a === '--limit') ? process.argv[process.argv.indexOf('--limit') + 1] : null;
+/** Mínimo fixo: só salva perfil com mais de 10 mil seguidores (quando o filtro está ativo). */
+const MIN_FOLLOWERS_FLOOR = 10000;
 
-const maxPostsPerTag = limitArg ? parseInt(limitArg, 10) : parseInt(process.env.MAX_POSTS_PER_TAG ?? '30', 10);
-const maxProfiles = parseInt(process.env.MAX_PROFILES ?? '100', 10);
-const headless = process.env.HEADFUL !== 'true';
-const authStatePath = process.env.AUTH_STATE_PATH ?? '.auth/instagram.json';
+/** Timeout total por perfil (extract + save). Se estourar, consideramos que "parou" e retentamos ou pulamos. */
+const PROFILE_PROCESS_TIMEOUT_MS = Number(process.env.PROFILE_PROCESS_TIMEOUT_MS) || 180_000; // 3 min
 
-const config = {
-  ...DEFAULT_CRAWL_CONFIG,
-  maxPostsPerTag: Number.isNaN(maxPostsPerTag) ? 30 : maxPostsPerTag,
-  maxProfiles: Number.isNaN(maxProfiles) ? 100 : maxProfiles,
-  headless,
-  authStatePath,
-};
+/** Quantas vezes retentar o mesmo perfil em caso de timeout/erro antes de pular e seguir. */
+const PROFILE_PROCESS_MAX_RETRIES = 2;
+
+function buildConfigFromEnv(): CrawlConfig {
+  const raw = (() => {
+    const v = process.env.MIN_FOLLOWERS?.trim();
+    if (v === undefined || v === '') return DEFAULT_CRAWL_CONFIG.minFollowersToSave;
+    const n = parseInt(v, 10);
+    if (Number.isNaN(n) || n < 0) return DEFAULT_CRAWL_CONFIG.minFollowersToSave;
+    return n;
+  })();
+  const minFollowersToSave = raw === 0 ? 0 : Math.max(raw, MIN_FOLLOWERS_FLOOR);
+  return {
+    ...DEFAULT_CRAWL_CONFIG,
+    maxPostsPerTag: parseInt(process.env.MAX_POSTS_PER_TAG ?? String(DEFAULT_CRAWL_CONFIG.maxPostsPerTag), 10) || DEFAULT_CRAWL_CONFIG.maxPostsPerTag,
+    maxProfiles: parseInt(process.env.MAX_PROFILES ?? String(DEFAULT_CRAWL_CONFIG.maxProfiles), 10) || DEFAULT_CRAWL_CONFIG.maxProfiles,
+    headless: process.env.HEADFUL !== 'true',
+    authStatePath: process.env.AUTH_STATE_PATH ?? DEFAULT_CRAWL_CONFIG.authStatePath,
+    minFollowersToSave,
+    excludeBusinessProfiles: process.env.EXCLUDE_BUSINESS_PROFILES !== 'false',
+    maxPostsToAnalyzeForInsights: parseInt(process.env.MAX_POSTS_FOR_INSIGHTS ?? String(DEFAULT_CRAWL_CONFIG.maxPostsToAnalyzeForInsights), 10) || DEFAULT_CRAWL_CONFIG.maxPostsToAnalyzeForInsights,
+  };
+}
+
+function parseArgs(): { tag: string | null; limit: number | undefined; clear: boolean } {
+  const argv = process.argv.slice(2);
+  let tag: string | null = null;
+  let limit: number | undefined;
+  let clear = false;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--tag' && argv[i + 1]) {
+      tag = argv[++i].replace(/^#/, '');
+    } else if (a.startsWith('--tag=')) {
+      tag = a.slice(6).replace(/^#/, '') || null;
+    } else if (a === '--limit' && argv[i + 1]) {
+      const n = parseInt(argv[++i], 10);
+      if (!Number.isNaN(n)) limit = n;
+    } else if (a.startsWith('--limit=')) {
+      const n = parseInt(a.slice(8), 10);
+      if (!Number.isNaN(n)) limit = n;
+    } else if (a === '--clear') {
+      clear = true;
+    }
+  }
+  return { tag, limit, clear };
+}
+
+/**
+ * Processa um perfil com timeout e retries. Se travar (timeout), identifica sozinho,
+ * retenta até PROFILE_PROCESS_MAX_RETRIES e, se salvar, retorna true; senão pula e retorna false.
+ */
+async function processOneProfileWithTimeout(
+  client: InstagramClient,
+  ref: DiscoveredProfileRef,
+  tag: string,
+  config: CrawlConfig,
+  storage: ReturnType<typeof createStorage>,
+  sqlite: SqliteStorageAdapter,
+  existingHandles: Set<string>
+): Promise<boolean> {
+  for (let attempt = 0; attempt <= PROFILE_PROCESS_MAX_RETRIES; attempt++) {
+    crawlLogExtract(`[heartbeat] ${new Date().toISOString()} — processando @${ref.handle} (tentativa ${attempt + 1}/${PROFILE_PROCESS_MAX_RETRIES + 1}, timeout ${PROFILE_PROCESS_TIMEOUT_MS / 1000}s)`);
+    const page = await client.newPage();
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('PROFILE_TIMEOUT')), PROFILE_PROCESS_TIMEOUT_MS)
+    );
+    const work = async (): Promise<boolean> => {
+      try {
+        if (existingHandles.has(ref.handle.toLowerCase())) return false;
+        crawlLogExtract(`Extraindo perfil completo @${ref.handle}...${attempt > 0 ? ` (tentativa ${attempt + 1})` : ''}`);
+        const result = await extractProfile(page, ref.handle, 'hashtag', tag, config);
+        if (!result) {
+          crawlLogExtract(`Falha ao extrair @${ref.handle}`);
+          return false;
+        }
+        const { profile, posts } = result;
+        const followers = profile.followers ?? 0;
+        const minRequired = config.minFollowersToSave > 0 ? Math.max(config.minFollowersToSave, MIN_FOLLOWERS_FLOOR) : 0;
+        if (minRequired > 0 && followers < minRequired) {
+          crawlLogExtract(`@${ref.handle} abaixo de 10 mil (${followers}), pulando`);
+          return false;
+        }
+        if (config.excludeBusinessProfiles && profile.is_business) {
+          crawlLogExtract(`@${ref.handle} é perfil de negócio, pulando`);
+          return false;
+        }
+        await storage.save(profile);
+        const postsSaved = typeof sqlite.savePosts === 'function'
+          ? await sqlite.savePosts(profile.handle, posts, profile.collected_at)
+          : 0;
+        existingHandles.add(ref.handle.toLowerCase());
+        const categories = profile.post_insights?.inferred_categories?.length
+          ? profile.post_insights.inferred_categories.join(', ')
+          : '(nenhuma)';
+        crawlLogExtract(`Salvo @${ref.handle} | followers=${profile.followers ?? '?'} | posts=${postsSaved} | categorias: ${categories}`);
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        crawlLogExtract(`Erro ao processar @${ref.handle}: ${msg}`);
+        return false;
+      }
+    };
+
+    try {
+      const ok = await Promise.race([work(), timeoutPromise]);
+      if (ok) return true;
+      if (attempt < PROFILE_PROCESS_MAX_RETRIES) {
+        crawlLogExtract(`@${ref.handle} não qualificado ou falha ao salvar; retentando (${attempt + 1}/${PROFILE_PROCESS_MAX_RETRIES})...`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTimeout = msg.includes('PROFILE_TIMEOUT') || msg.toLowerCase().includes('timeout');
+      crawlLogExtract(`Perfil @${ref.handle}: ${isTimeout ? 'timeout (código parou?)' : msg}. ${attempt < PROFILE_PROCESS_MAX_RETRIES ? `Retentando (${attempt + 1}/${PROFILE_PROCESS_MAX_RETRIES})...` : 'Desistindo e seguindo ao próximo.'}`);
+      if (attempt === PROFILE_PROCESS_MAX_RETRIES) return false;
+    } finally {
+      await page.close().catch(() => { });
+    }
+  }
+  return false;
+}
 
 async function main(): Promise<void> {
-  const hashtag = tag ?? process.env.CRAWL_TAG;
-  if (!hashtag) {
-    console.error('Uso: npm run crawl:hashtag -- --tag <hashtag> [--limit 50]');
+  const { tag, limit: maxProfilesArg, clear } = parseArgs();
+  const maxProfiles = maxProfilesArg;
+
+  if (!tag || tag.includes('node') || tag.includes('.exe')) {
+    console.error('Uso: npm run crawl:hashtag -- --tag <hashtag> [--limit <número>] [--clear]');
+    console.error('Ex.: npx tsx src/cli/crawl-hashtag.ts --tag viagem --limit 2 --clear');
     process.exit(1);
   }
 
-  const user = process.env.INSTAGRAM_USER;
-  const password = process.env.INSTAGRAM_PASSWORD;
-  if (!user || !password) {
-    console.error('Defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env');
-    process.exit(1);
-  }
+  const config = buildConfigFromEnv();
+  const effectiveMaxProfiles = maxProfiles !== undefined ? maxProfiles : config.maxProfiles;
 
+  const storage = createStorage({ config });
+  const sqlite = storage as SqliteStorageAdapter;
+  if (clear && typeof sqlite.clearAll === 'function') {
+    await sqlite.clearAll();
+    crawlLog('Banco limpo (profiles, posts, hashtags).');
+  }
+  const existingHandles = await storage.listHandles();
   const client = new InstagramClient({
     headless: config.headless,
     authStatePath: config.authStatePath,
   });
-  const storage = new StorageAdapter({ config });
 
   try {
-    const loggedIn = await ensureLoggedIn(client, user, password);
-    if (!loggedIn) {
-      console.error('Falha no login.');
-      process.exit(1);
-    }
-    console.log('Sessão OK. Descobrindo perfis por hashtag:', hashtag);
+    await client.init();
+    crawlLog(`Hashtag: ${tag}, max posts: ${config.maxPostsPerTag}, max perfis: ${effectiveMaxProfiles}, min seguidores: ${config.minFollowersToSave}`);
 
-    const refs = await discoverProfilesByHashtag(client, hashtag.replace(/^#/, ''), config.maxPostsPerTag);
-    const existingHandles = await storage.listHandles();
-    const toVisit = refs.filter((r) => !existingHandles.has(r.handle.toLowerCase()));
-    const capped = toVisit.slice(0, config.maxProfiles);
+    const saved = await discoverAndProcessByHashtag(
+      client,
+      tag.replace(/^#/, ''),
+      config.maxPostsPerTag,
+      effectiveMaxProfiles,
+      config.minFollowersToSave,
+      existingHandles,
+      (ref) => processOneProfileWithTimeout(client, ref, tag, config, storage, sqlite, existingHandles)
+    );
 
-    console.log(`Encontrados ${refs.length} perfis; ${capped.length} novos (limite ${config.maxProfiles}).`);
-
-    const page = await client.newPage();
-    let saved = 0;
-    for (const ref of capped) {
-      await randomDelay(config.randomDelayMinMs, config.randomDelayMaxMs);
-      const profile = await extractProfile(page, ref.handle, 'hashtag', hashtag, config);
-      if (profile) {
-        const { path, bytes } = await storage.save(profile);
-        saved++;
-        console.log(`[${saved}] ${ref.handle} -> ${path} (${bytes} bytes)`);
-      }
-    }
-    await page.close();
-    console.log(`Concluído. ${saved} perfis salvos.`);
+    crawlLog(`Concluído. Perfis salvos nesta execução: ${saved}`);
   } finally {
     await client.close();
   }

@@ -4,8 +4,11 @@ import type { CrawlConfig } from '../types/index.js';
 import { writeFile, mkdir, readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { SqliteStorageAdapter } from './sqlite.js';
 
 const NODE_MAX_BYTES_DEFAULT = 1024 * 1024; // 1MB
+
+export type StorageBackend = 'sqlite' | 'json';
 
 export interface StorageAdapterOptions {
   basePath?: string;
@@ -93,4 +96,32 @@ export class StorageAdapter {
 
 function sanitizeHandle(handle: string): string {
   return handle.replace(/^@/, '').replace(/[^a-zA-Z0-9_.]/g, '_').toLowerCase();
+}
+
+export interface CreateStorageOptions {
+  basePath?: string;
+  dbPath?: string;
+  nodeMaxBytes?: number;
+  config?: CrawlConfig;
+  backend?: StorageBackend;
+}
+
+/**
+ * Cria o adapter de armazenamento. Por padrão usa SQLite (banco local).
+ * Use STORAGE_BACKEND=json no .env para voltar a salvar em arquivos JSON.
+ */
+export function createStorage(options: CreateStorageOptions = {}): StorageAdapter | SqliteStorageAdapter {
+  const backend = (options.backend ?? process.env.STORAGE_BACKEND ?? 'sqlite') as StorageBackend;
+  if (backend === 'json') {
+    return new StorageAdapter({
+      basePath: options.basePath,
+      nodeMaxBytes: options.nodeMaxBytes,
+      config: options.config,
+    });
+  }
+  return new SqliteStorageAdapter({
+    dbPath: options.dbPath ?? process.env.STORAGE_DB_PATH ?? './data/influencer.db',
+    nodeMaxBytes: options.nodeMaxBytes,
+    config: options.config,
+  });
 }

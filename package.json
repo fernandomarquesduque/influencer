@@ -6,14 +6,15 @@
   "scripts": {
     "build": "tsc",
     "crawl:hashtag": "tsx src/cli/crawl-hashtag.ts",
-    "crawl:location": "tsx src/cli/crawl-location.ts",
     "login": "tsx src/cli/login.ts"
   },
   "dependencies": {
-    "playwright": "^1.49.0",
-    "dotenv": "^16.4.5"
+    "better-sqlite3": "^12.6.2",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.49.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

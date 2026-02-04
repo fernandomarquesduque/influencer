@@ -96,10 +96,21 @@ export class InstagramClient {
     return `${INSTAGRAM_ORIGIN}/explore/tags/${encodeURIComponent(clean)}/`;
   }
 
+  /** URL do Explore por local. Use o ID numérico (ex: 246052326) ou "id/slug" (ex: 246052326/aurajoki-turku). */
   static locationExploreUrl(locationIdOrSlug: string): string {
-    if (/^\d+$/.test(locationIdOrSlug)) {
-      return `${INSTAGRAM_ORIGIN}/explore/locations/${locationIdOrSlug}/`;
+    const trimmed = locationIdOrSlug.trim();
+    if (/^\d+$/.test(trimmed)) {
+      return `${INSTAGRAM_ORIGIN}/explore/locations/${trimmed}/`;
     }
-    return `${INSTAGRAM_ORIGIN}/explore/locations/${encodeURIComponent(locationIdOrSlug)}/`;
+    if (/^\d+\/.+$/.test(trimmed)) {
+      const [id, slug] = trimmed.split('/');
+      return `${INSTAGRAM_ORIGIN}/explore/locations/${id}/${encodeURIComponent(slug)}/`;
+    }
+    return `${INSTAGRAM_ORIGIN}/explore/locations/${encodeURIComponent(trimmed)}/`;
+  }
+
+  /** Feed Explore (descoberta orgânica) */
+  static exploreUrl(): string {
+    return `${INSTAGRAM_ORIGIN}/explore/`;
   }
 }
