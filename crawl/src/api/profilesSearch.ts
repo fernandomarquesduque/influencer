@@ -1,0 +1,718 @@
+/**
+ * Listagem de perfis com filtros avançados e cálculo de engajamento
+ * baseado nos posts (likes, comentários, views).
+ */
+
+import type { CompositeStorage } from '../storage/compositeStorage.js';
+import type { ProfileActivationData } from '../storage/sqliteSync.js';
+
+function getIn(obj: unknown, ...paths: string[]): unknown {
+  if (obj == null) return undefined;
+  for (const path of paths) {
+    const parts = path.split('.');
+    let current: unknown = obj;
+    for (const p of parts) {
+      if (current == null || typeof current !== 'object') break;
+      current = (current as Record<string, unknown>)[p];
+    }
+    if (current !== undefined && current !== null) return current;
+  }
+  return undefined;
+}
+
+function toNum(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return Math.floor(v);
+  if (typeof v === 'string') {
+    const n = parseInt(v.replace(/\D/g, ''), 10);
+    return Number.isNaN(n) ? 0 : n;
+  }
+  return 0;
+}
+
+/** Extrai seguidores do perfil (vários formatos da API). */
+function getFollowers(profile: Record<string, unknown>): number {
+  const fromPaths = getIn(
+    profile,
+    'followers_count',
+    'data.user.follower_count',
+    'data.user.edge_followed_by.count',
+    'graphql.user.edge_followed_by.count'
+  );
+  if (fromPaths !== undefined && fromPaths !== null) return toNum(fromPaths);
+  const user = profile.data?.user as Record<string, unknown> | undefined;
+  if (user?.follower_count != null) return toNum(user.follower_count);
+  const edge = user?.edge_followed_by as { count?: number } | undefined;
+  return toNum(edge?.count);
+}
+
+/** Extrai handle do perfil. */
+function getHandle(profile: Record<string, unknown>, key: string): string {
+  const h = profile.handle ?? profile.username ?? (profile.data?.user as Record<string, unknown> | undefined)?.username ?? key;
+  return String(h ?? key).toLowerCase().replace(/^@/, '');
+}
+
+/** Extrai nome completo. */
+function getFullName(profile: Record<string, unknown>): string {
+  const u = profile.data?.user as Record<string, unknown> | undefined;
+  return String(profile.full_name ?? u?.full_name ?? '');
+}
+
+/** Extrai categorias (array de strings). */
+function getCategories(profile: Record<string, unknown>): string[] {
+  const c = profile.categories;
+  if (Array.isArray(c)) return c.filter((x): x is string => typeof x === 'string');
+  const u = profile.data?.user as Record<string, unknown> | undefined;
+  const cat = u?.category ?? u?.account_type;
+  if (typeof cat === 'string') return [cat];
+  return [];
+}
+
+/** Extrai biografia. */
+function getBiography(profile: Record<string, unknown>): string {
+  const b = profile.biography ?? (profile.data?.user as Record<string, unknown> | undefined)?.biography;
+  return typeof b === 'string' ? b : '';
+}
+
+/** Extrai hashtags do texto (ex.: "#curiosidade #viagem" → ["curiosidade", "viagem"]). */
+function extractHashtagsFromText(text: string | undefined): string[] {
+  if (text == null || text.length === 0) return [];
+  const matches = text.match(/#[\w\u00C0-\u024F]+/g);
+  if (!matches) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of matches) {
+    const tag = m.slice(1).toLowerCase();
+    if (!seen.has(tag)) {
+      seen.add(tag);
+      out.push(tag);
+    }
+  }
+  return out;
+}
+
+/** Extrai hashtags de qualquer string dentro de um objeto (fallback). */
+function extractHashtagsFromObject(obj: unknown, maxDepth = 5): string[] {
+  if (maxDepth <= 0) return [];
+  const set = new Set<string>();
+  function walk(o: unknown, depth: number): void {
+    if (depth <= 0) return;
+    if (typeof o === 'string') {
+      for (const tag of extractHashtagsFromText(o)) set.add(tag);
+      return;
+    }
+    if (o != null && typeof o === 'object') {
+      for (const v of Object.values(o)) walk(v, depth - 1);
+    }
+  }
+  walk(obj, maxDepth);
+  return [...set];
+}
+
+/** Extrai hashtags de um post: content.hashtags, caption_text, caption.text, edge_media_to_caption ou varredura no objeto. */
+function getPostHashtags(post: Record<string, unknown>): string[] {
+  const content = post.content as Record<string, unknown> | undefined;
+  const fromArray = content?.hashtags;
+  if (Array.isArray(fromArray) && fromArray.length > 0) {
+    const out: string[] = [];
+    for (const h of fromArray) {
+      if (typeof h === 'string') {
+        const tag = h.replace(/^#/, '').trim().toLowerCase();
+        if (tag) out.push(tag);
+      }
+    }
+    if (out.length > 0) return out;
+  }
+  const captionText =
+    content?.caption_text ??
+    (post as { caption_text?: string }).caption_text ??
+    (() => {
+      const cap = (post.caption ?? content?.caption) as Record<string, unknown> | undefined;
+      return cap && typeof cap.text === 'string' ? (cap.text as string) : undefined;
+    })();
+  if (typeof captionText === 'string') return extractHashtagsFromText(captionText);
+  const edgeCaption = post.edge_media_to_caption as { edges?: Array<{ node?: { text?: string } }> } | undefined;
+  const edgeText = edgeCaption?.edges?.[0]?.node?.text;
+  if (typeof edgeText === 'string') return extractHashtagsFromText(edgeText);
+  return extractHashtagsFromObject(post);
+}
+
+/** Coleta todas as hashtags únicas dos posts do perfil. */
+function getAllHashtagsFromPosts(posts: Record<string, unknown>[]): string[] {
+  const set = new Set<string>();
+  for (const p of posts) {
+    for (const tag of getPostHashtags(p)) set.add(tag);
+  }
+  return [...set].sort();
+}
+
+/** Extrai de um post: caption e hashtags para busca. */
+function getPostTextForSearch(post: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const content = post.content as Record<string, unknown> | undefined;
+  if (content?.caption_text && typeof content.caption_text === 'string') {
+    parts.push(content.caption_text);
+  }
+  const hashtags = content?.hashtags;
+  if (Array.isArray(hashtags)) {
+    for (const h of hashtags) {
+      if (typeof h === 'string') parts.push(h.replace(/^#/, ''));
+    }
+  }
+  return parts.join(' ');
+}
+
+/** Monta um único texto pesquisável do perfil + posts (handle, nome, bio, categorias, hashtags, legendas). */
+function getSearchableText(
+  profile: Record<string, unknown>,
+  key: string,
+  fullName: string,
+  categories: string[],
+  posts: Record<string, unknown>[]
+): string {
+  const handle = getHandle(profile, key);
+  const username = (profile.username ?? (profile.data?.user as Record<string, unknown> | undefined)?.username ?? '') as string;
+  const bio = getBiography(profile);
+  const discoveredValue = (profile._discovered_value as string) ?? '';
+  const parts = [
+    handle,
+    fullName,
+    username,
+    bio,
+    discoveredValue,
+    ...categories,
+    ...categories.map((c) => c.replace(/\s+/g, ' ')),
+  ];
+  for (const p of posts) {
+    parts.push(getPostTextForSearch(p));
+  }
+  return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Verifica se o texto pesquisável atende à query q.
+ * - Se q tem espaços: primeiro exige match da frase completa (relevância 2); senão exige que todas as palavras apareçam (relevância 1, tipo LIKE %palavra%).
+ * - Se q não tem espaços: match por contém (relevância 2).
+ * Retorna { match, relevance }.
+ */
+function matchesQuery(searchableText: string, q: string): { match: boolean; relevance: number } {
+  const qTrim = q.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!qTrim) return { match: true, relevance: 0 };
+  const search = searchableText;
+
+  if (qTrim.includes(' ')) {
+    if (search.includes(qTrim)) return { match: true, relevance: 2 };
+    const words = qTrim.split(' ').filter((w) => w.length > 0);
+    const allWordsMatch = words.every((word) => search.includes(word));
+    return { match: allWordsMatch, relevance: allWordsMatch ? 1 : 0 };
+  }
+
+  if (search.includes(qTrim)) return { match: true, relevance: 2 };
+  return { match: false, relevance: 0 };
+}
+
+/** Extrai likes, comentários e views de um post. */
+function getPostMetrics(post: Record<string, unknown>): { likes: number; comments: number; views: number } {
+  const metrics = post.metrics as Record<string, unknown> | undefined;
+  const likes = toNum(metrics?.likes ?? post.like_count);
+  const comments = toNum(metrics?.comments ?? post.comment_count);
+  const views = toNum(metrics?.view_count ?? post.view_count);
+  return { likes, comments, views };
+}
+
+/** Resultado de engajamento agregado dos posts do perfil. */
+export interface EngagementStats {
+  posts_count: number;
+  total_likes: number;
+  total_comments: number;
+  total_views: number;
+  avg_likes: number;
+  avg_comments: number;
+  avg_views: number;
+  /** (total_likes + total_comments) / followers * 100. 0 se sem seguidores. */
+  engagement_rate: number;
+  /** Média de posts por semana (intervalo de datas dos posts analisados). */
+  posts_per_week?: number;
+}
+
+/** Bucket de facet (ex.: engajamento baixa/média/alta). */
+export interface FacetBucket {
+  key: string;
+  label: string;
+  min?: number;
+  count: number;
+}
+
+/** Sumarização dos resultados para filtros (hashtags/categorias, engajamento, ativação, tipo de conteúdo). */
+export interface ProfilesSearchFacets {
+  /** Hashtags/categorias dos perfis (dos posts + perfil). */
+  categories: { name: string; count: number }[];
+  engagement_rate: FacetBucket[];
+  avg_likes: FacetBucket[];
+  posts_count: FacetBucket[];
+  /** Contagem de perfis com cadastro ativado vs não ativado. */
+  activation: { activated: number; not_activated: number };
+  /** Tipo de conteúdo (cadastro ativado). */
+  content_type: { name: string; count: number }[];
+  /** Localização (apenas perfis ativados). */
+  cities: { name: string; count: number }[];
+  states: { name: string; count: number }[];
+  neighborhoods: { name: string; count: number }[];
+  /** Contagem por rede social preenchida (apenas ativados). */
+  social: { whatsapp: number; tiktok: number; facebook: number; linkedin: number; twitter: number };
+}
+
+/** Item retornado na listagem (perfil + engajamento). */
+export interface ProfileListItem {
+  key: string;
+  handle: string;
+  full_name: string;
+  profile_pic_url?: string;
+  hd_profile_pic_url?: string;
+  followers_count: number;
+  following_count?: number;
+  media_count?: number;
+  biography?: string;
+  categories: string[];
+  engagement: EngagementStats;
+  /** Relevância da busca (2 = frase completa, 1 = todas as palavras, 0 = sem busca ou não encontrado). */
+  search_relevance?: number;
+  /** Dados brutos do perfil (data.user etc.) para compatibilidade. */
+  data?: Record<string, unknown>;
+  /** Dados de ativação na plataforma (cadastro completo), quando existir. */
+  activation?: ProfileActivationData;
+  [key: string]: unknown;
+}
+
+export interface ProfilesSearchQuery {
+  /** Busca textual em handle, username, full_name. */
+  q?: string;
+  /** Mínimo de seguidores. */
+  minFollowers?: number;
+  /** Máximo de seguidores. */
+  maxFollowers?: number;
+  /** Mínimo de taxa de engajamento (%). Se engagementRateBuckets for usado, este é ignorado. */
+  minEngagementRate?: number;
+  /** Mínimo de média de likes por post. Se avgLikesBuckets for usado, este é ignorado. */
+  minAvgLikes?: number;
+  /** Mínimo de posts analisados. Se postsCountBuckets for usado, este é ignorado. */
+  minPostsCount?: number;
+  /** Faixas de taxa de engajamento (multiselect): 0=baixa(<1%), 1=média(1–5%), 5=alta(5%+). */
+  engagementRateBuckets?: number[];
+  /** Faixas de média likes: 0=baixa(<500), 500=média, 5000=alta. */
+  avgLikesBuckets?: number[];
+  /** Faixas de posts: 0=baixa(<25), 25=média, 50=alta. */
+  postsCountBuckets?: number[];
+  /** Filtro ativação: ['activated'] | ['not_activated'] | ambos/vazio = sem filtro. */
+  activationFilter?: string[];
+  /** Cidades (multiselect). */
+  cities?: string[];
+  /** Estados (multiselect). */
+  states?: string[];
+  /** Bairros (multiselect). */
+  neighborhoods?: string[];
+  /** Redes sociais (multiselect): whatsapp, tiktok, facebook, linkedin, twitter. */
+  socialNetworks?: string[];
+  /** Categorias/hashtags (vírgula ou array); perfil deve ter ao menos uma. */
+  categories?: string | string[];
+  /** Tipo de conteúdo (apenas perfis ativados; multiselect). */
+  contentTypes?: string | string[];
+  /** Ordenação: engagement_desc | engagement_asc | followers_desc | followers_asc | avg_likes_desc | avg_likes_asc | total_likes_desc | total_likes_asc */
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
+const SECONDS_PER_WEEK = 7 * 24 * 3600;
+/** Período mínimo (1 semana) para não inflar "posts/semana" quando a janela observada é muito curta. */
+const MIN_WEEKS_FOR_RATE = 1;
+
+function parseNumArray(v: unknown): number[] {
+  if (Array.isArray(v)) return v.map((x) => Number(x)).filter((n) => Number.isFinite(n));
+  if (typeof v === 'string') return v.split(',').map((x) => Number(x.trim())).filter((n) => Number.isFinite(n));
+  return [];
+}
+
+function parseStringArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+  if (typeof v === 'string') return v.split(',').map((x) => x.trim()).filter(Boolean);
+  return [];
+}
+
+/** Verifica se rate cai em algum bucket selecionado. Buckets: 0=<1%, 1=1-5%, 5=5%+. */
+function matchesEngagementRateBuckets(rate: number, selected: number[]): boolean {
+  if (selected.length === 0) return true;
+  if (selected.includes(0) && rate < 1) return true;
+  if (selected.includes(1) && rate >= 1 && rate < 5) return true;
+  if (selected.includes(5) && rate >= 5) return true;
+  return false;
+}
+
+/** Verifica se avgLikes cai em algum bucket: 0=<500, 500=500-5k, 5000=5k+. */
+function matchesAvgLikesBuckets(avgLikes: number, selected: number[]): boolean {
+  if (selected.length === 0) return true;
+  if (selected.includes(0) && avgLikes < 500) return true;
+  if (selected.includes(500) && avgLikes >= 500 && avgLikes < 5000) return true;
+  if (selected.includes(5000) && avgLikes >= 5000) return true;
+  return false;
+}
+
+/** Verifica se postsCount cai em algum bucket: 0=<25, 25=25-50, 50=50+. */
+function matchesPostsCountBuckets(postsCount: number, selected: number[]): boolean {
+  if (selected.length === 0) return true;
+  if (selected.includes(0) && postsCount < 25) return true;
+  if (selected.includes(25) && postsCount >= 25 && postsCount < 50) return true;
+  if (selected.includes(50) && postsCount >= 50) return true;
+  return false;
+}
+
+/** Extrai timestamp Unix (segundos) do post. */
+function getPostTimestamp(p: Record<string, unknown>): number | null {
+  const post = p.post as Record<string, unknown> | undefined;
+  const content = p.content as Record<string, unknown> | undefined;
+  const takenAt = post?.taken_at ?? (p as { taken_at?: number }).taken_at;
+  if (takenAt != null && typeof takenAt === 'number') return takenAt;
+  const captionAt = content?.caption_created_at;
+  if (captionAt != null && typeof captionAt === 'number') return captionAt;
+  const collected = post?.collected_at ?? (p as { collected_at?: string }).collected_at;
+  if (collected != null && typeof collected === 'string') {
+    const d = new Date(collected);
+    return Number.isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000);
+  }
+  return null;
+}
+
+/** Calcula engajamento a partir dos posts do perfil. */
+function computeEngagement(posts: Record<string, unknown>[], followersCount: number): EngagementStats {
+  let totalLikes = 0;
+  let totalComments = 0;
+  let totalViews = 0;
+  const timestamps: number[] = [];
+  for (const p of posts) {
+    const m = getPostMetrics(p);
+    totalLikes += m.likes;
+    totalComments += m.comments;
+    totalViews += m.views;
+    const ts = getPostTimestamp(p);
+    if (ts != null) timestamps.push(ts);
+  }
+  const n = posts.length;
+  const totalInteractions = totalLikes + totalComments;
+  // Engajamento = (média de interações por post) / seguidores — assim o % não ultrapassa 100%
+  const avgInteractionsPerPost = n > 0 ? totalInteractions / n : 0;
+  const engagementRate =
+    followersCount > 0 && avgInteractionsPerPost >= 0
+      ? (avgInteractionsPerPost / followersCount) * 100
+      : 0;
+
+  let posts_per_week: number;
+  if (timestamps.length >= 2) {
+    const minTs = Math.min(...timestamps);
+    const maxTs = Math.max(...timestamps);
+    const observedWeeks = (maxTs - minTs) / SECONDS_PER_WEEK;
+    const weeks = Math.max(observedWeeks, MIN_WEEKS_FOR_RATE);
+    posts_per_week = weeks > 0 ? Math.round((n / weeks) * 100) / 100 : n;
+  } else {
+    posts_per_week = n > 0 ? n : 0;
+  }
+
+  return {
+    posts_count: n,
+    total_likes: totalLikes,
+    total_comments: totalComments,
+    total_views: totalViews,
+    avg_likes: n > 0 ? Math.round(totalLikes / n) : 0,
+    avg_comments: n > 0 ? Math.round(totalComments / n) : 0,
+    avg_views: n > 0 ? Math.round(totalViews / n) : 0,
+    engagement_rate: Math.round(engagementRate * 100) / 100,
+    posts_per_week,
+  };
+}
+
+/** Normaliza URL da foto do perfil. */
+function getProfilePicUrl(profile: Record<string, unknown>): string | undefined {
+  const top = profile.profile_pic_url ?? profile.hd_profile_pic_url;
+  if (top && typeof top === 'string') return top;
+  const u = profile.data?.user as Record<string, unknown> | undefined;
+  const fromUser = u?.profile_pic_url ?? u?.hd_profile_pic_url;
+  if (fromUser && typeof fromUser === 'string') return fromUser;
+  const hd = u?.hd_profile_pic_url_info as { url?: string } | undefined;
+  return hd?.url;
+}
+
+/** Filtra e ordena perfis; retorna lista com engajamento e facets para sumarização. */
+export async function searchProfiles(
+  db: CompositeStorage,
+  query: ProfilesSearchQuery
+): Promise<{ total: number; items: ProfileListItem[]; facets: ProfilesSearchFacets }> {
+  const limit = Math.min(Math.max(0, Number(query.limit) || 50), 200);
+  const offset = Math.max(0, Number(query.offset) || 0);
+  const sort = (query.sort || 'engagement_desc').toLowerCase();
+  const minFollowers = query.minFollowers != null ? Number(query.minFollowers) : undefined;
+  const maxFollowers = query.maxFollowers != null ? Number(query.maxFollowers) : undefined;
+  const minEngagementRate = query.minEngagementRate != null ? Number(query.minEngagementRate) : undefined;
+  const minAvgLikes = query.minAvgLikes != null ? Number(query.minAvgLikes) : undefined;
+  const minPostsCount = query.minPostsCount != null ? Number(query.minPostsCount) : undefined;
+  const engagementRateBucketsFilter = parseNumArray(query.engagementRateBuckets);
+  const avgLikesBucketsFilter = parseNumArray(query.avgLikesBuckets);
+  const postsCountBucketsFilter = parseNumArray(query.postsCountBuckets);
+  const activationFilter = parseStringArray(query.activationFilter);
+  const citiesFilter = parseStringArray(query.cities).map((s) => s.toLowerCase());
+  const statesFilter = parseStringArray(query.states).map((s) => s.toLowerCase());
+  const neighborhoodsFilter = parseStringArray(query.neighborhoods).map((s) => s.toLowerCase());
+  const socialNetworksFilter = parseStringArray(query.socialNetworks).map((s) => s.toLowerCase());
+  const q = (query.q || '').trim().toLowerCase();
+  let categoriesFilter: string[] = [];
+  if (query.categories != null) {
+    categoriesFilter = Array.isArray(query.categories)
+      ? query.categories.map((c) => String(c).trim().toLowerCase()).filter(Boolean)
+      : String(query.categories)
+        .split(',')
+        .map((c) => c.trim().toLowerCase())
+        .filter(Boolean);
+  }
+  const contentTypesFilter = parseStringArray(query.contentTypes).map((s) => s.toLowerCase());
+
+  const [profilesRaw, postsRaw] = await Promise.all([
+    db.getByBucket<Record<string, unknown>>('profile'),
+    db.getByBucket<Record<string, unknown>>('post'),
+  ]);
+
+  const postsByHandle = new Map<string, Record<string, unknown>[]>();
+  for (const { key, value } of postsRaw) {
+    const v = value as Record<string, unknown>;
+    const handleRaw = (v.profile_handle ?? (key.includes(':') ? key.split(':')[0]! : key)) as string;
+    const handle = String(handleRaw ?? '').toLowerCase().replace(/^@/, '');
+    if (!handle) continue;
+    const list = postsByHandle.get(handle) ?? [];
+    list.push(v);
+    postsByHandle.set(handle, list);
+  }
+
+  let items: ProfileListItem[] = [];
+  for (const { key, value } of profilesRaw) {
+    const profile = value as Record<string, unknown>;
+    const handle = getHandle(profile, key).toLowerCase().replace(/^@/, '');
+    const followersCount = getFollowers(profile);
+    const fullName = getFullName(profile);
+    const baseCategories = getCategories(profile);
+    const posts = postsByHandle.get(handle) ?? [];
+    const postHashtags = getAllHashtagsFromPosts(posts);
+    const categoriesSet = new Set<string>([...baseCategories.map((c) => c.trim().toLowerCase()), ...postHashtags].filter(Boolean));
+    const categories = [...categoriesSet].sort();
+
+    if (minFollowers != null && followersCount < minFollowers) continue;
+    if (maxFollowers != null && followersCount > maxFollowers) continue;
+
+    const engagement = computeEngagement(posts, followersCount);
+
+    if (engagementRateBucketsFilter.length > 0) {
+      if (!matchesEngagementRateBuckets(engagement.engagement_rate, engagementRateBucketsFilter)) continue;
+    } else if (minEngagementRate != null && engagement.engagement_rate < minEngagementRate) continue;
+    if (avgLikesBucketsFilter.length > 0) {
+      if (!matchesAvgLikesBuckets(engagement.avg_likes, avgLikesBucketsFilter)) continue;
+    } else if (minAvgLikes != null && engagement.avg_likes < minAvgLikes) continue;
+    if (postsCountBucketsFilter.length > 0) {
+      if (!matchesPostsCountBuckets(engagement.posts_count, postsCountBucketsFilter)) continue;
+    } else if (minPostsCount != null && engagement.posts_count < minPostsCount) continue;
+
+    let searchRelevance: number | undefined;
+    if (q) {
+      const searchableText = getSearchableText(profile, key, fullName, categories, posts);
+      const { match, relevance } = matchesQuery(searchableText, q);
+      if (!match) continue;
+      searchRelevance = relevance;
+    }
+
+    if (categoriesFilter.length > 0) {
+      const hasCategory = categoriesFilter.some((fc) => categories.some((c) => c.toLowerCase() === fc));
+      if (!hasCategory) continue;
+    }
+
+    const pic = getProfilePicUrl(profile);
+    const item: ProfileListItem = {
+      key,
+      handle,
+      full_name: fullName,
+      followers_count: followersCount,
+      following_count: toNum(profile.following_count ?? (profile.data?.user as Record<string, unknown> | undefined)?.following_count),
+      media_count: profile.media_count ?? (profile.data?.user as Record<string, unknown> | undefined)?.media_count as number | undefined,
+      biography: profile.biography ?? (profile.data?.user as Record<string, unknown> | undefined)?.biography as string | undefined,
+      categories,
+      engagement,
+      ...(searchRelevance != null && { search_relevance: searchRelevance }),
+      ...(pic && { profile_pic_url: pic }),
+      data: profile.data as Record<string, unknown> | undefined,
+    };
+    Object.assign(item, profile);
+    item.categories = categories;
+    items.push(item);
+  }
+
+  type SortKey = 'engagement_desc' | 'engagement_asc' | 'followers_desc' | 'followers_asc' | 'avg_likes_desc' | 'avg_likes_asc' | 'total_likes_desc' | 'total_likes_asc';
+  const order = sort as SortKey;
+
+  const sortByOrder = (a: ProfileListItem, b: ProfileListItem): number => {
+    if (order === 'engagement_desc') return b.engagement.engagement_rate - a.engagement.engagement_rate;
+    if (order === 'engagement_asc') return a.engagement.engagement_rate - b.engagement.engagement_rate;
+    if (order === 'followers_desc') return b.followers_count - a.followers_count;
+    if (order === 'followers_asc') return a.followers_count - b.followers_count;
+    if (order === 'avg_likes_desc') return b.engagement.avg_likes - a.engagement.avg_likes;
+    if (order === 'avg_likes_asc') return a.engagement.avg_likes - b.engagement.avg_likes;
+    if (order === 'total_likes_desc') return b.engagement.total_likes - a.engagement.total_likes;
+    if (order === 'total_likes_asc') return a.engagement.total_likes - b.engagement.total_likes;
+    return 0;
+  };
+
+  /** Enriquece cada item com dados de ativação (SQLite) antes de filtrar por ativação/local/redes. */
+  for (const item of items) {
+    const act = db.getActivation(item.handle);
+    if (act) item.activation = act;
+  }
+
+  /** Filtros por ativação, cidade, estado, bairro e redes (multiselect). */
+  let filteredItems = items;
+  if (activationFilter.length === 1) {
+    const wantActivated = activationFilter[0]!.toLowerCase() === 'activated';
+    filteredItems = filteredItems.filter((i) => (wantActivated ? !!i.activation : !i.activation));
+  }
+  if (citiesFilter.length > 0) {
+    filteredItems = filteredItems.filter(
+      (i) => i.activation?.city?.trim() && citiesFilter.includes(i.activation.city!.trim().toLowerCase())
+    );
+  }
+  if (statesFilter.length > 0) {
+    filteredItems = filteredItems.filter(
+      (i) => i.activation?.state?.trim() && statesFilter.includes(i.activation.state!.trim().toLowerCase())
+    );
+  }
+  if (neighborhoodsFilter.length > 0) {
+    filteredItems = filteredItems.filter(
+      (i) => i.activation?.neighborhood?.trim() && neighborhoodsFilter.includes(i.activation.neighborhood!.trim().toLowerCase())
+    );
+  }
+  if (socialNetworksFilter.length > 0) {
+    const hasNetwork = (act: ProfileActivationData, net: string): boolean => {
+      const n = net.toLowerCase();
+      if (n === 'whatsapp') return !!(act.whatsapp?.trim());
+      if (n === 'tiktok') return !!(act.tiktok?.trim());
+      if (n === 'facebook') return !!(act.facebook?.trim());
+      if (n === 'linkedin') return !!(act.linkedin?.trim());
+      if (n === 'twitter') return !!(act.twitter?.trim());
+      return false;
+    };
+    filteredItems = filteredItems.filter(
+      (i) => i.activation && socialNetworksFilter.some((net) => hasNetwork(i.activation!, net))
+    );
+  }
+  if (contentTypesFilter.length > 0) {
+    filteredItems = filteredItems.filter((i) => {
+      const ct = i.activation?.content_type;
+      if (!ct || !Array.isArray(ct)) return false;
+      const ctLower = ct.map((c) => String(c).trim().toLowerCase()).filter(Boolean);
+      return contentTypesFilter.some((fc) => ctLower.includes(fc));
+    });
+  }
+
+  items = filteredItems;
+
+  if (q) {
+    items.sort((a, b) => {
+      const relA = (a.search_relevance ?? 0);
+      const relB = (b.search_relevance ?? 0);
+      if (relB !== relA) return relB - relA;
+      return sortByOrder(a, b);
+    });
+  } else {
+    items.sort(sortByOrder);
+  }
+
+  const total = items.length;
+
+  /** Facets calculados sobre o conjunto completo filtrado (para sumarização na UI). */
+  let activatedCount = 0;
+  const categoryCount = new Map<string, number>();
+  const contentTypeCount = new Map<string, number>();
+  const cityCount = new Map<string, number>();
+  const stateCount = new Map<string, number>();
+  const neighborhoodCount = new Map<string, number>();
+  const socialCount = { whatsapp: 0, tiktok: 0, facebook: 0, linkedin: 0, twitter: 0 };
+  const engagementRateBuckets = [
+    { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
+    { key: 'media', label: 'Média', min: 1, count: 0 },
+    { key: 'alta', label: 'Alta', min: 5, count: 0 },
+  ];
+  const avgLikesBuckets = [
+    { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
+    { key: 'media', label: 'Média', min: 500, count: 0 },
+    { key: 'alta', label: 'Alta', min: 5000, count: 0 },
+  ];
+  const postsCountBuckets = [
+    { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
+    { key: 'media', label: 'Média', min: 25, count: 0 },
+    { key: 'alta', label: 'Alta', min: 50, count: 0 },
+  ];
+
+  for (const item of items) {
+    if (item.activation) {
+      activatedCount++;
+      const act = item.activation;
+      if (act.city?.trim()) cityCount.set(act.city.trim().toLowerCase(), (cityCount.get(act.city.trim().toLowerCase()) ?? 0) + 1);
+      if (act.state?.trim()) stateCount.set(act.state.trim().toLowerCase(), (stateCount.get(act.state.trim().toLowerCase()) ?? 0) + 1);
+      if (act.neighborhood?.trim()) neighborhoodCount.set(act.neighborhood.trim().toLowerCase(), (neighborhoodCount.get(act.neighborhood.trim().toLowerCase()) ?? 0) + 1);
+      if (act.whatsapp?.trim()) socialCount.whatsapp++;
+      if (act.tiktok?.trim()) socialCount.tiktok++;
+      if (act.facebook?.trim()) socialCount.facebook++;
+      if (act.linkedin?.trim()) socialCount.linkedin++;
+      if (act.twitter?.trim()) socialCount.twitter++;
+      const ct = act.content_type;
+      if (Array.isArray(ct)) {
+        for (const v of ct) {
+          if (v && typeof v === 'string') {
+            const k = v.trim().toLowerCase();
+            if (k) contentTypeCount.set(k, (contentTypeCount.get(k) ?? 0) + 1);
+          }
+        }
+      }
+    }
+    for (const c of item.categories ?? []) {
+      if (c && typeof c === 'string') {
+        const key = c.trim().toLowerCase();
+        if (key) categoryCount.set(key, (categoryCount.get(key) ?? 0) + 1);
+      }
+    }
+    const rate = item.engagement?.engagement_rate ?? 0;
+    const avgLikes = item.engagement?.avg_likes ?? 0;
+    const postsCount = item.engagement?.posts_count ?? 0;
+    if (rate < 1) engagementRateBuckets[0]!.count++;
+    else if (rate < 5) engagementRateBuckets[1]!.count++;
+    else engagementRateBuckets[2]!.count++;
+    if (avgLikes < 500) avgLikesBuckets[0]!.count++;
+    else if (avgLikes < 5000) avgLikesBuckets[1]!.count++;
+    else avgLikesBuckets[2]!.count++;
+    if (postsCount < 25) postsCountBuckets[0]!.count++;
+    else if (postsCount < 50) postsCountBuckets[1]!.count++;
+    else postsCountBuckets[2]!.count++;
+  }
+
+  const facets = {
+    categories: [...categoryCount.entries()]
+      .filter(([, count]) => count > 0)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count),
+    engagement_rate: engagementRateBuckets,
+    avg_likes: avgLikesBuckets,
+    posts_count: postsCountBuckets,
+    activation: { activated: activatedCount, not_activated: total - activatedCount },
+    content_type: [...contentTypeCount.entries()]
+      .filter(([, count]) => count > 0)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count),
+    cities: [...cityCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+    states: [...stateCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+    neighborhoods: [...neighborhoodCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+    social: socialCount,
+  };
+
+  const slice = items.slice(offset, offset + limit);
+  return { total, items: slice, facets };
+}
