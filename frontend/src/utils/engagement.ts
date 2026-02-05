@@ -28,7 +28,11 @@ const SECONDS_PER_WEEK = 7 * 24 * 3600
 /** Período mínimo considerado (1 semana) para não inflar "posts/semana" em janelas muito curtas. */
 const MIN_WEEKS_FOR_RATE = 1
 
-/** Calcula engajamento a partir dos posts (mesma fórmula da API). */
+/**
+ * Calcula engajamento a partir dos posts (mesma fórmula do backend: crawl/src/api/profilesSearch.ts).
+ * Campos esperados por post: metrics.likes, metrics.comments, metrics.view_count
+ * (fallback: like_count, comment_count, view_count no topo para posts no formato antigo).
+ */
 export function computeEngagementFromPosts(
   posts: PostItem[],
   followersCount: number

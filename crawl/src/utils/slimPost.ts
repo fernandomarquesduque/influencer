@@ -259,12 +259,23 @@ export function buildNormalizedPost(media: Record<string, unknown>, collectedAt:
     video_versions,
   };
 
+  // Likes/comments: API pode enviar like_count/comment_count ou edge_media_preview_like.count / edge_media_to_comment.count
+  const likeCount =
+    num(media.like_count) ??
+    num(getIn(media, 'edge_media_preview_like.count')) ??
+    num((media.edge_media_preview_like as { count?: number } | undefined)?.count);
+  const commentCount =
+    num(media.comment_count) ??
+    num(getIn(media, 'edge_media_to_comment.count')) ??
+    num((media.edge_media_to_comment as { count?: number } | undefined)?.count);
+  const viewCountRaw = media.view_count != null ? num(media.view_count) ?? null : null;
+
   const metrics: NormalizedPostMetrics = {
-    likes: num(media.like_count),
-    comments: num(media.comment_count),
+    likes: likeCount,
+    comments: commentCount,
     fb_like_count: num(media.fb_like_count),
     like_and_view_counts_disabled: media.like_and_view_counts_disabled === true,
-    view_count: media.view_count != null ? num(media.view_count) ?? null : null,
+    view_count: viewCountRaw,
   };
 
   const flags: NormalizedPostFlags = {

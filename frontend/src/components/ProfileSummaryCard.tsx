@@ -1,25 +1,15 @@
 import {
   Card,
-  Row,
-  Col,
   Avatar,
   Tag,
   Space,
   Typography,
-  Divider,
   Tooltip,
-  Progress,
 } from 'antd'
 import {
   UserOutlined,
-  TeamOutlined,
-  UserAddOutlined,
-  FileImageOutlined,
   HeartOutlined,
   CommentOutlined,
-  EyeOutlined,
-  RiseOutlined,
-  CalendarOutlined,
   EnvironmentOutlined,
   MessageOutlined,
   VideoCameraOutlined,
@@ -62,6 +52,13 @@ function formatShortNum(n: number | undefined | null): string {
   return String(n)
 }
 
+/** Cor do engajamento: verde (alto), amarelo (médio), rosa (baixo). */
+function engagementColor(rate: number): string {
+  if (rate >= 5) return '#52c41a'   // verde
+  if (rate >= 2) return '#faad14'   // amarelo
+  return '#eb2f96'                  // rosa
+}
+
 interface ProfileSummaryCardProps {
   item: ProfileSummaryCardItem
   variant?: 'list' | 'detail'
@@ -69,204 +66,277 @@ interface ProfileSummaryCardProps {
 }
 
 export default function ProfileSummaryCard({ item, variant = 'list', onClick }: ProfileSummaryCardProps) {
-  const pic = proxyImageUrl(getProfilePicUrl(item))
+  const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
   const name = (item.full_name || item.handle) as string
   const eng = item.engagement
   const bio = variant === 'list' ? stripEmojiAndTrim(item.biography) : (item.biography ?? '')
-  // Barra reflete o próprio % de engajamento (0–100%); valores > 100% são limitados
-  const engagementPercent = Math.min(100, eng.engagement_rate)
   const categories = (Array.isArray(item.categories) ? item.categories : []) as string[]
-  const avatarSize = variant === 'detail' ? 80 : 56
+  const avatarSize = variant === 'detail' ? 128 : 112
+  const location = item.activation && (item.activation.city || item.activation.state)
+    ? [item.activation.city, item.activation.state].filter(Boolean).join(', ')
+    : null
 
   const cardContent = (
-    <Space direction="vertical" size="small" style={{ width: '100%', flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, minWidth: 0 }}>
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        flex: 1,
+        minWidth: 0,
+        padding: variant === 'list' ? 0 : undefined,
+      }}
+    >
+      {/* Tipo de conteúdo fixo no topo à esquerda (um abaixo do outro, cores distintas) */}
+      {item.activation?.content_type && item.activation.content_type.length > 0 && (() => {
+        const tagColors = ['blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'gold', 'lime'] as const
+        const list = item.activation.content_type.slice(0, variant === 'list' ? 4 : 8)
+        const extra = item.activation.content_type.length - list.length
+        return (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              zIndex: 1,
+            }}
+          >
+            {list.map((ct, i) => (
+              <Tag key={ct} color={tagColors[i % tagColors.length]} style={{ margin: 0, fontSize: 10, borderRadius: 4 }}>
+                {CONTENT_TYPE_LABELS[ct] ?? ct}
+              </Tag>
+            ))}
+            {extra > 0 && (
+              <Tag color="default" style={{ margin: 0, fontSize: 10 }}>+{extra}</Tag>
+            )}
+          </div>
+        )
+      })()}
+
+      {/* Ícones de redes fixos no topo à direita */}
+      {item.activation && (item.activation.whatsapp?.trim() || item.activation.tiktok?.trim() || item.activation.facebook?.trim() || item.activation.linkedin?.trim() || item.activation.twitter?.trim()) && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: 8,
+            zIndex: 1,
+          }}
+        >
+          {item.activation.whatsapp?.trim() && (
+            <Tooltip title="WhatsApp">
+              <MessageOutlined style={{ color: '#25D366', fontSize: 18 }} />
+            </Tooltip>
+          )}
+          {item.activation.tiktok?.trim() && (
+            <Tooltip title="TikTok">
+              <VideoCameraOutlined style={{ color: '#000000', fontSize: 18 }} />
+            </Tooltip>
+          )}
+          {item.activation.facebook?.trim() && (
+            <Tooltip title="Facebook">
+              <FacebookOutlined style={{ color: '#1877F2', fontSize: 18 }} />
+            </Tooltip>
+          )}
+          {item.activation.linkedin?.trim() && (
+            <Tooltip title="LinkedIn">
+              <LinkedinOutlined style={{ color: '#0A66C2', fontSize: 18 }} />
+            </Tooltip>
+          )}
+          {item.activation.twitter?.trim() && (
+            <Tooltip title="X / Twitter">
+              <TwitterOutlined style={{ color: '#1DA1F2', fontSize: 18 }} />
+            </Tooltip>
+          )}
+        </div>
+      )}
+
+      {/* Topo: avatar + nome estilo rede social */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 12 }}>
         <Avatar
           size={avatarSize}
           src={pic}
           icon={<UserOutlined />}
-          referrerPolicy="no-referrer"
-          style={{ flexShrink: 0 }}
+          style={{
+            flexShrink: 0,
+            border: '3px solid #f0f0f0',
+            boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+          }}
         />
-        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <div style={{ textAlign: 'center', marginTop: 10, width: '100%', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap' }}>
             <Text
               strong
               ellipsis
               style={{
-                fontSize: variant === 'detail' ? 16 : undefined,
-                flex: 1,
-                minWidth: 0,
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
+                fontSize: variant === 'detail' ? 17 : 15,
+                color: '#262626',
+                maxWidth: '100%',
               }}
             >
-              @{item.handle}
+              {name}
             </Text>
-            {item.activation && (item.activation.whatsapp?.trim() || item.activation.tiktok?.trim() || item.activation.facebook?.trim() || item.activation.linkedin?.trim() || item.activation.twitter?.trim()) && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                {item.activation.whatsapp?.trim() && (
-                  <Tooltip title="WhatsApp">
-                    <MessageOutlined style={{ color: '#25D366', fontSize: 14 }} />
-                  </Tooltip>
-                )}
-                {item.activation.tiktok?.trim() && (
-                  <Tooltip title="TikTok">
-                    <VideoCameraOutlined style={{ color: '#000000', fontSize: 14 }} />
-                  </Tooltip>
-                )}
-                {item.activation.facebook?.trim() && (
-                  <Tooltip title="Facebook">
-                    <FacebookOutlined style={{ color: '#1877F2', fontSize: 14 }} />
-                  </Tooltip>
-                )}
-                {item.activation.linkedin?.trim() && (
-                  <Tooltip title="LinkedIn">
-                    <LinkedinOutlined style={{ color: '#0A66C2', fontSize: 14 }} />
-                  </Tooltip>
-                )}
-                {item.activation.twitter?.trim() && (
-                  <Tooltip title="X / Twitter">
-                    <TwitterOutlined style={{ color: '#1DA1F2', fontSize: 14 }} />
-                  </Tooltip>
-                )}
-              </span>
-            )}
             {item.activation && (
-              <Tooltip title="Ativado">
-                <SafetyOutlined style={{ color: '#faad14', fontSize: 16, flexShrink: 0 }} />
+              <Tooltip title="Ativado na plataforma">
+                <SafetyOutlined style={{ color: '#52c41a', fontSize: 14, flexShrink: 0 }} />
               </Tooltip>
             )}
           </div>
-          {name && name !== item.handle && (
-            <Paragraph ellipsis={{ rows: 1 }} style={{ margin: 0, fontSize: 12, color: 'rgba(0,0,0,.55)' }}>
-              {name}
-            </Paragraph>
-          )}
-          {item.activation && (item.activation.city || item.activation.state) && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
-              <span style={{ fontSize: 11, color: 'rgba(0,0,0,.45)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <EnvironmentOutlined />
-                {[item.activation.city, item.activation.state].filter(Boolean).join(', ')}
-              </span>
-            </div>
-          )}
-          {item.activation?.content_type && item.activation.content_type.length > 0 && (
-            <div style={{ marginTop: 6 }}>
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {item.activation.content_type.slice(0, variant === 'list' ? 4 : 12).map((ct) => (
-                  <Tag key={ct} color="blue" style={{ margin: 0, fontSize: 10 }}>
-                    {CONTENT_TYPE_LABELS[ct] ?? ct}
-                  </Tag>
-                ))}
-                {item.activation.content_type.length > (variant === 'list' ? 4 : 12) && (
-                  <Tag style={{ margin: 0, fontSize: 10 }}>+{item.activation.content_type.length - (variant === 'list' ? 4 : 12)}</Tag>
-                )}
-              </div>
+          {location && (
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                marginTop: 4,
+                fontSize: 12,
+                color: '#8e8e8e',
+              }}
+            >
+              <EnvironmentOutlined style={{ fontSize: 12 }} />
+              {location}
             </div>
           )}
         </div>
       </div>
 
+      {/* Bio: destaque como no feed */}
       {bio && (
         <Paragraph
-          ellipsis={variant === 'list' ? { rows: 2 } : false}
-          style={{ margin: 0, fontSize: 12, color: 'rgba(0,0,0,.65)', wordBreak: 'break-word', overflowWrap: 'break-word' }}
+          ellipsis={variant === 'list' ? { rows: 3 } : false}
+          style={{
+            margin: '0 0 12px',
+            fontSize: 13,
+            color: '#262626',
+            lineHeight: 1.45,
+            wordBreak: 'break-word',
+          }}
         >
           {bio}
         </Paragraph>
       )}
 
-      <Divider style={{ margin: '8px 0' }} />
-
-      <Row gutter={8}>
-        <Col span={6}>
-          <Tooltip title="Seguidores">
-            <div style={{ textAlign: 'center' }}>
-              <TeamOutlined style={{ color: 'rgba(0,0,0,.45)' }} />
-              <div style={{ fontSize: 11, fontWeight: 600 }}>{formatShortNum(item.followers_count)}</div>
-            </div>
-          </Tooltip>
-        </Col>
-        <Col span={6}>
-          <Tooltip title="Seguindo">
-            <div style={{ textAlign: 'center' }}>
-              <UserAddOutlined style={{ color: 'rgba(0,0,0,.45)' }} />
-              <div style={{ fontSize: 11, fontWeight: 600 }}>{formatShortNum(item.following_count)}</div>
-            </div>
-          </Tooltip>
-        </Col>
-        <Col span={6}>
-          <Tooltip title="Posts no perfil">
-            <div style={{ textAlign: 'center' }}>
-              <FileImageOutlined style={{ color: 'rgba(0,0,0,.45)' }} />
-              <div style={{ fontSize: 11, fontWeight: 600 }}>{formatShortNum(item.media_count)}</div>
-            </div>
-          </Tooltip>
-        </Col>
-        <Col span={6}>
-          <Tooltip title="Média de posts por semana (pelos posts analisados)">
-            <div style={{ textAlign: 'center' }}>
-              <CalendarOutlined style={{ color: 'rgba(0,0,0,.45)' }} />
-              <div style={{ fontSize: 11, fontWeight: 600 }}>
-                {typeof eng.posts_per_week === 'number'
-                  ? eng.posts_per_week.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
-                  : '—'}
-              </div>
-              <div style={{ fontSize: 10, color: 'rgba(0,0,0,.45)' }}>posts/sem</div>
-            </div>
-          </Tooltip>
-        </Col>
-      </Row>
-
-      <div>
-        <Tooltip title="(likes + comentários) / seguidores × 100. Baseado nos posts analisados.">
-          <Space align="center" size={4}>
-            <RiseOutlined style={{ color: '#52c41a' }} />
-            <Text strong>Engajamento: {eng.engagement_rate.toFixed(2)}%</Text>
-          </Space>
-        </Tooltip>
-        <Progress percent={engagementPercent} showInfo={false} size="small" style={{ marginTop: 4 }} strokeColor="#52c41a" />
+      {/* Área flexível: só avatar, nome, bio (e categorias no detail) */}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        {variant !== 'list' && categories.length > 0 && (
+          <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {categories.slice(0, 10).map((c) => (
+              <Tag key={c}>{c}</Tag>
+            ))}
+          </div>
+        )}
       </div>
 
-      <Space size="large" wrap>
-        <Space size={4}>
-          <HeartOutlined />
-          <Text type="secondary">{eng.total_likes.toLocaleString('pt-BR')}</Text>
-        </Space>
-        <Space size={4}>
-          <CommentOutlined />
-          <Text type="secondary">{eng.total_comments.toLocaleString('pt-BR')}</Text>
-        </Space>
-        {eng.total_views > 0 && (
-          <Space size={4}>
-            <EyeOutlined />
-            <Text type="secondary">{eng.total_views.toLocaleString('pt-BR')}</Text>
-          </Space>
-        )}
-      </Space>
-      <Text type="secondary" style={{ fontSize: 11 }}>
-        Média: {eng.avg_likes.toLocaleString('pt-BR')} likes / {eng.posts_count} posts
-      </Text>
-
-      {variant !== 'list' && categories.length > 0 && (
-        <div>
-          {categories.slice(0, 10).map((c) => (
-            <Tag key={c}>{c}</Tag>
-          ))}
+      {/* Rodapé fixo: barra de métricas + curtidas/comentários + média */}
+      <div
+        style={{
+          marginTop: 'auto',
+          flexShrink: 0,
+          paddingTop: 12,
+          borderTop: '1px solid #f0f0f0',
+        }}
+      >
+        {/* Barra: seguidores / engajamento / posts */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            gap: 24,
+            padding: '10px 0',
+            marginBottom: 12,
+            borderBottom: '1px solid #f0f0f0',
+          }}
+        >
+          <Tooltip title="Seguidores">
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#262626' }}>
+                {formatShortNum(item.followers_count)}
+              </div>
+              <div style={{ fontSize: 11, color: '#8e8e8e' }}>seguidores</div>
+            </div>
+          </Tooltip>
+          <Tooltip title="Engajamento (likes + comentários / seguidores)">
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: engagementColor(eng.engagement_rate) }}>
+                {eng.engagement_rate.toFixed(1)}%
+              </div>
+              <div style={{ fontSize: 11, color: '#8e8e8e' }}>engajamento</div>
+            </div>
+          </Tooltip>
+          <Tooltip title="Posts analisados">
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#262626' }}>
+                {eng.posts_count}
+              </div>
+              <div style={{ fontSize: 11, color: '#8e8e8e' }}>posts</div>
+            </div>
+          </Tooltip>
         </div>
-      )}
-    </Space>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 16,
+            flexWrap: 'wrap',
+            marginBottom: 4,
+          }}
+        >
+          <Space size={6}>
+            <HeartOutlined style={{ color: '#eb2f96', fontSize: 14 }} />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {formatShortNum(eng.total_likes)} curtidas
+            </Text>
+          </Space>
+          <Space size={6}>
+            <CommentOutlined style={{ color: '#1890ff', fontSize: 14 }} />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {formatShortNum(eng.total_comments)} comentários
+            </Text>
+          </Space>
+        </div>
+        <Text type="secondary" style={{ fontSize: 11, textAlign: 'center', display: 'block' }}>
+          Média {eng.avg_likes.toLocaleString('pt-BR')} likes/post
+        </Text>
+      </div>
+    </div>
   )
+
+  const cardStyle: React.CSSProperties = {
+    height: variant === 'list' ? '100%' : undefined,
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+    borderRadius: 12,
+    overflow: 'hidden',
+    boxShadow: '0 1px 3px rgba(0,0,0,.06)',
+  }
 
   if (variant === 'list' && onClick) {
     return (
       <Card
         hoverable
         onClick={onClick}
-        style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}
-        styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' } }}
+        style={cardStyle}
+        styles={{
+          body: {
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minWidth: 0,
+            overflow: 'hidden',
+            padding: '20px 16px',
+          },
+        }}
       >
         {cardContent}
       </Card>
@@ -274,7 +344,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
   }
 
   return (
-    <Card style={{ marginBottom: 0 }}>
+    <Card style={{ ...cardStyle, marginBottom: 0 }} styles={{ body: { padding: '20px 16px' } }}>
       {cardContent}
     </Card>
   )

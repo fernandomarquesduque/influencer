@@ -11,7 +11,7 @@ import {
   Button,
   Space,
 } from 'antd'
-import { SearchOutlined, FilterOutlined } from '@ant-design/icons'
+import { SearchOutlined, FilterOutlined, ClearOutlined } from '@ant-design/icons'
 import { fetchProfilesSearch, type ProfileListItem, type ProfilesSearchQuery, type ProfilesSort, type ProfilesSearchFacets } from '../api'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
@@ -121,6 +121,23 @@ export default function InfluencerList() {
     load(newQuery)
   }
 
+  const hasActiveFilters = selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0
+
+  const clearFilters = () => {
+    updateFilter({
+      categories: undefined,
+      engagementRateBuckets: undefined,
+      avgLikesBuckets: undefined,
+      postsCountBuckets: undefined,
+      activationFilter: undefined,
+      cities: undefined,
+      states: undefined,
+      neighborhoods: undefined,
+      socialNetworks: undefined,
+      contentTypes: undefined,
+    })
+  }
+
   const hasSearchQuery = qFromUrl.trim().length > 0
 
   if (!hasSearchQuery) {
@@ -178,9 +195,49 @@ export default function InfluencerList() {
             overflowY: 'auto',
           }}
         >
-          <Typography.Title level={5} style={{ marginBottom: 12, marginTop: 0 }}>
-            <FilterOutlined /> Refinar resultados
+          <Typography.Title level={5} style={{ marginBottom: 8, marginTop: 0 }}>
+            <FilterOutlined /> {total === 0 ? 'Nenhum perfil encontrado' : `${total} perfil(is) encontrado(s)`}
           </Typography.Title>
+
+          <div style={{ marginBottom: 16 }}>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+              {total === 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span>Tente outro termo ou remova filtros.</span>
+                  {hasActiveFilters && (
+                    <Button
+                      type="default"
+                      size="small"
+                      icon={<ClearOutlined />}
+                      onClick={clearFilters}
+                      style={{ fontSize: 11, padding: '0 6px', color: '#d46b08', borderColor: '#d46b08', flexShrink: 0 }}
+                    >
+                      Limpar
+                    </Button>
+                  )}
+                </div>
+              )}
+              {total > 0 && (
+                <>
+                  {hasActiveFilters && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span>Com filtros aplicados</span>
+                      <Button
+                        type="default"
+                        size="small"
+                        icon={<ClearOutlined />}
+                        onClick={clearFilters}
+                        style={{ fontSize: 11, padding: '0 6px', color: '#d46b08', borderColor: '#d46b08', flexShrink: 0 }}
+                      >
+                        Limpar
+                      </Button>
+                    </div>
+                  )}
+                  {!hasActiveFilters && 'Todos os resultados da busca'}
+                </>
+              )}
+            </Text>
+          </div>
 
           {facets != null && (
             <div style={{ marginBottom: 16 }}>
@@ -438,11 +495,9 @@ export default function InfluencerList() {
       )}
 
       <main style={{ flex: 1, minWidth: 0 }}>
-        <Title level={3} style={{ marginBottom: 24 }}>
-          Perfis coletados
-        </Title>
 
-        <div style={{ marginBottom: 24, maxWidth: 640 }}>
+
+        <div style={{ marginBottom: 24, width: '100%' }}>
           <Space.Compact size="large" style={{ width: '100%' }}>
             <Input
               placeholder="Buscar por nome, @handle, categoria..."
