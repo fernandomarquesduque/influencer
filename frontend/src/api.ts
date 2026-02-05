@@ -110,6 +110,15 @@ export interface ProfilesSearchQuery {
   categories?: string | string[]
   /** Tipo de conteúdo (perfis ativados). */
   contentTypes?: string[]
+  /** Faixas de preço por formato (valores em reais: 0, 500, 1000, 2500, 5000, 15000). */
+  pricingPostUnique?: number[]
+  pricingStories?: number[]
+  pricingPackageMonthly?: number[]
+  pricingCommission?: number[]
+  pricingPermuta?: number[]
+  pricingImageRights?: number[]
+  pricingContentDelivery?: number[]
+  pricingLaunch?: number[]
   sort?: ProfilesSort
   limit?: number
   offset?: number
@@ -123,7 +132,13 @@ export interface FacetBucket {
   count: number
 }
 
-/** Sumarização dos resultados para filtros (hashtags, engajamento, ativação, tipo de conteúdo). */
+/** Faixa de preço na sumarização (valor em reais + contagem). */
+export interface PricingFacetBucket {
+  value: number
+  count: number
+}
+
+/** Sumarização dos resultados para filtros (hashtags, engajamento, ativação, tipo de conteúdo, faixas de preço). */
 export interface ProfilesSearchFacets {
   /** Hashtags/categorias. */
   categories: { name: string; count: number }[]
@@ -137,6 +152,17 @@ export interface ProfilesSearchFacets {
   states: { name: string; count: number }[]
   neighborhoods: { name: string; count: number }[]
   social: { whatsapp: number; tiktok: number; facebook: number; linkedin: number; twitter: number }
+  /** Faixas de preço por formato (resultado da sumarização). */
+  pricing?: {
+    post_unique?: PricingFacetBucket[]
+    stories?: PricingFacetBucket[]
+    package_monthly?: PricingFacetBucket[]
+    commission?: PricingFacetBucket[]
+    permuta?: PricingFacetBucket[]
+    image_rights?: PricingFacetBucket[]
+    content_delivery?: PricingFacetBucket[]
+    launch?: PricingFacetBucket[]
+  }
 }
 
 export interface ProfilesSearchResponse {
@@ -165,6 +191,14 @@ export async function fetchProfilesSearch(query: ProfilesSearchQuery): Promise<P
     params.set('categories', Array.isArray(query.categories) ? query.categories.join(',') : String(query.categories))
   }
   if (query.contentTypes?.length) params.set('contentTypes', query.contentTypes.join(','))
+  if (query.pricingPostUnique?.length) params.set('pricingPostUnique', query.pricingPostUnique.join(','))
+  if (query.pricingStories?.length) params.set('pricingStories', query.pricingStories.join(','))
+  if (query.pricingPackageMonthly?.length) params.set('pricingPackageMonthly', query.pricingPackageMonthly.join(','))
+  if (query.pricingCommission?.length) params.set('pricingCommission', query.pricingCommission.join(','))
+  if (query.pricingPermuta?.length) params.set('pricingPermuta', query.pricingPermuta.join(','))
+  if (query.pricingImageRights?.length) params.set('pricingImageRights', query.pricingImageRights.join(','))
+  if (query.pricingContentDelivery?.length) params.set('pricingContentDelivery', query.pricingContentDelivery.join(','))
+  if (query.pricingLaunch?.length) params.set('pricingLaunch', query.pricingLaunch.join(','))
   if (query.sort) params.set('sort', query.sort)
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))

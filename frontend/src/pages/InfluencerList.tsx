@@ -10,13 +10,37 @@ import {
   Select,
   Button,
   Space,
+  Collapse,
 } from 'antd'
 import { SearchOutlined, FilterOutlined, ClearOutlined } from '@ant-design/icons'
 import { fetchProfilesSearch, type ProfileListItem, type ProfilesSearchQuery, type ProfilesSort, type ProfilesSearchFacets } from '../api'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
+import { PRICE_BUCKETS } from '../constants/pricingBuckets'
 
 const { Title, Text } = Typography
+
+const PRICING_FILTER_KEYS = [
+  'pricingPostUnique',
+  'pricingStories',
+  'pricingPackageMonthly',
+  'pricingCommission',
+  'pricingPermuta',
+  'pricingImageRights',
+  'pricingContentDelivery',
+  'pricingLaunch',
+] as const
+
+const PRICING_FILTER_LABELS: Record<(typeof PRICING_FILTER_KEYS)[number], string> = {
+  pricingPostUnique: 'Preço por Post único',
+  pricingStories: 'Preço por Stories',
+  pricingPackageMonthly: 'Preço por Pacote mensal',
+  pricingCommission: 'Preço por Comissão',
+  pricingPermuta: 'Preço por Permuta',
+  pricingImageRights: 'Preço por Uso de imagem',
+  pricingContentDelivery: 'Preço por Entrega de conteúdo',
+  pricingLaunch: 'Preço por Lançamento',
+}
 
 const SORT_OPTIONS: { value: ProfilesSort; label: string }[] = [
   { value: 'engagement_desc', label: 'Maior engajamento %' },
@@ -114,6 +138,24 @@ export default function InfluencerList() {
   const selectedNeighborhoods = (query.neighborhoods ?? []) as string[]
   const selectedSocial = (query.socialNetworks ?? []) as string[]
   const selectedContentTypes = (query.contentTypes ?? []) as string[]
+  const selectedPricingPostUnique = (query.pricingPostUnique ?? []) as number[]
+  const selectedPricingStories = (query.pricingStories ?? []) as number[]
+  const selectedPricingPackageMonthly = (query.pricingPackageMonthly ?? []) as number[]
+  const selectedPricingCommission = (query.pricingCommission ?? []) as number[]
+  const selectedPricingPermuta = (query.pricingPermuta ?? []) as number[]
+  const selectedPricingImageRights = (query.pricingImageRights ?? []) as number[]
+  const selectedPricingContentDelivery = (query.pricingContentDelivery ?? []) as number[]
+  const selectedPricingLaunch = (query.pricingLaunch ?? []) as number[]
+
+  const hasPricingFilter =
+    selectedPricingPostUnique.length > 0 ||
+    selectedPricingStories.length > 0 ||
+    selectedPricingPackageMonthly.length > 0 ||
+    selectedPricingCommission.length > 0 ||
+    selectedPricingPermuta.length > 0 ||
+    selectedPricingImageRights.length > 0 ||
+    selectedPricingContentDelivery.length > 0 ||
+    selectedPricingLaunch.length > 0
 
   const updateFilter = (overrides: Partial<ProfilesSearchQuery>) => {
     const newQuery = { ...query, ...overrides, offset: 0 }
@@ -121,7 +163,18 @@ export default function InfluencerList() {
     load(newQuery)
   }
 
-  const hasActiveFilters = selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0
+  const hasActiveFilters =
+    selectedCategories.length > 0 ||
+    selectedEngagementRate.length > 0 ||
+    selectedAvgLikes.length > 0 ||
+    selectedPostsCount.length > 0 ||
+    selectedActivation.length > 0 ||
+    selectedCities.length > 0 ||
+    selectedStates.length > 0 ||
+    selectedNeighborhoods.length > 0 ||
+    selectedSocial.length > 0 ||
+    selectedContentTypes.length > 0 ||
+    hasPricingFilter
 
   const clearFilters = () => {
     updateFilter({
@@ -135,6 +188,14 @@ export default function InfluencerList() {
       neighborhoods: undefined,
       socialNetworks: undefined,
       contentTypes: undefined,
+      pricingPostUnique: undefined,
+      pricingStories: undefined,
+      pricingPackageMonthly: undefined,
+      pricingCommission: undefined,
+      pricingPermuta: undefined,
+      pricingImageRights: undefined,
+      pricingContentDelivery: undefined,
+      pricingLaunch: undefined,
     })
   }
 
@@ -179,7 +240,7 @@ export default function InfluencerList() {
 
   return (
     <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-      {(facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0) && (
+      {(facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter) && (
         <aside
           style={{
             flexShrink: 0,
@@ -193,35 +254,30 @@ export default function InfluencerList() {
             alignSelf: 'flex-start',
             maxHeight: 'calc(100vh - 48px)',
             overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
           }}
         >
-          <Typography.Title level={5} style={{ marginBottom: 8, marginTop: 0 }}>
-            <FilterOutlined /> {total === 0 ? 'Nenhum perfil encontrado' : `${total} perfil(is) encontrado(s)`}
-          </Typography.Title>
-
-          <div style={{ marginBottom: 16 }}>
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-              {total === 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span>Tente outro termo ou remova filtros.</span>
-                  {hasActiveFilters && (
-                    <Button
-                      type="default"
-                      size="small"
-                      icon={<ClearOutlined />}
-                      onClick={clearFilters}
-                      style={{ fontSize: 11, padding: '0 6px', color: '#d46b08', borderColor: '#d46b08', flexShrink: 0 }}
-                    >
-                      Limpar
-                    </Button>
-                  )}
-                </div>
-              )}
-              {total > 0 && (
-                <>
-                  {hasActiveFilters && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span>Com filtros aplicados</span>
+          <div
+            style={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 1,
+              background: 'var(--aside-bg, #fafafa)',
+              paddingBottom: 12,
+              marginBottom: 4,
+              flexShrink: 0,
+            }}
+          >
+            <Typography.Title level={5} style={{ marginBottom: 8, marginTop: 0 }}>
+              <FilterOutlined /> {total === 0 ? 'Nenhum perfil encontrado' : `${total} perfil(is) encontrado(s)`}
+            </Typography.Title>
+            <div style={{ marginBottom: 0 }}>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                {total === 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span>Tente outro termo ou remova filtros.</span>
+                    {hasActiveFilters && (
                       <Button
                         type="default"
                         size="small"
@@ -231,12 +287,30 @@ export default function InfluencerList() {
                       >
                         Limpar
                       </Button>
-                    </div>
-                  )}
-                  {!hasActiveFilters && 'Todos os resultados da busca'}
-                </>
-              )}
-            </Text>
+                    )}
+                  </div>
+                )}
+                {total > 0 && (
+                  <>
+                    {hasActiveFilters && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span>Com filtros aplicados</span>
+                        <Button
+                          type="default"
+                          size="small"
+                          icon={<ClearOutlined />}
+                          onClick={clearFilters}
+                          style={{ fontSize: 11, padding: '0 6px', color: '#d46b08', borderColor: '#d46b08', flexShrink: 0 }}
+                        >
+                          Limpar
+                        </Button>
+                      </div>
+                    )}
+                    {!hasActiveFilters && 'Todos os resultados da busca'}
+                  </>
+                )}
+              </Text>
+            </div>
           </div>
 
           {facets != null && (
@@ -314,177 +388,298 @@ export default function InfluencerList() {
             </div>
           )}
 
+          {/* Preço por formato (sumarização do resultado da busca) */}
+          {facets?.pricing && Object.values(facets.pricing).some((arr) => arr && arr.length > 0) && (
+            <Collapse
+              size="small"
+              style={{ marginBottom: 16 }}
+              items={[
+                {
+                  key: 'pricing',
+                  label: <Text strong style={{ fontSize: 12 }}>Preço</Text>,
+                  children: (
+                    <div style={{ paddingTop: 4 }}>
+                      {PRICING_FILTER_KEYS.map((key) => {
+                        const actKey =
+                          key === 'pricingPostUnique'
+                            ? 'post_unique'
+                            : key === 'pricingStories'
+                              ? 'stories'
+                              : key === 'pricingPackageMonthly'
+                                ? 'package_monthly'
+                                : key === 'pricingCommission'
+                                  ? 'commission'
+                                  : key === 'pricingPermuta'
+                                    ? 'permuta'
+                                    : key === 'pricingImageRights'
+                                      ? 'image_rights'
+                                      : key === 'pricingContentDelivery'
+                                        ? 'content_delivery'
+                                        : 'launch'
+                        const buckets = facets.pricing?.[actKey]
+                        if (!buckets || buckets.length === 0) return null
+                        const value =
+                          key === 'pricingPostUnique'
+                            ? selectedPricingPostUnique
+                            : key === 'pricingStories'
+                              ? selectedPricingStories
+                              : key === 'pricingPackageMonthly'
+                                ? selectedPricingPackageMonthly
+                                : key === 'pricingCommission'
+                                  ? selectedPricingCommission
+                                  : key === 'pricingPermuta'
+                                    ? selectedPricingPermuta
+                                    : key === 'pricingImageRights'
+                                      ? selectedPricingImageRights
+                                      : key === 'pricingContentDelivery'
+                                        ? selectedPricingContentDelivery
+                                        : selectedPricingLaunch
+                        const options = buckets.map((b) => ({
+                          value: b.value,
+                          label: `${PRICE_BUCKETS.find((pb) => pb.value === b.value)?.label ?? `R$ ${b.value}`} (${b.count})`,
+                        }))
+                        return (
+                          <div key={key} style={{ marginBottom: 10 }}>
+                            <Text type="secondary" strong style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+                              {PRICING_FILTER_LABELS[key]}
+                            </Text>
+                            <Select
+                              mode="multiple"
+                              size="small"
+                              placeholder="Filtrar por faixa..."
+                              allowClear
+                              value={value}
+                              options={options}
+                              onChange={(vals) => updateFilter({ [key]: vals?.length ? vals : undefined })}
+                              style={{ width: '100%' }}
+                              maxTagCount={2}
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          )}
+
           {/* 2. Engajamento – autocomplete multiselect */}
           {facets && (
-            <>
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Taxa engajamento %
-              </Text>
-              <Select
-                mode="multiple"
-                size="small"
-                placeholder="Filtrar por faixa..."
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                value={selectedEngagementRate}
-                options={engagementFacets.engagement_rate.map((b) => ({
-                  value: b.min ?? 0,
-                  label: `${b.label} (${b.count})`,
-                }))}
-                onChange={(vals) => updateFilter({ engagementRateBuckets: vals.length ? vals : undefined })}
-                style={{ width: '100%', marginBottom: 12 }}
-                maxTagCount="responsive"
-              />
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Média curtidas/post
-              </Text>
-              <Select
-                mode="multiple"
-                size="small"
-                placeholder="Filtrar por faixa..."
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                value={selectedAvgLikes}
-                options={engagementFacets.avg_likes.map((b) => ({
-                  value: b.min ?? 0,
-                  label: `${b.label} (${b.count})`,
-                }))}
-                onChange={(vals) => updateFilter({ avgLikesBuckets: vals.length ? vals : undefined })}
-                style={{ width: '100%', marginBottom: 12 }}
-                maxTagCount="responsive"
-              />
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Posts analisados
-              </Text>
-              <Select
-                mode="multiple"
-                size="small"
-                placeholder="Filtrar por faixa..."
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                value={selectedPostsCount}
-                options={engagementFacets.posts_count.map((b) => ({
-                  value: b.min ?? 0,
-                  label: `${b.label} (${b.count})`,
-                }))}
-                onChange={(vals) => updateFilter({ postsCountBuckets: vals.length ? vals : undefined })}
-                style={{ width: '100%', marginBottom: 16 }}
-                maxTagCount="responsive"
-              />
-            </>
+            <Collapse
+              size="small"
+              style={{ marginBottom: 16 }}
+              items={[
+                {
+                  key: 'metricas',
+                  label: <Text strong style={{ fontSize: 12 }}>Métricas</Text>,
+                  children: (
+                    <div style={{ paddingTop: 4 }}>
+                      <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                        Taxa engajamento %
+                      </Text>
+                      <Select
+                        mode="multiple"
+                        size="small"
+                        placeholder="Filtrar por faixa..."
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        value={selectedEngagementRate}
+                        options={engagementFacets.engagement_rate.map((b) => ({
+                          value: b.min ?? 0,
+                          label: `${b.label} (${b.count})`,
+                        }))}
+                        onChange={(vals) => updateFilter({ engagementRateBuckets: vals.length ? vals : undefined })}
+                        style={{ width: '100%', marginBottom: 12 }}
+                        maxTagCount="responsive"
+                      />
+                      <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                        Média curtidas/post
+                      </Text>
+                      <Select
+                        mode="multiple"
+                        size="small"
+                        placeholder="Filtrar por faixa..."
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        value={selectedAvgLikes}
+                        options={engagementFacets.avg_likes.map((b) => ({
+                          value: b.min ?? 0,
+                          label: `${b.label} (${b.count})`,
+                        }))}
+                        onChange={(vals) => updateFilter({ avgLikesBuckets: vals.length ? vals : undefined })}
+                        style={{ width: '100%', marginBottom: 12 }}
+                        maxTagCount="responsive"
+                      />
+                      <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                        Posts analisados
+                      </Text>
+                      <Select
+                        mode="multiple"
+                        size="small"
+                        placeholder="Filtrar por faixa..."
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        value={selectedPostsCount}
+                        options={engagementFacets.posts_count.map((b) => ({
+                          value: b.min ?? 0,
+                          label: `${b.label} (${b.count})`,
+                        }))}
+                        onChange={(vals) => updateFilter({ postsCountBuckets: vals.length ? vals : undefined })}
+                        style={{ width: '100%', marginBottom: 0 }}
+                        maxTagCount="responsive"
+                      />
+                    </div>
+                  ),
+                },
+              ]}
+            />
           )}
 
-          {facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0) && (
-            <div style={{ marginTop: 0 }}>
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Cadastro na plataforma
-              </Text>
-              <Select
-                mode="multiple"
-                size="small"
-                placeholder="Ativados / Não ativados..."
-                allowClear
-                showSearch={false}
-                value={selectedActivation}
-                options={[
-                  { value: 'activated', label: `Ativados (${facets.activation.activated})` },
-                  { value: 'not_activated', label: `Não ativados (${facets.activation.not_activated})` },
-                ]}
-                onChange={(vals) => updateFilter({ activationFilter: vals.length && vals.length < 2 ? vals : undefined })}
-                style={{ width: '100%', marginBottom: 16 }}
-                maxTagCount="responsive"
-              />
-            </div>
-          )}
+          {(facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0)) ||
+            (facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0)) ? (
+            <Collapse
+              size="small"
+              style={{ marginBottom: 16 }}
+              items={[
+                {
+                  key: 'avancado',
+                  label: <Text strong style={{ fontSize: 12 }}>Avançado</Text>,
+                  children: (
+                    <div style={{ paddingTop: 4 }}>
+                      {facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0) && (
+                        <div style={{ marginBottom: 12 }}>
+                          <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                            Cadastro na plataforma
+                          </Text>
+                          <Select
+                            mode="multiple"
+                            size="small"
+                            placeholder="Ativados / Não ativados..."
+                            allowClear
+                            showSearch={false}
+                            value={selectedActivation}
+                            options={[
+                              { value: 'activated', label: `Ativados (${facets.activation.activated})` },
+                              { value: 'not_activated', label: `Não ativados (${facets.activation.not_activated})` },
+                            ]}
+                            onChange={(vals) => updateFilter({ activationFilter: vals.length && vals.length < 2 ? vals : undefined })}
+                            style={{ width: '100%' }}
+                            maxTagCount="responsive"
+                          />
+                        </div>
+                      )}
+                      {facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0) && (
+                        <div style={{ marginBottom: 0 }}>
+                          <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                            Redes (ativados)
+                          </Text>
+                          <Select
+                            mode="multiple"
+                            size="small"
+                            placeholder="WhatsApp, TikTok..."
+                            allowClear
+                            showSearch={false}
+                            value={selectedSocial}
+                            options={[
+                              facets.social.whatsapp > 0 && { value: 'whatsapp', label: `WhatsApp (${facets.social.whatsapp})` },
+                              facets.social.tiktok > 0 && { value: 'tiktok', label: `TikTok (${facets.social.tiktok})` },
+                              facets.social.facebook > 0 && { value: 'facebook', label: `Facebook (${facets.social.facebook})` },
+                              facets.social.linkedin > 0 && { value: 'linkedin', label: `LinkedIn (${facets.social.linkedin})` },
+                              facets.social.twitter > 0 && { value: 'twitter', label: `X/Twitter (${facets.social.twitter})` },
+                            ].filter(Boolean) as { value: string; label: string }[]}
+                            onChange={(vals) => updateFilter({ socialNetworks: vals.length ? vals : undefined })}
+                            style={{ width: '100%' }}
+                            maxTagCount="responsive"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          ) : null}
 
-          {facets?.cities?.length > 0 && (
-            <div style={{ marginTop: 0 }}>
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Cidades
-              </Text>
-              <Select
-                mode="multiple"
-                size="small"
-                placeholder="Filtrar por cidade..."
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                value={selectedCities}
-                options={facets.cities.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                onChange={(vals) => updateFilter({ cities: vals.length ? vals : undefined })}
-                style={{ width: '100%', marginBottom: 16 }}
-                maxTagCount="responsive"
-              />
-            </div>
-          )}
-          {facets?.states?.length > 0 && (
-            <div style={{ marginTop: 0 }}>
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Estados
-              </Text>
-              <Select
-                mode="multiple"
-                size="small"
-                placeholder="Filtrar por estado..."
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                value={selectedStates}
-                options={facets.states.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                onChange={(vals) => updateFilter({ states: vals.length ? vals : undefined })}
-                style={{ width: '100%', marginBottom: 16 }}
-                maxTagCount="responsive"
-              />
-            </div>
-          )}
-          {facets?.neighborhoods?.length > 0 && (
-            <div style={{ marginTop: 0 }}>
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Bairros
-              </Text>
-              <Select
-                mode="multiple"
-                size="small"
-                placeholder="Filtrar por bairro..."
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                value={selectedNeighborhoods}
-                options={facets.neighborhoods.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                onChange={(vals) => updateFilter({ neighborhoods: vals.length ? vals : undefined })}
-                style={{ width: '100%', marginBottom: 16 }}
-                maxTagCount="responsive"
-              />
-            </div>
-          )}
-          {facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0) && (
-            <div style={{ marginTop: 0 }}>
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Redes (ativados)
-              </Text>
-              <Select
-                mode="multiple"
-                size="small"
-                placeholder="WhatsApp, TikTok..."
-                allowClear
-                showSearch={false}
-                value={selectedSocial}
-                options={[
-                  facets.social.whatsapp > 0 && { value: 'whatsapp', label: `WhatsApp (${facets.social.whatsapp})` },
-                  facets.social.tiktok > 0 && { value: 'tiktok', label: `TikTok (${facets.social.tiktok})` },
-                  facets.social.facebook > 0 && { value: 'facebook', label: `Facebook (${facets.social.facebook})` },
-                  facets.social.linkedin > 0 && { value: 'linkedin', label: `LinkedIn (${facets.social.linkedin})` },
-                  facets.social.twitter > 0 && { value: 'twitter', label: `X/Twitter (${facets.social.twitter})` },
-                ].filter(Boolean) as { value: string; label: string }[]}
-                onChange={(vals) => updateFilter({ socialNetworks: vals.length ? vals : undefined })}
-                style={{ width: '100%', marginBottom: 16 }}
-                maxTagCount="responsive"
-              />
-            </div>
-          )}
+          {facets && (facets.cities?.length ?? 0) > 0 || (facets?.states?.length ?? 0) > 0 || (facets?.neighborhoods?.length ?? 0) > 0 ? (
+            <Collapse
+              size="small"
+              style={{ marginBottom: 16 }}
+              items={[
+                {
+                  key: 'endereco',
+                  label: <Text strong style={{ fontSize: 12 }}>Endereço</Text>,
+                  children: (
+                    <div style={{ paddingTop: 4 }}>
+                      {facets?.cities && facets.cities.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                          <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                            Cidades
+                          </Text>
+                          <Select
+                            mode="multiple"
+                            size="small"
+                            placeholder="Filtrar por cidade..."
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            value={selectedCities}
+                            options={facets.cities.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                            onChange={(vals) => updateFilter({ cities: vals.length ? vals : undefined })}
+                            style={{ width: '100%' }}
+                            maxTagCount="responsive"
+                          />
+                        </div>
+                      )}
+                      {facets?.states && facets.states.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                          <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                            Estados
+                          </Text>
+                          <Select
+                            mode="multiple"
+                            size="small"
+                            placeholder="Filtrar por estado..."
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            value={selectedStates}
+                            options={facets.states.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                            onChange={(vals) => updateFilter({ states: vals.length ? vals : undefined })}
+                            style={{ width: '100%' }}
+                            maxTagCount="responsive"
+                          />
+                        </div>
+                      )}
+                      {facets?.neighborhoods && facets.neighborhoods.length > 0 && (
+                        <div style={{ marginBottom: 0 }}>
+                          <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                            Bairros
+                          </Text>
+                          <Select
+                            mode="multiple"
+                            size="small"
+                            placeholder="Filtrar por bairro..."
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            value={selectedNeighborhoods}
+                            options={facets.neighborhoods.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                            onChange={(vals) => updateFilter({ neighborhoods: vals.length ? vals : undefined })}
+                            style={{ width: '100%' }}
+                            maxTagCount="responsive"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          ) : null}
 
           {facets == null && !loading && (
             <Text type="secondary" style={{ fontSize: 12 }}>

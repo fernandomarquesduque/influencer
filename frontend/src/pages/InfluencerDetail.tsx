@@ -40,6 +40,7 @@ import {
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
+import { getCostTier } from '../utils/pricing'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -78,10 +79,10 @@ function getPostLink(post: PostItem): string {
   return '#'
 }
 
-/** Cor do engajamento por faixa */
+/** Cor do engajamento: >70% verde, >40% amarelo, >0% rosa. */
 function engagementColor(rate: number): string {
-  if (rate >= 5) return '#52c41a'
-  if (rate >= 2) return '#faad14'
+  if (rate > 70) return '#52c41a'
+  if (rate > 40) return '#faad14'
   return '#eb2f96'
 }
 
@@ -205,6 +206,8 @@ export default function InfluencerDetail() {
       activation.linkedin?.trim() || activation.twitter?.trim() || activation.websites?.trim() ||
       activation.description?.trim() || activation.about_topics?.trim())
 
+  const costTier = activation?.pricing ? getCostTier(activation.pricing) : null
+
   return (
     <div style={{ maxWidth: 1120, margin: '0 auto', padding: '0 24px 48px' }}>
       {/* 1) Contexto: quem é este relatório + ações imediatas */}
@@ -228,6 +231,11 @@ export default function InfluencerDetail() {
                   <Text strong style={{ fontSize: 17 }}>{fullName || displayHandle}</Text>
                   {isVerified && <Tooltip title="Verificado"><span style={{ color: '#3897f0' }}>✓</span></Tooltip>}
                   {hasActivationData && <Tooltip title="Cadastro ativo"><SafetyOutlined style={{ color: '#52c41a' }} /></Tooltip>}
+                  {costTier ? (
+                    <Tooltip title={`Custo médio: ${costTier.label}`}>
+                      <Tag color="gold" style={{ margin: 0, fontWeight: 600 }}>{`${costTier.symbol} ${costTier.label}`}</Tag>
+                    </Tooltip>
+                  ) : null}
                 </div>
                 <Text type="secondary" style={{ fontSize: 13 }}>@{displayHandle}</Text>
                 {bio && (
@@ -374,6 +382,16 @@ export default function InfluencerDetail() {
               <Text strong>Dados da ativação</Text>
             </div>
             <Descriptions column={1} bordered size="small" style={{ marginBottom: 0 }}>
+              {(() => {
+                const cost = activation!.pricing ? getCostTier(activation!.pricing) : null
+                return cost ? (
+                  <Descriptions.Item label="Custo médio">
+                    <Text strong style={{ color: '#d48806' }}>
+                      {cost.symbol} {cost.label}
+                    </Text>
+                  </Descriptions.Item>
+                ) : null
+              })()}
               {(activation!.city || activation!.state || activation!.neighborhood || activation!.country) && (
                 <Descriptions.Item label="Localização">
                   {[activation!.city, activation!.state, activation!.neighborhood, activation!.country].filter(Boolean).join(', ') || '—'}

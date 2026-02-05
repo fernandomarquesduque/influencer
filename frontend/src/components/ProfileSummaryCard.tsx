@@ -17,11 +17,13 @@ import {
   LinkedinOutlined,
   TwitterOutlined,
   SafetyOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons'
 import { getProfilePicUrl, proxyImageUrl, type EngagementStats, type ProfileActivation } from '../api'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
+import { getCostTier } from '../utils/pricing'
 
-const { Text, Paragraph } = Typography
+const { Text } = Typography
 
 export interface ProfileSummaryCardItem {
   key: string
@@ -39,12 +41,6 @@ export interface ProfileSummaryCardItem {
   activation?: ProfileActivation
 }
 
-function stripEmojiAndTrim(s: string | undefined, max = 120): string {
-  if (!s || typeof s !== 'string') return ''
-  const t = s.replace(/\s+/g, ' ').trim()
-  return t.length > max ? t.slice(0, max) + '…' : t
-}
-
 function formatShortNum(n: number | undefined | null): string {
   if (n == null) return '—'
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
@@ -52,10 +48,10 @@ function formatShortNum(n: number | undefined | null): string {
   return String(n)
 }
 
-/** Cor do engajamento: verde (alto), amarelo (médio), rosa (baixo). */
+/** Cor do engajamento: >70% verde, >40% amarelo, >0% rosa. */
 function engagementColor(rate: number): string {
-  if (rate >= 5) return '#52c41a'   // verde
-  if (rate >= 2) return '#faad14'   // amarelo
+  if (rate > 70) return '#52c41a'   // verde
+  if (rate > 40) return '#faad14'   // amarelo
   return '#eb2f96'                  // rosa
 }
 
@@ -69,12 +65,13 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
   const name = (item.full_name || item.handle) as string
   const eng = item.engagement
-  const bio = variant === 'list' ? stripEmojiAndTrim(item.biography) : (item.biography ?? '')
   const categories = (Array.isArray(item.categories) ? item.categories : []) as string[]
   const avatarSize = variant === 'detail' ? 128 : 112
   const location = item.activation && (item.activation.city || item.activation.state)
     ? [item.activation.city, item.activation.state].filter(Boolean).join(', ')
     : null
+  const userData = item.data?.user as Record<string, unknown> | undefined
+  const isVerified = (item as unknown as Record<string, unknown>).is_verified === true || userData?.is_verified === true
 
   const cardContent = (
     <div
@@ -88,11 +85,11 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
         padding: variant === 'list' ? 0 : undefined,
       }}
     >
-      {/* Tipo de conteúdo fixo no topo à esquerda (um abaixo do outro, cores distintas) */}
-      {item.activation?.content_type && item.activation.content_type.length > 0 && (() => {
+      {/* Tipo de conteúdo e custo fixos no topo à esquerda (card lista) */}
+      {(variant !== 'list' && item.activation?.content_type && item.activation.content_type.length > 0) && (() => {
         const tagColors = ['blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'gold', 'lime'] as const
-        const list = item.activation.content_type.slice(0, variant === 'list' ? 4 : 8)
-        const extra = item.activation.content_type.length - list.length
+        const list = item.activation.content_type!.slice(0, 8)
+        const extra = item.activation.content_type!.length - list.length
         return (
           <div
             style={{
@@ -116,6 +113,40 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
           </div>
         )
       })()}
+      {variant === 'list' && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            zIndex: 1,
+          }}
+        >
+          {(isVerified || item.activation?.pricing) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {isVerified && (
+                <Tooltip title="Verificado">
+                  <CheckCircleOutlined style={{ color: '#3897f0', fontSize: 16 }} />
+                </Tooltip>
+              )}
+              {item.activation?.pricing && (() => {
+                const cost = getCostTier(item.activation.pricing)
+                if (!cost) return null
+                return (
+                  <Tooltip title={`Custo médio: ${cost.label}`}>
+                    <Tag color="gold" style={{ margin: 0, fontSize: 10, fontWeight: 600 }}>
+                      {cost.symbol}
+                    </Tag>
+                  </Tooltip>
+                )
+              })()}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Ícones de redes fixos no topo à direita */}
       {item.activation && (item.activation.whatsapp?.trim() || item.activation.tiktok?.trim() || item.activation.facebook?.trim() || item.activation.linkedin?.trim() || item.activation.twitter?.trim()) && (
@@ -189,6 +220,17 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
                 <SafetyOutlined style={{ color: '#52c41a', fontSize: 14, flexShrink: 0 }} />
               </Tooltip>
             )}
+            {variant !== 'list' && item.activation?.pricing && (() => {
+              const cost = getCostTier(item.activation.pricing)
+              if (!cost) return null
+              return (
+                <Tooltip title={`Custo médio: ${cost.label}`}>
+                  <Tag color="gold" style={{ margin: 0, fontWeight: 600 }}>
+                    {cost.symbol} {cost.label}
+                  </Tag>
+                </Tooltip>
+              )
+            })()}
           </div>
           {location && (
             <div
@@ -205,26 +247,42 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
               {location}
             </div>
           )}
+          {((item.activation?.content_type && item.activation.content_type.length > 0) || categories.length > 0) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 4, marginTop: 8 }}>
+              {item.activation?.content_type && item.activation.content_type.length > 0
+                ? (() => {
+                  const list = item.activation!.content_type!.slice(0, variant === 'list' ? 4 : 8)
+                  const tagColors = ['blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'gold', 'lime'] as const
+                  return (
+                    <>
+                      {list.map((ct, i) => (
+                        <Tag key={ct} color={tagColors[i % tagColors.length]} style={{ margin: 0, fontSize: 10, borderRadius: 4 }}>
+                          {CONTENT_TYPE_LABELS[ct] ?? ct}
+                        </Tag>
+                      ))}
+                      {variant === 'list' && item.activation!.content_type!.length > 4 && (
+                        <Tag color="default" style={{ margin: 0, fontSize: 10 }}>+{item.activation!.content_type!.length - 4}</Tag>
+                      )}
+                      {variant !== 'list' && item.activation!.content_type!.length > 8 && (
+                        <Tag color="default" style={{ margin: 0, fontSize: 10 }}>+{item.activation!.content_type!.length - 8}</Tag>
+                      )}
+                    </>
+                  )
+                })()
+                : categories.slice(0, 3).map((c, i) => {
+                  const tagColors = ['blue', 'green', 'orange'] as const
+                  return (
+                    <Tag key={c} color={tagColors[i % 3]} style={{ margin: 0, fontSize: 10, borderRadius: 4 }}>
+                      #{c}
+                    </Tag>
+                  )
+                })}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Bio: destaque como no feed */}
-      {bio && (
-        <Paragraph
-          ellipsis={variant === 'list' ? { rows: 3 } : false}
-          style={{
-            margin: '0 0 12px',
-            fontSize: 13,
-            color: '#262626',
-            lineHeight: 1.45,
-            wordBreak: 'break-word',
-          }}
-        >
-          {bio}
-        </Paragraph>
-      )}
-
-      {/* Área flexível: só avatar, nome, bio (e categorias no detail) */}
+      {/* Área flexível: categorias no detail */}
       <div style={{ flex: 1, minHeight: 0 }}>
         {variant !== 'list' && categories.length > 0 && (
           <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>

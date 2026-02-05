@@ -15,6 +15,7 @@ import {
 import { ArrowLeftOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { fetchProfile, fetchProfileActivation, saveProfileActivation, getProfilePicUrl, proxyImageUrl, type ProfileActivation, type PricingData } from '../api'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
+import { PRICE_BUCKETS, PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
 
 const { Title, Text } = Typography
 
@@ -26,16 +27,7 @@ const GENDER_OPTIONS = [
   { value: 'prefiro_nao_dizer', label: 'Prefiro não dizer' },
 ]
 
-const PRICING_FIELDS: { key: keyof PricingData; label: string; placeholder: string }[] = [
-  { key: 'post_unique', label: '1️⃣ Post único (publipost)', placeholder: 'Foto, vídeo ou carrossel. Valores médios: Micro R$300–R$2.000, Médio R$2.000–R$15.000, Grande R$15.000+' },
-  { key: 'stories', label: '2️⃣ Stories', placeholder: 'Pacotes (3, 5 ou 7). Micro R$150–R$800, Médio R$800–R$5.000' },
-  { key: 'package_monthly', label: '3️⃣ Pacote mensal', placeholder: 'X posts/mês + stories. Micro R$1.000–R$5.000/mês, Médio R$5.000–R$30.000/mês' },
-  { key: 'commission', label: '4️⃣ Comissão / afiliado', placeholder: '5% a 30%. Fixo + comissão' },
-  { key: 'permuta', label: '5️⃣ Permuta', placeholder: 'Produto ou serviço em troca de divulgação' },
-  { key: 'image_rights', label: '6️⃣ Uso de imagem (direitos)', placeholder: '+30% a +200% do valor do post. Repost em anúncios, site, mídia paga' },
-  { key: 'content_delivery', label: '7️⃣ Entrega de conteúdo (sem postar)', placeholder: 'Vídeos, fotos, UGC. A marca publica no próprio perfil' },
-  { key: 'launch', label: '8️⃣ Lançamento / campanha', placeholder: 'Série de conteúdos, datas específicas. Valor fechado (ex: R$10k, R$30k)' },
-]
+const PRICE_OPTIONS = PRICE_BUCKETS.map((b) => ({ value: b.value, label: b.label }))
 
 export default function Activate() {
   const { handle } = useParams<{ handle: string }>()
@@ -61,6 +53,16 @@ export default function Activate() {
         setProfilePic(pic ? proxyImageUrl(pic) : undefined)
       }
       const act = activation as ProfileActivation
+      const pricingForm: Record<string, number | undefined> = {}
+      if (act.pricing && typeof act.pricing === 'object') {
+        for (const k of PRICING_FIELD_KEYS) {
+          const v = act.pricing[k as keyof PricingData]
+          if (v !== undefined && v !== null && v !== '') {
+            const n = Number(v)
+            if (Number.isFinite(n)) pricingForm[k] = n
+          }
+        }
+      }
       form.setFieldsValue({
         address: act.address ?? '',
         city: act.city ?? '',
@@ -77,7 +79,7 @@ export default function Activate() {
         description: act.description ?? '',
         about_topics: act.about_topics ?? '',
         content_type: act.content_type ?? [],
-        pricing: act.pricing ?? {},
+        pricing: pricingForm,
       })
     }).finally(() => {
       if (!cancelled) setLoading(false)
@@ -89,11 +91,12 @@ export default function Activate() {
     if (!handle) return
     setSaving(true)
     try {
-      const pricing = values.pricing as Record<string, string> | undefined
+      const pricing = values.pricing as Record<string, number | string> | undefined
       const pricingData: PricingData = {}
       if (pricing && typeof pricing === 'object') {
-        for (const key of PRICING_FIELDS.map((f) => f.key)) {
+        for (const key of PRICING_FIELD_KEYS) {
           const v = pricing[key]
+          if (typeof v === 'number' && Number.isFinite(v)) pricingData[key] = String(v)
           if (typeof v === 'string' && v.trim()) pricingData[key] = v.trim()
         }
       }
@@ -252,11 +255,16 @@ export default function Activate() {
 
           <Title level={5} style={{ marginTop: 24, marginBottom: 16 }}>Valores e formatos</Title>
           <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-            Descreva valores, faixas ou condições para cada formato (pode usar os placeholders como referência).
+            Selecione a faixa de preço para cada formato (apenas para categorização).
           </Text>
-          {PRICING_FIELDS.map(({ key, label, placeholder }) => (
-            <Form.Item key={key} name={['pricing', key]} label={label}>
-              <Input.TextArea placeholder={placeholder} rows={2} />
+          {PRICING_FIELD_KEYS.map((key) => (
+            <Form.Item key={key} name={['pricing', key]} label={PRICING_FIELD_LABELS[key as PricingFieldKey]}>
+              <Select
+                placeholder="Selecione a faixa"
+                allowClear
+                options={PRICE_OPTIONS}
+                style={{ width: '100%' }}
+              />
             </Form.Item>
           ))}
 

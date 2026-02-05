@@ -101,6 +101,12 @@ app.get('/api/profiles/search', async (req: Request, res: Response) => {
     const states = req.query.states;
     const neighborhoods = req.query.neighborhoods;
     const socialNetworks = req.query.socialNetworks;
+    const parseNumList = (v: unknown): number[] | undefined => {
+      if (v == null) return undefined;
+      if (Array.isArray(v)) return v.map((x) => Number(x)).filter(Number.isFinite);
+      if (typeof v === 'string') return v.split(',').map((x) => Number(x.trim())).filter(Number.isFinite);
+      return undefined;
+    };
     const sort = (req.query.sort as string) || 'engagement_desc';
     const limit = Math.min(Math.max(0, Number(req.query.limit) || 50), 200);
     const offset = Math.max(0, Number(req.query.offset) || 0);
@@ -121,6 +127,14 @@ app.get('/api/profiles/search', async (req: Request, res: Response) => {
       socialNetworks: Array.isArray(socialNetworks) ? socialNetworks.map(String).filter(Boolean) : typeof socialNetworks === 'string' ? socialNetworks.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
       categories,
       contentTypes: Array.isArray(contentTypes) ? contentTypes.map(String).filter(Boolean) : typeof contentTypes === 'string' ? contentTypes?.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+      pricingPostUnique: parseNumList(req.query.pricingPostUnique),
+      pricingStories: parseNumList(req.query.pricingStories),
+      pricingPackageMonthly: parseNumList(req.query.pricingPackageMonthly),
+      pricingCommission: parseNumList(req.query.pricingCommission),
+      pricingPermuta: parseNumList(req.query.pricingPermuta),
+      pricingImageRights: parseNumList(req.query.pricingImageRights),
+      pricingContentDelivery: parseNumList(req.query.pricingContentDelivery),
+      pricingLaunch: parseNumList(req.query.pricingLaunch),
       sort,
       limit,
       offset,

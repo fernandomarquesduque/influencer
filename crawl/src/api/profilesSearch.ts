@@ -316,6 +316,15 @@ export interface ProfilesSearchQuery {
   categories?: string | string[];
   /** Tipo de conteúdo (apenas perfis ativados; multiselect). */
   contentTypes?: string | string[];
+  /** Faixas de preço por formato (multiselect: valores em reais 0, 500, 1000, 2500, 5000, 15000). */
+  pricingPostUnique?: number[];
+  pricingStories?: number[];
+  pricingPackageMonthly?: number[];
+  pricingCommission?: number[];
+  pricingPermuta?: number[];
+  pricingImageRights?: number[];
+  pricingContentDelivery?: number[];
+  pricingLaunch?: number[];
   /** Ordenação: engagement_desc | engagement_asc | followers_desc | followers_asc | avg_likes_desc | avg_likes_asc | total_likes_desc | total_likes_asc */
   sort?: string;
   limit?: number;
@@ -471,6 +480,13 @@ export async function searchProfiles(
         .filter(Boolean);
   }
   const contentTypesFilter = parseStringArray(query.contentTypes).map((s) => s.toLowerCase());
+  const pricingFilters: Record<string, number[]> = {};
+  const pricingKeys = ['pricingPostUnique', 'pricingStories', 'pricingPackageMonthly', 'pricingCommission', 'pricingPermuta', 'pricingImageRights', 'pricingContentDelivery', 'pricingLaunch'] as const;
+  const pricingActivationKeys = ['post_unique', 'stories', 'package_monthly', 'commission', 'permuta', 'image_rights', 'content_delivery', 'launch'] as const;
+  for (let i = 0; i < pricingKeys.length; i++) {
+    const arr = parseNumArray((query as Record<string, unknown>)[pricingKeys[i]]);
+    if (arr.length > 0) pricingFilters[pricingActivationKeys[i]] = arr;
+  }
 
   const [profilesRaw, postsRaw] = await Promise.all([
     db.getByBucket<Record<string, unknown>>('profile'),
@@ -612,6 +628,18 @@ export async function searchProfiles(
       return contentTypesFilter.some((fc) => ctLower.includes(fc));
     });
   }
+  for (const [actKey, allowedBuckets] of Object.entries(pricingFilters)) {
+    if (allowedBuckets.length === 0) continue;
+    filteredItems = filteredItems.filter((i) => {
+      const pricing = i.activation?.pricing as Record<string, unknown> | undefined;
+      if (!pricing) return false;
+      const raw = pricing[actKey];
+      if (raw === undefined || raw === null || raw === '') return false;
+      const num = typeof raw === 'number' ? raw : Number(raw);
+      if (!Number.isFinite(num)) return false;
+      return allowedBuckets.includes(num);
+    });
+  }
 
   items = filteredItems;
 
@@ -652,6 +680,17 @@ export async function searchProfiles(
     { key: 'alta', label: 'Alta', min: 50, count: 0 },
   ];
 
+  const pricingCounts: Record<(typeof pricingActivationKeys)[number], Map<number, number>> = {
+    post_unique: new Map(),
+    stories: new Map(),
+    package_monthly: new Map(),
+    commission: new Map(),
+    permuta: new Map(),
+    image_rights: new Map(),
+    content_delivery: new Map(),
+    launch: new Map(),
+  };
+
   for (const item of items) {
     if (item.activation) {
       activatedCount++;
@@ -671,6 +710,17 @@ export async function searchProfiles(
             const k = v.trim().toLowerCase();
             if (k) contentTypeCount.set(k, (contentTypeCount.get(k) ?? 0) + 1);
           }
+        }
+      }
+      const pricing = act.pricing as Record<string, unknown> | undefined;
+      if (pricing && typeof pricing === 'object') {
+        for (const actKey of pricingActivationKeys) {
+          const raw = pricing[actKey];
+          if (raw === undefined || raw === null || raw === '') continue;
+          const num = typeof raw === 'number' ? raw : Number(raw);
+          if (!Number.isFinite(num)) continue;
+          const map = pricingCounts[actKey];
+          map.set(num, (map.get(num) ?? 0) + 1);
         }
       }
     }
@@ -711,6 +761,15 @@ export async function searchProfiles(
     states: [...stateCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     neighborhoods: [...neighborhoodCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     social: socialCount,
+    pricing: Object.fromEntries(
+      pricingActivationKeys.map((actKey) => [
+        actKey,
+        [...pricingCounts[actKey].entries()]
+          .filter(([, count]) => count > 0)
+          .map(([value, count]) => ({ value, count }))
+          .sort((a, b) => a.value - b.value),
+      ])
+    ) as Record<(typeof pricingActivationKeys)[number], { value: number; count: number }[]>,
   };
 
   const slice = items.slice(offset, offset + limit);
