@@ -191,6 +191,11 @@ app.post('/api/auth/verify-profile', (req: RequestWithAuth, res: Response) => {
         res.status(400).json({ error: 'Código não corresponde à sua conta.' });
         return;
       }
+      const existingByUsername = authDb.getByUsername(nickname);
+      if (existingByUsername && existingByUsername.id !== currentUserId) {
+        authDb.updateUser(existingByUsername.id, { profile_handle: nickname });
+        return res.status(200).json({ verified: true, profile_handle: nickname });
+      }
       authDb.updateUser(currentUserId, { profile_handle: nickname, username: nickname });
       return res.status(200).json({ verified: true, profile_handle: nickname });
     }
@@ -202,9 +207,15 @@ app.post('/api/auth/verify-profile', (req: RequestWithAuth, res: Response) => {
 
     let user = authDb.getByProfileHandle(nickname);
     if (!user) {
-      const randomPassword = crypto.randomBytes(32).toString('hex');
-      const id = authDb.createUser(nickname, hashPassword(randomPassword), 'influencer', nickname);
-      user = authDb.getById(id)!;
+      const existingByUsername = authDb.getByUsername(nickname);
+      if (existingByUsername) {
+        authDb.updateUser(existingByUsername.id, { profile_handle: nickname, scope: 'influencer' });
+        user = authDb.getById(existingByUsername.id)!;
+      } else {
+        const randomPassword = crypto.randomBytes(32).toString('hex');
+        const id = authDb.createUser(nickname, hashPassword(randomPassword), 'influencer', nickname);
+        user = authDb.getById(id)!;
+      }
     }
     const secret = getJwtSecret();
     const token = signJwt(

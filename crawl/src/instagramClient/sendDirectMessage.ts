@@ -220,25 +220,25 @@ export async function sendDirectMessage(
 
       try {
         await messageInput.click();
-        await randomDelay(50, 120);
+        await randomDelay(30, 80);
         try {
           await messageInput.fill(message);
         } catch {
           await messageInput.pressSequentially(message, { delay: 15 });
         }
-        await randomDelay(80, 180);
+        await randomDelay(40, 100);
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
         continue;
       }
 
-      // Garantir que o botão Enviar seja clicado (pode ficar habilitado só após digitar)
-      await randomDelay(100, 250);
+      // Botão Enviar fica habilitado logo após digitar; espera curta e clica
+      await randomDelay(50, 120);
       let sendClicked = false;
       for (const sel of sendSelectors) {
         try {
           const btn = page.locator(sel).first();
-          await btn.waitFor({ state: 'visible', timeout: 3000 });
+          await btn.waitFor({ state: 'visible', timeout: 1500 });
           await btn.click();
           sendClicked = true;
           log(`botão Enviar clicado: ${sel}`);
