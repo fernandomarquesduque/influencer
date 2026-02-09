@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tunnel": "lt --port 5173 --subdomain influencer --local-host 127.0.0.1 --print-requests",
+    "public": "concurrently -n dev,tunnel -c blue,yellow \"vite --port 5173 --strictPort\" \"powershell -NoProfile -Command Start-Sleep 12; lt --port 5173 --subdomain influencer --local-host 127.0.0.1 --print-requests\""
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.0",
@@ -16,6 +18,8 @@
     "react-router-dom": "^7.0.1"
   },
   "devDependencies": {
+    "concurrently": "^9.1.0",
+    "localtunnel": "^2.0.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

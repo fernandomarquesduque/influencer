@@ -78,7 +78,7 @@ export default function InfluencerList() {
   })
   const [limitReachedCode, setLimitReachedCode] = useState<string | null>(null)
 
-  const load = (overrides?: Partial<ProfilesSearchQuery>) => {
+  const load = (overrides?: Partial<ProfilesSearchQuery>, signal?: AbortSignal) => {
     setLimitReachedCode(null)
     let q: ProfilesSearchQuery = { ...query, ...overrides, limit: overrides?.limit ?? PAGE_SIZE }
     if (isLimitedView) {
@@ -87,8 +87,9 @@ export default function InfluencerList() {
     const isLoadMore = (q.offset ?? 0) > 0
     if (isLoadMore) setLoadingMore(true)
     else setLoading(true)
-    fetchProfilesSearch(q)
+    fetchProfilesSearch(q, { signal })
       .then((res) => {
+        if (signal?.aborted) return
         if (isLoadMore) {
           setData((prev) => [...prev, ...res.items])
         } else {
@@ -98,6 +99,7 @@ export default function InfluencerList() {
         if (res.facets) setFacets(res.facets)
       })
       .catch((e) => {
+        if (signal?.aborted || (e as Error).name === 'AbortError') return
         const code = (e as Error & { code?: string }).code
         if (code && PUBLIC_LIMIT_CODES.includes(code)) {
           setLimitReachedCode(code)
@@ -115,6 +117,7 @@ export default function InfluencerList() {
         }
       })
       .finally(() => {
+        if (signal?.aborted) return
         setLoading(false)
         setLoadingMore(false)
       })
@@ -124,13 +127,18 @@ export default function InfluencerList() {
     setSearchInput(qFromUrl)
     const base = { q: qFromUrl || undefined, offset: 0, limit: PAGE_SIZE }
     setQuery((prev) => (isLimitedView ? { ...base } : { ...prev, ...base }))
-    if (qFromUrl.trim()) {
-      load(isLimitedView ? { q: qFromUrl.trim() || undefined, offset: 0 } : { q: qFromUrl.trim() || undefined, offset: 0 })
-    } else {
+    if (!qFromUrl.trim()) {
       setData([])
       setTotal(0)
       setFacets(null)
+      return
     }
+    const controller = new AbortController()
+    load(
+      isLimitedView ? { q: qFromUrl.trim() || undefined, offset: 0 } : { q: qFromUrl.trim() || undefined, offset: 0 },
+      controller.signal
+    )
+    return () => controller.abort()
   }, [qFromUrl, isLimitedView])
 
   if (user?.scope === 'influencer' && user.profile_handle) {

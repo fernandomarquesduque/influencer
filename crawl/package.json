@@ -4,13 +4,14 @@
   "description": "Extração de microinfluenciadores Instagram com foco em endereço e baixo uso de memória",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/api/openapi.json', 'dist/api/openapi.json')\"",
     "extract": "tsx src/cli/crawl-hashtag.ts -- --tag viagem --limit 2",
     "login": "tsx src/cli/login.ts",
     "list-db": "tsx src/cli/list-db.ts",
     "check-db": "tsx src/cli/check-db.ts",
     "api": "tsx src/api/server.ts",
-    "create-admin": "tsx src/scripts/create-admin.ts"
+    "create-admin": "tsx src/scripts/create-admin.ts",
+    "router-port-forward": "tsx src/scripts/router-port-forward.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

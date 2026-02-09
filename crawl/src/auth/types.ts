@@ -1,4 +1,4 @@
-/** Escopos de acesso: adm = tudo, assinante = navegação completa, influencer = edita só o próprio perfil, public = limite 10 buscas, 1ª página, sem filtros, detalhe limitado. */
+/** Escopos de acesso: adm = tudo, assinante = navegação completa, influencer = edita só o próprio perfil, public = limite de buscas/dia (ver PUBLIC_MAX_REQUESTS_PER_DAY), 1ª página, sem filtros, detalhe limitado. */
 export type AuthScope = 'adm' | 'assinante' | 'influencer' | 'public';
 
 export interface AuthUser {

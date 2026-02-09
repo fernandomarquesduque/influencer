@@ -36,7 +36,7 @@ export const DEFAULT_CRAWL_CONFIG: CrawlConfig = {
   bioMaxChars: 500,
   addressRawTextMaxChars: 300,
   minFollowersToSave: 5000,
-  minPostLikesToSave: 0,
+  minPostLikesToSave: 200,
   excludeBusinessProfiles: true,
   maxPostsToAnalyzeForInsights: 10,
 };

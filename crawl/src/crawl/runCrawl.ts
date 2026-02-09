@@ -4,7 +4,7 @@ import { discoverAndProcessByHashtag, type DiscoveredProfileRef } from '../disco
 import { extractProfile } from '../profileExtractor/index.js';
 import type { Page } from 'playwright';
 import { crawlLog, crawlLogExtract } from '../utils/crawlLogger.js';
-import { getFollowersFromEntity, hasPostWithMinLikes, isPersonOrCreator, qualifiesAsInfluencer } from '../utils/entityAccess.js';
+import { getFollowersFromEntity, hasPostWithMinLikes, isPersonOrCreator, isPrivateFromEntity, qualifiesAsInfluencer } from '../utils/entityAccess.js';
 import { reset429Run } from '../utils/rateLimit429.js';
 import { buildSlimProfile } from '../utils/slimProfile.js';
 /** Storage usado pelo crawl: RocksDB ou Composite (RocksDB + SQLite). */
@@ -15,7 +15,7 @@ export interface CrawlStorage {
   clearAll(): Promise<void>;
 }
 
-const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? parseInt(process.env.MIN_FOLLOWERS, 10000) : 0;
+const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? (parseInt(process.env.MIN_FOLLOWERS, 10) || 0) : 0;
 const PROFILE_PROCESS_TIMEOUT_MS = Number(process.env.PROFILE_PROCESS_TIMEOUT_MS) || 180_000;
 const PROFILE_PROCESS_MAX_RETRIES = 1;
 
@@ -85,6 +85,10 @@ async function processOneProfileWithTimeout(
           profileObj.followers_count = ref.followersFromDiscovery;
         }
         const minRequired = config.minFollowersToSave > 0 ? Math.max(config.minFollowersToSave, MIN_FOLLOWERS_FLOOR) : 0;
+        if (isPrivateFromEntity(raw)) {
+          crawlLogExtract(`@${ref.handle} perfil privado, pulando`);
+          throw new Error('FILTER_REJECT');
+        }
         if (config.excludeBusinessProfiles) {
           if (!qualifiesAsInfluencer(profileObj, minRequired)) {
             crawlLogExtract(`@${ref.handle} não qualifica como influenciador (filtro estabelecimento + tipo + seguidores), pulando`);

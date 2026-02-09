@@ -7,6 +7,8 @@ import { extractProfileToBackend, type ExtractProfileResult } from '../api'
 const { Title, Text } = Typography
 
 const REASON_LABELS: Record<string, string> = {
+  nao_segue_perfil: 'Não segue o perfil oficial do programa (obrigatório para 2FA)',
+  perfil_privado: 'Perfil privado; é necessário que seja público',
   estabelecimento_comercial: 'Marcado como estabelecimento comercial (categoria ou is_business)',
   conta_empresa: 'Tipo de conta = empresa (account_type 3)',
   conta_tipo_desconhecido: 'Tipo de conta não é pessoa/criador',

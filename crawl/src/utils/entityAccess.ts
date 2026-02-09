@@ -49,6 +49,20 @@ function deepFindIsBusinessAccount(obj: unknown, seen = new Set<unknown>()): unk
   return undefined;
 }
 
+/** Busca profunda: encontra is_private em qualquer nível (boolean). */
+function deepFindIsPrivate(obj: unknown, seen = new Set<unknown>()): unknown {
+  if (obj == null || seen.has(obj)) return undefined;
+  if (typeof obj !== 'object') return undefined;
+  seen.add(obj);
+  const o = obj as Record<string, unknown>;
+  if ('is_private' in o) return o.is_private;
+  for (const key of Object.keys(o)) {
+    const found = deepFindIsPrivate(o[key], seen);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function toNumber(v: unknown): number {
   if (typeof v === 'number' && Number.isFinite(v)) return Math.floor(v);
   if (typeof v === 'string') {
@@ -192,6 +206,55 @@ export function isBusinessFromEntity(entity: Record<string, unknown>): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// 2b) PERFIL PÚBLICO (elegibilidade)
+// ---------------------------------------------------------------------------
+
+/** Indica se o perfil é privado (is_private === true). Se o campo não vier na API, trata como público. */
+export function isPrivateFromEntity(entity: Record<string, unknown>): boolean {
+  const fromPaths = getIn(
+    entity,
+    'data.user.is_private',
+    'is_private'
+  );
+  let v = fromPaths;
+  if (v === undefined) v = deepFindIsPrivate(entity);
+  return v === true || v === 'true' || v === 1;
+}
+
+/** Busca profunda: encontra friendship_status.followed_by (o perfil visualizado segue o viewer/logado). */
+function deepFindFollowedBy(obj: unknown, seen = new Set<unknown>()): unknown {
+  if (obj == null || seen.has(obj)) return undefined;
+  if (typeof obj !== 'object') return undefined;
+  seen.add(obj);
+  const o = obj as Record<string, unknown>;
+  if ('friendship_status' in o && o.friendship_status != null && typeof o.friendship_status === 'object') {
+    const fs = o.friendship_status as Record<string, unknown>;
+    if ('followed_by' in fs) return fs.followed_by;
+  }
+  for (const key of Object.keys(o)) {
+    const found = deepFindFollowedBy(o[key], seen);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Indica se o perfil visualizado segue o usuário logado (viewer).
+ * A API retorna friendship_status.followed_by quando o perfil é carregado estando logado.
+ * Retorna true só se followed_by === true; false se explícito ou ausente (fail closed para 2FA).
+ */
+export function isFollowingViewerFromEntity(entity: Record<string, unknown>): boolean {
+  const fromPaths = getIn(
+    entity,
+    'data.user.friendship_status.followed_by',
+    'friendship_status.followed_by'
+  );
+  let v = fromPaths;
+  if (v === undefined) v = deepFindFollowedBy(entity);
+  return v === true || v === 'true' || v === 1;
+}
+
+// ---------------------------------------------------------------------------
 // 3) PESSOA / CRIADOR (base para influenciador)
 // ---------------------------------------------------------------------------
 
@@ -235,14 +298,18 @@ export function qualifiesAsInfluencer(
 
 export interface InfluencerRejectionDiagnostic {
   pass: boolean;
-  /** Motivo da rejeição (ex.: estabelecimento_comercial, conta_empresa, seguidores_abaixo_minimo) */
+  /** Motivo da rejeição (ex.: estabelecimento_comercial, perfil_privado, seguidores_abaixo_minimo) */
   reason?: string;
   accountType?: number;
   followers: number;
   category?: string;
   isBusiness?: boolean;
+  /** Perfil privado (is_private === true) */
+  isPrivate?: boolean;
   /** Mínimo exigido para o tipo (após multiplicador) */
   minRequired?: number;
+  /** Perfil não segue a conta obrigatória (INSTAGRAM_PERFIL) */
+  followsRequiredProfile?: boolean;
 }
 
 /**

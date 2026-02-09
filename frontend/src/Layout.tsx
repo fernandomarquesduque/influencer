@@ -1,22 +1,21 @@
 import { useEffect } from 'react'
-import { Layout as AntLayout, Button, Dropdown } from 'antd'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { UserOutlined, CloudDownloadOutlined, UserAddOutlined, TeamOutlined, LogoutOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import { Layout as AntLayout, Button } from 'antd'
+import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 
 const { Header, Content } = AntLayout
 
-const navStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  color: 'rgba(255,255,255,.85)',
-  fontSize: 15,
-  fontWeight: 500,
+const navLinkStyle: React.CSSProperties = {
+  color: 'rgba(0,0,0,0.65)',
+  fontSize: 13,
+  padding: '0 10px',
   textDecoration: 'none',
-  padding: '4px 12px',
-  borderRadius: 4,
+}
+const navLinkActiveStyle: React.CSSProperties = {
+  ...navLinkStyle,
+  color: 'rgba(0,0,0,0.88)',
+  fontWeight: 500,
 }
 
 export default function Layout() {
@@ -37,119 +36,69 @@ export default function Layout() {
     }
   }, [user?.scope, myHandle, allowedForInfluencer, navigate])
 
+  const isActive = (path: string) => {
+    if (path === '/') return location.pathname === '/' || location.pathname === ''
+    return location.pathname.startsWith(path)
+  }
+
   return (
     <AntLayout style={{ minHeight: '100vh' }}>
       <Header
         style={{
+          height: 40,
+          lineHeight: '40px',
+          padding: '0 16px',
+          background: 'rgba(250,250,250,0.95)',
+          borderBottom: '1px solid rgba(0,0,0,0.06)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          paddingInline: 24,
-          background: 'var(--header-bg, #001529)',
-          gap: 16,
+          gap: 12,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          {user?.scope === 'influencer' && user.profile_handle ? (
-            <Link
-              to={`/influencer/${encodeURIComponent(user.profile_handle.replace(/^@/, ''))}`}
-              style={{
-                ...navStyle,
-                fontSize: 18,
-                fontWeight: 600,
-                background: location.pathname.startsWith('/influencer/') ? 'rgba(255,255,255,.15)' : undefined,
-              }}
-            >
-              <UserOutlined />
-              Meu perfil
-            </Link>
-          ) : (
-            <Link
-              to="/"
-              style={{
-                ...navStyle,
-                fontSize: 18,
-                fontWeight: 600,
-                background: location.pathname === '/' ? 'rgba(255,255,255,.15)' : undefined,
-              }}
-            >
-              <UserOutlined />
-              Influenciadores
-            </Link>
-          )}
-          {user?.scope !== 'influencer' && (
+        <nav style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Link to="/create" style={isActive('/create') ? navLinkActiveStyle : navLinkStyle}>
+            Criar conta
+          </Link>
+          {user && (
             <>
-              <Link
-                to="/extraction"
-                style={{
-                  ...navStyle,
-                  background: location.pathname === '/extraction' ? 'rgba(255,255,255,.15)' : undefined,
-                }}
-              >
-                <CloudDownloadOutlined />
-                Extração
-              </Link>
-              <Link
-                to="/extract-profile"
-                style={{
-                  ...navStyle,
-                  background: location.pathname === '/extract-profile' ? 'rgba(255,255,255,.15)' : undefined,
-                }}
-              >
-                <UserAddOutlined />
-                Extrair perfil
-              </Link>
-              <Link
-                to="/create"
-                style={{
-                  ...navStyle,
-                  background: location.pathname.startsWith('/create') ? 'rgba(255,255,255,.15)' : undefined,
-                }}
-              >
-                <SafetyCertificateOutlined />
-                Validar perfil
-              </Link>
+              {isAdm && (
+                <>
+                  <Link to="/" style={isActive('/') && location.pathname === '/' ? navLinkActiveStyle : navLinkStyle}>
+                    Início
+                  </Link>
+                  <Link to="/extraction" style={isActive('/extraction') ? navLinkActiveStyle : navLinkStyle}>
+                    Extração
+                  </Link>
+                  <Link to="/extract-profile" style={isActive('/extract-profile') ? navLinkActiveStyle : navLinkStyle}>
+                    Extrair perfil
+                  </Link>
+                </>
+              )}
+              {myHandle && (
+                <Link to={myProfilePath} style={isActive(myProfilePath) ? navLinkActiveStyle : navLinkStyle}>
+                  Meu perfil
+                </Link>
+              )}
+              {isAdm && (
+                <Link to="/admin/users" style={isActive('/admin') ? navLinkActiveStyle : navLinkStyle}>
+                  Admin
+                </Link>
+              )}
             </>
           )}
-          {isAdm && (
-            <Link
-              to="/admin/users"
-              style={{
-                ...navStyle,
-                background: location.pathname === '/admin/users' ? 'rgba(255,255,255,.15)' : undefined,
-              }}
-            >
-              <TeamOutlined />
-              Usuários
+        </nav>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {user ? (
+            <Button type="text" size="small" onClick={logout} style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)' }}>
+              Sair
+            </Button>
+          ) : (
+            <Link to="/login" style={isActive('/login') ? navLinkActiveStyle : navLinkStyle}>
+              Entrar
             </Link>
           )}
         </div>
-        {user ? (
-          <Dropdown
-            menu={{
-              items: [
-                {
-                  key: 'logout',
-                  icon: <LogoutOutlined />,
-                  label: 'Sair',
-                  onClick: () => {
-                    logout()
-                    navigate('/login')
-                  },
-                },
-              ],
-            }}
-            placement="bottomRight"
-          >
-            <Button type="text" style={{ color: 'rgba(255,255,255,.85)' }}>
-              {user.username}
-            </Button>
-          </Dropdown>
-        ) : (
-          <Link to="/login" style={{ ...navStyle, marginLeft: 'auto' }}>
-            Entrar
-          </Link>
-        )}
       </Header>
       <Content style={{ padding: 24 }}>
         <Outlet />

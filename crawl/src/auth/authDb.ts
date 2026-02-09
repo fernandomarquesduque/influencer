@@ -143,7 +143,7 @@ export class AuthDb {
     this.db.prepare('DELETE FROM auth_user WHERE id = ?').run(id);
   }
 
-  /** Quantidade de requisições à API de busca feitas pelo usuário hoje (limite: 10/dia). */
+  /** Quantidade de requisições à API de busca feitas pelo usuário hoje (limite/dia definido em server: PUBLIC_MAX_REQUESTS_PER_DAY). */
   countPublicRequestsToday(userId: number): number {
     const today = new Date().toISOString().slice(0, 10);
     const row = this.db.prepare(
@@ -157,7 +157,7 @@ export class AuthDb {
     this.db.prepare('INSERT INTO auth_public_request (user_id, search_date) VALUES (?, ?)').run(userId, today);
   }
 
-  /** Quantidade de requisições à API de busca por IP hoje (limite: 10/dia). */
+  /** Quantidade de requisições à API de busca por IP hoje (limite/dia definido em server: PUBLIC_MAX_REQUESTS_PER_DAY). */
   countAnonymousRequestsToday(ipHash: string): number {
     const today = new Date().toISOString().slice(0, 10);
     const row = this.db.prepare(

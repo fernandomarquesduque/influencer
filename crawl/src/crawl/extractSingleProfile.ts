@@ -5,7 +5,9 @@ import {
   getFollowersFromEntity,
   getInfluencerRejectionDiagnostic,
   hasPostWithMinLikes,
+  isFollowingViewerFromEntity,
   isPersonOrCreator,
+  isPrivateFromEntity,
   qualifiesAsInfluencer,
   type InfluencerRejectionDiagnostic,
 } from '../utils/entityAccess.js';
@@ -13,7 +15,7 @@ import { buildSlimProfile } from '../utils/slimProfile.js';
 import { crawlLogExtract } from '../utils/crawlLogger.js';
 import type { CrawlStorage } from './runCrawl.js';
 
-const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? parseInt(process.env.MIN_FOLLOWERS, 10000) : 0;
+const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? (parseInt(process.env.MIN_FOLLOWERS, 10) || 0) : 0;
 const EXTRACT_TIMEOUT_MS = Number(process.env.PROFILE_PROCESS_TIMEOUT_MS) || 180_000;
 
 function buildConfigFromEnv(): CrawlConfig {
@@ -47,6 +49,8 @@ export interface ExtractSingleProfileResult {
   /** Motivo da rejeição (quando success=false e não foi erro de extração) */
   rejectionReason?: string;
   diagnostic?: InfluencerRejectionDiagnostic;
+  /** URL do perfil obrigatório para seguir (quando rejectionReason === 'nao_segue_perfil') */
+  followProfileUrl?: string;
   error?: string;
   followers?: number;
   postsSaved?: number;
@@ -89,14 +93,44 @@ export async function extractSingleProfile(
           }
           const { profile: rawProfile, posts } = extracted;
           const raw = rawProfile as Record<string, unknown>;
+
+          // 1ª regra (primeira a executar): deve seguir o perfil INSTAGRAM_PERFIL para poder receber o 2FA
+          const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');
+          if (requiredProfile && requiredProfile.length > 0) {
+            const followsRequired = isFollowingViewerFromEntity(raw);
+            if (!followsRequired) {
+              const followers = getFollowersFromEntity(raw);
+              const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
+              return {
+                success: false,
+                handle: cleanHandle,
+                saved: false,
+                rejectionReason: 'nao_segue_perfil',
+                diagnostic: { pass: false, reason: 'nao_segue_perfil', followers, followsRequiredProfile: false },
+                followProfileUrl,
+                followers,
+              };
+            }
+          }
+
           const followersFromRaw = getFollowersFromEntity(raw);
           const slim = buildSlimProfile(raw, cleanHandle, followersFromRaw, posts, 'seed', '');
-          const profileObj = slim as Record<string, unknown>;
-          const followers = getFollowersFromEntity(profileObj);
+          const followers = followersFromRaw > 0 ? followersFromRaw : getFollowersFromEntity(slim as Record<string, unknown>);
+
+          if (isPrivateFromEntity(raw)) {
+            return {
+              success: false,
+              handle: cleanHandle,
+              saved: false,
+              rejectionReason: 'perfil_privado',
+              diagnostic: { pass: false, reason: 'perfil_privado', followers, isPrivate: true },
+              followers,
+            };
+          }
 
           if (config.excludeBusinessProfiles) {
-            const pass = qualifiesAsInfluencer(profileObj, minRequired);
-            const diagnostic = getInfluencerRejectionDiagnostic(profileObj, minRequired, true);
+            const pass = qualifiesAsInfluencer(raw, minRequired);
+            const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, true);
             if (!pass) {
               return {
                 success: false,
@@ -108,8 +142,8 @@ export async function extractSingleProfile(
               };
             }
           } else {
-            if (!isPersonOrCreator(profileObj)) {
-              const diagnostic = getInfluencerRejectionDiagnostic(profileObj, minRequired, false);
+            if (!isPersonOrCreator(raw)) {
+              const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, false);
               return {
                 success: false,
                 handle: cleanHandle,
@@ -120,7 +154,7 @@ export async function extractSingleProfile(
               };
             }
             if (minRequired > 0 && followers < minRequired) {
-              const diagnostic = getInfluencerRejectionDiagnostic(profileObj, minRequired, false);
+              const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, false);
               return {
                 success: false,
                 handle: cleanHandle,

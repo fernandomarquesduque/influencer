@@ -1,9 +1,19 @@
 import { useState, useEffect } from 'react'
-import { Form, Input, Button, Card, message, Alert } from 'antd'
+import { Form, Input, Button, Card, message, Collapse } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
-import { requestVerificationCode, verifyProfile, extractProfileToBackend } from '../api'
-import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined } from '@ant-design/icons'
+import { requestVerificationCode, verifyProfile, extractProfileToBackend, type ExtractProfileResult } from '../api'
+import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+
+const REJECTION_REASON_LABELS: Record<string, string> = {
+  nao_segue_perfil: 'É necessário seguir o perfil oficial do programa no Instagram para receber o código de ativação por mensagem direta.',
+  perfil_privado: 'O perfil está privado; é necessário que seja público para participar do programa.',
+  estabelecimento_comercial: 'Perfil classificado como estabelecimento comercial (ex.: bar, restaurante, loja).',
+  conta_empresa: 'Conta do tipo empresa; aceitamos apenas perfis pessoais ou de criador.',
+  conta_tipo_desconhecido: 'Tipo de conta não identificado como pessoa ou criador.',
+  seguidores_abaixo_minimo: 'Número de seguidores abaixo do mínimo exigido para o seu tipo de conta.',
+  nenhum_post_com_curtidas_minimas: 'Nenhum post com o mínimo de curtidas exigido.',
+}
 
 const INSTALL_PHRASES = [
   'Verificando se o perfil é elegível...',
@@ -17,6 +27,169 @@ const INSTALL_PHRASES = [
 ]
 
 const INSTALL_DURATION_MS = 30_000 // barra avança ao longo de ~30 segundos
+
+/** Tela inteira: perfil não elegível + todas as regras + botão Entendi. */
+function RejectionFullScreen({
+  result,
+  onUnderstood,
+}: {
+  result: ExtractProfileResult
+  onUnderstood: () => void
+}) {
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [])
+
+  const reasonText = result.rejectionReason
+    ? (REJECTION_REASON_LABELS[result.rejectionReason] ?? result.rejectionReason)
+    : result.error ?? 'Perfil não atende aos critérios do programa.'
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        background: '#f8fafc',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+        fontFamily: "'Segoe UI', system-ui, sans-serif",
+        overflow: 'auto',
+        overflowX: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 520,
+          marginBottom: 20,
+        }}
+      >
+        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+          <ExclamationCircleOutlined style={{ fontSize: 44, color: '#ca8a04' }} />
+          <h1
+            style={{
+              fontSize: 18,
+              fontWeight: 700,
+              color: '#1e293b',
+              margin: '12px 0 4px',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            Perfil não elegível
+          </h1>
+          <p style={{ fontSize: 13, color: '#475569', margin: 0 }}>
+            @{result.handle} não atende aos critérios do programa.
+          </p>
+        </div>
+
+        <div
+          style={{
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: 10,
+            padding: '12px 14px',
+            marginBottom: 16,
+          }}
+        >
+          <strong style={{ color: '#b91c1c', fontSize: 12 }}>Motivo:</strong>{' '}
+          <span style={{ color: '#334155', fontSize: 12 }}>{reasonText}</span>
+          {result.rejectionReason === 'nao_segue_perfil' && result.followProfileUrl && (
+            <div style={{ marginTop: 10 }}>
+              <a
+                href={result.followProfileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  color: '#7c3aed',
+                  fontWeight: 600,
+                  fontSize: 12,
+                  textDecoration: 'none',
+                }}
+              >
+                Abrir perfil e seguir →
+              </a>
+            </div>
+          )}
+          {result.diagnostic && result.diagnostic.minRequired != null && (
+            <div style={{ marginTop: 8, fontSize: 12, color: '#475569' }}>
+              Mínimo exigido: {result.diagnostic.minRequired.toLocaleString('pt-BR')}
+            </div>
+          )}
+        </div>
+
+        <Collapse
+          size="small"
+          style={{
+            marginBottom: 20,
+            background: '#fff',
+            border: '1px solid #e2e8f0',
+            borderRadius: 10,
+          }}
+          items={[
+            {
+              key: 'regras',
+              label: (
+                <span style={{ color: '#1e293b', fontWeight: 600, fontSize: 13 }}>
+                  Regras de elegibilidade do programa
+                </span>
+              ),
+              children: (
+                <div style={{ paddingTop: 2, paddingBottom: 2 }}>
+                  <ul
+                    style={{
+                      margin: 0,
+                      paddingLeft: 18,
+                      lineHeight: 1.6,
+                      fontSize: 12,
+                      color: '#334155',
+                    }}
+                  >
+                    <li>É obrigatório <strong style={{ color: '#0f172a' }}>seguir o perfil oficial do programa</strong> no Instagram para receber o código de ativação por mensagem direta (2FA).</li>
+                    <li>O perfil precisa ser <strong style={{ color: '#0f172a' }}>público</strong> (não aceitamos perfis privados).</li>
+                    <li>O perfil deve ser de <strong style={{ color: '#0f172a' }}>pessoa ou criador</strong> (não aceitamos contas de empresa ou estabelecimentos como bares, restaurantes, lojas).</li>
+                    <li><strong style={{ color: '#0f172a' }}>Conta pessoal</strong>: é exigido o dobro do mínimo de seguidores configurado no programa.</li>
+                    <li><strong style={{ color: '#0f172a' }}>Conta criador</strong>: é exigido o mínimo de seguidores configurado.</li>
+                    <li>Se o tipo de conta não for identificado, é exigido o triplo do mínimo de seguidores.</li>
+                    <li>O perfil não pode ser classificado como <strong style={{ color: '#0f172a' }}>estabelecimento comercial</strong> (categoria, nome ou tipo de conta indicando negócio).</li>
+                    <li>Quando há regra de curtidas, é necessário ter <strong style={{ color: '#0f172a' }}>pelo menos um post</strong> com o número mínimo de curtidas exigido.</li>
+                  </ul>
+                </div>
+              ),
+            },
+          ]}
+        />
+      </div>
+
+      <Button
+        type="primary"
+        size="large"
+        onClick={onUnderstood}
+        style={{
+          height: 44,
+          minWidth: 140,
+          borderRadius: 10,
+          fontWeight: 600,
+          fontSize: 14,
+          background: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)',
+          border: 'none',
+        }}
+      >
+        Entendi
+      </Button>
+    </div>
+  )
+}
 
 function InstallationLoader() {
   const [phraseIndex, setPhraseIndex] = useState(0)
@@ -126,7 +299,7 @@ export default function Auth() {
   const [nickname, setNickname] = useState('')
   const [loading, setLoading] = useState(false)
   const [showInstallLoader, setShowInstallLoader] = useState(false)
-  const [rejectionError, setRejectionError] = useState<string | null>(null)
+  const [rejectionInfo, setRejectionInfo] = useState<ExtractProfileResult | null>(null)
   const [form] = Form.useForm()
 
   const savedNickname = (location.state as { nickname?: string })?.nickname
@@ -139,13 +312,13 @@ export default function Auth() {
   const onRequestCode = async (values: { nickname: string }) => {
     const n = (values.nickname ?? '').replace(/^@/, '').trim()
     if (!n) return
-    setRejectionError(null)
+    setRejectionInfo(null)
     setLoading(true)
     setShowInstallLoader(true)
     try {
       const extractResult = await extractProfileToBackend(n)
-      if (extractResult.saved === false) {
-        setRejectionError(extractResult.rejectionReason ?? extractResult.error ?? 'Perfil não elegível.')
+      if (!extractResult.success) {
+        setRejectionInfo(extractResult)
         return
       }
       const data = await requestVerificationCode(n)
@@ -191,13 +364,16 @@ export default function Auth() {
   const startOver = () => {
     setStep('nickname')
     setNickname('')
-    setRejectionError(null)
+    setRejectionInfo(null)
     form.resetFields()
   }
 
   return (
     <>
       {showInstallLoader && <InstallationLoader />}
+      {rejectionInfo && (
+        <RejectionFullScreen result={rejectionInfo} onUnderstood={startOver} />
+      )}
 
       <div
         style={{
@@ -292,15 +468,6 @@ export default function Auth() {
 
             {step === 'nickname' && (
               <>
-                {rejectionError && (
-                  <Alert
-                    type="error"
-                    message={rejectionError}
-                    closable
-                    onClose={() => setRejectionError(null)}
-                    style={{ marginBottom: 16, borderRadius: 8 }}
-                  />
-                )}
                 <p style={{ color: '#64748b', marginBottom: 20, fontSize: 14, lineHeight: 1.5 }}>
                   Digite seu <strong>@ do Instagram</strong>. Enviamos um código de ativação por <strong>mensagem direta</strong> no Instagram.
                 </p>

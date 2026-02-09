@@ -1,4 +1,5 @@
-const API_BASE = '/api'
+/** Em produção sob subpasta (ex.: /influencer) use VITE_API_BASE=/influencer/api */
+const API_BASE = (import.meta.env.VITE_API_BASE as string) || '/api'
 
 /** Token JWT definido pelo AuthContext após login. Usado em todas as requisições autenticadas. */
 let authToken: string | null = null
@@ -40,7 +41,10 @@ export function getProfilePicUrl(item: ProfileItem | Record<string, unknown> | n
   if (!item) return undefined
   const top = (item.profile_pic_url ?? item.hd_profile_pic_url) as string | undefined
   if (top && typeof top === 'string') return top
-  const u = item.data?.user as Record<string, unknown> | undefined
+  const data = (item as Record<string, unknown>).data
+  const u = (data && typeof data === 'object' && 'user' in data)
+    ? (data as { user?: Record<string, unknown> }).user
+    : undefined
   const fromUser = (u?.profile_pic_url ?? u?.hd_profile_pic_url) as string | undefined
   if (fromUser && typeof fromUser === 'string') return fromUser
   const hdInfo = u?.hd_profile_pic_url_info
@@ -181,7 +185,10 @@ export interface ProfilesSearchResponse {
   facets?: ProfilesSearchFacets
 }
 
-export async function fetchProfilesSearch(query: ProfilesSearchQuery): Promise<ProfilesSearchResponse> {
+export async function fetchProfilesSearch(
+  query: ProfilesSearchQuery,
+  options?: { signal?: AbortSignal }
+): Promise<ProfilesSearchResponse> {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
   if (query.minFollowers != null) params.set('minFollowers', String(query.minFollowers))
@@ -214,6 +221,7 @@ export async function fetchProfilesSearch(query: ProfilesSearchQuery): Promise<P
   if (query.offset != null) params.set('offset', String(query.offset))
   const res = await fetch(`${API_BASE}/profiles/search?${params.toString()}`, {
     headers: { ...authHeaders() },
+    signal: options?.signal,
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
@@ -384,6 +392,8 @@ export interface ExtractProfileResult {
   saved?: boolean
   handle: string
   rejectionReason?: string
+  /** URL do perfil para seguir (quando rejectionReason === 'nao_segue_perfil') */
+  followProfileUrl?: string
   diagnostic?: {
     pass: boolean
     reason?: string
@@ -391,6 +401,8 @@ export interface ExtractProfileResult {
     followers: number
     category?: string
     isBusiness?: boolean
+    isPrivate?: boolean
+    followsRequiredProfile?: boolean
     minRequired?: number
   }
   error?: string

@@ -336,6 +336,15 @@ export async function extractProfile(
       return null;
     }
 
+    // Perfil não existe: Instagram exibe "Sorry, this page isn't available" (ou equivalente)
+    const pageNotAvailable = await page.evaluate(() => {
+      const text = document.body?.innerText ?? '';
+      return /isn't available|page isn't available|não está disponível|não encontrado/i.test(text);
+    }).catch(() => false);
+    if (pageNotAvailable) {
+      throw new Error('Perfil não encontrado');
+    }
+
     await page.waitForTimeout(delayMs(pageAlreadyOnProfile ? 400 : 1000));
 
     if (pageAlreadyOnProfile) {

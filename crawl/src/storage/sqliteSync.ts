@@ -211,10 +211,7 @@ export class SqliteSync {
     }
   }
 
-  getActivation(profileHandle: string): ProfileActivationData | null {
-    const handle = profileHandle.toLowerCase().replace(/^@/, '');
-    const row = this.getActivationStmt.get(handle) as Record<string, unknown> | undefined;
-    if (!row) return null;
+  private rowToActivation(row: Record<string, unknown>): ProfileActivationData {
     const updated_at = row.updated_at as string;
     let pricing: PricingData | undefined;
     const pricingRaw = row.pricing;
@@ -255,6 +252,33 @@ export class SqliteSync {
       activated_at: row.activated_at as string | undefined,
       updated_at: typeof updated_at === 'string' ? updated_at : new Date().toISOString(),
     };
+  }
+
+  getActivation(profileHandle: string): ProfileActivationData | null {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    const row = this.getActivationStmt.get(handle) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return this.rowToActivation(row);
+  }
+
+  /** Retorna ativações para vários handles em uma única query (bem mais rápido que N×getActivation). */
+  getActivationsBatch(handles: string[]): Map<string, ProfileActivationData> {
+    const out = new Map<string, ProfileActivationData>();
+    if (handles.length === 0) return out;
+    const normalized = [...new Set(handles.map((h) => h.toLowerCase().replace(/^@/, '')))];
+    const placeholders = normalized.map(() => '?').join(',');
+    const stmt = this.db.prepare(`
+      SELECT profile_handle, address, city, state, neighborhood, country,
+             whatsapp, tiktok, facebook, linkedin, twitter, websites,
+             gender, description, about_topics, pricing, content_type, activated_at, updated_at
+      FROM profile_activation WHERE profile_handle IN (${placeholders})
+    `);
+    const rows = stmt.all(...normalized) as Array<Record<string, unknown> & { profile_handle: string }>;
+    for (const row of rows) {
+      const handle = String(row.profile_handle ?? '').toLowerCase().replace(/^@/, '');
+      if (handle) out.set(handle, this.rowToActivation(row));
+    }
+    return out;
   }
 
   saveActivation(profileHandle: string, data: Omit<ProfileActivationData, 'updated_at' | 'activated_at'> & { activated_at?: string }): void {

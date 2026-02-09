@@ -6,6 +6,20 @@
 import type { CompositeStorage } from '../storage/compositeStorage.js';
 import type { ProfileActivationData } from '../storage/sqliteSync.js';
 
+/** TTL do cache em memória dos dados do RocksDB (perfis + posts). Reduz drasticamente o tempo da 2ª busca em diante. */
+const SEARCH_DATA_CACHE_TTL_MS = Number(process.env.SEARCH_CACHE_TTL_MS) || 60_000; // 60s padrão
+
+let searchDataCache: {
+  profilesRaw: { key: string; value: Record<string, unknown> }[];
+  postsRaw: { key: string; value: Record<string, unknown> }[];
+  expiresAt: number;
+} | null = null;
+
+/** Invalida o cache da busca (útil após salvar perfis/posts). */
+export function clearSearchCache(): void {
+  searchDataCache = null;
+}
+
 function getIn(obj: unknown, ...paths: string[]): unknown {
   if (obj == null) return undefined;
   for (const path of paths) {
@@ -169,6 +183,9 @@ function getPostTextForSearch(post: Record<string, unknown>): string {
   return parts.join(' ');
 }
 
+/** Máximo de posts usados para montar o texto pesquisável (evita custo com perfis com muitos posts). */
+const MAX_POSTS_FOR_SEARCH = 30;
+
 /** Monta um único texto pesquisável do perfil + posts (handle, nome, bio, categorias, hashtags, legendas). */
 function getSearchableText(
   profile: Record<string, unknown>,
@@ -190,9 +207,32 @@ function getSearchableText(
     ...categories,
     ...categories.map((c) => c.replace(/\s+/g, ' ')),
   ];
-  for (const p of posts) {
-    parts.push(getPostTextForSearch(p));
+  for (let i = 0; i < Math.min(posts.length, MAX_POSTS_FOR_SEARCH); i++) {
+    parts.push(getPostTextForSearch(posts[i]!));
   }
+  return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Texto pesquisável só do perfil (sem posts). Usado para early match e evitar custo com posts quando desnecessário. */
+function getSearchableTextProfileOnly(
+  profile: Record<string, unknown>,
+  key: string,
+  fullName: string,
+  categories: string[]
+): string {
+  const handle = getHandle(profile, key);
+  const username = (profile.username ?? getDataUser(profile)?.username ?? '') as string;
+  const bio = getBiography(profile);
+  const discoveredValue = (profile._discovered_value as string) ?? '';
+  const parts = [
+    handle,
+    fullName,
+    username,
+    bio,
+    discoveredValue,
+    ...categories,
+    ...categories.map((c) => c.replace(/\s+/g, ' ')),
+  ];
   return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ');
 }
 
@@ -496,10 +536,23 @@ export async function searchProfiles(
     if (arr.length > 0) pricingFilters[pricingActivationKeys[i]] = arr;
   }
 
-  const [profilesRaw, postsRaw] = await Promise.all([
-    db.getByBucket<Record<string, unknown>>('profile'),
-    db.getByBucket<Record<string, unknown>>('post'),
-  ]);
+  const now = Date.now();
+  let profilesRaw: { key: string; value: Record<string, unknown> }[];
+  let postsRaw: { key: string; value: Record<string, unknown> }[];
+  if (searchDataCache && searchDataCache.expiresAt > now) {
+    profilesRaw = searchDataCache.profilesRaw;
+    postsRaw = searchDataCache.postsRaw;
+  } else {
+    [profilesRaw, postsRaw] = await Promise.all([
+      db.getByBucket<Record<string, unknown>>('profile'),
+      db.getByBucket<Record<string, unknown>>('post'),
+    ]);
+    searchDataCache = {
+      profilesRaw,
+      postsRaw,
+      expiresAt: now + SEARCH_DATA_CACHE_TTL_MS,
+    };
+  }
 
   const postsByHandle = new Map<string, Record<string, unknown>[]>();
   for (const { key, value } of postsRaw) {
@@ -541,10 +594,16 @@ export async function searchProfiles(
 
     let searchRelevance: number | undefined;
     if (q) {
-      const searchableText = getSearchableText(profile, key, fullName, categories, posts);
-      const { match, relevance } = matchesQuery(searchableText, q);
-      if (!match) continue;
-      searchRelevance = relevance;
+      const textProfileOnly = getSearchableTextProfileOnly(profile, key, fullName, categories);
+      const { match: matchProfile, relevance: relProfile } = matchesQuery(textProfileOnly, q);
+      if (matchProfile) {
+        searchRelevance = relProfile;
+      } else {
+        const searchableText = getSearchableText(profile, key, fullName, categories, posts);
+        const { match, relevance } = matchesQuery(searchableText, q);
+        if (!match) continue;
+        searchRelevance = relevance;
+      }
     }
 
     if (categoriesFilter.length > 0) {
@@ -587,9 +646,11 @@ export async function searchProfiles(
     return 0;
   };
 
-  /** Enriquece cada item com dados de ativação (SQLite) antes de filtrar por ativação/local/redes. */
+  /** Enriquece cada item com dados de ativação (SQLite) em uma única query em lote. */
+  const handles = items.map((i) => i.handle);
+  const activationsMap = db.getActivationsBatch(handles);
   for (const item of items) {
-    const act = db.getActivation(item.handle);
+    const act = activationsMap.get(item.handle);
     if (act) item.activation = act;
   }
 

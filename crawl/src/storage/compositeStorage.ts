@@ -10,7 +10,9 @@ import type { SqliteSync, ProfileActivationData } from './sqliteSync.js';
 export class CompositeStorage {
   constructor(
     private readonly rocks: RocksDBStorage,
-    private readonly sqlite: SqliteSync
+    private readonly sqlite: SqliteSync,
+    /** Chamado após save/savePosts para invalidar cache da busca (ex.: clearSearchCache). */
+    private readonly onInvalidateSearch?: () => void
   ) { }
 
   async save(entity: Entity & { handle: string }): Promise<{ path: string; bytes: number }> {
@@ -20,6 +22,7 @@ export class CompositeStorage {
     } catch (e) {
       console.warn('[CompositeStorage] SQLite saveProfile:', e instanceof Error ? e.message : e);
     }
+    this.onInvalidateSearch?.();
     return result;
   }
 
@@ -30,6 +33,7 @@ export class CompositeStorage {
     } catch (e) {
       console.warn('[CompositeStorage] SQLite savePosts:', e instanceof Error ? e.message : e);
     }
+    this.onInvalidateSearch?.();
     return n;
   }
 
@@ -37,8 +41,8 @@ export class CompositeStorage {
     return this.rocks.listHandles();
   }
 
-  async getByBucket<T = unknown>(bucket: string): Promise<{ key: string; value: T }[]> {
-    return this.rocks.getByBucket<T>(bucket);
+  async getByBucket<T = unknown>(bucket: string, keyPrefix?: string): Promise<{ key: string; value: T }[]> {
+    return this.rocks.getByBucket<T>(bucket, keyPrefix);
   }
 
   async listKeys(bucket: string): Promise<string[]> {
@@ -56,6 +60,11 @@ export class CompositeStorage {
   /** Dados de ativação do perfil (cadastro completo na plataforma), do SQLite. */
   getActivation(profileHandle: string): ProfileActivationData | null {
     return this.sqlite.getActivation(profileHandle);
+  }
+
+  /** Várias ativações em uma query (uso em listagem/busca para ganho de performance). */
+  getActivationsBatch(handles: string[]): Map<string, ProfileActivationData> {
+    return this.sqlite.getActivationsBatch(handles);
   }
 
   async clearAll(): Promise<void> {

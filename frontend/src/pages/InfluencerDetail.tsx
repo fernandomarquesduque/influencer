@@ -31,7 +31,6 @@ import {
   FacebookOutlined,
   LinkedinOutlined,
   TwitterOutlined,
-  BarChartOutlined,
   TagOutlined,
   TeamOutlined,
   RiseOutlined,
@@ -159,7 +158,7 @@ export default function InfluencerDetail() {
 
   const userData = profile?.data?.user as Record<string, unknown> | undefined
   const displayHandle = (profile?.handle ?? profile?.username ?? profile?.key ?? handle ?? '') as string
-  const fullName = (profile?.full_name ?? userData?.full_name) as string | undefined
+  const fullName: string | undefined = profile?.full_name ?? (userData?.full_name != null ? String(userData.full_name) : undefined)
   const followersCount = typeof profile?.followers_count === 'number'
     ? profile.followers_count
     : (typeof userData?.follower_count === 'number' ? userData.follower_count : 0)
@@ -171,8 +170,7 @@ export default function InfluencerDetail() {
     : (typeof profile?.media_count_visible === 'number' ? profile.media_count_visible : (typeof userData?.media_count === 'number' ? userData.media_count : undefined))
   const categories = (Array.isArray(profile?.categories) ? profile.categories : []) as string[]
   const bio = (profile?.biography ?? userData?.biography) as string | undefined
-  const externalUrl = (userData?.external_url ?? profile?.external_url) as string | undefined
-  const isVerified = profile?.is_verified ?? userData?.is_verified
+  const isVerified = Boolean(profile?.is_verified ?? userData?.is_verified)
   const collectedAt = (profile as Record<string, unknown>)?._collected_at as string | undefined
   const discoveredBy = (profile as Record<string, unknown>)?._discovered_by as string | undefined
   const discoveredValue = (profile as Record<string, unknown>)?._discovered_value as string | undefined
@@ -209,10 +207,9 @@ export default function InfluencerDetail() {
 
   if (!profile && !profileLoading) {
     return (
-      <Empty
-        description="Perfil não encontrado"
-        extra={<Button type="primary" onClick={() => navigate('/')}>Voltar à lista</Button>}
-      />
+      <Empty description="Perfil não encontrado">
+        <Button type="primary" onClick={() => navigate('/')}>Voltar à lista</Button>
+      </Empty>
     )
   }
 
@@ -263,8 +260,8 @@ export default function InfluencerDetail() {
                   {!isRedacted && isVerified && <Tooltip title="Verificado"><span style={{ color: '#3897f0' }}>✓</span></Tooltip>}
                   {!isRedacted && hasActivationData && <Tooltip title="Cadastro ativo"><SafetyOutlined style={{ color: '#52c41a' }} /></Tooltip>}
                   {!isRedacted && costTier ? (
-                    <Tooltip title={`Custo médio: ${costTier.label}`}>
-                      <Tag color="gold" style={{ margin: 0, fontWeight: 600 }}>{`${costTier.symbol} ${costTier.label}`}</Tag>
+                    <Tooltip title={'Custo médio: ' + String(costTier.label)}>
+                      <Tag color="gold" style={{ margin: 0, fontWeight: 600 }}>{String(costTier.symbol)} {String(costTier.label)}</Tag>
                     </Tooltip>
                   ) : null}
                 </div>

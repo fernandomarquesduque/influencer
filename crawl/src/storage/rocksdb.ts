@@ -113,12 +113,17 @@ export class RocksDBStorage {
 
   /**
    * Retorna todos os itens de um bucket como { key, value }.
+   * Se keyPrefix for informado, retorna apenas itens cuja chave (após "bucket:") começa com keyPrefix
+   * (ex.: para bucket "post", keyPrefix "jonathas_avis:" retorna só posts desse perfil).
    */
-  async getByBucket<T = unknown>(bucket: string): Promise<{ key: string; value: T }[]> {
+  async getByBucket<T = unknown>(bucket: string, keyPrefix?: string): Promise<{ key: string; value: T }[]> {
     const db = await this.getDb();
-    const prefix = `${bucket}:`;
+    const prefix = keyPrefix != null ? `${bucket}:${keyPrefix}` : `${bucket}:`;
+    const limitKey = keyPrefix != null
+      ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+      : prefix + '\xff';
     const items: { key: string; value: T }[] = [];
-    const stream = db.iterator({ gte: prefix, lt: prefix + '\xff' });
+    const stream = db.iterator({ gte: prefix, lt: limitKey });
     try {
       for await (const [fullKey, value] of stream) {
         const k = parseKey(fullKey, bucket);

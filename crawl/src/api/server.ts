@@ -9,7 +9,7 @@ import { SqliteSync } from '../storage/sqliteSync.js';
 import { CompositeStorage } from '../storage/compositeStorage.js';
 import { runCrawl } from '../crawl/runCrawl.js';
 import { extractSingleProfile } from '../crawl/extractSingleProfile.js';
-import { searchProfiles, type ProfilesSearchQuery } from './profilesSearch.js';
+import { searchProfiles, clearSearchCache, type ProfilesSearchQuery } from './profilesSearch.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { sendVerificationCode } from '../instagramClient/sendDirectMessage.js';
 import { AuthDb } from '../auth/authDb.js';
@@ -22,16 +22,27 @@ import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
 const require = createRequire(import.meta.url);
 const openApiSpec = require('./openapi.json');
 
-const PORT = Number(process.env.API_PORT) || 3000;
+/** iisnode define process.env.PORT; fora do IIS usamos API_PORT ou 3500 */
+const PORT = Number(process.env.PORT) || Number(process.env.API_PORT) || 3500;
 const rocksPath = process.env.STORAGE_DB_PATH ?? './data/rocksdb';
 const sqlitePath = process.env.SQLITE_DB_PATH ?? './data/influencer.db';
 
 const app = express();
 app.use(express.json());
 
+/** iisnode: a Application IIS em /api repassa só o path relativo (ex.: /profiles/search). Prefixa /api para as rotas. */
+app.use((req, _res, next) => {
+  if (req.path && !req.path.startsWith('/api')) {
+    const q = req.url?.includes('?') ? '?' + req.url.split('?')[1] : '';
+    req.url = '/api' + req.path + q;
+    (req as { path?: string }).path = '/api' + req.path;
+  }
+  next();
+});
+
 const rocks = new RocksDBStorage({ dbPath: rocksPath });
 const sqlite = new SqliteSync(sqlitePath);
-const db = new CompositeStorage(rocks, sqlite);
+const db = new CompositeStorage(rocks, sqlite, clearSearchCache);
 const authDb = new AuthDb(sqlitePath);
 
 /** Middleware: extrai JWT e define req.user (opcional). */
@@ -463,7 +474,7 @@ app.get('/api/profiles', async (req: Request, res: Response) => {
 });
 
 const PUBLIC_PAGE_SIZE = 12;
-const PUBLIC_MAX_REQUESTS_PER_DAY = 10;
+const PUBLIC_MAX_REQUESTS_PER_DAY = 200;
 
 /** Retorna true se o visitante é público (ou anônimo) e já atingiu o limite de requisições/dia — nesse caso as APIs de perfil/ativação/posts devem retornar dados redigidos. Admin e assinante nunca sofrem limite. */
 function publicAtLimit(req: RequestWithAuth): boolean {
@@ -526,7 +537,7 @@ function redactPostsItems(items: Array<{ key: string;[k: string]: unknown }>): A
   });
 }
 
-/** Listagem de perfis com filtros avançados e engajamento. Público (anônimo ou scope public): 1ª página, até 10 requisições/dia. */
+/** Listagem de perfis com filtros avançados e engajamento. Público (anônimo ou scope public): 1ª página, até PUBLIC_MAX_REQUESTS_PER_DAY requisições/dia. */
 app.get('/api/profiles/search', async (req: RequestWithAuth, res: Response) => {
   try {
     const q = (req.query.q as string)?.trim();
@@ -546,7 +557,7 @@ app.get('/api/profiles/search', async (req: RequestWithAuth, res: Response) => {
         const userId = Number(req.user.sub);
         const count = authDb.countPublicRequestsToday(userId);
         if (count >= PUBLIC_MAX_REQUESTS_PER_DAY) {
-          res.status(403).json({ error: 'Limite de 10 buscas por dia. Seja assinante para buscar sem limite.', code: 'PUBLIC_SEARCH_LIMIT' });
+          res.status(403).json({ error: `Limite de ${PUBLIC_MAX_REQUESTS_PER_DAY} buscas por dia. Seja assinante para buscar sem limite.`, code: 'PUBLIC_SEARCH_LIMIT' });
           return;
         }
         authDb.addPublicRequest(userId);
@@ -555,7 +566,7 @@ app.get('/api/profiles/search', async (req: RequestWithAuth, res: Response) => {
         const ipHash = crypto.createHash('sha256').update(ip + (process.env.ANON_SEARCH_SALT || '')).digest('hex');
         const count = authDb.countAnonymousRequestsToday(ipHash);
         if (count >= PUBLIC_MAX_REQUESTS_PER_DAY) {
-          res.status(403).json({ error: 'Limite de 10 buscas por dia. Faça login ou seja assinante para mais.', code: 'PUBLIC_SEARCH_LIMIT' });
+          res.status(403).json({ error: `Limite de ${PUBLIC_MAX_REQUESTS_PER_DAY} buscas por dia. Faça login ou seja assinante para mais.`, code: 'PUBLIC_SEARCH_LIMIT' });
           return;
         }
         authDb.addAnonymousRequest(ipHash);
@@ -712,10 +723,9 @@ app.get('/api/posts', async (req: RequestWithAuth, res: Response) => {
     const profileFilter = (req.query.profile as string)?.toLowerCase().replace(/^@/, '');
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Number(req.query.offset) || 0;
-    let items = await db.getByBucket('post');
-    if (profileFilter) {
-      items = items.filter((i) => i.key.startsWith(profileFilter + ':'));
-    }
+    const items = profileFilter
+      ? await db.getByBucket('post', profileFilter + ':')
+      : await db.getByBucket('post');
     const total = items.length;
     const slice = items.slice(offset, offset + limit).map(({ key, value }) => {
       const item = value as Record<string, unknown>;
