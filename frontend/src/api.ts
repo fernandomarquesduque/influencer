@@ -301,7 +301,7 @@ export async function verifyProfile(
   verified: boolean
   profile_handle: string
   token?: string
-  user?: { id: number; username: string; scope: string; profile_handle: string | null }
+  user?: { id: number; username: string; scope: AuthScope; profile_handle: string | null }
 }> {
   const res = await fetch(`${API_BASE}/auth/verify-profile`, {
     method: 'POST',
