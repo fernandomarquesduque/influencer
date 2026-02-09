@@ -92,26 +92,38 @@ const ACCOUNT_TYPE_PERSONAL = 1;
 const ACCOUNT_TYPE_CREATOR = 2;
 const ACCOUNT_TYPE_BUSINESS = 3;
 
-/** Categorias que indicam estabelecimento comercial. Termos mais específicos; não incluir "salon"/"salão" para não excluir influenciadoras de beleza (ex.: Rafaella Cassol). */
-const ESTABLISHMENT_CATEGORY_KEYWORDS = new Set([
-  'restaurante', 'lanche', 'ifood', 'cafe', 'café', 'lanches', 'store', 'loja', 'lojas', 'restaurant', 'bar', 'café', 'cafe', 'lanchonete', 'padaria', 'bakery',
-  'hotel', 'pousada', 'loja', 'clínica', 'clinica', 'clinic',
-  'academia', 'gym', 'farmácia', 'farmacia', 'pharmacy', 'supermercado',
-  'pizzaria', 'hamburgueria', 'sorveteria', 'confeitaria', 'balada',
-  'nightclub', 'pub', 'cervejaria', 'brewery', 'vinícola', 'winery', 'food truck',
-  'gastrobar', 'gastropub', 'gastronomy',
-  'imobiliária', 'imobiliaria', 'imóveis', 'imoveis', 'real estate', 'realty',
-]);
-
-/** Termos no handle/username que indicam estabelecimento (ex.: barsaojorgetatuape, santomarestaurante). */
-const ESTABLISHMENT_HANDLE_KEYWORDS = new Set([
-  'gastrobar', 'gastropub', 'lanche', 'lanches', 'ifood', 'cafe', 'café', 'store', 'loja', 'lojas', 'restaurante', 'restaurant', 'pizzaria', 'lanchonete',
-  'padaria', 'hamburgueria', 'sorveteria', 'confeitaria', 'cervejaria', 'vinicola', 'winery',
-  'bakery', 'quintal', 'bistro', 'brasserie', 'steakhouse', 'grill', 'kitchen',
-  'rooftop', 'lounge',
-  'imoveis', 'imobiliaria', 'realestate', 'realty',
+/** Termos que indicam estabelecimento comercial (categoria ou handle). Não incluir "salon"/"salão" para não excluir influenciadoras de beleza (ex.: Rafaella Cassol). */
+const ESTABLISHMENT_KEYWORDS = new Set([
+  'restaurante', 'radio', 'clinica', 'studio', 'estudio', 'lanche', 'lanches', 'ifood', 'cafe', 'café', 'store', 'loja', 'lojas', 'restaurant', 'bar', 'lanchonete', 'padaria', 'bakery',
+  'hotel', 'pousada', 'clinic', 'academia', 'gym', 'farmácia', 'farmacia', 'pharmacy', 'supermercado',
+  'pizzaria', 'hamburgueria', 'sorveteria', 'confeitaria', 'balada', 'nightclub', 'pub', 'cervejaria', 'brewery', 'vinícola', 'winery', 'food truck',
+  'gastrobar', 'gastropub', 'gastronomy', 'quintal', 'bistro', 'brasserie', 'steakhouse', 'grill', 'kitchen', 'rooftop', 'lounge',
+  'imobiliária', 'imobiliaria', 'imóveis', 'imoveis', 'real estate', 'realty', 'realestate',
   'barsao', 'santomar',
 ]);
+
+/** Extrai curtidas de um post Entity (NormalizedPost ou formato legado). */
+function getLikesFromPost(post: unknown): number | undefined {
+  if (post == null || typeof post !== 'object') return undefined;
+  const o = post as Record<string, unknown>;
+  const metrics = o.metrics;
+  if (metrics != null && typeof metrics === 'object') {
+    const likes = (metrics as Record<string, unknown>).likes;
+    if (typeof likes === 'number' && Number.isFinite(likes)) return Math.floor(likes);
+  }
+  const likeCount = o.like_count;
+  if (typeof likeCount === 'number' && Number.isFinite(likeCount)) return Math.floor(likeCount);
+  return undefined;
+}
+
+/** Verifica se pelo menos um post tem mais que minLikes curtidas. */
+export function hasPostWithMinLikes(posts: unknown[], minLikes: number): boolean {
+  if (minLikes <= 0 || !Array.isArray(posts) || posts.length === 0) return true;
+  return posts.some((p) => {
+    const likes = getLikesFromPost(p);
+    return likes != null && likes > minLikes;
+  });
+}
 
 function normalizeCategory(cat: unknown): string {
   if (cat == null) return '';
@@ -144,12 +156,12 @@ export function isBusinessFromEntity(entity: Record<string, unknown>): boolean {
   const category = getIn(entity, 'data.user.category', 'category');
   const categoryStr = normalizeCategory(category);
   const categoryMatchesEstablishment = categoryStr
-    ? [...ESTABLISHMENT_CATEGORY_KEYWORDS].some((kw) => categoryStr.includes(kw))
+    ? [...ESTABLISHMENT_KEYWORDS].some((kw) => categoryStr.includes(kw))
     : false;
 
   const handleStr = getHandleOrUsername(entity);
   const handleMatchesEstablishment = handleStr
-    ? [...ESTABLISHMENT_HANDLE_KEYWORDS].some((kw) => handleStr.includes(kw))
+    ? [...ESTABLISHMENT_KEYWORDS].some((kw) => handleStr.includes(kw))
     : false;
 
   if (handleMatchesEstablishment) return true;

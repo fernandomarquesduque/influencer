@@ -16,6 +16,7 @@ import { ArrowLeftOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { fetchProfile, fetchProfileActivation, saveProfileActivation, getProfilePicUrl, proxyImageUrl, type ProfileActivation, type PricingData } from '../api'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
 import { PRICE_BUCKETS, PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
+import { useAuth } from '../contexts/AuthContext'
 
 const { Title, Text } = Typography
 
@@ -32,6 +33,7 @@ const PRICE_OPTIONS = PRICE_BUCKETS.map((b) => ({ value: b.value, label: b.label
 export default function Activate() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
+  const { canEditProfile } = useAuth()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -40,6 +42,10 @@ export default function Activate() {
 
   useEffect(() => {
     if (!handle) return
+    if (!canEditProfile(handle)) {
+      navigate('/', { replace: true })
+      return
+    }
     let cancelled = false
     setLoading(true)
     Promise.all([
@@ -121,6 +127,7 @@ export default function Activate() {
         pricing: Object.keys(pricingData).length ? pricingData : undefined,
       })
       message.success('Cadastro ativado com sucesso!')
+      navigate(`/influencer/${encodeURIComponent(handle)}`, { replace: true })
     } catch {
       message.error('Falha ao salvar. Tente novamente.')
     } finally {

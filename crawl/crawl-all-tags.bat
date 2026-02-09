@@ -4,10 +4,17 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "LIMIT=%~1"
-if "%LIMIT%"=="" set "LIMIT=1000"
+if "%LIMIT%"=="" set "LIMIT=200"
+
+set "DELAY_EXTRA=%~2"
+if not "%DELAY_EXTRA%"=="" (
+  set "DELAY_ARG=--delay-extra %DELAY_EXTRA%"
+) else (
+  set "DELAY_ARG="
+)
 
 echo Iniciando fila de crawl (PT-BR): %LIMIT% perfis por hashtag.
-echo Uso: crawl-influenciadores-pt.bat [limite]   ex: crawl-influenciadores-pt.bat 500
+echo Uso: crawl-all-tags.bat [limite] [delay-extra-ms]   ex: crawl-all-tags.bat 500 2000
 echo.
 
 REM =====================================================
@@ -51,11 +58,29 @@ REM =====================================================
 set "TAGS=%TAGS% empreendedorismo negocios marketingdigital negociolocal barbearia salaodebeleza estetica manicure"
 
 REM =====================================================
-REM EXECUCAO
+REM Embaralha as tags para cada execucao ser diferente
+REM =====================================================
+set "TAGS_TMP=%TEMP%\crawl-tags-%RANDOM%.txt"
+echo %TAGS%> "%TAGS_TMP%"
+for /f "usebackq delims=" %%L in (`powershell -NoProfile -Command "$t = (Get-Content -Raw '%TAGS_TMP%').Trim().Split(); $shuffled = $t | Sort-Object { Get-Random }; $shuffled -join ' '"`) do set "TAGS=%%L"
+del /q "%TAGS_TMP%" 2>nul
+echo Ordem desta execucao (embaralhada): %TAGS%
+echo.
+
+REM =====================================================
+REM EXECUCAO (delay varia por hashtag para parecer mais humano)
 REM =====================================================
 for %%T in (%TAGS%) do (
-  echo === Crawling hashtag: %%T - limit %LIMIT% ===
-  npx tsx src/cli/crawl-hashtag.ts --tag "%%T" --limit %LIMIT%
+  set "TAG_DELAY=%DELAY_EXTRA%"
+  if not "!TAG_DELAY!"=="" (
+    set /a "RAND=!RANDOM! * 1500 / 32768"
+    set /a "TAG_DELAY=!TAG_DELAY!+!RAND!"
+    echo === Crawling hashtag: %%T - limit %LIMIT% - delay-extra !TAG_DELAY!ms ===
+    npx tsx src/cli/crawl-hashtag.ts --tag "%%T" --limit %LIMIT% --delay-extra !TAG_DELAY!
+  ) else (
+    echo === Crawling hashtag: %%T - limit %LIMIT% ===
+    npx tsx src/cli/crawl-hashtag.ts --tag "%%T" --limit %LIMIT%
+  )
   if errorlevel 1 (
     echo [ERRO] Falha ao processar %%T. Continuando...
   )

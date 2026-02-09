@@ -4,7 +4,7 @@ import { discoverAndProcessByHashtag, type DiscoveredProfileRef } from '../disco
 import { extractProfile } from '../profileExtractor/index.js';
 import type { Page } from 'playwright';
 import { crawlLog, crawlLogExtract } from '../utils/crawlLogger.js';
-import { getFollowersFromEntity, isPersonOrCreator, qualifiesAsInfluencer } from '../utils/entityAccess.js';
+import { getFollowersFromEntity, hasPostWithMinLikes, isPersonOrCreator, qualifiesAsInfluencer } from '../utils/entityAccess.js';
 import { reset429Run } from '../utils/rateLimit429.js';
 import { buildSlimProfile } from '../utils/slimProfile.js';
 /** Storage usado pelo crawl: RocksDB ou Composite (RocksDB + SQLite). */
@@ -15,7 +15,7 @@ export interface CrawlStorage {
   clearAll(): Promise<void>;
 }
 
-const MIN_FOLLOWERS_FLOOR = 10000;
+const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? parseInt(process.env.MIN_FOLLOWERS, 10000) : 0;
 const PROFILE_PROCESS_TIMEOUT_MS = Number(process.env.PROFILE_PROCESS_TIMEOUT_MS) || 180_000;
 const PROFILE_PROCESS_MAX_RETRIES = 1;
 
@@ -28,6 +28,8 @@ function buildConfigFromEnv(): CrawlConfig {
     return n;
   })();
   const minFollowersToSave = raw === 0 ? 0 : Math.max(raw, MIN_FOLLOWERS_FLOOR);
+  const minPostLikesRaw = parseInt(process.env.MIN_POST_LIKES ?? '0', 10);
+  const minPostLikesToSave = Number.isNaN(minPostLikesRaw) || minPostLikesRaw < 0 ? 0 : minPostLikesRaw;
   return {
     ...DEFAULT_CRAWL_CONFIG,
     maxPostsPerTag: parseInt(process.env.MAX_POSTS_PER_TAG ?? String(DEFAULT_CRAWL_CONFIG.maxPostsPerTag), 10) || DEFAULT_CRAWL_CONFIG.maxPostsPerTag,
@@ -35,6 +37,7 @@ function buildConfigFromEnv(): CrawlConfig {
     headless: process.env.HEADFUL !== 'true',
     authStatePath: process.env.AUTH_STATE_PATH ?? DEFAULT_CRAWL_CONFIG.authStatePath,
     minFollowersToSave,
+    minPostLikesToSave,
     excludeBusinessProfiles: process.env.EXCLUDE_BUSINESS_PROFILES !== 'false',
     maxPostsToAnalyzeForInsights: parseInt(process.env.MAX_POSTS_FOR_INSIGHTS ?? String(DEFAULT_CRAWL_CONFIG.maxPostsToAnalyzeForInsights), 10) || DEFAULT_CRAWL_CONFIG.maxPostsToAnalyzeForInsights,
   };
@@ -97,6 +100,13 @@ async function processOneProfileWithTimeout(
             throw new Error('FILTER_REJECT');
           }
         }
+        if (config.minPostLikesToSave > 0) {
+          if (!hasPostWithMinLikes(posts, config.minPostLikesToSave)) {
+            crawlLogExtract(`@${ref.handle} regra de curtidas NÃO validada: nenhum post com mais de ${config.minPostLikesToSave} curtidas, pulando`);
+            throw new Error('FILTER_REJECT');
+          }
+          crawlLogExtract(`@${ref.handle} regra de curtidas validada: pelo menos 1 post com > ${config.minPostLikesToSave} curtidas`);
+        }
         await storage.save(slim as Entity & { handle: string });
         const collectedAt = String(slim._collected_at ?? new Date().toISOString());
         const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
@@ -106,6 +116,7 @@ async function processOneProfileWithTimeout(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         crawlLogExtract(`Erro ao processar @${ref.handle}: ${msg}`);
+        if (msg === 'RATE_LIMIT_429') throw err;
         return false;
       }
     };
@@ -124,6 +135,10 @@ async function processOneProfileWithTimeout(
       if (msg === 'FILTER_REJECT') {
         if (!useDiscoveryPage) await page.close().catch(() => { });
         return false;
+      }
+      if (msg === 'RATE_LIMIT_429') {
+        if (!useDiscoveryPage) await page.close().catch(() => { });
+        throw err;
       }
       const isTimeout = msg.includes('PROFILE_TIMEOUT') || msg.toLowerCase().includes('timeout');
       crawlLogExtract(`Perfil @${ref.handle}: ${isTimeout ? 'timeout (código parou?)' : msg}. ${attempt < PROFILE_PROCESS_MAX_RETRIES ? `Retentando (${attempt + 1}/${PROFILE_PROCESS_MAX_RETRIES})...` : 'Desistindo e seguindo ao próximo.'}`);

@@ -1,5 +1,15 @@
 const API_BASE = '/api'
 
+/** Token JWT definido pelo AuthContext após login. Usado em todas as requisições autenticadas. */
+let authToken: string | null = null
+export function setAuthToken(token: string | null): void {
+  authToken = token
+}
+
+function authHeaders(): Record<string, string> {
+  return authToken ? { Authorization: `Bearer ${authToken}` } : {}
+}
+
 /** Usa proxy da API para carregar imagem (evita bloqueio CORS/referrer do Instagram). */
 export function proxyImageUrl(url: string | undefined): string | undefined {
   if (!url || typeof url !== 'string') return undefined
@@ -202,8 +212,17 @@ export async function fetchProfilesSearch(query: ProfilesSearchQuery): Promise<P
   if (query.sort) params.set('sort', query.sort)
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))
-  const res = await fetch(`${API_BASE}/profiles/search?${params.toString()}`)
-  if (!res.ok) throw new Error('Falha ao buscar perfis')
+  const res = await fetch(`${API_BASE}/profiles/search?${params.toString()}`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    const code = (err as { code?: string }).code
+    const msg = (err as { error?: string }).error || 'Falha ao buscar perfis'
+    const e = new Error(msg) as Error & { code?: string }
+    e.code = code
+    throw e
+  }
   return res.json()
 }
 
@@ -252,15 +271,70 @@ export async function fetchProfiles(limit = 50, offset = 0, since?: string): Pro
 
 export async function fetchProfile(handle: string): Promise<ProfileItem | null> {
   const h = handle.replace(/^@/, '')
-  const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}`)
+  const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}`, {
+    headers: { ...authHeaders() },
+  })
   if (res.status === 404) return null
   if (!res.ok) throw new Error('Falha ao carregar perfil')
   return res.json()
 }
 
+/** Solicita envio do código de ativação 2FA para o nickname (via inbox do Instagram). Requer login. */
+export async function requestVerificationCode(nickname: string): Promise<{ sent: boolean; code?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/auth/request-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ nickname: nickname.replace(/^@/, '').trim() }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao solicitar código')
+  }
+  return res.json()
+}
+
+/** Valida com o código recebido no Instagram. Sem login: retorna token+user (2FA como login). */
+export async function verifyProfile(
+  nickname: string,
+  code: string
+): Promise<{
+  verified: boolean
+  profile_handle: string
+  token?: string
+  user?: { id: number; username: string; scope: string; profile_handle: string | null }
+}> {
+  const res = await fetch(`${API_BASE}/auth/verify-profile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ nickname: nickname.replace(/^@/, '').trim(), code: code.trim() }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Código inválido ou expirado')
+  }
+  return res.json()
+}
+
+/** Define a senha do usuário logado (após validação 2FA). Requer autenticação. */
+export async function setMyPassword(password: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/me/password`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ password }),
+  })
+  if (res.status === 401) throw new Error('Faça login para definir a senha.')
+  if (res.status === 400) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Senha inválida')
+  }
+  if (!res.ok) throw new Error('Falha ao definir senha')
+}
+
 export async function fetchPosts(profileHandle: string, limit = 50, offset = 0): Promise<PostsResponse> {
   const h = profileHandle.replace(/^@/, '')
-  const res = await fetch(`${API_BASE}/posts?profile=${encodeURIComponent(h)}&limit=${limit}&offset=${offset}`)
+  const res = await fetch(`${API_BASE}/posts?profile=${encodeURIComponent(h)}&limit=${limit}&offset=${offset}`, {
+    headers: { ...authHeaders() },
+  })
   if (!res.ok) throw new Error('Falha ao carregar posts')
   return res.json()
 }
@@ -328,7 +402,7 @@ export interface ExtractProfileResult {
 export async function extractProfileToBackend(handleOrUrl: string): Promise<ExtractProfileResult> {
   const res = await fetch(`${API_BASE}/crawl/extract-profile`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(
       handleOrUrl.startsWith('http') ? { url: handleOrUrl } : { handle: handleOrUrl }
     ),
@@ -376,7 +450,9 @@ export interface ProfileActivation {
 
 export async function fetchProfileActivation(handle: string): Promise<ProfileActivation> {
   const h = handle.replace(/^@/, '')
-  const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}/activation`)
+  const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}/activation`, {
+    headers: { ...authHeaders() },
+  })
   if (!res.ok) throw new Error('Falha ao carregar ativação')
   const data = await res.json()
   return data && typeof data === 'object' ? data : {}
@@ -386,10 +462,72 @@ export async function saveProfileActivation(handle: string, data: Omit<ProfileAc
   const h = handle.replace(/^@/, '')
   const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}/activation`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   })
   if (!res.ok) throw new Error('Falha ao salvar ativação')
   const out = await res.json()
   return out && typeof out === 'object' ? out : {}
+}
+
+/** Admin: tipos de usuário (scope). */
+export type AuthScope = 'adm' | 'assinante' | 'influencer' | 'public'
+
+export interface AdminUser {
+  id: number
+  username: string
+  scope: AuthScope
+  profile_handle: string | null
+  created_at?: string
+}
+
+export async function fetchAdminUsers(): Promise<AdminUser[]> {
+  const res = await fetch(`${API_BASE}/admin/users`, { headers: { ...authHeaders() } })
+  if (!res.ok) throw new Error('Falha ao listar usuários')
+  const data = await res.json()
+  return (data?.users ?? []) as AdminUser[]
+}
+
+export async function createAdminUser(payload: {
+  username: string
+  password: string
+  scope: AuthScope
+  profile_handle?: string | null
+}): Promise<AdminUser> {
+  const res = await fetch(`${API_BASE}/admin/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao criar usuário')
+  }
+  const data = await res.json()
+  return data?.user as AdminUser
+}
+
+export async function updateAdminUser(
+  id: number,
+  payload: { username?: string; password?: string; scope?: AuthScope; profile_handle?: string | null }
+): Promise<AdminUser> {
+  const res = await fetch(`${API_BASE}/admin/users/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao atualizar usuário')
+  }
+  const data = await res.json()
+  return data?.user as AdminUser
+}
+
+export async function deleteAdminUser(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/users/${id}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error('Falha ao excluir usuário')
 }

@@ -278,16 +278,14 @@ export async function extractProfile(
   const onResponse = async (response: Response) => {
     const url = response.url();
     const status = response.status();
-    // Tratar 429, 401, 403 e 302 como bloqueio (IG às vezes pune com esses em vez de 429).
+    // Tratar 429, 401, 403 e 302 como possível bloqueio (record429 só se falharmos ao extrair).
     if (status === 429 || status === 401 || status === 403 || status === 302) {
-      record429();
       had429 = true;
       crawlLogExtract(`${status} (bloqueio) em ${url.slice(0, 80)}...`);
       return;
     }
-    // Redirecionamento para login ou challenge também é bloqueio.
+    // Redirecionamento para login ou challenge.
     if (url.includes('/accounts/login/') || url.includes('/challenge/')) {
-      record429();
       had429 = true;
       crawlLogExtract(`URL de login/challenge: ${url.slice(0, 80)}...`);
       return;
@@ -331,7 +329,10 @@ export async function extractProfile(
       { timeout: pageAlreadyOnProfile ? 5000 : 10000 }
     ).catch(() => null);
     if (!onProfile) {
-      if (had429) throw new Error('RATE_LIMIT_429');
+      if (had429) {
+        record429();
+        throw new Error('RATE_LIMIT_429');
+      }
       return null;
     }
 
@@ -355,13 +356,19 @@ export async function extractProfile(
     page.off('response', onResponse);
   }
 
-  if (had429) throw new Error('RATE_LIMIT_429');
-
   const bodies = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
-  if (bodies.length === 0) {
+  const hasUsableProfile = bodies.some((b) => hasDataUser(b));
+
+  if (bodies.length === 0 || !hasUsableProfile) {
+    if (had429) {
+      record429();
+      throw new Error('RATE_LIMIT_429');
+    }
     crawlLogExtract('Nenhuma response de perfil capturada.');
     return null;
   }
+
+  if (had429) crawlLogExtract('302/bloqueio em algumas requests, mas perfil extraído com sucesso; salvando.');
 
   // Preferir resposta Polaris (data.user com media_count/following_count); senão qualquer data.user; senão merged.
   const merged = bodies.length > 1 ? deepMergeResponses(bodies) : bodies[0];

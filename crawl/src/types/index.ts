@@ -16,6 +16,8 @@ export interface CrawlConfig {
   addressRawTextMaxChars: number;
   /** Só gravar perfis com pelo menos este número de seguidores (0 = desligado) */
   minFollowersToSave: number;
+  /** Pelo menos um post deve ter mais que este número de curtidas (0 = desligado) */
+  minPostLikesToSave: number;
   /** Se true, não grava perfis de negócio (foco em influenciadores) */
   excludeBusinessProfiles: boolean;
   /** Quantos posts do perfil analisar para extrair hashtags/localidades */
@@ -34,6 +36,7 @@ export const DEFAULT_CRAWL_CONFIG: CrawlConfig = {
   bioMaxChars: 500,
   addressRawTextMaxChars: 300,
   minFollowersToSave: 5000,
+  minPostLikesToSave: 0,
   excludeBusinessProfiles: true,
   maxPostsToAnalyzeForInsights: 10,
 };

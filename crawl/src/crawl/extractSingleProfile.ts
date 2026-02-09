@@ -4,14 +4,16 @@ import { extractProfile } from '../profileExtractor/index.js';
 import {
   getFollowersFromEntity,
   getInfluencerRejectionDiagnostic,
+  hasPostWithMinLikes,
   isPersonOrCreator,
   qualifiesAsInfluencer,
   type InfluencerRejectionDiagnostic,
 } from '../utils/entityAccess.js';
 import { buildSlimProfile } from '../utils/slimProfile.js';
+import { crawlLogExtract } from '../utils/crawlLogger.js';
 import type { CrawlStorage } from './runCrawl.js';
 
-const MIN_FOLLOWERS_FLOOR = 10000;
+const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? parseInt(process.env.MIN_FOLLOWERS, 10000) : 0;
 const EXTRACT_TIMEOUT_MS = Number(process.env.PROFILE_PROCESS_TIMEOUT_MS) || 180_000;
 
 function buildConfigFromEnv(): CrawlConfig {
@@ -23,6 +25,8 @@ function buildConfigFromEnv(): CrawlConfig {
     return n;
   })();
   const minFollowersToSave = raw === 0 ? 0 : Math.max(raw, MIN_FOLLOWERS_FLOOR);
+  const minPostLikesRaw = parseInt(process.env.MIN_POST_LIKES ?? '0', 10);
+  const minPostLikesToSave = Number.isNaN(minPostLikesRaw) || minPostLikesRaw < 0 ? 0 : minPostLikesRaw;
   return {
     ...DEFAULT_CRAWL_CONFIG,
     maxPostsPerTag: parseInt(process.env.MAX_POSTS_PER_TAG ?? String(DEFAULT_CRAWL_CONFIG.maxPostsPerTag), 10) || DEFAULT_CRAWL_CONFIG.maxPostsPerTag,
@@ -30,6 +34,7 @@ function buildConfigFromEnv(): CrawlConfig {
     headless: process.env.HEADFUL !== 'true',
     authStatePath: process.env.AUTH_STATE_PATH ?? DEFAULT_CRAWL_CONFIG.authStatePath,
     minFollowersToSave,
+    minPostLikesToSave,
     excludeBusinessProfiles: process.env.EXCLUDE_BUSINESS_PROFILES !== 'false',
     maxPostsToAnalyzeForInsights: parseInt(process.env.MAX_POSTS_FOR_INSIGHTS ?? String(DEFAULT_CRAWL_CONFIG.maxPostsToAnalyzeForInsights), 10) || DEFAULT_CRAWL_CONFIG.maxPostsToAnalyzeForInsights,
   };
@@ -125,6 +130,20 @@ export async function extractSingleProfile(
                 followers,
               };
             }
+          }
+
+          if (config.minPostLikesToSave > 0) {
+            if (!hasPostWithMinLikes(posts, config.minPostLikesToSave)) {
+              crawlLogExtract(`@${cleanHandle} regra de curtidas NÃO validada: nenhum post com mais de ${config.minPostLikesToSave} curtidas`);
+              return {
+                success: false,
+                handle: cleanHandle,
+                saved: false,
+                rejectionReason: 'nenhum_post_com_curtidas_minimas',
+                followers,
+              };
+            }
+            crawlLogExtract(`@${cleanHandle} regra de curtidas validada: pelo menos 1 post com > ${config.minPostLikesToSave} curtidas`);
           }
 
           await storage.save(slim as Entity & { handle: string });

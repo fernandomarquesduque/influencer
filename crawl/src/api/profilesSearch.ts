@@ -29,6 +29,14 @@ function toNum(v: unknown): number {
   return 0;
 }
 
+/** Extrai data.user do perfil (formato da API do Instagram). */
+function getDataUser(profile: Record<string, unknown>): Record<string, unknown> | undefined {
+  const data = profile['data'];
+  if (data == null || typeof data !== 'object') return undefined;
+  const user = (data as Record<string, unknown>)['user'];
+  return (user != null && typeof user === 'object') ? (user as Record<string, unknown>) : undefined;
+}
+
 /** Extrai seguidores do perfil (vários formatos da API). */
 function getFollowers(profile: Record<string, unknown>): number {
   const fromPaths = getIn(
@@ -39,7 +47,7 @@ function getFollowers(profile: Record<string, unknown>): number {
     'graphql.user.edge_followed_by.count'
   );
   if (fromPaths !== undefined && fromPaths !== null) return toNum(fromPaths);
-  const user = profile.data?.user as Record<string, unknown> | undefined;
+  const user = getDataUser(profile);
   if (user?.follower_count != null) return toNum(user.follower_count);
   const edge = user?.edge_followed_by as { count?: number } | undefined;
   return toNum(edge?.count);
@@ -47,13 +55,13 @@ function getFollowers(profile: Record<string, unknown>): number {
 
 /** Extrai handle do perfil. */
 function getHandle(profile: Record<string, unknown>, key: string): string {
-  const h = profile.handle ?? profile.username ?? (profile.data?.user as Record<string, unknown> | undefined)?.username ?? key;
+  const h = profile.handle ?? profile.username ?? getDataUser(profile)?.username ?? key;
   return String(h ?? key).toLowerCase().replace(/^@/, '');
 }
 
 /** Extrai nome completo. */
 function getFullName(profile: Record<string, unknown>): string {
-  const u = profile.data?.user as Record<string, unknown> | undefined;
+  const u = getDataUser(profile);
   return String(profile.full_name ?? u?.full_name ?? '');
 }
 
@@ -61,7 +69,7 @@ function getFullName(profile: Record<string, unknown>): string {
 function getCategories(profile: Record<string, unknown>): string[] {
   const c = profile.categories;
   if (Array.isArray(c)) return c.filter((x): x is string => typeof x === 'string');
-  const u = profile.data?.user as Record<string, unknown> | undefined;
+  const u = getDataUser(profile);
   const cat = u?.category ?? u?.account_type;
   if (typeof cat === 'string') return [cat];
   return [];
@@ -69,7 +77,7 @@ function getCategories(profile: Record<string, unknown>): string[] {
 
 /** Extrai biografia. */
 function getBiography(profile: Record<string, unknown>): string {
-  const b = profile.biography ?? (profile.data?.user as Record<string, unknown> | undefined)?.biography;
+  const b = profile.biography ?? getDataUser(profile)?.biography;
   return typeof b === 'string' ? b : '';
 }
 
@@ -170,7 +178,7 @@ function getSearchableText(
   posts: Record<string, unknown>[]
 ): string {
   const handle = getHandle(profile, key);
-  const username = (profile.username ?? (profile.data?.user as Record<string, unknown> | undefined)?.username ?? '') as string;
+  const username = (profile.username ?? getDataUser(profile)?.username ?? '') as string;
   const bio = getBiography(profile);
   const discoveredValue = (profile._discovered_value as string) ?? '';
   const parts = [
@@ -441,7 +449,7 @@ function computeEngagement(posts: Record<string, unknown>[], followersCount: num
 function getProfilePicUrl(profile: Record<string, unknown>): string | undefined {
   const top = profile.profile_pic_url ?? profile.hd_profile_pic_url;
   if (top && typeof top === 'string') return top;
-  const u = profile.data?.user as Record<string, unknown> | undefined;
+  const u = getDataUser(profile);
   const fromUser = u?.profile_pic_url ?? u?.hd_profile_pic_url;
   if (fromUser && typeof fromUser === 'string') return fromUser;
   const hd = u?.hd_profile_pic_url_info as { url?: string } | undefined;
@@ -550,9 +558,9 @@ export async function searchProfiles(
       handle,
       full_name: fullName,
       followers_count: followersCount,
-      following_count: toNum(profile.following_count ?? (profile.data?.user as Record<string, unknown> | undefined)?.following_count),
-      media_count: profile.media_count ?? (profile.data?.user as Record<string, unknown> | undefined)?.media_count as number | undefined,
-      biography: profile.biography ?? (profile.data?.user as Record<string, unknown> | undefined)?.biography as string | undefined,
+      following_count: toNum(profile.following_count ?? getDataUser(profile)?.following_count),
+      media_count: (profile.media_count ?? getDataUser(profile)?.media_count) as number | undefined,
+      biography: (profile.biography ?? getDataUser(profile)?.biography) as string | undefined,
       categories,
       engagement,
       ...(searchRelevance != null && { search_relevance: searchRelevance }),

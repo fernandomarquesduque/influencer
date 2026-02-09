@@ -68,15 +68,73 @@
       "get": {
         "summary": "Lista perfis com filtros e engajamento",
         "description": "Filtros avançados e cálculo de engajamento baseado nos posts (likes, comentários). Retorna engagement_rate, total_likes, avg_likes, etc.",
-        "tags": ["Perfis"],
+        "tags": [
+          "Perfis"
+        ],
         "parameters": [
-          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "Busca em handle, username, full_name" },
-          { "name": "minFollowers", "in": "query", "schema": { "type": "integer" }, "description": "Mínimo de seguidores" },
-          { "name": "maxFollowers", "in": "query", "schema": { "type": "integer" }, "description": "Máximo de seguidores" },
-          { "name": "categories", "in": "query", "schema": { "type": "string" }, "description": "Categorias separadas por vírgula" },
-          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["engagement_desc", "engagement_asc", "followers_desc", "followers_asc"], "default": "engagement_desc" }, "description": "Ordenação" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } },
-          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Busca em handle, username, full_name"
+          },
+          {
+            "name": "minFollowers",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Mínimo de seguidores"
+          },
+          {
+            "name": "maxFollowers",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Máximo de seguidores"
+          },
+          {
+            "name": "categories",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Categorias separadas por vírgula"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "engagement_desc",
+                "engagement_asc",
+                "followers_desc",
+                "followers_asc"
+              ],
+              "default": "engagement_desc"
+            },
+            "description": "Ordenação"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
         ],
         "responses": {
           "200": {
@@ -86,25 +144,47 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "total": { "type": "integer" },
+                    "total": {
+                      "type": "integer"
+                    },
                     "items": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "key": { "type": "string" },
-                          "handle": { "type": "string" },
-                          "full_name": { "type": "string" },
-                          "followers_count": { "type": "integer" },
+                          "key": {
+                            "type": "string"
+                          },
+                          "handle": {
+                            "type": "string"
+                          },
+                          "full_name": {
+                            "type": "string"
+                          },
+                          "followers_count": {
+                            "type": "integer"
+                          },
                           "engagement": {
                             "type": "object",
                             "properties": {
-                              "posts_count": { "type": "integer" },
-                              "total_likes": { "type": "integer" },
-                              "total_comments": { "type": "integer" },
-                              "engagement_rate": { "type": "number" },
-                              "avg_likes": { "type": "number" },
-                              "avg_comments": { "type": "number" }
+                              "posts_count": {
+                                "type": "integer"
+                              },
+                              "total_likes": {
+                                "type": "integer"
+                              },
+                              "total_comments": {
+                                "type": "integer"
+                              },
+                              "engagement_rate": {
+                                "type": "number"
+                              },
+                              "avg_likes": {
+                                "type": "number"
+                              },
+                              "avg_comments": {
+                                "type": "number"
+                              }
                             }
                           }
                         }
@@ -271,8 +351,12 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "ok": { "type": "boolean" },
-                    "message": { "type": "string" }
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
                   }
                 }
               }
@@ -312,13 +396,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "running": { "type": "boolean", "description": "True se um crawl está em andamento" },
+                    "running": {
+                      "type": "boolean",
+                      "description": "True se um crawl está em andamento"
+                    },
                     "last": {
                       "type": "object",
                       "properties": {
-                        "saved": { "type": "integer" },
-                        "tag": { "type": "string" },
-                        "finishedAt": { "type": "string", "format": "date-time" }
+                        "saved": {
+                          "type": "integer"
+                        },
+                        "tag": {
+                          "type": "string"
+                        },
+                        "finishedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
                       }
                     }
                   }
@@ -342,11 +436,22 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [ "tag" ],
+                "required": [
+                  "tag"
+                ],
                 "properties": {
-                  "tag": { "type": "string", "description": "Hashtag sem # (ex: viagem)" },
-                  "limit": { "type": "integer", "description": "Máximo de perfis a processar (opcional)" },
-                  "clear": { "type": "boolean", "description": "Se true, limpa o banco antes de começar (opcional)" }
+                  "tag": {
+                    "type": "string",
+                    "description": "Hashtag sem # (ex: viagem)"
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "description": "Máximo de perfis a processar (opcional)"
+                  },
+                  "clear": {
+                    "type": "boolean",
+                    "description": "Se true, limpa o banco antes de começar (opcional)"
+                  }
                 }
               }
             }
@@ -360,10 +465,21 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "started": { "type": "boolean" },
-                    "tag": { "type": "string" },
-                    "limit": { "type": ["integer", "null"] },
-                    "clear": { "type": "boolean" }
+                    "started": {
+                      "type": "boolean"
+                    },
+                    "tag": {
+                      "type": "string"
+                    },
+                    "limit": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "clear": {
+                      "type": "boolean"
+                    }
                   }
                 }
               }
@@ -374,6 +490,115 @@
           },
           "409": {
             "description": "Já existe um crawl em andamento"
+          }
+        }
+      }
+    },
+    "/api/admin/db/tables": {
+      "get": {
+        "summary": "Lista tabelas do banco",
+        "description": "Retorna as tabelas permitidas para consulta. Requer scope adm.",
+        "tags": [
+          "Admin - Banco"
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de tabelas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tables": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/db/tables/{table}": {
+      "get": {
+        "summary": "Consulta tabela",
+        "description": "Retorna linhas da tabela com paginação. password_hash de auth_user é ocultado. Requer scope adm.",
+        "tags": [
+          "Admin - Banco"
+        ],
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "auth_user",
+                "auth_public_request",
+                "auth_anonymous_request",
+                "auth_profile_verification",
+                "profiles",
+                "post",
+                "profile_activation"
+              ]
+            },
+            "description": "Nome da tabela"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 1000
+            },
+            "description": "Máximo de linhas"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            },
+            "description": "Offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Linhas da tabela",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "table": {
+                      "type": "string"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "offset": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -399,6 +624,10 @@
     {
       "name": "Crawl",
       "description": "Iniciar e consultar status do crawl por hashtag (mesmo processo da API)"
+    },
+    {
+      "name": "Admin - Banco",
+      "description": "Consulta às tabelas do SQLite (requer adm)"
     }
   ]
 }

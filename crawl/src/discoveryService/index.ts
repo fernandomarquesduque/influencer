@@ -175,7 +175,7 @@ export async function discoverAndProcessByHashtag(
       for (const sel of authorSelectors) {
         try {
           const el = page.locator(sel).first();
-          await el.waitFor({ state: 'visible', timeout: 5000 });
+          await el.waitFor({ state: 'attached', timeout: 5000 });
           const h = await el.getAttribute('href');
           if (h && isProfileHref(h)) {
             authorHref = h;
@@ -263,8 +263,12 @@ export async function discoverAndProcessByHashtag(
         const ref: DiscoveredProfileRef = { handle, profileUrl, followersFromDiscovery: followers ?? undefined };
         try {
           const saved = await onProfileQualified(ref, page);
-          if (saved) savedCount++;
-          crawlLogDiscovery(`  -> perfil @${handle} concluído; só então indo ao próximo post.`);
+          if (saved) {
+            savedCount++;
+            crawlLogDiscovery(`  -> perfil @${handle} concluído; só então indo ao próximo post.`);
+          } else {
+            crawlLogDiscovery(`  -> perfil @${handle} não salvo; seguindo ao próximo post.`);
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (msg === 'RATE_LIMIT_429') {
@@ -385,7 +389,7 @@ export async function discoverProfilesByLocation(
       for (const sel of authorSelectors) {
         try {
           const el = page.locator(sel).first();
-          await el.waitFor({ state: 'visible', timeout: 5000 });
+          await el.waitFor({ state: 'attached', timeout: 5000 });
           const h = await el.getAttribute('href');
           if (h && /^\/[^/]+\/?$/.test(h.replace(/\?.*$/, '')) && !h.includes('/p/')) {
             authorHref = h;
@@ -461,7 +465,7 @@ export async function discoverProfilesFromExplore(
       for (const sel of authorSelectors) {
         try {
           const el = page.locator(sel).first();
-          await el.waitFor({ state: 'visible', timeout: 5000 });
+          await el.waitFor({ state: 'attached', timeout: 5000 });
           const h = await el.getAttribute('href');
           if (h && /^\/[^/]+\/?$/.test(h.replace(/\?.*$/, '')) && !h.includes('/p/')) {
             authorHref = h;

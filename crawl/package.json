@@ -9,7 +9,8 @@
     "login": "tsx src/cli/login.ts",
     "list-db": "tsx src/cli/list-db.ts",
     "check-db": "tsx src/cli/check-db.ts",
-    "api": "tsx src/api/server.ts"
+    "api": "tsx src/api/server.ts",
+    "create-admin": "tsx src/scripts/create-admin.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link, Navigate } from 'react-router-dom'
 import {
   Row,
   Col,
@@ -17,6 +17,7 @@ import { fetchProfilesSearch, type ProfileListItem, type ProfilesSearchQuery, ty
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
+import { useAuth } from '../contexts/AuthContext'
 
 const { Title, Text } = Typography
 
@@ -55,11 +56,14 @@ const SORT_OPTIONS: { value: ProfilesSort; label: string }[] = [
 
 const PAGE_SIZE = 12
 
+const PUBLIC_LIMIT_CODES = ['PUBLIC_PAGE_LIMIT', 'PUBLIC_FILTERS_NOT_ALLOWED', 'PUBLIC_SEARCH_LIMIT']
+
 export default function InfluencerList() {
   const navigate = useNavigate()
+  const { user, isPublic } = useAuth()
+  const isLimitedView = !user || isPublic
   const [searchParams, setSearchParams] = useSearchParams()
   const qFromUrl = searchParams.get('q') ?? ''
-
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [data, setData] = useState<ProfileListItem[]>([])
@@ -72,9 +76,14 @@ export default function InfluencerList() {
     offset: 0,
     sort: 'engagement_desc',
   })
+  const [limitReachedCode, setLimitReachedCode] = useState<string | null>(null)
 
   const load = (overrides?: Partial<ProfilesSearchQuery>) => {
-    const q = { ...query, ...overrides, limit: overrides?.limit ?? PAGE_SIZE }
+    setLimitReachedCode(null)
+    let q: ProfilesSearchQuery = { ...query, ...overrides, limit: overrides?.limit ?? PAGE_SIZE }
+    if (isLimitedView) {
+      q = { ...q, limit: 12, offset: 0 }
+    }
     const isLoadMore = (q.offset ?? 0) > 0
     if (isLoadMore) setLoadingMore(true)
     else setLoading(true)
@@ -88,7 +97,17 @@ export default function InfluencerList() {
         setTotal(res.total)
         if (res.facets) setFacets(res.facets)
       })
-      .catch(() => {
+      .catch((e) => {
+        const code = (e as Error & { code?: string }).code
+        if (code && PUBLIC_LIMIT_CODES.includes(code)) {
+          setLimitReachedCode(code)
+          if (!isLoadMore) {
+            setData([])
+            setTotal(0)
+            setFacets(null)
+          }
+          return
+        }
         if (!isLoadMore) {
           setData([])
           setTotal(0)
@@ -103,15 +122,20 @@ export default function InfluencerList() {
 
   useEffect(() => {
     setSearchInput(qFromUrl)
-    setQuery((prev) => ({ ...prev, q: qFromUrl || undefined, offset: 0 }))
+    const base = { q: qFromUrl || undefined, offset: 0, limit: PAGE_SIZE }
+    setQuery((prev) => (isLimitedView ? { ...base } : { ...prev, ...base }))
     if (qFromUrl.trim()) {
-      load({ q: qFromUrl.trim() || undefined, offset: 0 })
+      load(isLimitedView ? { q: qFromUrl.trim() || undefined, offset: 0 } : { q: qFromUrl.trim() || undefined, offset: 0 })
     } else {
       setData([])
       setTotal(0)
       setFacets(null)
     }
-  }, [qFromUrl])
+  }, [qFromUrl, isLimitedView])
+
+  if (user?.scope === 'influencer' && user.profile_handle) {
+    return <Navigate to={`/influencer/${encodeURIComponent(user.profile_handle.replace(/^@/, ''))}`} replace />
+  }
 
   const runSearch = () => {
     const q = searchInput.trim()
@@ -238,9 +262,11 @@ export default function InfluencerList() {
     )
   }
 
+  const showFilters = facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter
+
   return (
     <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-      {(facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter) && (
+      {showFilters && (
         <aside
           style={{
             flexShrink: 0,
@@ -691,7 +717,6 @@ export default function InfluencerList() {
 
       <main style={{ flex: 1, minWidth: 0 }}>
 
-
         <div style={{ marginBottom: 24, width: '100%' }}>
           <Space.Compact size="large" style={{ width: '100%' }}>
             <Input
@@ -713,6 +738,25 @@ export default function InfluencerList() {
           <div style={{ textAlign: 'center', padding: 48 }}>
             <Spin size="large" />
           </div>
+        ) : data.length === 0 && limitReachedCode === 'PUBLIC_SEARCH_LIMIT' ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <span>
+                Você alcançou o limite diário de buscas. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para continuar buscando.
+              </span>
+            }
+          />
+        ) : data.length === 0 && (limitReachedCode === 'PUBLIC_PAGE_LIMIT' || limitReachedCode === 'PUBLIC_FILTERS_NOT_ALLOWED') ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <span>
+                {limitReachedCode === 'PUBLIC_PAGE_LIMIT' ? 'Mais páginas são para assinantes.' : 'Filtros avançados são para assinantes.'}{' '}
+                <Link to="/premium">Assine o plano premium</Link> para acessar.
+              </span>
+            }
+          />
         ) : data.length === 0 ? (
           <Empty description="Nenhum influenciador encontrado. Ajuste os filtros ou execute o crawl." />
         ) : (
@@ -728,7 +772,7 @@ export default function InfluencerList() {
                 </Col>
               ))}
             </Row>
-            {data.length < total && (
+            {data.length < total && !isLimitedView && (
               <div style={{ textAlign: 'center', marginTop: 24 }}>
                 <Button
                   type="primary"
@@ -737,6 +781,13 @@ export default function InfluencerList() {
                   size="large"
                 >
                   Ver mais
+                </Button>
+              </div>
+            )}
+            {data.length < total && isLimitedView && (
+              <div style={{ textAlign: 'center', marginTop: 24 }}>
+                <Button type="primary" onClick={() => navigate('/premium')} size="large">
+                  Seja assinante para ver mais resultados
                 </Button>
               </div>
             )}

@@ -1,10 +1,18 @@
-/** CRAWL_FAST=1 reduz delays (~40%). CRAWL_SAFE=1 usa ritmo mais lento (5–8 req/min) para evitar 429. */
-const FAST_MULTIPLIER = process.env.CRAWL_FAST === '1' || process.env.CRAWL_FAST === 'true' ? 0.4 : 1;
-const SAFE_MODE = process.env.CRAWL_SAFE === '1' || process.env.CRAWL_SAFE === 'true';
+/** CRAWL_FAST=1 reduz delays (~40%). CRAWL_SAFE=1 usa ritmo mais lento (5–8 req/min). CRAWL_DELAY_EXTRA_MS soma ms em cada delay. */
+function getFastMultiplier(): number {
+  return process.env.CRAWL_FAST === '1' || process.env.CRAWL_FAST === 'true' ? 0.4 : 1;
+}
+function getSafeMode(): boolean {
+  return process.env.CRAWL_SAFE === '1' || process.env.CRAWL_SAFE === 'true';
+}
+function getDelayExtraMs(): number {
+  return Math.max(0, parseInt(process.env.CRAWL_DELAY_EXTRA_MS ?? '0', 10) || 0);
+}
 
 export function randomDelay(minMs: number, maxMs: number): Promise<void> {
-  const min = Math.round(minMs * FAST_MULTIPLIER);
-  const max = Math.round(maxMs * FAST_MULTIPLIER);
+  const extra = getDelayExtraMs();
+  const min = Math.round(minMs * getFastMultiplier()) + extra;
+  const max = Math.round(maxMs * getFastMultiplier()) + extra;
   const ms = Math.floor(Math.random() * (Math.max(max - min + 1, 1))) + min;
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -14,10 +22,11 @@ export function randomDelay(minMs: number, maxMs: number): Promise<void> {
  * Regra prática: 3–6 s com jitter. Em CRAWL_SAFE=1: ~8–12 s (5–8 req/min).
  */
 export function humanDelay(): Promise<void> {
-  const base = SAFE_MODE ? 8000 : 3000;
-  const jitter = SAFE_MODE ? 4000 : 3000;
+  const safe = getSafeMode();
+  const base = safe ? 8000 : 3000;
+  const jitter = safe ? 4000 : 3000;
   const ms = Math.round(base + Math.random() * jitter);
-  const actual = Math.round(ms * FAST_MULTIPLIER);
+  const actual = Math.round(ms * getFastMultiplier()) + getDelayExtraMs();
   return new Promise((r) => setTimeout(r, Math.max(1000, actual)));
 }
 
@@ -29,7 +38,7 @@ export function rateLimitBackoff(): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Delay fixo em ms (respeita CRAWL_FAST). */
+/** Delay fixo em ms (respeita CRAWL_FAST e CRAWL_DELAY_EXTRA_MS). */
 export function delayMs(ms: number): number {
-  return Math.max(100, Math.round(ms * FAST_MULTIPLIER));
+  return Math.max(100, Math.round(ms * getFastMultiplier()) + getDelayExtraMs());
 }

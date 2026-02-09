@@ -37,10 +37,12 @@ import {
   RiseOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
+import { Link } from 'react-router-dom'
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
+import { useAuth } from '../contexts/AuthContext'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -89,20 +91,28 @@ function engagementColor(rate: number): string {
 export default function InfluencerDetail() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
+  const { user, isPublic, canEditProfile } = useAuth()
+  const isLimitedView = !user || isPublic
   const [profileLoading, setProfileLoading] = useState(true)
   const [postsLoading, setPostsLoading] = useState(true)
   const [profile, setProfile] = useState<ProfileItem | null>(null)
   const [activation, setActivation] = useState<ProfileActivation | null>(null)
   const [posts, setPosts] = useState<PostItem[]>([])
   const [postsTotal, setPostsTotal] = useState(0)
+  const [dataRedacted, setDataRedacted] = useState(false)
 
   useEffect(() => {
     if (!handle) return
     let cancelled = false
     setProfileLoading(true)
+    setDataRedacted(false)
     fetchProfile(handle)
       .then((p) => {
-        if (!cancelled) setProfile(p ?? null)
+        if (!cancelled) {
+          const pr = p as Record<string, unknown> | null
+          if (pr?._redacted === true) setDataRedacted(true)
+          setProfile(p ?? null)
+        }
       })
       .finally(() => {
         if (!cancelled) setProfileLoading(false)
@@ -114,7 +124,17 @@ export default function InfluencerDetail() {
     if (!handle) return
     let cancelled = false
     fetchProfileActivation(handle)
-      .then((a) => { if (!cancelled) setActivation(a && (a.city ?? a.whatsapp ?? a.content_type?.length) ? a : null) })
+      .then((a) => {
+        if (!cancelled) {
+          const ar = a as Record<string, unknown> | undefined
+          if (ar?._redacted === true) {
+            setDataRedacted(true)
+            setActivation(null)
+          } else {
+            setActivation(a && (a.city ?? a.whatsapp ?? a.content_type?.length) ? a : null)
+          }
+        }
+      })
       .catch(() => { if (!cancelled) setActivation(null) })
     return () => { cancelled = true }
   }, [handle])
@@ -126,8 +146,10 @@ export default function InfluencerDetail() {
     fetchPosts(handle, 100, 0)
       .then((res) => {
         if (!cancelled) {
-          setPosts(res.items)
-          setPostsTotal(res.total)
+          const r = res as { items: PostItem[]; total: number; _redacted?: boolean }
+          if (r._redacted === true) setDataRedacted(true)
+          setPosts(r.items ?? [])
+          setPostsTotal(r.total ?? 0)
         }
       })
       .catch(() => { if (!cancelled) setPosts([]) })
@@ -207,9 +229,18 @@ export default function InfluencerDetail() {
       activation.description?.trim() || activation.about_topics?.trim())
 
   const costTier = activation?.pricing ? getCostTier(activation.pricing) : null
+  const canEdit = handle ? canEditProfile(handle) : false
+  const isRedacted = dataRedacted && isLimitedView
 
   return (
     <div style={{ maxWidth: 1120, margin: '0 auto', padding: '0 24px 48px' }}>
+      {isLimitedView && !isRedacted && (
+        <div style={{ marginBottom: 16, padding: 12, background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8 }}>
+          <Text>
+            Você está vendo uma prévia limitada. <Link to="/premium">Seja assinante</Link> para ver métricas completas e filtros avançados.
+          </Text>
+        </div>
+      )}
       {/* 1) Contexto: quem é este relatório + ações imediatas */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
@@ -229,28 +260,30 @@ export default function InfluencerDetail() {
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <Text strong style={{ fontSize: 17 }}>{fullName || displayHandle}</Text>
-                  {isVerified && <Tooltip title="Verificado"><span style={{ color: '#3897f0' }}>✓</span></Tooltip>}
-                  {hasActivationData && <Tooltip title="Cadastro ativo"><SafetyOutlined style={{ color: '#52c41a' }} /></Tooltip>}
-                  {costTier ? (
+                  {!isRedacted && isVerified && <Tooltip title="Verificado"><span style={{ color: '#3897f0' }}>✓</span></Tooltip>}
+                  {!isRedacted && hasActivationData && <Tooltip title="Cadastro ativo"><SafetyOutlined style={{ color: '#52c41a' }} /></Tooltip>}
+                  {!isRedacted && costTier ? (
                     <Tooltip title={`Custo médio: ${costTier.label}`}>
                       <Tag color="gold" style={{ margin: 0, fontWeight: 600 }}>{`${costTier.symbol} ${costTier.label}`}</Tag>
                     </Tooltip>
                   ) : null}
                 </div>
                 <Text type="secondary" style={{ fontSize: 13 }}>@{displayHandle}</Text>
-                {bio && (
+                {bio ? (
                   <Paragraph style={{ margin: '6px 0 0', fontSize: 13, color: '#595959', whiteSpace: 'pre-wrap', maxWidth: 560 }}>
                     {bio}
                   </Paragraph>
-                )}
+                ) : null}
 
               </div>
             </div>
             <Space wrap size="middle">
-              <Button type="primary" icon={<LinkOutlined />} href={instagramUrl} target="_blank" rel="noopener noreferrer">
-                Abrir no Instagram
-              </Button>
-              {handle && (
+              {!dataRedacted && (
+                <Button type="primary" icon={<LinkOutlined />} href={instagramUrl} target="_blank" rel="noopener noreferrer">
+                  Abrir no Instagram
+                </Button>
+              )}
+              {handle && canEdit && (
                 <Button icon={<CheckCircleOutlined />} onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}>
                   {hasActivationData ? 'Editar cadastro' : 'Finalizar cadastro'}
                 </Button>
@@ -260,191 +293,195 @@ export default function InfluencerDetail() {
         </Card>
       </div>
 
-      {/* 2) Métricas de decisão (o que importa primeiro) */}
-      <div style={{ marginBottom: 24 }}>
-        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>RESUMO EXECUTIVO</Text>
-        <Row gutter={[12, 12]}>
-          <Col xs={24} sm={12} lg={8}>
-            <Card size="small" style={{ height: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div style={{ width: 48, height: 48, borderRadius: 10, background: '#e6f4ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <TeamOutlined style={{ fontSize: 22, color: '#1677ff' }} />
+      {isRedacted && (
+        <div style={{ marginBottom: 24, padding: 12, background: '#fff2e8', border: '1px solid #ffbb96', borderRadius: 8 }}>
+          <Text>
+            Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.
+          </Text>
+        </div>
+      )}
+
+      {/* 2) Métricas de decisão – oculto se público no limite */}
+      {!isLimitedView && !isRedacted && (
+        <div style={{ marginBottom: 24 }}>
+          <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>RESUMO EXECUTIVO</Text>
+          <Row gutter={[12, 12]}>
+            <Col xs={24} sm={12} lg={8}>
+              <Card size="small" style={{ height: '100%' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div style={{ width: 48, height: 48, borderRadius: 10, background: '#e6f4ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <TeamOutlined style={{ fontSize: 22, color: '#1677ff' }} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Alcance</Text>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>{formatShortNum(followersCount)}</div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>seguidores</Text>
+                  </div>
                 </div>
-                <div style={{ minWidth: 0 }}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Alcance</Text>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>{formatShortNum(followersCount)}</div>
-                  <Text type="secondary" style={{ fontSize: 11 }}>seguidores</Text>
-                </div>
-              </div>
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={8}>
-            <Card size="small" style={{ height: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div style={{ width: 48, height: 48, borderRadius: 10, background: '#f6ffed', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <RiseOutlined style={{ fontSize: 22, color: engagementColor(engagement.engagement_rate) }} />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Engajamento</Text>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: engagementColor(engagement.engagement_rate), lineHeight: 1.2 }}>{engagement.engagement_rate.toFixed(2)}%</div>
-                  <Text type="secondary" style={{ fontSize: 11 }}>taxa média</Text>
-                </div>
-              </div>
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={8}>
-            <Card size="small" style={{ height: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div style={{ width: 48, height: 48, borderRadius: 10, background: '#fff7e6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <ThunderboltOutlined style={{ fontSize: 22, color: '#fa8c16' }} />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Interações</Text>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>{totalInteractions.toLocaleString('pt-BR')}</div>
-                  <Text type="secondary" style={{ fontSize: 11 }}>likes + comentários</Text>
-                </div>
-              </div>
-            </Card>
-          </Col>
-        </Row>
-        <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
-          <Col xs={24} sm={8}>
-            <Card size="small">
-              <Text type="secondary" style={{ fontSize: 11 }}>Média likes/post</Text>
-              <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{engagement.avg_likes.toLocaleString('pt-BR')}</div>
-            </Card>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Card size="small">
-              <Text type="secondary" style={{ fontSize: 11 }}>Posts na análise</Text>
-              <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{engagement.posts_count}</div>
-            </Card>
-          </Col>
-          {mediaCount != null && (
-            <Col xs={24} sm={8}>
-              <Card size="small">
-                <Text type="secondary" style={{ fontSize: 11 }}>Publicações no perfil</Text>
-                <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{formatShortNum(mediaCount)}</div>
               </Card>
             </Col>
-          )}
-        </Row>
-      </div>
-
-      {/* 3) Métricas de referência (linha inteira) */}
-      <div style={{ marginBottom: 24 }}>
-        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>MÉTRICAS DE REFERÊNCIA</Text>
-        <Card size="small" styles={{ body: { padding: '20px 24px' } }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '20px 32px' }}>
-            <div><Text type="secondary" style={{ fontSize: 11 }}>Seguidores</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{followersCount.toLocaleString('pt-BR')}</div></div>
-            {followingCount != null && (
-              <div><Text type="secondary" style={{ fontSize: 11 }}>Seguindo</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{followingCount.toLocaleString('pt-BR')}</div></div>
-            )}
+            <Col xs={24} sm={12} lg={8}>
+              <Card size="small" style={{ height: '100%' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div style={{ width: 48, height: 48, borderRadius: 10, background: '#f6ffed', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <RiseOutlined style={{ fontSize: 22, color: engagementColor(engagement.engagement_rate) }} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Engajamento</Text>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: engagementColor(engagement.engagement_rate), lineHeight: 1.2 }}>{engagement.engagement_rate.toFixed(2)}%</div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>taxa média</Text>
+                  </div>
+                </div>
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} lg={8}>
+              <Card size="small" style={{ height: '100%' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div style={{ width: 48, height: 48, borderRadius: 10, background: '#fff7e6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <ThunderboltOutlined style={{ fontSize: 22, color: '#fa8c16' }} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Interações</Text>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>{totalInteractions.toLocaleString('pt-BR')}</div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>likes + comentários</Text>
+                  </div>
+                </div>
+              </Card>
+            </Col>
+          </Row>
+          <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
+            <Col xs={24} sm={8}>
+              <Card size="small">
+                <Text type="secondary" style={{ fontSize: 11 }}>Média likes/post</Text>
+                <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{engagement.avg_likes.toLocaleString('pt-BR')}</div>
+              </Card>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Card size="small">
+                <Text type="secondary" style={{ fontSize: 11 }}>Posts na análise</Text>
+                <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{engagement.posts_count}</div>
+              </Card>
+            </Col>
             {mediaCount != null && (
-              <div><Text type="secondary" style={{ fontSize: 11 }}>Posts no perfil</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{mediaCount.toLocaleString('pt-BR')}</div></div>
+              <Col xs={24} sm={8}>
+                <Card size="small">
+                  <Text type="secondary" style={{ fontSize: 11 }}>Publicações no perfil</Text>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{formatShortNum(mediaCount)}</div>
+                </Card>
+              </Col>
             )}
-            <div><Text type="secondary" style={{ fontSize: 11 }}>Posts analisados</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.posts_count}</div></div>
-            <div><Text type="secondary" style={{ fontSize: 11 }}>Taxa de engajamento</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2, color: engagementColor(engagement.engagement_rate) }}>{engagement.engagement_rate.toFixed(2)}%</div></div>
-            <div><Text type="secondary" style={{ fontSize: 11 }}>Total de likes</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.total_likes.toLocaleString('pt-BR')}</div></div>
-            <div><Text type="secondary" style={{ fontSize: 11 }}>Total de comentários</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.total_comments.toLocaleString('pt-BR')}</div></div>
-            {engagement.total_views > 0 && (
-              <div><Text type="secondary" style={{ fontSize: 11 }}>Total de views</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.total_views.toLocaleString('pt-BR')}</div></div>
-            )}
-            <div><Text type="secondary" style={{ fontSize: 11 }}>Média likes/post</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.avg_likes.toLocaleString('pt-BR')}</div></div>
-            <div><Text type="secondary" style={{ fontSize: 11 }}>Média comentários/post</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.avg_comments.toLocaleString('pt-BR')}</div></div>
-            {engagement.avg_views > 0 && (
-              <div><Text type="secondary" style={{ fontSize: 11 }}>Média views/post</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.avg_views.toLocaleString('pt-BR')}</div></div>
-            )}
-            {engagement.posts_per_week != null && (
-              <div><Text type="secondary" style={{ fontSize: 11 }}>Média posts/semana</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.posts_per_week.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div></div>
-            )}
-          </div>
-          {(collectedAt && formatDate(collectedAt) !== '—') || discoveredBy || discoveredValue ? (
-            <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #f0f0f0', display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              {discoveredValue && (
-                <div><Text type="secondary" style={{ fontSize: 11 }}>Descoberto Por</Text><div style={{ fontSize: 13, marginTop: 2 }}>{discoveredValue}</div></div>
-              )}
-              {collectedAt && formatDate(collectedAt) !== '—' && (
-                <div style={{ marginLeft: 'auto', textAlign: 'right' }}><Text type="secondary" style={{ fontSize: 11 }}>Data da coleta</Text><div style={{ fontSize: 13, marginTop: 2 }}><CalendarOutlined style={{ marginRight: 4 }} />{formatDate(collectedAt)}</div></div>
-              )}
-            </div>
-          ) : null}
-        </Card>
-      </div>
+          </Row>
+        </div>
+      )}
 
-      {/* 4) Contato e cadastro (linha inteira) */}
-      <div style={{ marginBottom: 24 }}>
-        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>CONTATO E CADASTRO</Text>
-        {hasActivationData ? (
-          <Card size="small">
-            <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <SafetyOutlined style={{ color: '#52c41a', fontSize: 16 }} />
-              <Text strong>Dados da ativação</Text>
+      {/* 3) Métricas de referência – oculto se público no limite */}
+      {!isLimitedView && !isRedacted && (
+        <div style={{ marginBottom: 24 }}>
+          <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>MÉTRICAS DE REFERÊNCIA</Text>
+          <Card size="small" styles={{ body: { padding: '20px 24px' } }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '20px 32px' }}>
+              <div><Text type="secondary" style={{ fontSize: 11 }}>Seguidores</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{followersCount.toLocaleString('pt-BR')}</div></div>
+              {followingCount != null && (
+                <div><Text type="secondary" style={{ fontSize: 11 }}>Seguindo</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{followingCount.toLocaleString('pt-BR')}</div></div>
+              )}
+              {mediaCount != null && (
+                <div><Text type="secondary" style={{ fontSize: 11 }}>Posts no perfil</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{mediaCount.toLocaleString('pt-BR')}</div></div>
+              )}
+              <div><Text type="secondary" style={{ fontSize: 11 }}>Posts analisados</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.posts_count}</div></div>
+              <div><Text type="secondary" style={{ fontSize: 11 }}>Taxa de engajamento</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2, color: engagementColor(engagement.engagement_rate) }}>{engagement.engagement_rate.toFixed(2)}%</div></div>
+              <div><Text type="secondary" style={{ fontSize: 11 }}>Total de likes</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.total_likes.toLocaleString('pt-BR')}</div></div>
+              <div><Text type="secondary" style={{ fontSize: 11 }}>Total de comentários</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.total_comments.toLocaleString('pt-BR')}</div></div>
+              {engagement.total_views > 0 && (
+                <div><Text type="secondary" style={{ fontSize: 11 }}>Total de views</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.total_views.toLocaleString('pt-BR')}</div></div>
+              )}
+              <div><Text type="secondary" style={{ fontSize: 11 }}>Média likes/post</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.avg_likes.toLocaleString('pt-BR')}</div></div>
+              <div><Text type="secondary" style={{ fontSize: 11 }}>Média comentários/post</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.avg_comments.toLocaleString('pt-BR')}</div></div>
+              {engagement.avg_views > 0 && (
+                <div><Text type="secondary" style={{ fontSize: 11 }}>Média views/post</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.avg_views.toLocaleString('pt-BR')}</div></div>
+              )}
+              {engagement.posts_per_week != null && (
+                <div><Text type="secondary" style={{ fontSize: 11 }}>Média posts/semana</Text><div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{engagement.posts_per_week.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div></div>
+              )}
             </div>
-            <Descriptions column={1} bordered size="small" style={{ marginBottom: 0 }}>
-              {(() => {
-                const cost = activation!.pricing ? getCostTier(activation!.pricing) : null
-                return cost ? (
-                  <Descriptions.Item label="Custo médio">
-                    <Text strong style={{ color: '#d48806' }}>
-                      {cost.symbol} {cost.label}
-                    </Text>
+            {(collectedAt && formatDate(collectedAt) !== '—') || discoveredBy || discoveredValue ? (
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #f0f0f0', display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                {discoveredValue && (
+                  <div><Text type="secondary" style={{ fontSize: 11 }}>Descoberto Por</Text><div style={{ fontSize: 13, marginTop: 2 }}>{discoveredValue}</div></div>
+                )}
+                {collectedAt && formatDate(collectedAt) !== '—' && (
+                  <div style={{ marginLeft: 'auto', textAlign: 'right' }}><Text type="secondary" style={{ fontSize: 11 }}>Data da coleta</Text><div style={{ fontSize: 13, marginTop: 2 }}><CalendarOutlined style={{ marginRight: 4 }} />{formatDate(collectedAt)}</div></div>
+                )}
+              </div>
+            ) : null}
+          </Card>
+        </div>
+      )}
+
+      {/* 4) Contato e cadastro – oculto se público no limite */}
+      {!isRedacted && (
+        <div style={{ marginBottom: 24 }}>
+
+          {hasActivationData && (<>
+            <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>CONTATO E CADASTRO</Text>
+            <Card size="small">
+              <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <SafetyOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                <Text strong>Dados da ativação</Text>
+              </div>
+              <Descriptions column={1} bordered size="small" style={{ marginBottom: 0 }}>
+                {(() => {
+                  const cost = activation!.pricing ? getCostTier(activation!.pricing) : null
+                  return cost ? (
+                    <Descriptions.Item label="Custo médio">
+                      <Text strong style={{ color: '#d48806' }}>
+                        {cost.symbol} {cost.label}
+                      </Text>
+                    </Descriptions.Item>
+                  ) : null
+                })()}
+                {(activation!.city || activation!.state || activation!.neighborhood || activation!.country) && (
+                  <Descriptions.Item label="Localização">
+                    {[activation!.city, activation!.state, activation!.neighborhood, activation!.country].filter(Boolean).join(', ') || '—'}
                   </Descriptions.Item>
-                ) : null
-              })()}
-              {(activation!.city || activation!.state || activation!.neighborhood || activation!.country) && (
-                <Descriptions.Item label="Localização">
-                  {[activation!.city, activation!.state, activation!.neighborhood, activation!.country].filter(Boolean).join(', ') || '—'}
-                </Descriptions.Item>
-              )}
-              {activation!.address && <Descriptions.Item label="Endereço">{activation!.address}</Descriptions.Item>}
-              {activation!.content_type && activation!.content_type.length > 0 && (
-                <Descriptions.Item label="Tipo de conteúdo">
-                  <Space wrap size={[6, 6]}>
-                    {activation!.content_type.map((ct) => (
-                      <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>
-                    ))}
-                  </Space>
-                </Descriptions.Item>
-              )}
-              {activation!.whatsapp?.trim() && (
-                <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: '#25D366' }} />{activation!.whatsapp}</Space></Descriptions.Item>
-              )}
-              {activation!.tiktok?.trim() && (
-                <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation!.tiktok}</Space></Descriptions.Item>
-              )}
-              {activation!.facebook?.trim() && (
-                <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: '#1877F2' }} />{activation!.facebook}</Space></Descriptions.Item>
-              )}
-              {activation!.linkedin?.trim() && (
-                <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: '#0A66C2' }} />{activation!.linkedin}</Space></Descriptions.Item>
-              )}
-              {activation!.twitter?.trim() && (
-                <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: '#1DA1F2' }} />{activation!.twitter}</Space></Descriptions.Item>
-              )}
-              {activation!.websites?.trim() && <Descriptions.Item label="Websites">{activation!.websites}</Descriptions.Item>}
-              {activation!.description?.trim() && <Descriptions.Item label="Descrição">{activation!.description}</Descriptions.Item>}
-              {activation!.about_topics?.trim() && <Descriptions.Item label="Temas">{activation!.about_topics}</Descriptions.Item>}
-              {activation!.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation!.activated_at)}</Descriptions.Item>}
-              {activation!.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation!.updated_at)}</Descriptions.Item>}
-            </Descriptions>
-          </Card>
-        ) : (
-          <Card size="small" style={{ background: '#fafafa' }}>
-            <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-              Nenhum dado de cadastro ainda. O influenciador pode preencher contato e tipo de conteúdo ao finalizar o cadastro.
-            </Text>
-            {handle && (
-              <Button type="primary" ghost icon={<CheckCircleOutlined />} onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)} block>
-                Abrir cadastro
-              </Button>
-            )}
-          </Card>
-        )}
-      </div>
+                )}
+                {activation!.address && <Descriptions.Item label="Endereço">{activation!.address}</Descriptions.Item>}
+                {activation!.content_type && activation!.content_type.length > 0 && (
+                  <Descriptions.Item label="Tipo de conteúdo">
+                    <Space wrap size={[6, 6]}>
+                      {activation!.content_type.map((ct) => (
+                        <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>
+                      ))}
+                    </Space>
+                  </Descriptions.Item>
+                )}
+                {activation!.whatsapp?.trim() && (
+                  <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: '#25D366' }} />{activation!.whatsapp}</Space></Descriptions.Item>
+                )}
+                {activation!.tiktok?.trim() && (
+                  <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation!.tiktok}</Space></Descriptions.Item>
+                )}
+                {activation!.facebook?.trim() && (
+                  <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: '#1877F2' }} />{activation!.facebook}</Space></Descriptions.Item>
+                )}
+                {activation!.linkedin?.trim() && (
+                  <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: '#0A66C2' }} />{activation!.linkedin}</Space></Descriptions.Item>
+                )}
+                {activation!.twitter?.trim() && (
+                  <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: '#1DA1F2' }} />{activation!.twitter}</Space></Descriptions.Item>
+                )}
+                {activation!.websites?.trim() && <Descriptions.Item label="Websites">{activation!.websites}</Descriptions.Item>}
+                {activation!.description?.trim() && <Descriptions.Item label="Descrição">{activation!.description}</Descriptions.Item>}
+                {activation!.about_topics?.trim() && <Descriptions.Item label="Temas">{activation!.about_topics}</Descriptions.Item>}
+                {activation!.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation!.activated_at)}</Descriptions.Item>}
+                {activation!.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation!.updated_at)}</Descriptions.Item>}
+              </Descriptions>
+            </Card></>
+          )}
+        </div>
+      )}
 
-      {/* Conteúdo analisado (temas e hashtags — base das métricas) — só exibe se houver dados */}
-      {(categories.length > 0 || allHashtags.length > 0) && (
+      {/* Conteúdo analisado – oculto se público no limite */}
+      {!isRedacted && (categories.length > 0 || allHashtags.length > 0) && (
         <div style={{ marginBottom: 24 }}>
           <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>CONTEÚDO ANALISADO</Text>
           <Card size="small">
@@ -475,100 +512,102 @@ export default function InfluencerDetail() {
 
 
 
-      <Tabs
-        defaultActiveKey="posts"
-        items={[
-          {
-            key: 'posts',
-            label: (
-              <span>
-                <FileImageOutlined style={{ marginRight: 6 }} />
-                Publicações
-                {postsTotal > 0 && (
-                  <Text type="secondary" style={{ marginLeft: 6, fontWeight: 'normal' }}>
-                    ({postsTotal})
-                  </Text>
-                )}
-              </span>
-            ),
-            children: (
-              <>
-                {postsLoading ? (
-                  <div style={{ textAlign: 'center', padding: 48 }}>
-                    <Spin />
-                  </div>
-                ) : posts.length === 0 ? (
-                  <Empty description="Nenhum post encontrado para este perfil." style={{ padding: 48 }} />
-                ) : (
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(3, 1fr)',
-                      gap: 4,
-                    }}
-                  >
-                    {posts.map((post) => {
-                      const imgUrl = getPostImageUrl(post)
-                      const link = getPostLink(post)
-                      const likes = post.metrics?.likes ?? 0
-                      const comments = post.metrics?.comments ?? 0
-                      const views = post.metrics?.view_count
-                      return (
-                        <a
-                          key={post.key}
-                          href={link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{
-                            aspectRatio: '1',
-                            position: 'relative',
-                            display: 'block',
-                            overflow: 'hidden',
-                            background: '#f0f0f0',
-                          }}
-                        >
-                          {imgUrl ? (
-                            <Image
-                              alt=""
-                              src={proxyImageUrl(imgUrl)}
-                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                              preview={false}
-                            />
-                          ) : (
-                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              <FileImageOutlined style={{ fontSize: 40, color: '#bbb' }} />
-                            </div>
-                          )}
-                          <div
+      {!dataRedacted && (
+        <Tabs
+          defaultActiveKey="posts"
+          items={[
+            {
+              key: 'posts',
+              label: (
+                <span>
+                  <FileImageOutlined style={{ marginRight: 6 }} />
+                  Publicações
+                  {postsTotal > 0 && (
+                    <Text type="secondary" style={{ marginLeft: 6, fontWeight: 'normal' }}>
+                      ({postsTotal})
+                    </Text>
+                  )}
+                </span>
+              ),
+              children: (
+                <>
+                  {postsLoading ? (
+                    <div style={{ textAlign: 'center', padding: 48 }}>
+                      <Spin />
+                    </div>
+                  ) : posts.length === 0 ? (
+                    <Empty description="Nenhum post encontrado para este perfil." style={{ padding: 48 }} />
+                  ) : (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(3, 1fr)',
+                        gap: 4,
+                      }}
+                    >
+                      {posts.map((post) => {
+                        const imgUrl = getPostImageUrl(post)
+                        const link = getPostLink(post)
+                        const likes = post.metrics?.likes ?? 0
+                        const comments = post.metrics?.comments ?? 0
+                        const views = post.metrics?.view_count
+                        return (
+                          <a
+                            key={post.key}
+                            href={link}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             style={{
-                              position: 'absolute',
-                              inset: 0,
-                              background: 'rgba(0,0,0,.35)',
-                              opacity: 0,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 20,
-                              color: '#fff',
-                              fontWeight: 600,
-                              transition: 'opacity 0.2s',
+                              aspectRatio: '1',
+                              position: 'relative',
+                              display: 'block',
+                              overflow: 'hidden',
+                              background: '#f0f0f0',
                             }}
-                            className="post-hover-overlay"
                           >
-                            <span><HeartOutlined style={{ marginRight: 6 }} />{formatShortNum(likes)}</span>
-                            <span><CommentOutlined style={{ marginRight: 6 }} />{formatShortNum(comments)}</span>
-                            {views != null && <span><EyeOutlined style={{ marginRight: 6 }} />{formatShortNum(Number(views))}</span>}
-                          </div>
-                        </a>
-                      )
-                    })}
-                  </div>
-                )}
-              </>
-            ),
-          },
-        ]}
-      />
+                            {imgUrl ? (
+                              <Image
+                                alt=""
+                                src={proxyImageUrl(imgUrl)}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                preview={false}
+                              />
+                            ) : (
+                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <FileImageOutlined style={{ fontSize: 40, color: '#bbb' }} />
+                              </div>
+                            )}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                background: 'rgba(0,0,0,.35)',
+                                opacity: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 20,
+                                color: '#fff',
+                                fontWeight: 600,
+                                transition: 'opacity 0.2s',
+                              }}
+                              className="post-hover-overlay"
+                            >
+                              <span><HeartOutlined style={{ marginRight: 6 }} />{formatShortNum(likes)}</span>
+                              <span><CommentOutlined style={{ marginRight: 6 }} />{formatShortNum(comments)}</span>
+                              {views != null && <span><EyeOutlined style={{ marginRight: 6 }} />{formatShortNum(Number(views))}</span>}
+                            </div>
+                          </a>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
+              ),
+            },
+          ]}
+        />
+      )}
 
       <style>{`
         a:hover .post-hover-overlay { opacity: 1 !important; }
