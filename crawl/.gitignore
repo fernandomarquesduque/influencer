@@ -3,5 +3,6 @@ dist/
 .env
 .auth/
 data/
+browser/
 *.log
 .DS_Store

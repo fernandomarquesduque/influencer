@@ -25,10 +25,35 @@ export class InstagramClient {
 
   async init(): Promise<void> {
     if (this.browser) return;
-    this.browser = await chromium.launch({
+    const launchTimeout = process.env.PLAYWRIGHT_LAUNCH_TIMEOUT
+      ? parseInt(process.env.PLAYWRIGHT_LAUNCH_TIMEOUT, 10)
+      : 60000;
+    const args = [
+      '--disable-dev-shm-usage',
+      '--no-sandbox',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-setuid-sandbox',
+      '--no-first-run',
+      '--no-zygote',
+    ];
+    const baseOptions = {
       headless: this.headless,
-      args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    });
+      args,
+      timeout: launchTimeout,
+    };
+
+    // Usa apenas Chromium na pasta do projeto: PLAYWRIGHT_CHROMIUM_EXECUTABLE ou Chromium instalado
+    // via PLAYWRIGHT_BROWSERS_PATH (ex: ./browser) + npx playwright install chromium
+    if (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE) {
+      this.browser = await chromium.launch({
+        ...baseOptions,
+        executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
+      });
+      return;
+    }
+
+    this.browser = await chromium.launch(baseOptions);
   }
 
   private async getContext(storageState?: string): Promise<BrowserContext> {

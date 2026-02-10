@@ -67,12 +67,7 @@ export default function Layout() {
                   <Link to="/" style={isActive('/') && location.pathname === '/' ? navLinkActiveStyle : navLinkStyle}>
                     Início
                   </Link>
-                  <Link to="/extraction" style={isActive('/extraction') ? navLinkActiveStyle : navLinkStyle}>
-                    Extração
-                  </Link>
-                  <Link to="/extract-profile" style={isActive('/extract-profile') ? navLinkActiveStyle : navLinkStyle}>
-                    Extrair perfil
-                  </Link>
+
                 </>
               )}
               {myHandle && (

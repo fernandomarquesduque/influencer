@@ -10,16 +10,20 @@ function log(msg: string): void {
   if (DEBUG) console.log(`[sendDM] ${msg}`);
 }
 
-/** Fecha modais do Instagram (notificações, salvar login, etc.) que bloqueiam cliques. */
+/** Fecha modais do Instagram (notificações "Ativar notificações", salvar login, etc.) que bloqueiam cliques. */
 async function dismissModals(page: Page, maxAttempts = 5): Promise<void> {
   const notNowSelectors = [
+    // Modal "Ativar notificações" (container _a9-z com botão "Agora não")
+    'div._a9-z button._a9_1',
+    'div._a9-z button:has-text("Agora não")',
+    'div._a9-z button:has-text("Not Now")',
+    'div._a9-z button:has-text("Not now")',
+    'button._a9_1',
     'button:has-text("Agora não")',
     'button:has-text("Not Now")',
     'button:has-text("Not now")',
-    'button._a9_1',
     '[role="dialog"] button:has-text("Agora não")',
     '[role="dialog"] button:has-text("Not Now")',
-    'div._a9-z button._a9_1',
   ];
   for (let i = 0; i < maxAttempts; i++) {
     let closed = false;
@@ -27,10 +31,11 @@ async function dismissModals(page: Page, maxAttempts = 5): Promise<void> {
       try {
         const btn = page.locator(sel).first();
         if ((await btn.count()) > 0) {
-          await btn.click({ timeout: 1500 });
+          await btn.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
+          await btn.click({ timeout: 3000 });
           log(`modal fechado: ${sel}`);
           closed = true;
-          await randomDelay(80, 150);
+          await randomDelay(150, 300);
           break;
         }
       } catch {
@@ -62,13 +67,16 @@ export async function sendDirectMessage(
   try {
     log(`abrindo ${DIRECT_NEW_URL}`);
     await page.goto(DIRECT_NEW_URL, { waitUntil: 'domcontentloaded', timeout: 2000 });
-    await randomDelay(250, 500);
+    await randomDelay(400, 700);
 
     const currentUrl = page.url();
     if (currentUrl.includes('/accounts/login') || currentUrl.includes('/challenge/')) {
       return { ok: false, error: 'Sessão do Instagram expirada ou não logada. Faça login novamente (npm run login no crawl).' };
     }
 
+    // Fecha modal "Ativar notificações" e outros que aparecem após carregar
+    await dismissModals(page);
+    await randomDelay(200, 400);
     await dismissModals(page);
 
     // Tela "Suas mensagens" vazia: clicar em "Enviar mensagem" para abrir o composer (campo de busca)

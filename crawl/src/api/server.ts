@@ -148,7 +148,7 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
       return;
     }
 
-    const headless = process.env.HEADFUL !== 'true';
+    const headless = process.env.HEADFUL === 'true' ? false : process.env.HEADFUL === 'false' ? true : process.env.NODE_ENV === 'production' ? true : false;
     const maxAttempts = 3;
     const delayMs = 2000;
     const client = new InstagramClient({ authStatePath, headless });
@@ -800,14 +800,30 @@ app.post('/api/crawl/extract-profile', async (req: Request, res: Response) => {
     }
   }
   handle = handle.replace(/^@/, '');
+
+  const authStatePath = process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? '.auth/instagram.json';
+  if (!existsSync(authStatePath)) {
+    res.status(503).json({
+      success: false,
+      handle,
+      error: 'Sessão do Instagram não configurada. Execute o login na pasta crawl: npm run login',
+    });
+    return;
+  }
+
   try {
     const result = await extractSingleProfile(handle, db);
     res.json(result);
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isLoginRelated = /ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR|sessão|login/i.test(msg);
+    const error = isLoginRelated
+      ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login'
+      : msg;
     res.status(500).json({
       success: false,
       handle,
-      error: e instanceof Error ? e.message : String(e),
+      error,
     });
   }
 });

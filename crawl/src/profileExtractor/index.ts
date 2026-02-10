@@ -317,7 +317,15 @@ export async function extractProfile(
       await humanDelay();
       await page.waitForTimeout(delayMs(1500));
     } else {
-      await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      try {
+        await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      } catch (navErr) {
+        const navMsg = navErr instanceof Error ? navErr.message : String(navErr);
+        if (/ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR/i.test(navMsg)) {
+          throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login');
+        }
+        throw navErr;
+      }
       await humanDelay();
       await page.waitForTimeout(delayMs(1500));
     }

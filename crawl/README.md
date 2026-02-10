@@ -14,7 +14,7 @@ Ferramenta de extração de perfis de microinfluenciadores no Instagram com **fo
 
 - Node.js 18+
 - Conta Instagram (usuário/senha em variáveis de ambiente)
-- Playwright: após `npm install`, rodar `npx playwright install chromium`
+- **Chromium na pasta do projeto** (não usa Chrome do sistema): no `.env` defina `PLAYWRIGHT_BROWSERS_PATH=./browser` e depois rode `npx playwright install chromium`. O Chromium será instalado em `crawl/browser/`.
 
 ## Configuração
 

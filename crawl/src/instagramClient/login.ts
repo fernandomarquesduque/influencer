@@ -154,7 +154,30 @@ export async function loginWithCredentials(
   const page = await client.newPage();
   try {
     log('navegando para login');
-    await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    let loginResponseStatus: number | null = null;
+    page.on('response', (response) => {
+      const u = response.url();
+      if (u.includes('instagram.com/accounts/login') && response.request().resourceType() === 'document') {
+        loginResponseStatus = response.status();
+        if (loginResponseStatus >= 400) {
+          log(`Instagram retornou HTTP ${loginResponseStatus} para a página de login.`);
+        }
+      }
+    });
+    try {
+      await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    } catch (gotoErr: unknown) {
+      const msg = gotoErr instanceof Error ? gotoErr.message : String(gotoErr);
+      if (msg.includes('ERR_HTTP_RESPONSE_CODE_FAILURE') || msg.includes('net::ERR')) {
+        const code = loginResponseStatus != null ? ` (HTTP ${loginResponseStatus})` : '';
+        console.error(
+          '[login] Instagram respondeu com erro HTTP' + code + '. ' +
+          'Causas comuns: Chrome 109 bloqueado pelo Instagram, IP/firewall do servidor, ou rede. ' +
+          'Solução recomendada: faça o login em outro PC (Windows 10+ com Chrome atual), copie o arquivo .auth/instagram.json para esta pasta no servidor e reinicie a API.'
+        );
+      }
+      throw gotoErr;
+    }
     await randomDelay(2500, 5000);
     const currentUrlAfterGoto = page.url();
     log(`página carregada: ${currentUrlAfterGoto}`);
