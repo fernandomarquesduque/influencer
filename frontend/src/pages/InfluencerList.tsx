@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useNavigate, useSearchParams, Link, Navigate } from 'react-router-dom'
+import { useEffect, useState, useRef } from 'react'
+import { useNavigate, useSearchParams, useLocation, Link, Navigate } from 'react-router-dom'
 import {
   Row,
   Col,
@@ -18,6 +18,7 @@ import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
 import { useAuth } from '../contexts/AuthContext'
+import { useListCache } from '../contexts/ListCacheContext'
 
 const { Title, Text } = Typography
 
@@ -60,7 +61,9 @@ const PUBLIC_LIMIT_CODES = ['PUBLIC_PAGE_LIMIT', 'PUBLIC_FILTERS_NOT_ALLOWED', '
 
 export default function InfluencerList() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, isPublic } = useAuth()
+  const { getCache, saveCache } = useListCache()
   const isLimitedView = !user || isPublic
   const [searchParams, setSearchParams] = useSearchParams()
   const qFromUrl = searchParams.get('q') ?? ''
@@ -77,6 +80,7 @@ export default function InfluencerList() {
     sort: 'engagement_desc',
   })
   const [limitReachedCode, setLimitReachedCode] = useState<string | null>(null)
+  const scrollToRestoreRef = useRef<number | null>(null)
 
   const load = (overrides?: Partial<ProfilesSearchQuery>, signal?: AbortSignal) => {
     setLimitReachedCode(null)
@@ -124,15 +128,27 @@ export default function InfluencerList() {
   }
 
   useEffect(() => {
-    setSearchInput(qFromUrl)
-    const base = { q: qFromUrl || undefined, offset: 0, limit: PAGE_SIZE }
-    setQuery((prev) => (isLimitedView ? { ...base } : { ...prev, ...base }))
     if (!qFromUrl.trim()) {
+      setSearchInput('')
       setData([])
       setTotal(0)
       setFacets(null)
+      setQuery({ limit: PAGE_SIZE, offset: 0, sort: 'engagement_desc' })
       return
     }
+    const cached = getCache()
+    if (cached && cached.q === qFromUrl.trim()) {
+      setData(cached.data)
+      setTotal(cached.total)
+      setFacets(cached.facets)
+      setQuery(cached.query)
+      setSearchInput(cached.searchInput)
+      if (cached.scrollPosition != null) scrollToRestoreRef.current = cached.scrollPosition
+      return
+    }
+    setSearchInput(qFromUrl)
+    const base = { q: qFromUrl || undefined, offset: 0, limit: PAGE_SIZE }
+    setQuery((prev) => (isLimitedView ? { ...base } : { ...prev, ...base }))
     const controller = new AbortController()
     load(
       isLimitedView ? { q: qFromUrl.trim() || undefined, offset: 0 } : { q: qFromUrl.trim() || undefined, offset: 0 },
@@ -141,6 +157,30 @@ export default function InfluencerList() {
     return () => controller.abort()
   }, [qFromUrl, isLimitedView])
 
+  useEffect(() => {
+    if (!loading && !loadingMore && qFromUrl.trim() && (data.length > 0 || total > 0 || facets != null)) {
+      saveCache({
+        q: qFromUrl.trim(),
+        data,
+        total,
+        facets,
+        query,
+        searchInput,
+        scrollPosition: typeof window !== 'undefined' ? window.scrollY : 0,
+      })
+    }
+  }, [loading, loadingMore, qFromUrl, data, total, facets, query, searchInput, saveCache])
+
+  useEffect(() => {
+    if (scrollToRestoreRef.current != null) {
+      const y = scrollToRestoreRef.current
+      scrollToRestoreRef.current = null
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: y, behavior: 'auto' })
+      })
+    }
+  })
+
   if (user?.scope === 'influencer' && user.profile_handle) {
     return <Navigate to={`/influencer/${encodeURIComponent(user.profile_handle.replace(/^@/, ''))}`} replace />
   }
@@ -148,6 +188,14 @@ export default function InfluencerList() {
   const runSearch = () => {
     const q = searchInput.trim()
     setSearchParams(q ? { q } : {})
+  }
+
+  const openDetail = (handleOrKey: string) => {
+    const prev = getCache()
+    if (prev && prev.q === qFromUrl.trim()) {
+      saveCache({ ...prev, scrollPosition: typeof window !== 'undefined' ? window.scrollY : 0 })
+    }
+    navigate(location.pathname + location.search, { state: { detailHandle: handleOrKey } })
   }
 
   /** Categorias e engajamento vêm da sumarização da API (facets), não dos itens da página atual */
@@ -775,7 +823,7 @@ export default function InfluencerList() {
                   <ProfileSummaryCard
                     item={item}
                     variant="list"
-                    onClick={() => navigate(`/influencer/${encodeURIComponent(item.handle ?? item.key)}`)}
+                    onClick={() => openDetail(item.handle ?? item.key)}
                   />
                 </Col>
               ))}

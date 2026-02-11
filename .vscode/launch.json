@@ -17,6 +17,22 @@
         {
             "type": "node",
             "request": "launch",
+            "name": "Extract",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "extract",
+                "--",
+                "--delay-extra",
+                "1000"
+            ],
+            "cwd": "${workspaceFolder}/crawl",
+            "console": "integratedTerminal",
+            "preLaunchTask": "kill-extract"
+        },
+        {
+            "type": "node",
+            "request": "launch",
             "name": "Frontend",
             "runtimeExecutable": "npm",
             "runtimeArgs": [

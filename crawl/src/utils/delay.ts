@@ -19,15 +19,15 @@ export function randomDelay(minMs: number, maxMs: number): Promise<void> {
 
 /**
  * Delay entre requisições pesadas (abrir post, abrir perfil) para evitar rate limit (429).
- * Regra prática: 3–6 s com jitter. Em CRAWL_SAFE=1: ~8–12 s (5–8 req/min).
+ * Padrão: 5–9 s. Em CRAWL_SAFE=1: ~10–16 s (4–6 req/min). Use CRAWL_SAFE=1 ou --delay-extra se bloquear.
  */
 export function humanDelay(): Promise<void> {
   const safe = getSafeMode();
-  const base = safe ? 8000 : 3000;
-  const jitter = safe ? 4000 : 3000;
+  const base = safe ? 10_000 : 5000;
+  const jitter = safe ? 6000 : 4000;
   const ms = Math.round(base + Math.random() * jitter);
   const actual = Math.round(ms * getFastMultiplier()) + getDelayExtraMs();
-  return new Promise((r) => setTimeout(r, Math.max(1000, actual)));
+  return new Promise((r) => setTimeout(r, Math.max(2000, actual)));
 }
 
 /** Backoff longo ao detectar 429 (Too Many Requests). Padrão 15 min. */

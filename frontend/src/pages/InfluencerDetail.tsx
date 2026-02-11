@@ -2,7 +2,6 @@ import { useEffect, useState, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Spin,
-  Typography,
   Empty,
   Button,
   Image,
@@ -15,6 +14,7 @@ import {
   Card,
   Row,
   Col,
+  Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -43,7 +43,7 @@ import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 import { useAuth } from '../contexts/AuthContext'
 
-const { Title, Text, Paragraph } = Typography
+const { Text, Paragraph } = Typography
 
 function formatDate(isoOrTimestamp: string | number | undefined | null): string {
   if (isoOrTimestamp == null) return '—'
@@ -87,8 +87,14 @@ function engagementColor(rate: number): string {
   return '#eb2f96'
 }
 
-export default function InfluencerDetail() {
-  const { handle } = useParams<{ handle: string }>()
+interface InfluencerDetailProps {
+  /** Quando o detalhe é aberto pela lista (modal), o handle vem por prop e não pela URL. */
+  overrideHandle?: string
+}
+
+export default function InfluencerDetail({ overrideHandle }: InfluencerDetailProps = {}) {
+  const { handle: paramHandle } = useParams<{ handle: string }>()
+  const handle = overrideHandle ?? paramHandle
   const navigate = useNavigate()
   const { user, isPublic, canEditProfile } = useAuth()
   const isLimitedView = !user || isPublic
@@ -231,20 +237,13 @@ export default function InfluencerDetail() {
 
   return (
     <div style={{ maxWidth: 1120, margin: '0 auto', padding: '0 24px 48px' }}>
-      {isLimitedView && !isRedacted && (
-        <div style={{ marginBottom: 16, padding: 12, background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8 }}>
-          <Text>
-            Você está vendo uma prévia limitada. <Link to="/premium">Seja assinante</Link> para ver métricas completas e filtros avançados.
-          </Text>
-        </div>
-      )}
+
       {/* 1) Contexto: quem é este relatório + ações imediatas */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-            <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} style={{ paddingLeft: 0, flexShrink: 0 }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, minWidth: 0 }}>
+            <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ paddingLeft: 0, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
-              <Title level={4} style={{ margin: 0, fontWeight: 600, color: '#1a1a1a' }}>BI do influenciador</Title>
               <Text type="secondary" style={{ fontSize: 12 }}>Painel de métricas e desempenho</Text>
             </div>
           </div>
@@ -265,7 +264,7 @@ export default function InfluencerDetail() {
                     </Tooltip>
                   ) : null}
                 </div>
-                <Text type="secondary" style={{ fontSize: 13 }}>@{displayHandle}</Text>
+                {!isLimitedView && !isRedacted && <Text type="secondary" style={{ fontSize: 13 }}>@{displayHandle}</Text>}
                 {bio ? (
                   <Paragraph style={{ margin: '6px 0 0', fontSize: 13, color: '#595959', whiteSpace: 'pre-wrap', maxWidth: 560 }}>
                     {bio}
@@ -275,7 +274,7 @@ export default function InfluencerDetail() {
               </div>
             </div>
             <Space wrap size="middle">
-              {!dataRedacted && (
+              {!dataRedacted && !isLimitedView && !isRedacted && (
                 <Button type="primary" icon={<LinkOutlined />} href={instagramUrl} target="_blank" rel="noopener noreferrer">
                   Abrir no Instagram
                 </Button>
@@ -298,6 +297,13 @@ export default function InfluencerDetail() {
         </div>
       )}
 
+      {isLimitedView && !isRedacted && (
+        <div style={{ marginBottom: 16, padding: 12, background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8 }}>
+          <Text>
+            Você está vendo uma prévia limitada. <Link to="/premium">Seja assinante</Link> para ver métricas completas e filtros avançados.
+          </Text>
+        </div>
+      )}
       {/* 2) Métricas de decisão – oculto se público no limite */}
       {!isLimitedView && !isRedacted && (
         <div style={{ marginBottom: 24 }}>
@@ -509,7 +515,7 @@ export default function InfluencerDetail() {
 
 
 
-      {!dataRedacted && (
+      {!dataRedacted && !isLimitedView && !isRedacted && (
         <Tabs
           defaultActiveKey="posts"
           items={[

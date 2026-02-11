@@ -30,10 +30,12 @@ export async function discoverAndProcessByHashtag(
   onProfileQualified: (ref: DiscoveredProfileRef, pageAlreadyOnProfile?: Page) => Promise<boolean>,
   shouldAbort?: () => boolean,
   excludeBusinessProfiles: boolean = true
-): Promise<number> {
+): Promise<{ saved: number; processed: number; failed: number }> {
   const CONSECUTIVE_FAILURES_BEFORE_RELOGIN = 5;
+  const zero = { saved: 0, processed: 0, failed: 0 };
   let page = await client.newPage();
   let savedCount = 0;
+  let processedCount = 0;
   let consecutiveLoadFailures = 0;
   try {
     const url = InstagramClient.tagUrl(tag);
@@ -60,24 +62,24 @@ export async function discoverAndProcessByHashtag(
             const urlAfterLogin = page.url();
             if (urlAfterLogin.includes('/accounts/login/') || urlAfterLogin.includes('/challenge/')) {
               crawlLogDiscovery('Ainda na página de login após tentativa. Verifique usuário/senha no .env.');
-              return 0;
+              return zero;
             }
           } else {
             crawlLogDiscovery('Login falhou. Verifique INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
-            return 0;
+            return zero;
           }
         } catch (loginErr) {
           crawlLogDiscovery(`Erro ao fazer login: ${loginErr instanceof Error ? loginErr.message : String(loginErr)}`);
-          return 0;
+          return zero;
         }
       } else {
         crawlLogDiscovery('Rode: npm run login (sessão em .auth/instagram.json) ou defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
-        return 0;
+        return zero;
       }
     }
 
     await page.evaluate(() => window.scrollTo(0, 600));
-    await randomDelay(800, 1500);
+    await randomDelay(1500, 3000);
 
     let postLinks = page.locator('article a[href^="/p/"]');
     let postCount = await postLinks.count();
@@ -89,10 +91,10 @@ export async function discoverAndProcessByHashtag(
       const urlNow = page.url();
       if (urlNow.includes('/accounts/login/') || urlNow.includes('/challenge/')) {
         crawlLogDiscovery('Redirecionado para login/challenge. Rode npm run login ou defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
-        return 0;
+        return zero;
       }
       crawlLogDiscovery('Nenhum post encontrado para esta hashtag. Verifique o termo ou se a hashtag existe.');
-      return 0;
+      return zero;
     }
     const toProcess = Math.min(maxPosts, Math.max(0, postCount));
     const hrefs: string[] = [];
@@ -100,7 +102,7 @@ export async function discoverAndProcessByHashtag(
       const href = await postLinks.nth(i).getAttribute('href');
       if (href && !hrefs.includes(href)) hrefs.push(href);
     }
-    crawlLogDiscovery(`${tag}: ${postCount} links, ${hrefs.length} posts para processar`);
+    crawlLogDiscovery(`${tag}: ${hrefs.length} posts para processar`);
 
     let postIndex = 0;
     let stoppedDueToBlock = false;
@@ -112,7 +114,7 @@ export async function discoverAndProcessByHashtag(
       if (savedCount >= maxProfiles) break;
       postIndex++;
       const fullUrl = href.startsWith('http') ? href : `https://www.instagram.com${href}`;
-      crawlLogDiscovery(`post ${postIndex}/${hrefs.length}: ${fullUrl}`);
+      await randomDelay(1500, 3500);
       try {
         await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
         consecutiveLoadFailures = 0;
@@ -179,13 +181,10 @@ export async function discoverAndProcessByHashtag(
           const h = await el.getAttribute('href');
           if (h && isProfileHref(h)) {
             authorHref = h;
-            crawlLogDiscovery(`  seletor ok: ${sel} -> ${h}`);
             break;
           }
-          if (h) crawlLogDiscovery(`  seletor ${sel}: href=${h.slice(0, 60)} (ignorado, nao eh perfil)`);
         } catch (e) {
           lastError = e instanceof Error ? e.message : String(e);
-          crawlLogDiscovery(`  seletor falhou: ${sel} - ${lastError}`);
           continue;
         }
       }
@@ -196,10 +195,7 @@ export async function discoverAndProcessByHashtag(
             nodes.map((a) => (a as HTMLAnchorElement).getAttribute('href')).filter((h): h is string => !!h)
           );
           const first = hrefs.find((h) => isProfileHref(h));
-          if (first) {
-            authorHref = first;
-            crawlLogDiscovery(`  autor (link oculto): section a[href^="/"] -> ${first}`);
-          }
+          if (first) authorHref = first;
         } catch {
           // ignore
         }
@@ -208,12 +204,12 @@ export async function discoverAndProcessByHashtag(
         const handle = authorHref.replace(/^\//, '').split('/')[0]?.trim().split('?')[0] ?? '';
         if (!handle) continue;
         if (existingHandles.has(handle.toLowerCase())) {
-          crawlLogDiscovery(`  -> @${handle} já no storage, pulando`);
+          crawlLogDiscovery(`@${handle} → pulado: já no storage`);
           await humanDelay();
           continue;
         }
         if (excludeBusinessProfiles && isBusinessFromEntity({ handle })) {
-          crawlLogDiscovery(`  -> @${handle} parece estabelecimento (handle), pulando sem abrir`);
+          crawlLogDiscovery(`@${handle} → pulado: estabelecimento (handle)`);
           await humanDelay();
           continue;
         }
@@ -222,7 +218,6 @@ export async function discoverAndProcessByHashtag(
         let minimalProfile: Record<string, unknown> | null = null;
 
         if (minFollowers > 0) {
-          crawlLogDiscovery(`  -> checando seguidores de @${handle}...`);
           if (excludeBusinessProfiles) {
             const result = await getFollowersAndMinimalProfile(page, profileUrl);
             followers = result.followers;
@@ -233,7 +228,8 @@ export async function discoverAndProcessByHashtag(
         }
 
         if (minFollowers > 0 && (followers == null || followers < minFollowers)) {
-          crawlLogDiscovery(`  -> autor: @${handle} (${followers ?? '?'} seguidores, abaixo de ${minFollowers}, pulando)`);
+          crawlLogDiscovery(`@${handle} → pulado: abaixo de ${minFollowers} seguidores`);
+          processedCount++; // conta como falha (não sucesso)
           await humanDelay();
           continue;
         }
@@ -249,26 +245,19 @@ export async function discoverAndProcessByHashtag(
             followers_count: followers ?? 0,
           };
           if (!qualifiesAsInfluencer(entity, minFollowers)) {
-            crawlLogDiscovery(`  -> @${handle} não qualifica como influenciador (filtro no início), pulando`);
+            crawlLogDiscovery(`@${handle} → pulado: não qualifica (filtro)`);
             await humanDelay();
             continue;
           }
         }
 
-        if (minFollowers > 0) {
-          crawlLogDiscovery(`  -> autor: @${handle} (${followers} seguidores, ok). Processando perfil completo (1 por vez)...`);
-        } else {
-          crawlLogDiscovery(`  -> autor: @${handle}. Processando perfil completo (1 por vez)...`);
-        }
         const ref: DiscoveredProfileRef = { handle, profileUrl, followersFromDiscovery: followers ?? undefined };
+        processedCount++;
         try {
           const saved = await onProfileQualified(ref, page);
-          if (saved) {
-            savedCount++;
-            crawlLogDiscovery(`  -> perfil @${handle} concluído; só então indo ao próximo post.`);
-          } else {
-            crawlLogDiscovery(`  -> perfil @${handle} não salvo; seguindo ao próximo post.`);
-          }
+          if (saved) savedCount++;
+          const failed = processedCount - savedCount;
+          crawlLogDiscovery(`Totais: ${savedCount} salvos, ${failed} falhas`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (msg === 'RATE_LIMIT_429') {
@@ -286,8 +275,6 @@ export async function discoverAndProcessByHashtag(
           }
         }
         await humanDelay();
-      } else {
-        crawlLogDiscovery(`  -> nenhum autor (ultimo erro: ${lastError || 'href nao passou no regex'})`);
       }
       await humanDelay();
     }
@@ -304,7 +291,7 @@ export async function discoverAndProcessByHashtag(
   } finally {
     await page.close().catch(() => { });
   }
-  return savedCount;
+  return { saved: savedCount, processed: processedCount, failed: processedCount - savedCount };
 }
 
 /**

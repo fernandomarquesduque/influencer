@@ -1,12 +1,12 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
+import { ListCacheProvider } from './contexts/ListCacheContext'
 import { RequireAuth } from './components/RequireAuth'
 import Layout from './Layout'
 import Login from './pages/Login'
 import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
-import InfluencerList from './pages/InfluencerList'
-import InfluencerDetail from './pages/InfluencerDetail'
+import ListAndDetailModal from './pages/ListAndDetailModal'
 import Extraction from './pages/Extraction'
 import ExtractProfile from './pages/ExtractProfile'
 import Activate from './pages/Activate'
@@ -21,9 +21,9 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/premium" element={<Premium />} />
         {/* Lista, detalhe e auth: acesso público */}
-        <Route path="/" element={<Layout />}>
-          <Route index element={<InfluencerList />} />
-          <Route path="influencer/:handle" element={<InfluencerDetail />} />
+        <Route path="/" element={<ListCacheProvider><Layout /></ListCacheProvider>}>
+          <Route index element={<ListAndDetailModal />} />
+          <Route path="influencer/:handle" element={<ListAndDetailModal />} />
           <Route path="create" element={<Auth />} />
           <Route path="create/password" element={<AuthPassword />} />
           <Route path="create/rejected" element={<AuthRejected />} />

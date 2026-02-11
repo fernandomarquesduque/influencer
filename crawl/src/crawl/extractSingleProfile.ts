@@ -12,7 +12,6 @@ import {
   type InfluencerRejectionDiagnostic,
 } from '../utils/entityAccess.js';
 import { buildSlimProfile } from '../utils/slimProfile.js';
-import { crawlLogExtract } from '../utils/crawlLogger.js';
 import type { CrawlStorage } from './runCrawl.js';
 
 const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? (parseInt(process.env.MIN_FOLLOWERS, 10) || 0) : 0;
@@ -168,7 +167,6 @@ export async function extractSingleProfile(
 
           if (config.minPostLikesToSave > 0) {
             if (!hasPostWithMinLikes(posts, config.minPostLikesToSave)) {
-              crawlLogExtract(`@${cleanHandle} regra de curtidas NÃO validada: nenhum post com mais de ${config.minPostLikesToSave} curtidas`);
               return {
                 success: false,
                 handle: cleanHandle,
@@ -177,7 +175,6 @@ export async function extractSingleProfile(
                 followers,
               };
             }
-            crawlLogExtract(`@${cleanHandle} regra de curtidas validada: pelo menos 1 post com > ${config.minPostLikesToSave} curtidas`);
           }
 
           await storage.save(slim as Entity & { handle: string });

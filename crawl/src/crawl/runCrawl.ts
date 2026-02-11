@@ -1,5 +1,6 @@
 import { DEFAULT_CRAWL_CONFIG, type CrawlConfig, type Entity } from '../types/index.js';
 import { InstagramClient } from '../instagramClient/index.js';
+import { ensureLoggedIn } from '../instagramClient/login.js';
 import { discoverAndProcessByHashtag, type DiscoveredProfileRef } from '../discoveryService/index.js';
 import { extractProfile } from '../profileExtractor/index.js';
 import type { Page } from 'playwright';
@@ -43,6 +44,14 @@ function buildConfigFromEnv(): CrawlConfig {
   };
 }
 
+function logProfileOutcome(handle: string, saved: boolean, detail: string): void {
+  if (saved) {
+    crawlLogExtract(`@${handle} → salvo (${detail})`);
+  } else {
+    crawlLogExtract(`@${handle} → rejeitado: ${detail}`);
+  }
+}
+
 async function processOneProfileWithTimeout(
   client: InstagramClient,
   ref: DiscoveredProfileRef,
@@ -56,17 +65,15 @@ async function processOneProfileWithTimeout(
   const page = useDiscoveryPage ? pageFromDiscovery : await client.newPage();
 
   for (let attempt = 0; attempt <= PROFILE_PROCESS_MAX_RETRIES; attempt++) {
-    crawlLogExtract(`[heartbeat] ${new Date().toISOString()} — processando @${ref.handle} (tentativa ${attempt + 1}/${PROFILE_PROCESS_MAX_RETRIES + 1}, timeout ${PROFILE_PROCESS_TIMEOUT_MS / 1000}s)`);
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('PROFILE_TIMEOUT')), PROFILE_PROCESS_TIMEOUT_MS)
     );
     const work = async (): Promise<boolean> => {
       try {
         if (existingHandles.has(ref.handle.toLowerCase())) return false;
-        crawlLogExtract(`Extraindo perfil completo @${ref.handle}...${attempt > 0 ? ` (tentativa ${attempt + 1})` : ''}`);
         const result = await extractProfile(page, ref.handle, 'hashtag', tag, config, { pageAlreadyOnProfile: useDiscoveryPage });
         if (!result) {
-          crawlLogExtract(`Falha ao extrair @${ref.handle}`);
+          logProfileOutcome(ref.handle, false, 'falha ao extrair');
           return false;
         }
         const { profile: rawProfile, posts } = result;
@@ -86,41 +93,39 @@ async function processOneProfileWithTimeout(
         }
         const minRequired = config.minFollowersToSave > 0 ? Math.max(config.minFollowersToSave, MIN_FOLLOWERS_FLOOR) : 0;
         if (isPrivateFromEntity(raw)) {
-          crawlLogExtract(`@${ref.handle} perfil privado, pulando`);
-          throw new Error('FILTER_REJECT');
+          throw new Error('FILTER_REJECT:perfil privado');
         }
         if (config.excludeBusinessProfiles) {
           if (!qualifiesAsInfluencer(profileObj, minRequired)) {
-            crawlLogExtract(`@${ref.handle} não qualifica como influenciador (filtro estabelecimento + tipo + seguidores), pulando`);
-            throw new Error('FILTER_REJECT');
+            throw new Error('FILTER_REJECT:não qualifica (estabelecimento/tipo/seguidores)');
           }
         } else {
           if (!isPersonOrCreator(profileObj)) {
-            crawlLogExtract(`@${ref.handle} não é pessoa/criador (conta empresa), pulando`);
-            throw new Error('FILTER_REJECT');
+            throw new Error('FILTER_REJECT:conta empresa');
           }
           if (minRequired > 0 && followers < minRequired) {
-            crawlLogExtract(`@${ref.handle} abaixo do mínimo (${followers} < ${minRequired}), pulando`);
-            throw new Error('FILTER_REJECT');
+            throw new Error(`FILTER_REJECT:abaixo do mínimo (${followers} < ${minRequired})`);
           }
         }
         if (config.minPostLikesToSave > 0) {
           if (!hasPostWithMinLikes(posts, config.minPostLikesToSave)) {
-            crawlLogExtract(`@${ref.handle} regra de curtidas NÃO validada: nenhum post com mais de ${config.minPostLikesToSave} curtidas, pulando`);
-            throw new Error('FILTER_REJECT');
+            throw new Error(`FILTER_REJECT:curtidas insuficientes (< ${config.minPostLikesToSave})`);
           }
-          crawlLogExtract(`@${ref.handle} regra de curtidas validada: pelo menos 1 post com > ${config.minPostLikesToSave} curtidas`);
         }
         await storage.save(slim as Entity & { handle: string });
         const collectedAt = String(slim._collected_at ?? new Date().toISOString());
-        const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
+        await storage.savePosts(slim.handle, posts, collectedAt);
         existingHandles.add(ref.handle.toLowerCase());
-        crawlLogExtract(`Salvo @${ref.handle} | followers=${followers} | posts=${postsSaved}`);
+        logProfileOutcome(ref.handle, true, `${followers} seguidores`);
         return true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        crawlLogExtract(`Erro ao processar @${ref.handle}: ${msg}`);
         if (msg === 'RATE_LIMIT_429') throw err;
+        if (msg.startsWith('FILTER_REJECT:')) {
+          logProfileOutcome(ref.handle, false, msg.slice('FILTER_REJECT:'.length));
+        } else {
+          logProfileOutcome(ref.handle, false, msg.slice(0, 60));
+        }
         return false;
       }
     };
@@ -131,12 +136,13 @@ async function processOneProfileWithTimeout(
         if (!useDiscoveryPage) await page.close().catch(() => { });
         return true;
       }
-      if (attempt < PROFILE_PROCESS_MAX_RETRIES) {
-        crawlLogExtract(`@${ref.handle} falha ao extrair/salvar; retentando (${attempt + 1}/${PROFILE_PROCESS_MAX_RETRIES})...`);
-      }
+      if (attempt < PROFILE_PROCESS_MAX_RETRIES) continue;
+      logProfileOutcome(ref.handle, false, 'falha após retentativas');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg === 'FILTER_REJECT') {
+      if (msg.startsWith('FILTER_REJECT:')) {
+        const reason = msg.slice('FILTER_REJECT:'.length);
+        logProfileOutcome(ref.handle, false, reason);
         if (!useDiscoveryPage) await page.close().catch(() => { });
         return false;
       }
@@ -145,7 +151,7 @@ async function processOneProfileWithTimeout(
         throw err;
       }
       const isTimeout = msg.includes('PROFILE_TIMEOUT') || msg.toLowerCase().includes('timeout');
-      crawlLogExtract(`Perfil @${ref.handle}: ${isTimeout ? 'timeout (código parou?)' : msg}. ${attempt < PROFILE_PROCESS_MAX_RETRIES ? `Retentando (${attempt + 1}/${PROFILE_PROCESS_MAX_RETRIES})...` : 'Desistindo e seguindo ao próximo.'}`);
+      logProfileOutcome(ref.handle, false, isTimeout ? 'timeout' : msg.slice(0, 60));
       if (attempt === PROFILE_PROCESS_MAX_RETRIES) {
         if (!useDiscoveryPage) await page.close().catch(() => { });
         return false;
@@ -169,6 +175,8 @@ export interface RunCrawlCallbacks {
 
 export interface RunCrawlResult {
   saved: number;
+  processed: number;
+  failed: number;
   tag: string;
 }
 
@@ -205,12 +213,26 @@ export async function runCrawl(
 
   try {
     await client.init();
+    const user = process.env.INSTAGRAM_USER?.trim();
+    const password = process.env.INSTAGRAM_PASSWORD;
+    if (user && password) {
+      crawlLog('Verificando sessão Instagram (ensureLoggedIn)...');
+      const loggedIn = await ensureLoggedIn(client, user, password);
+      if (!loggedIn) {
+        throw new Error(
+          'Não foi possível manter sessão no Instagram. Verifique INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env ou rode npm run login (HEADFUL=true para 2FA).'
+        );
+      }
+      crawlLog('Sessão Instagram OK.');
+    } else {
+      crawlLog('INSTAGRAM_USER ou INSTAGRAM_PASSWORD não definidos no .env; usando apenas sessão salva em .auth/instagram.json se existir.');
+    }
     crawlLog(`Hashtag: ${tag}, max posts: ${config.maxPostsPerTag}, max perfis: ${effectiveMaxProfiles}, min seguidores: ${config.minFollowersToSave}`);
     if (process.env.CRAWL_SAFE === '1' || process.env.CRAWL_SAFE === 'true') {
       crawlLog('CRAWL_SAFE=1: ritmo lento (5–8 req/min) para reduzir risco de 429.');
     }
 
-    const saved = await discoverAndProcessByHashtag(
+    const result = await discoverAndProcessByHashtag(
       client,
       tag,
       config.maxPostsPerTag,
@@ -222,8 +244,8 @@ export async function runCrawl(
       config.excludeBusinessProfiles
     );
 
-    crawlLog(`Concluído. Perfis salvos nesta execução: ${saved}`);
-    return { saved, tag };
+    crawlLog(`Concluído. Perfis salvos nesta execução: ${result.saved}`);
+    return { saved: result.saved, processed: result.processed, failed: result.failed, tag };
   } finally {
     await client.close();
   }

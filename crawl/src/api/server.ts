@@ -20,7 +20,8 @@ import type { AuthScope } from '../auth/types.js';
 import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
 
 const require = createRequire(import.meta.url);
-const openApiSpec = require('./openapi.json');
+const openApiRocksdb = require('./openapi-rocksdb.json');
+const openApiSqlite = require('./openapi-sqlite.json');
 
 /** iisnode define process.env.PORT; fora do IIS usamos API_PORT ou 3500 */
 const PORT = Number(process.env.PORT) || Number(process.env.API_PORT) || 3500;
@@ -863,15 +864,26 @@ app.post('/api/crawl', async (req: Request, res: Response) => {
     });
 });
 
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec, {
-  customCss: '.swagger-ui .topbar { display: none }',
-}));
-
-app.get('/api-docs.json', (_req: Request, res: Response) => {
-  res.json(openApiSpec);
+// Specs por URL; cada Swagger usa serveFiles para ter init script próprio (evita variável global compartilhada).
+app.get('/api-docs/rocksdb.json', (_req: Request, res: Response) => {
+  res.json(openApiRocksdb);
+});
+app.get('/api-docs/sqlite.json', (_req: Request, res: Response) => {
+  res.json(openApiSqlite);
+});
+const swaggerCss = '.swagger-ui .topbar { display: none }';
+const rocksdbSwaggerOpts = { swaggerUrl: '/api-docs/rocksdb.json', customCss: swaggerCss };
+const sqliteSwaggerOpts = { swaggerUrl: '/api-docs/sqlite.json', customCss: swaggerCss };
+const rocksdbServe = swaggerUi.serveFiles(undefined as unknown as object, rocksdbSwaggerOpts);
+const sqliteServe = swaggerUi.serveFiles(undefined as unknown as object, sqliteSwaggerOpts);
+app.use('/api-docs/rocksdb', rocksdbServe[0], rocksdbServe[1], swaggerUi.setup(null, rocksdbSwaggerOpts));
+app.use('/api-docs/sqlite', sqliteServe[0], sqliteServe[1], swaggerUi.setup(null, sqliteSwaggerOpts));
+app.get('/api-docs', (_req: Request, res: Response) => {
+  res.redirect(302, '/api-docs/rocksdb');
 });
 
 app.listen(PORT, () => {
   console.log(`API: http://localhost:${PORT}`);
-  console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
+  console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
+  console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
 });

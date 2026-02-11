@@ -77,7 +77,7 @@ export default function Layout() {
               )}
               {isAdm && (
                 <Link to="/admin/users" style={isActive('/admin') ? navLinkActiveStyle : navLinkStyle}>
-                  Admin
+                  Usuários
                 </Link>
               )}
             </>

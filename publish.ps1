@@ -40,17 +40,33 @@ $crawlExclude = @("node_modules", ".auth", "dist", ".env")
 Get-ChildItem -Path $crawlSrc -Force | Where-Object { $crawlExclude -notcontains $_.Name } | ForEach-Object {
     Copy-Item -Path $_.FullName -Destination $crawlDest -Recurse -Force
 }
+# Garantir que node_modules não foi copiado (remover se existir)
+$crawlNodeModules = Join-Path $crawlDest "node_modules"
+if (Test-Path $crawlNodeModules) {
+    Write-Host "Removendo node_modules do publish (não deve ser copiado)." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $crawlNodeModules
+}
+# SQLite não deve ir no publish (no servidor será criado novo ou use .env SQLITE_DB_PATH)
+$crawlData = Join-Path $crawlDest "data"
+foreach ($name in @("influencer.db", "influencer.db-wal", "influencer.db-shm")) {
+    $f = Join-Path $crawlData $name
+    if (Test-Path $f) {
+        Write-Host "Removendo SQLite do publish: crawl\data\$name" -ForegroundColor Yellow
+        Remove-Item -Force $f
+    }
+}
+# (crawl\data com RocksDB é copiado no loop acima; SQLite removido acima)
 if (Test-Path (Join-Path $crawlSrc "data")) {
-    Write-Host "Copiando banco de dados (crawl\data) ..." -ForegroundColor Yellow
+    Write-Host "crawl\data (RocksDB) incluído no publish; SQLite excluído." -ForegroundColor Gray
 }
 
-# 5) npm ci + build no crawl (iisnode usa run.mjs + dist/)
+# 5) npm ci + build no crawl (iisnode usa dist/ + openapi-rocksdb.json + openapi-sqlite.json)
 Write-Host "Instalando dependencias do crawl (npm ci) em $crawlDest ..." -ForegroundColor Yellow
 Push-Location $crawlDest
 try {
     npm ci
     if (-not $?) { throw "npm ci no crawl falhou" }
-    Write-Host "Build do crawl (dist + openapi.json) para iisnode ..." -ForegroundColor Yellow
+    Write-Host "Build do crawl (dist + openapi specs) para iisnode ..." -ForegroundColor Yellow
     npm run build
     if (-not $?) { throw "npm run build no crawl falhou" }
 } finally {

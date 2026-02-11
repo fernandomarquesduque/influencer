@@ -16,6 +16,8 @@ async function main(): Promise<void> {
   });
 
   try {
+    await client.clearAuthStateFile();
+    console.log('Sessão anterior removida; iniciando login...');
     const ok = await loginWithCredentials(client, user, password);
     if (ok) {
       console.log('Login OK. Sessão salva em', client.getAuthStatePath());

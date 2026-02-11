@@ -1,0 +1,318 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Influencer API — RocksDB",
+    "description": "Endpoints que leem ou gravam no banco **RocksDB** (perfis e posts). Dados em `./data/rocksdb` (ou STORAGE_DB_PATH).",
+    "version": "1.0.0"
+  },
+  "servers": [{ "url": "http://localhost:3000", "description": "Local" }],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health check",
+        "tags": ["Sistema"],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/profiles": {
+      "get": {
+        "summary": "Lista todos os perfis",
+        "tags": ["Perfis"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 }, "description": "Máximo de itens" },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 }, "description": "Offset para paginação" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de perfis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer" },
+                    "items": { "type": "array", "items": { "type": "object", "description": "Perfil (entidade dinâmica)" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profiles/search": {
+      "get": {
+        "summary": "Lista perfis com filtros e engajamento",
+        "description": "Filtros avançados e cálculo de engajamento baseado nos posts (RocksDB). Retorna engagement_rate, total_likes, avg_likes, etc.",
+        "tags": ["Perfis"],
+        "parameters": [
+          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "Busca em handle, username, full_name" },
+          { "name": "minFollowers", "in": "query", "schema": { "type": "integer" } },
+          { "name": "maxFollowers", "in": "query", "schema": { "type": "integer" } },
+          { "name": "categories", "in": "query", "schema": { "type": "string" } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["engagement_desc", "engagement_asc", "followers_desc", "followers_asc"], "default": "engagement_desc" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista com perfis e engagement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer" },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "handle": { "type": "string" },
+                          "full_name": { "type": "string" },
+                          "followers_count": { "type": "integer" },
+                          "engagement": {
+                            "type": "object",
+                            "properties": {
+                              "posts_count": { "type": "integer" },
+                              "total_likes": { "type": "integer" },
+                              "total_comments": { "type": "integer" },
+                              "engagement_rate": { "type": "number" },
+                              "avg_likes": { "type": "number" },
+                              "avg_comments": { "type": "number" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profiles/{handle}": {
+      "get": {
+        "summary": "Busca um perfil por handle",
+        "tags": ["Perfis"],
+        "parameters": [
+          { "name": "handle", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Handle do perfil (ex: mala.ta.ok)" }
+        ],
+        "responses": {
+          "200": { "description": "Perfil encontrado", "content": { "application/json": { "schema": { "type": "object", "description": "Entidade dinâmica do perfil" } } } },
+          "404": { "description": "Perfil não encontrado" }
+        }
+      }
+    },
+    "/api/posts": {
+      "get": {
+        "summary": "Lista todos os posts",
+        "tags": ["Posts"],
+        "parameters": [
+          { "name": "profile", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por handle do perfil" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de posts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer" },
+                    "items": { "type": "array", "items": { "type": "object", "description": "Post (entidade dinâmica)" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/buckets/{bucket}": {
+      "get": {
+        "summary": "Lista chaves de um bucket",
+        "tags": ["Buckets"],
+        "parameters": [
+          { "name": "bucket", "in": "path", "required": true, "schema": { "type": "string", "enum": ["profile", "post"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de chaves",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bucket": { "type": "string" },
+                    "keys": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/clear": {
+      "delete": {
+        "summary": "Remove todos os dados do RocksDB",
+        "description": "Apaga todos os registros (perfis e posts) do RocksDB. Use com cuidado.",
+        "tags": ["Sistema"],
+        "responses": {
+          "200": {
+            "description": "Banco limpo",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "ok": { "type": "boolean" }, "message": { "type": "string" } } }
+              }
+            }
+          },
+          "500": { "description": "Erro ao limpar (ex.: banco em uso)" }
+        }
+      }
+    },
+    "/api/crawl/status": {
+      "get": {
+        "summary": "Status do crawl",
+        "description": "Indica se há um crawl em execução e o resultado do último crawl (grava no RocksDB).",
+        "tags": ["Crawl"],
+        "responses": {
+          "200": {
+            "description": "Status atual",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "running": { "type": "boolean", "description": "True se um crawl está em andamento" },
+                    "last": {
+                      "type": "object",
+                      "properties": {
+                        "saved": { "type": "integer" },
+                        "tag": { "type": "string" },
+                        "finishedAt": { "type": "string", "format": "date-time" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/crawl/stop": {
+      "post": {
+        "summary": "Solicita parada do crawl",
+        "description": "O crawl encerrará após o perfil atual. Dados já gravados permanecem no RocksDB.",
+        "tags": ["Crawl"],
+        "responses": {
+          "200": {
+            "description": "Parada solicitada",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "ok": { "type": "boolean" }, "message": { "type": "string" } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/crawl/extract-profile": {
+      "post": {
+        "summary": "Extrai um perfil específico por URL ou handle",
+        "description": "Grava perfil e posts no RocksDB. Útil para incluir perfis que não passaram no crawl por hashtag.",
+        "tags": ["Crawl"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "handle": { "type": "string", "description": "Ex.: rafaellacassol" },
+                  "url": { "type": "string", "description": "Ex.: https://www.instagram.com/rafaellacassol/" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Resultado da extração" },
+          "400": { "description": "handle ou url inválido" },
+          "503": { "description": "Sessão do Instagram não configurada" }
+        }
+      }
+    },
+    "/api/crawl": {
+      "post": {
+        "summary": "Inicia um crawl por hashtag",
+        "description": "Dispara o crawl no mesmo processo da API (compartilha o RocksDB). Resposta 202 = aceito; o crawl roda em background.",
+        "tags": ["Crawl"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["tag"],
+                "properties": {
+                  "tag": { "type": "string", "description": "Hashtag sem # (ex: viagem)" },
+                  "limit": { "type": "integer", "description": "Máximo de perfis (opcional)" },
+                  "clear": { "type": "boolean", "description": "Se true, limpa o RocksDB antes (opcional)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Crawl iniciado em background",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "started": { "type": "boolean" },
+                    "tag": { "type": "string" },
+                    "limit": { "type": ["integer", "null"] },
+                    "clear": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Body inválido (tag ausente)" },
+          "409": { "description": "Já existe um crawl em andamento" }
+        }
+      }
+    },
+    "/api/proxy-image": {
+      "get": {
+        "summary": "Proxy de imagem (CORS)",
+        "description": "Evita bloqueio por CORS ao carregar imagens externas (ex.: CDN Instagram).",
+        "tags": ["Sistema"],
+        "parameters": [
+          { "name": "url", "in": "query", "required": true, "schema": { "type": "string", "format": "uri" } }
+        ],
+        "responses": {
+          "200": { "description": "Imagem" },
+          "400": { "description": "Query url obrigatória" },
+          "502": { "description": "Falha ao buscar a URL" }
+        }
+      }
+    }
+  },
+  "tags": [
+    { "name": "Perfis", "description": "Perfis armazenados no RocksDB" },
+    { "name": "Posts", "description": "Posts armazenados no RocksDB" },
+    { "name": "Buckets", "description": "Chaves por bucket (profile, post)" },
+    { "name": "Crawl", "description": "Crawl por hashtag (grava no RocksDB)" },
+    { "name": "Sistema", "description": "Health e utilitários" }
+  ]
+}

@@ -1,0 +1,398 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Influencer API — SQLite",
+    "description": "Endpoints que leem ou gravam no banco **SQLite** (data/influencer.db): autenticação, ativação de perfis e admin. Tabelas: auth_user, auth_public_request, auth_anonymous_request, auth_profile_verification, profile_activation.",
+    "version": "1.0.0"
+  },
+  "servers": [{ "url": "http://localhost:3000", "description": "Local" }],
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "summary": "Login",
+        "description": "Retorna JWT e dados do usuário. Aceita username (handle do influencer ou admin).",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "login": { "type": "string" },
+                  "username": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token e usuário",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string" },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "integer" },
+                        "username": { "type": "string" },
+                        "scope": { "type": "string" },
+                        "profile_handle": { "type": ["string", "null"] }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Usuário e senha obrigatórios" },
+          "401": { "description": "Usuário ou senha inválidos" }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "summary": "Usuário atual",
+        "description": "Retorna o usuário a partir do JWT (opcional).",
+        "tags": ["Auth"],
+        "responses": {
+          "200": {
+            "description": "user ou null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "type": ["object", "null"],
+                      "properties": {
+                        "id": { "type": "integer" },
+                        "username": { "type": "string" },
+                        "scope": { "type": "string" },
+                        "profile_handle": { "type": ["string", "null"] }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me/password": {
+      "patch": {
+        "summary": "Define senha do usuário logado",
+        "description": "Requer autenticação. Após validação 2FA.",
+        "tags": ["Auth"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["password"],
+                "properties": { "password": { "type": "string", "minLength": 6 } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "ok" },
+          "400": { "description": "Senha mínima 6 caracteres" },
+          "401": { "description": "Não autenticado" }
+        }
+      }
+    },
+    "/api/auth/request-code": {
+      "post": {
+        "summary": "Solicita código de ativação 2FA",
+        "description": "Envia (via inbox Instagram) um código para o nickname. Pode ser chamado sem login.",
+        "tags": ["Auth"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nickname": { "type": "string" },
+                  "handle": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "sent: true/false" },
+          "400": { "description": "Nickname obrigatório" },
+          "503": { "description": "Sessão Instagram não configurada" }
+        }
+      }
+    },
+    "/api/auth/verify-profile": {
+      "post": {
+        "summary": "Valida código recebido no Instagram",
+        "description": "Se não estiver logado, o 2FA faz o login (retorna token + user).",
+        "tags": ["Auth"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["nickname", "code"],
+                "properties": {
+                  "nickname": { "type": "string" },
+                  "handle": { "type": "string" },
+                  "code": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "verified e/ou token+user" },
+          "400": { "description": "Nickname e código obrigatórios ou código inválido" }
+        }
+      }
+    },
+    "/api/profiles/{handle}/activation": {
+      "get": {
+        "summary": "Dados de ativação do perfil",
+        "description": "Cadastro completo do influenciador (SQLite: profile_activation). Público que atingiu limite diário recebe vazio.",
+        "tags": ["Ativação"],
+        "parameters": [
+          { "name": "handle", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objeto de ativação ou {}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "address, city, state, whatsapp, pricing, content_type, etc."
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Salva ativação do perfil",
+        "description": "Requer permissão para editar o perfil (dono ou adm). Grava na tabela profile_activation.",
+        "tags": ["Ativação"],
+        "parameters": [
+          { "name": "handle", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "address": { "type": "string" },
+                  "city": { "type": "string" },
+                  "state": { "type": "string" },
+                  "neighborhood": { "type": "string" },
+                  "country": { "type": "string" },
+                  "whatsapp": { "type": "string" },
+                  "tiktok": { "type": "string" },
+                  "facebook": { "type": "string" },
+                  "linkedin": { "type": "string" },
+                  "twitter": { "type": "string" },
+                  "websites": { "type": "string" },
+                  "gender": { "type": "string" },
+                  "description": { "type": "string" },
+                  "about_topics": { "type": "string" },
+                  "pricing": { "type": "object" },
+                  "content_type": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Dados de ativação salvos" },
+          "401": { "description": "Não autenticado" },
+          "403": { "description": "Sem permissão para editar este perfil" }
+        }
+      }
+    },
+    "/api/admin/users": {
+      "get": {
+        "summary": "Lista usuários",
+        "description": "Requer scope adm. Dados do SQLite (auth_user).",
+        "tags": ["Admin"],
+        "responses": {
+          "200": {
+            "description": "Lista de usuários (sem password_hash)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "integer" },
+                          "username": { "type": "string" },
+                          "scope": { "type": "string" },
+                          "profile_handle": { "type": ["string", "null"] },
+                          "created_at": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Cria usuário",
+        "description": "Requer scope adm.",
+        "tags": ["Admin"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password", "scope"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" },
+                  "scope": { "type": "string", "enum": ["adm", "assinante", "influencer", "public"] },
+                  "profile_handle": { "type": ["string", "null"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Usuário criado" },
+          "400": { "description": "Dados inválidos" }
+        }
+      }
+    },
+    "/api/admin/users/{id}": {
+      "get": {
+        "summary": "Usuário por ID",
+        "tags": ["Admin"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Usuário" },
+          "404": { "description": "Não encontrado" }
+        }
+      },
+      "put": {
+        "summary": "Atualiza usuário",
+        "tags": ["Admin"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" },
+                  "scope": { "type": "string" },
+                  "profile_handle": { "type": ["string", "null"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Usuário atualizado" },
+          "404": { "description": "Não encontrado" }
+        }
+      },
+      "delete": {
+        "summary": "Exclui usuário",
+        "tags": ["Admin"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "204": { "description": "Excluído" },
+          "404": { "description": "Não encontrado" }
+        }
+      }
+    },
+    "/api/admin/db/tables": {
+      "get": {
+        "summary": "Lista tabelas do SQLite",
+        "description": "Retorna as tabelas permitidas para consulta. Requer scope adm.",
+        "tags": ["Admin - Banco"],
+        "responses": {
+          "200": {
+            "description": "Lista de tabelas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tables": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/db/tables/{table}": {
+      "get": {
+        "summary": "Consulta tabela do SQLite",
+        "description": "Retorna linhas da tabela com paginação. password_hash de auth_user é ocultado. Requer scope adm.",
+        "tags": ["Admin - Banco"],
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["auth_user", "auth_public_request", "auth_anonymous_request", "auth_profile_verification", "profile_activation"]
+            },
+            "description": "Nome da tabela"
+          },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100, "maximum": 1000 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Linhas da tabela",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "table": { "type": "string" },
+                    "rows": { "type": "array", "items": { "type": "object" } },
+                    "total": { "type": "integer" },
+                    "limit": { "type": "integer" },
+                    "offset": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    { "name": "Auth", "description": "Login e 2FA (SQLite: auth_user, auth_profile_verification)" },
+    { "name": "Ativação", "description": "Cadastro do influenciador (SQLite: profile_activation)" },
+    { "name": "Admin", "description": "CRUD de usuários (SQLite: auth_user)" },
+    { "name": "Admin - Banco", "description": "Consulta às tabelas do SQLite (requer adm)" }
+  ]
+}

@@ -1,5 +1,5 @@
 /**
- * Storage que grava no RocksDB e também sincroniza para SQLite (tabelas profiles e post).
+ * Storage: perfis e posts só no RocksDB; SQLite só para profile_activation (cadastro do influenciador).
  * Contrato: apenas dados slim/normalizados (SlimProfile + NormalizedPost). Não persistir JSON completo do response.
  */
 
@@ -17,22 +17,12 @@ export class CompositeStorage {
 
   async save(entity: Entity & { handle: string }): Promise<{ path: string; bytes: number }> {
     const result = await this.rocks.save(entity);
-    try {
-      this.sqlite.saveProfile(entity as Record<string, unknown>);
-    } catch (e) {
-      console.warn('[CompositeStorage] SQLite saveProfile:', e instanceof Error ? e.message : e);
-    }
     this.onInvalidateSearch?.();
     return result;
   }
 
   async savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number> {
     const n = await this.rocks.savePosts(profileHandle, posts, collectedAt);
-    try {
-      this.sqlite.savePosts(profileHandle, posts, collectedAt);
-    } catch (e) {
-      console.warn('[CompositeStorage] SQLite savePosts:', e instanceof Error ? e.message : e);
-    }
     this.onInvalidateSearch?.();
     return n;
   }

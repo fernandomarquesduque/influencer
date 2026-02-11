@@ -4,7 +4,6 @@ import { join } from 'path';
 import type { Entity, DiscoveredBy } from '../types/index.js';
 import type { CrawlConfig } from '../types/index.js';
 import { InstagramClient } from '../instagramClient/index.js';
-import { crawlLogExtract } from '../utils/crawlLogger.js';
 import { buildNormalizedPost } from '../utils/slimPost.js';
 import { delayMs, humanDelay } from '../utils/delay.js';
 import { record429 } from '../utils/rateLimit429.js';
@@ -281,13 +280,10 @@ export async function extractProfile(
     // Tratar 429, 401, 403 e 302 como possível bloqueio (record429 só se falharmos ao extrair).
     if (status === 429 || status === 401 || status === 403 || status === 302) {
       had429 = true;
-      crawlLogExtract(`${status} (bloqueio) em ${url.slice(0, 80)}...`);
       return;
     }
-    // Redirecionamento para login ou challenge.
     if (url.includes('/accounts/login/') || url.includes('/challenge/')) {
       had429 = true;
-      crawlLogExtract(`URL de login/challenge: ${url.slice(0, 80)}...`);
       return;
     }
     if (!RESPONSE_URL_PATTERNS.some((p) => p.test(url))) return;
@@ -381,11 +377,8 @@ export async function extractProfile(
       record429();
       throw new Error('RATE_LIMIT_429');
     }
-    crawlLogExtract('Nenhuma response de perfil capturada.');
     return null;
   }
-
-  if (had429) crawlLogExtract('302/bloqueio em algumas requests, mas perfil extraído com sucesso; salvando.');
 
   // Preferir resposta Polaris (data.user com media_count/following_count); senão qualquer data.user; senão merged.
   const merged = bodies.length > 1 ? deepMergeResponses(bodies) : bodies[0];
@@ -393,14 +386,12 @@ export async function extractProfile(
   const polarisAny = bodies.find((r): r is Record<string, unknown> => r != null && hasDataUser(r));
   const rawForProfile = polarisFull ?? polarisAny ?? merged;
 
-  // Log do response para inspeção
   try {
     await mkdir(RESPONSE_LOG_DIR, { recursive: true });
     const logPath = join(RESPONSE_LOG_DIR, 'last-profile-response.json');
     await writeFile(logPath, JSON.stringify(rawForProfile, null, 2), 'utf-8');
-    crawlLogExtract(`Response da API gravada em ${logPath}`);
-  } catch (e) {
-    crawlLogExtract(`Falha ao gravar response log: ${e instanceof Error ? e.message : String(e)}`);
+  } catch {
+    // ignore
   }
 
   // Perfil = JSON completo da API (data.user + extensions + status etc.), com metadados de coleta.
@@ -431,11 +422,6 @@ export async function extractProfile(
   addFrom(merged);
   for (const r of bodies) {
     if (r !== merged) addFrom(r);
-  }
-  if (allPosts.length > 0) {
-    crawlLogExtract(`${allPosts.length} posts extraídos da timeline (response da API).`);
-  } else {
-    crawlLogExtract('Nenhum post extraído da timeline (timeline pode não ter sido capturada).');
   }
   return { profile: profile as Entity & { handle: string }, posts: allPosts };
 }

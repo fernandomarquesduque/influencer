@@ -9,14 +9,12 @@ import { dirname } from 'node:path';
 
 const DEFAULT_PATH = './data/influencer.db';
 
-/** Tabelas permitidas para consulta. */
+/** Tabelas permitidas para consulta (profiles e post ficam só no RocksDB). */
 const ALLOWED_TABLES = [
   'auth_user',
   'auth_public_request',
   'auth_anonymous_request',
   'auth_profile_verification',
-  'profiles',
-  'post',
   'profile_activation',
 ] as const;
 
