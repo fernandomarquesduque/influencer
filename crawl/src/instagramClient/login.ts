@@ -168,7 +168,12 @@ export async function loginWithCredentials(
       await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
     } catch (gotoErr: unknown) {
       const msg = gotoErr instanceof Error ? gotoErr.message : String(gotoErr);
-      if (msg.includes('ERR_HTTP_RESPONSE_CODE_FAILURE') || msg.includes('net::ERR')) {
+      if (msg.includes('ERR_NAME_NOT_RESOLVED')) {
+        console.error(
+          '[login] Não foi possível resolver o endereço www.instagram.com (DNS). ' +
+          'Verifique: internet conectada, DNS do sistema (ex.: 8.8.8.8), firewall/proxy ou VPN que bloqueie acesso.'
+        );
+      } else if (msg.includes('ERR_HTTP_RESPONSE_CODE_FAILURE') || msg.includes('net::ERR')) {
         const code = loginResponseStatus != null ? ` (HTTP ${loginResponseStatus})` : '';
         console.error(
           '[login] Instagram respondeu com erro HTTP' + code + '. ' +

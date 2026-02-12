@@ -8,9 +8,15 @@ import { RocksDBStorage } from '../storage/rocksdb.js';
 import { SqliteSync } from '../storage/sqliteSync.js';
 import { CompositeStorage } from '../storage/compositeStorage.js';
 import { runCrawl } from '../crawl/runCrawl.js';
-import { extractSingleProfile } from '../crawl/extractSingleProfile.js';
+import {
+  extractSingleProfileWithPage,
+  buildConfigFromEnv,
+  type ExtractSingleProfileResult,
+} from '../crawl/extractSingleProfile.js';
 import { searchProfiles, clearSearchCache, type ProfilesSearchQuery } from './profilesSearch.js';
 import { InstagramClient } from '../instagramClient/index.js';
+import { profileExtractDelay } from '../utils/delay.js';
+import { get429BackoffMs, record429 } from '../utils/rateLimit429.js';
 import { sendVerificationCode } from '../instagramClient/sendDirectMessage.js';
 import { AuthDb } from '../auth/authDb.js';
 import { authOptional, requireScopes, canEditProfile, type RequestWithAuth } from '../auth/middleware.js';
@@ -45,6 +51,53 @@ const rocks = new RocksDBStorage({ dbPath: rocksPath });
 const sqlite = new SqliteSync(sqlitePath);
 const db = new CompositeStorage(rocks, sqlite, clearSearchCache);
 const authDb = new AuthDb(sqlitePath);
+
+/** Worker de extração por perfil: 1 client + 1 context quentes, fila com concorrência 1. */
+let apiExtractClient: InstagramClient | null = null;
+let apiExtractQueue: Promise<void> = Promise.resolve();
+/** Timestamp até quando a API não deve aceitar novas extrações (backoff após 429/challenge). */
+let apiExtractBlockedUntil = 0;
+/** Contador de perfis extraídos nesta instância (para cooldown a cada N). */
+let apiExtractProfileCount = 0;
+
+function getApiExtractClient(): InstagramClient {
+  if (!apiExtractClient) {
+    const config = buildConfigFromEnv();
+    apiExtractClient = new InstagramClient({
+      headless: config.headless,
+      authStatePath: config.authStatePath,
+    });
+  }
+  return apiExtractClient;
+}
+
+function isBlockSignal(result: ExtractSingleProfileResult): boolean {
+  const err = (result.error ?? '').toLowerCase();
+  return (
+    err.includes('429') ||
+    err.includes('rate_limit') ||
+    err.includes('rate_limit_429') ||
+    err.includes('/challenge') ||
+    err.includes('challenge') ||
+    err.includes('accounts/login') ||
+    err.includes('please wait') ||
+    err.includes('suspicious') ||
+    err.includes('too many requests') ||
+    err.includes('temporarily blocked')
+  );
+}
+
+/** Sinal de que a sessão caiu em login/challenge — deve fechar o context para recriar na próxima. */
+function isLoginOrChallengeSignal(result: ExtractSingleProfileResult): boolean {
+  const err = (result.error ?? '').toLowerCase();
+  return (
+    err.includes('/challenge') ||
+    err.includes('accounts/login') ||
+    err.includes('sessão') ||
+    err.includes('login') ||
+    err.includes('expirada')
+  );
+}
 
 /** Middleware: extrai JWT e define req.user (opcional). */
 app.use('/api', authOptional);
@@ -782,7 +835,7 @@ app.post('/api/crawl/stop', (_req: Request, res: Response) => {
   res.json({ ok: true, message: 'Parada solicitada. O crawl encerrará após o perfil atual.' });
 });
 
-/** Extrai um perfil específico por URL ou handle. Útil para testar e para incluir perfis que não passaram no crawl por hashtag. */
+/** Extrai um perfil específico por URL ou handle. Fila com concorrência 1, delay e backoff em 429/challenge. */
 app.post('/api/crawl/extract-profile', async (req: Request, res: Response) => {
   let handle = (req.body?.handle ?? req.body?.url ?? '').toString().trim();
   if (!handle) {
@@ -812,21 +865,75 @@ app.post('/api/crawl/extract-profile', async (req: Request, res: Response) => {
     return;
   }
 
-  try {
-    const result = await extractSingleProfile(handle, db);
-    res.json(result);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const isLoginRelated = /ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR|sessão|login/i.test(msg);
-    const error = isLoginRelated
-      ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login'
-      : msg;
-    res.status(500).json({
-      success: false,
-      handle,
-      error,
-    });
-  }
+  const doExtract = async (): Promise<void> => {
+    const send = (status: number, body: object) => {
+      if (res.headersSent) return;
+      res.status(status).json(body);
+    };
+    const now = Date.now();
+    if (now < apiExtractBlockedUntil) {
+      const retryAfterSec = Math.ceil((apiExtractBlockedUntil - now) / 1000);
+      if (!res.headersSent) res.set('Retry-After', String(retryAfterSec));
+      send(503, {
+        success: false,
+        handle,
+        error: `Rate limit ou bloqueio detectado. Tente novamente em ${Math.ceil(retryAfterSec / 60)} min.`,
+      });
+      return;
+    }
+    try {
+      await profileExtractDelay();
+      const cooldownEvery = Math.max(0, parseInt(process.env.COOLDOWN_EVERY ?? '10', 10) || 10);
+      const cooldownMinMs = Math.max(0, parseInt(process.env.COOLDOWN_MIN_MS ?? '60000', 10) || 60000);
+      const cooldownMaxMs = Math.max(cooldownMinMs, parseInt(process.env.COOLDOWN_MAX_MS ?? '180000', 10) || 180000);
+      if (cooldownEvery > 0 && apiExtractProfileCount > 0 && apiExtractProfileCount % cooldownEvery === 0) {
+        const cooldownMs = cooldownMinMs + Math.floor(Math.random() * (cooldownMaxMs - cooldownMinMs + 1));
+        await new Promise((r) => setTimeout(r, cooldownMs));
+      }
+      const client = getApiExtractClient();
+      await client.init();
+      const page = await client.newPage();
+      const config = buildConfigFromEnv();
+      let result: ExtractSingleProfileResult;
+      try {
+        result = await extractSingleProfileWithPage(page, handle, db, config);
+      } finally {
+        await page.close().catch(() => {});
+      }
+      await client.saveAuthState();
+
+      if (isBlockSignal(result)) {
+        record429();
+        apiExtractBlockedUntil = Date.now() + get429BackoffMs();
+        if (isLoginOrChallengeSignal(result)) {
+          await client.closeContext();
+        }
+        if (!res.headersSent) res.set('Retry-After', String(Math.ceil(get429BackoffMs() / 1000)));
+        send(503, {
+          success: false,
+          handle,
+          error: result.error ?? 'Bloqueio ou rate limit (429/challenge). Não tente de novo agora.',
+        });
+        return;
+      }
+      apiExtractProfileCount++;
+      send(200, result);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const isLoginRelated = /ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR|sessão|login/i.test(msg);
+      const error = isLoginRelated
+        ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login'
+        : msg;
+      send(500, {
+        success: false,
+        handle,
+        error,
+      });
+    }
+  };
+
+  apiExtractQueue = apiExtractQueue.then(doExtract).catch(() => {});
+  await apiExtractQueue;
 });
 
 app.post('/api/crawl', async (req: Request, res: Response) => {

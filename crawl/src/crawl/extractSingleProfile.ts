@@ -1,3 +1,4 @@
+import type { Page } from 'playwright';
 import { DEFAULT_CRAWL_CONFIG, type CrawlConfig, type Entity } from '../types/index.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { extractProfile } from '../profileExtractor/index.js';
@@ -17,7 +18,7 @@ import type { CrawlStorage } from './runCrawl.js';
 const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? (parseInt(process.env.MIN_FOLLOWERS, 10) || 0) : 0;
 const EXTRACT_TIMEOUT_MS = Number(process.env.PROFILE_PROCESS_TIMEOUT_MS) || 180_000;
 
-function buildConfigFromEnv(): CrawlConfig {
+export function buildConfigFromEnv(): CrawlConfig {
   const raw = (() => {
     const v = process.env.MIN_FOLLOWERS?.trim();
     if (v === undefined || v === '') return DEFAULT_CRAWL_CONFIG.minFollowersToSave;
@@ -56,9 +57,126 @@ export interface ExtractSingleProfileResult {
 }
 
 /**
- * Extrai um perfil específico por handle: abre o perfil, captura dados, aplica filtros
- * (excludeBusinessProfiles + qualifiesAsInfluencer) e, se passar, salva no storage.
- * Retorna diagnóstico quando rejeitado para identificar qual regra bloqueou.
+ * Core: extrai um perfil usando uma page já aberta (para reuso de client/context na API).
+ * A page não é fechada por esta função — quem chama deve fechar após salvar estado se necessário.
+ */
+export async function extractSingleProfileWithPage(
+  page: Page,
+  handle: string,
+  storage: CrawlStorage,
+  config: CrawlConfig
+): Promise<ExtractSingleProfileResult> {
+  const cleanHandle = handle.replace(/^@/, '').trim();
+  if (!cleanHandle) {
+    return { success: false, handle: handle, error: 'Handle vazio' };
+  }
+  const minRequired = config.minFollowersToSave > 0 ? Math.max(config.minFollowersToSave, MIN_FOLLOWERS_FLOOR) : 0;
+
+  const extracted = await extractProfile(page, cleanHandle, 'seed', '', config);
+  if (!extracted) {
+    return { success: false, handle: cleanHandle, error: 'Falha ao extrair perfil (página ou API)' };
+  }
+  const { profile: rawProfile, posts } = extracted;
+  const raw = rawProfile as Record<string, unknown>;
+
+  const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');
+  if (requiredProfile && requiredProfile.length > 0) {
+    const followsRequired = isFollowingViewerFromEntity(raw);
+    if (!followsRequired) {
+      const followers = getFollowersFromEntity(raw);
+      const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
+      return {
+        success: false,
+        handle: cleanHandle,
+        saved: false,
+        rejectionReason: 'nao_segue_perfil',
+        diagnostic: { pass: false, reason: 'nao_segue_perfil', followers, followsRequiredProfile: false },
+        followProfileUrl,
+        followers,
+      };
+    }
+  }
+
+  const followersFromRaw = getFollowersFromEntity(raw);
+  const slim = buildSlimProfile(raw, cleanHandle, followersFromRaw, posts, 'seed', '');
+  const followers = followersFromRaw > 0 ? followersFromRaw : getFollowersFromEntity(slim as Record<string, unknown>);
+
+  if (isPrivateFromEntity(raw)) {
+    return {
+      success: false,
+      handle: cleanHandle,
+      saved: false,
+      rejectionReason: 'perfil_privado',
+      diagnostic: { pass: false, reason: 'perfil_privado', followers, isPrivate: true },
+      followers,
+    };
+  }
+
+  if (config.excludeBusinessProfiles) {
+    const pass = qualifiesAsInfluencer(raw, minRequired);
+    const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, true);
+    if (!pass) {
+      return {
+        success: false,
+        handle: cleanHandle,
+        saved: false,
+        rejectionReason: diagnostic.reason,
+        diagnostic,
+        followers,
+      };
+    }
+  } else {
+    if (!isPersonOrCreator(raw)) {
+      const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, false);
+      return {
+        success: false,
+        handle: cleanHandle,
+        saved: false,
+        rejectionReason: diagnostic.reason,
+        diagnostic,
+        followers,
+      };
+    }
+    if (minRequired > 0 && followers < minRequired) {
+      const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, false);
+      return {
+        success: false,
+        handle: cleanHandle,
+        saved: false,
+        rejectionReason: diagnostic.reason,
+        diagnostic,
+        followers,
+      };
+    }
+  }
+
+  if (config.minPostLikesToSave > 0) {
+    if (!hasPostWithMinLikes(posts, config.minPostLikesToSave)) {
+      return {
+        success: false,
+        handle: cleanHandle,
+        saved: false,
+        rejectionReason: 'nenhum_post_com_curtidas_minimas',
+        followers,
+      };
+    }
+  }
+
+  await storage.save(slim as Entity & { handle: string });
+  const collectedAt = String(slim._collected_at ?? new Date().toISOString());
+  const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
+  return {
+    success: true,
+    saved: true,
+    handle: cleanHandle,
+    followers,
+    postsSaved,
+  };
+}
+
+/**
+ * Extrai um perfil específico por handle: cria client + page, chama extractSingleProfileWithPage, fecha tudo.
+ * Uso: CLI e chamadas que não compartilham browser (cada execução é isolada).
  */
 export async function extractSingleProfile(
   handle: string,
@@ -70,7 +188,6 @@ export async function extractSingleProfile(
   }
 
   const config = buildConfigFromEnv();
-  const minRequired = config.minFollowersToSave > 0 ? Math.max(config.minFollowersToSave, MIN_FOLLOWERS_FLOOR) : 0;
   const client = new InstagramClient({
     headless: config.headless,
     authStatePath: config.authStatePath,
@@ -85,109 +202,7 @@ export async function extractSingleProfile(
     const page = await client.newPage();
     try {
       const result = await Promise.race([
-        (async (): Promise<ExtractSingleProfileResult> => {
-          const extracted = await extractProfile(page, cleanHandle, 'seed', '', config);
-          if (!extracted) {
-            return { success: false, handle: cleanHandle, error: 'Falha ao extrair perfil (página ou API)' };
-          }
-          const { profile: rawProfile, posts } = extracted;
-          const raw = rawProfile as Record<string, unknown>;
-
-          // 1ª regra (primeira a executar): deve seguir o perfil INSTAGRAM_PERFIL para poder receber o 2FA
-          const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');
-          if (requiredProfile && requiredProfile.length > 0) {
-            const followsRequired = isFollowingViewerFromEntity(raw);
-            if (!followsRequired) {
-              const followers = getFollowersFromEntity(raw);
-              const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
-              return {
-                success: false,
-                handle: cleanHandle,
-                saved: false,
-                rejectionReason: 'nao_segue_perfil',
-                diagnostic: { pass: false, reason: 'nao_segue_perfil', followers, followsRequiredProfile: false },
-                followProfileUrl,
-                followers,
-              };
-            }
-          }
-
-          const followersFromRaw = getFollowersFromEntity(raw);
-          const slim = buildSlimProfile(raw, cleanHandle, followersFromRaw, posts, 'seed', '');
-          const followers = followersFromRaw > 0 ? followersFromRaw : getFollowersFromEntity(slim as Record<string, unknown>);
-
-          if (isPrivateFromEntity(raw)) {
-            return {
-              success: false,
-              handle: cleanHandle,
-              saved: false,
-              rejectionReason: 'perfil_privado',
-              diagnostic: { pass: false, reason: 'perfil_privado', followers, isPrivate: true },
-              followers,
-            };
-          }
-
-          if (config.excludeBusinessProfiles) {
-            const pass = qualifiesAsInfluencer(raw, minRequired);
-            const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, true);
-            if (!pass) {
-              return {
-                success: false,
-                handle: cleanHandle,
-                saved: false,
-                rejectionReason: diagnostic.reason,
-                diagnostic,
-                followers,
-              };
-            }
-          } else {
-            if (!isPersonOrCreator(raw)) {
-              const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, false);
-              return {
-                success: false,
-                handle: cleanHandle,
-                saved: false,
-                rejectionReason: diagnostic.reason,
-                diagnostic,
-                followers,
-              };
-            }
-            if (minRequired > 0 && followers < minRequired) {
-              const diagnostic = getInfluencerRejectionDiagnostic(raw, minRequired, false);
-              return {
-                success: false,
-                handle: cleanHandle,
-                saved: false,
-                rejectionReason: diagnostic.reason,
-                diagnostic,
-                followers,
-              };
-            }
-          }
-
-          if (config.minPostLikesToSave > 0) {
-            if (!hasPostWithMinLikes(posts, config.minPostLikesToSave)) {
-              return {
-                success: false,
-                handle: cleanHandle,
-                saved: false,
-                rejectionReason: 'nenhum_post_com_curtidas_minimas',
-                followers,
-              };
-            }
-          }
-
-          await storage.save(slim as Entity & { handle: string });
-          const collectedAt = String(slim._collected_at ?? new Date().toISOString());
-          const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
-          return {
-            success: true,
-            saved: true,
-            handle: cleanHandle,
-            followers,
-            postsSaved,
-          };
-        })(),
+        extractSingleProfileWithPage(page, cleanHandle, storage, config),
         timeoutPromise,
       ]);
       return result;

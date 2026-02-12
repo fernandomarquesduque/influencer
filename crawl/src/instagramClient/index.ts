@@ -56,9 +56,14 @@ export class InstagramClient {
     this.browser = await chromium.launch(baseOptions);
   }
 
+  /**
+   * Retorna o context atual (cache). Só cria um novo quando não existe (primeira chamada)
+   * ou após closeContext() (ex.: re-login). Assim mantemos 1 browser + 1 context quente.
+   */
   private async getContext(storageState?: string): Promise<BrowserContext> {
     await this.init();
     if (!this.browser) throw new Error('Browser not initialized');
+    if (this.context) return this.context;
     const statePath = storageState ?? this.authStatePath;
     let state: string | undefined;
     if (statePath && existsSync(statePath)) {

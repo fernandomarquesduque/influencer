@@ -42,3 +42,14 @@ export function rateLimitBackoff(): Promise<void> {
 export function delayMs(ms: number): number {
   return Math.max(100, Math.round(ms * getFastMultiplier()) + getDelayExtraMs());
 }
+
+/**
+ * Delay entre perfis no fluxo da API (extrair perfil). Usa MIN_DELAY_MS / MAX_DELAY_MS do env.
+ * Padrão 8–20 s para reduzir bloqueio quando vários perfis são extraídos em sequência.
+ */
+export function profileExtractDelay(): Promise<void> {
+  const min = Math.max(0, parseInt(process.env.MIN_DELAY_MS ?? '8000', 10) || 8000);
+  const max = Math.max(min, parseInt(process.env.MAX_DELAY_MS ?? '20000', 10) || 20000);
+  const ms = min + Math.floor(Math.random() * (max - min + 1));
+  return new Promise((r) => setTimeout(r, ms));
+}
