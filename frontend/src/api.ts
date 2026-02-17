@@ -11,7 +11,7 @@ function authHeaders(): Record<string, string> {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {}
 }
 
-/** Usa proxy da API para carregar imagem (evita bloqueio CORS/referrer do Instagram). */
+/** Usa proxy da API para carregar imagem (evita CORS/CORP do CDN do Instagram). Em caso de 403, o backend tenta fallback via proxy público. */
 export function proxyImageUrl(url: string | undefined): string | undefined {
   if (!url || typeof url !== 'string') return undefined
   return `${API_BASE}/proxy-image?url=${encodeURIComponent(url)}`
@@ -272,7 +272,10 @@ export interface PostsResponse {
 export async function fetchProfiles(limit = 50, offset = 0, since?: string): Promise<ProfilesResponse> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (since) params.set('since', since)
-  const res = await fetch(`${API_BASE}/profiles?${params.toString()}`)
+  const res = await fetch(`${API_BASE}/profiles?${params.toString()}`, {
+    headers: { ...authHeaders() },
+  })
+  if (res.status === 401) throw new Error('Faça login para acessar a lista de perfis')
   if (!res.ok) throw new Error('Falha ao carregar perfis')
   return res.json()
 }
@@ -283,22 +286,40 @@ export async function fetchProfile(handle: string): Promise<ProfileItem | null> 
     headers: { ...authHeaders() },
   })
   if (res.status === 404) return null
+  if (res.status === 429) {
+    const err = await res.json().catch(() => ({}))
+    const msg = (err as { error?: string }).error || 'Muitas requisições. Aguarde um minuto.'
+    throw Object.assign(new Error(msg), { code: 'RATE_LIMIT' })
+  }
   if (!res.ok) throw new Error('Falha ao carregar perfil')
   return res.json()
 }
 
+/** Resposta ao solicitar código: pode vir rejeição (nao_segue_perfil) para exibir na tela de erro, sem toast. */
+export interface RequestCodeResponse {
+  sent: boolean
+  code?: string
+  error?: string
+  /** Quando o backend rejeita por não seguir o perfil oficial (request-code). */
+  rejectionReason?: string
+  followProfileUrl?: string
+}
+
 /** Solicita envio do código de ativação 2FA para o nickname (via inbox do Instagram). Requer login. */
-export async function requestVerificationCode(nickname: string): Promise<{ sent: boolean; code?: string; error?: string }> {
+export async function requestVerificationCode(nickname: string): Promise<RequestCodeResponse> {
   const res = await fetch(`${API_BASE}/auth/request-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ nickname: nickname.replace(/^@/, '').trim() }),
   })
+  const body = await res.json().catch(() => ({})) as { error?: string; followProfileUrl?: string; sent?: boolean; code?: string }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { error?: string }).error || 'Falha ao solicitar código')
+    if (res.status === 400 && body.error === 'nao_segue_perfil') {
+      return { sent: false, rejectionReason: 'nao_segue_perfil', followProfileUrl: body.followProfileUrl }
+    }
+    throw new Error(body.error || 'Falha ao solicitar código')
   }
-  return res.json()
+  return { ...body, sent: body.sent ?? true }
 }
 
 /** Valida com o código recebido no Instagram. Sem login: retorna token+user (2FA como login). */
@@ -343,6 +364,11 @@ export async function fetchPosts(profileHandle: string, limit = 50, offset = 0):
   const res = await fetch(`${API_BASE}/posts?profile=${encodeURIComponent(h)}&limit=${limit}&offset=${offset}`, {
     headers: { ...authHeaders() },
   })
+  if (res.status === 429) {
+    const err = await res.json().catch(() => ({}))
+    const msg = (err as { error?: string }).error || 'Muitas requisições. Aguarde um minuto.'
+    throw Object.assign(new Error(msg), { code: 'RATE_LIMIT' })
+  }
   if (!res.ok) throw new Error('Falha ao carregar posts')
   return res.json()
 }
@@ -354,7 +380,10 @@ export interface CrawlStatusResponse {
 }
 
 export async function fetchCrawlStatus(): Promise<CrawlStatusResponse> {
-  const res = await fetch(`${API_BASE}/crawl/status`)
+  const res = await fetch(`${API_BASE}/crawl/status`, {
+    headers: { ...authHeaders() },
+  })
+  if (res.status === 401 || res.status === 403) throw new Error('Acesso restrito a administradores')
   if (!res.ok) throw new Error('Falha ao obter status do crawl')
   return res.json()
 }
@@ -363,7 +392,7 @@ export async function fetchCrawlStatus(): Promise<CrawlStatusResponse> {
 export async function startCrawl(params: { tag: string; limit?: number; clear?: boolean }): Promise<{ started: boolean; tag: string; limit: number | null; clear?: boolean }> {
   const res = await fetch(`${API_BASE}/crawl`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
       tag: params.tag.replace(/^#/, '').trim(),
       limit: params.limit,
@@ -381,7 +410,11 @@ export async function startCrawl(params: { tag: string; limit?: number; clear?: 
 
 /** Solicita parada do crawl (POST /api/crawl/stop). */
 export async function stopCrawl(): Promise<{ ok: boolean; message: string }> {
-  const res = await fetch(`${API_BASE}/crawl/stop`, { method: 'POST' })
+  const res = await fetch(`${API_BASE}/crawl/stop`, {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  })
+  if (res.status === 401 || res.status === 403) throw new Error('Acesso restrito a administradores')
   if (!res.ok) throw new Error('Falha ao parar crawl')
   return res.json()
 }
@@ -410,19 +443,46 @@ export interface ExtractProfileResult {
   postsSaved?: number
 }
 
-/** Extrai um perfil específico por URL ou handle (POST /api/crawl/extract-profile). Pode demorar ~1 min. */
+const EXTRACT_STATUS_POLL_MS = 2500
+const EXTRACT_STATUS_MAX_POLLS = 120 // ~5 min
+
+/** Extrai um perfil (POST retorna 202; resultado vem em background). Faz polling até done/error. */
 export async function extractProfileToBackend(handleOrUrl: string): Promise<ExtractProfileResult> {
+  const body = handleOrUrl.startsWith('http') ? { url: handleOrUrl } : { handle: handleOrUrl }
   const res = await fetch(`${API_BASE}/crawl/extract-profile`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(
-      handleOrUrl.startsWith('http') ? { url: handleOrUrl } : { handle: handleOrUrl }
-    ),
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({})) as { error?: string; handle?: string; accepted?: boolean }
+  if (res.status === 400) throw new Error(data.error || 'Handle ou URL inválido')
+  if (res.status === 503) throw new Error(data.error || 'Serviço indisponível. Tente mais tarde.')
+  if (res.status === 500) throw new Error(data.error || 'Erro ao extrair perfil')
+  if (res.status !== 202) return data as ExtractProfileResult
+
+  const handle = (data.handle ?? handleOrUrl.replace(/^@/, '').trim()).toLowerCase()
+  for (let i = 0; i < EXTRACT_STATUS_MAX_POLLS; i++) {
+    await new Promise((r) => setTimeout(r, EXTRACT_STATUS_POLL_MS))
+    const statusRes = await fetch(`${API_BASE}/crawl/extract-profile/status?handle=${encodeURIComponent(handle)}`, { headers: authHeaders() })
+    const statusData = await statusRes.json().catch(() => ({})) as { status: string; result?: ExtractProfileResult; error?: string }
+    if (statusData.status === 'done' && statusData.result) return statusData.result
+    if (statusData.status === 'error') throw new Error(statusData.error || 'Erro ao extrair perfil')
+  }
+  throw new Error('Extração demorou demais. Tente novamente.')
+}
+
+/** Enfileira re-extração do perfil para renovar URLs de imagem (quando falham). Uma execução por vez no backend. */
+export async function queueRefreshProfile(handle: string): Promise<{ queued: boolean; handle: string; message: string }> {
+  const h = handle.replace(/^@/, '').trim()
+  if (!h) return { queued: false, handle: h, message: 'Handle vazio.' }
+  const res = await fetch(`${API_BASE}/crawl/queue-refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ handle: h }),
   })
   const data = await res.json().catch(() => ({}))
-  if (res.status === 400) throw new Error(data.error || 'Handle ou URL inválido')
-  if (res.status === 500) throw new Error(data.error || 'Erro ao extrair perfil')
-  return data
+  if (res.status === 400) return { queued: false, handle: h, message: data.error || 'Requisição inválida' }
+  return { queued: !!data.queued, handle: h, message: data.message || (data.queued ? 'Na fila.' : 'Já na fila.') }
 }
 
 /** Valores/tarifas (8 tipos de entrega). */

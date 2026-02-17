@@ -4,45 +4,7 @@ import { createStorage } from '../storage/index.js';
 import type { RocksDBStorage } from '../storage/rocksdb.js';
 import { runCrawl, type RunCrawlResult } from '../crawl/runCrawl.js';
 import { crawlLog } from '../utils/crawlLogger.js';
-
-/** Hashtags usadas quando nenhuma --tag é passada. Locais + variedade geral em PT. */
-const DEFAULT_TAGS = [
-  'brasil', 'sp', 'rj', 'mg', 'ba', 'pe', 'ce', 'rs', 'sc', 'pr', 'df', 'go', 'pb', 'rn', 'al', 'se', 'ma', 'pi', 'pa', 'am', 'ro', 'rr', 'ac', 'ap', 'to', 'ms', 'mt', 'es',
-  'manaus', 'belem', 'portovelho', 'riobranco', 'boavista', 'macapa', 'palmas',
-  'salvador', 'fortaleza', 'recife', 'natal', 'maceio', 'joaopessoa', 'aracaju', 'teresina', 'saoluis',
-  'brasilia', 'goiania', 'cuiaba', 'campogrande',
-  'saopaulo', 'riodejaneiro', 'belohorizonte', 'vitoria',
-  'curitiba', 'florianopolis', 'portoalegre',
-  'ipanema', 'copacabana', 'leblon', 'buzios', 'arraialdocabo', 'paraty', 'grumari', 'itauna', 'saquarema', 'angradosreis', 'ilhagrande', 'petropolis',
-  'guaruja', 'ubatuba', 'ilhabela', 'santos', 'saosebastiao', 'caraguatatuba', 'camposdojordao',
-  'morrodesaopaulo', 'portoseguro', 'itacare', 'praiadoforte', 'trancoso', 'arraialdajuda', 'costadosauipe',
-  'olinda', 'portodegalinhas', 'maragogi', 'barradesaomiguel', 'praiadofrancisco',
-  'jericoacoara', 'canoaquebrada', 'beachpark', 'morrobranco', 'canoadasdunas',
-  'pipapraia', 'genipabu', 'praiadosdelfins', 'tambau', 'praiabessa',
-  'balneariocamboriu', 'bombinhas', 'garopaba', 'praiadorosa', 'jurere', 'campeche', 'barradasul', 'itajai', 'penha',
-  'fozdoiguacu', 'ilhadomel', 'matinhos', 'guaratuba', 'caioba',
-  'gramado', 'canela', 'torres', 'capaodacanoa', 'cassino',
-  'guarapari', 'vilanova', 'domingasmartins', 'pedraazul',
-  'ouropreto', 'tiradentes', 'saojoaodelrei', 'caparao', 'serradocipo',
-  'lencoismaranhenses', 'bonito', 'chapadadosveadeiros', 'chapadadiamantina', 'fernandodenoronha', 'alterdochao', 'jalapao', 'cataratas',
-  'praia', 'praiasbrasil', 'turismobrasil', 'destinosbrasil', 'viagem', 'pontoturistico', 'litoralbrasileiro', 'nordeste', 'suldobrasil', 'sudeste',
-  'amor', 'vida', 'feliz', 'fotografia', 'fotododia', 'instagood', 'picoftheday', 'tbt', 'explorepage', 'viral', 'tendencias',
-  'moda', 'modafeminina', 'estilo', 'lookdodia', 'ootd', 'fashion', 'outfit', 'acessorios', 'sapatos', 'blogueira', 'style',
-  'beleza', 'maquiagem', 'skincare', 'makeup', 'cabelo', 'unhas', 'autocuidado',
-  'familia', 'mae', 'maternidade', 'bebe', 'criancas', 'gravidez',
-  'fitness', 'academia', 'treino', 'musculacao', 'yoga', 'corrida', 'vidasaudavel', 'motivacao', 'emforma',
-  'viagens', 'natureza', 'travel', 'wanderlust', 'ferias',
-  'comida', 'receitas', 'gastronomia', 'foodie', 'instafood', 'restaurante', 'culinaria', 'sobremesa', 'cafe', 'almoco',
-  'influenciadora', 'influenciador', 'microinfluenciador', 'criadoradeconteudo', 'parceria', 'resenha', 'cupom', 'desconto', 'promocao', 'empreendedorismo',
-  'blogueiro', 'postpatrocinado', 'publipost', 'marcas', 'conteudo', 'dica', 'tutorial', 'rotina', 'diario',
-  'unboxing', 'reels', 'reelsbrasil', 'memes', 'humor', 'lifestyle', 'arte', 'artesanato', 'handmade',
-  'bomdia', 'boanoite', 'selfie', 'gratidao', 'bemestar',
-  'blackfriday', 'oferta', 'compras', 'fretegratis', 'lojaonline',
-  'vegano', 'vegetariano', 'modaplussize', 'plussize', 'diy', 'sustentabilidade',
-  'festa', 'evento', 'casamento', 'aniversario', 'formatura',
-  'trabalho', 'homeoffice', 'carreira', 'negocios',
-  'pets', 'caes', 'gatos', 'nature', 'sol', 'paisagem',
-];
+import { DEFAULT_TAGS } from './defaultTags.js';
 
 function parseArgs(): { tags: string[]; limit: number | undefined; clear: boolean; delayExtraMs: number } {
   const argv = process.argv.slice(2);

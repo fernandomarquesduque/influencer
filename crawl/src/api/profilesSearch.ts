@@ -6,18 +6,61 @@
 import type { CompositeStorage } from '../storage/compositeStorage.js';
 import type { ProfileActivationData } from '../storage/sqliteSync.js';
 
-/** TTL do cache em memória dos dados do RocksDB (perfis + posts). Reduz drasticamente o tempo da 2ª busca em diante. */
-const SEARCH_DATA_CACHE_TTL_MS = Number(process.env.SEARCH_CACHE_TTL_MS) || 60_000; // 60s padrão
-
+/** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: só é substituído quando um novo reaquecimento termina (warmSearchCache ou scheduleSearchCacheRewarm). */
 let searchDataCache: {
   profilesRaw: { key: string; value: Record<string, unknown> }[];
   postsRaw: { key: string; value: Record<string, unknown> }[];
-  expiresAt: number;
 } | null = null;
 
-/** Invalida o cache da busca (útil após salvar perfis/posts). */
+let warmInProgress = false;
+let rewarmPending = false;
+
+/** Carrega perfis e posts do storage (para reaquecimento em background). */
+async function loadSearchCacheData(db: CompositeStorage): Promise<{
+  profilesRaw: { key: string; value: Record<string, unknown> }[];
+  postsRaw: { key: string; value: Record<string, unknown> }[];
+}> {
+  const [profilesRaw, postsRaw] = await Promise.all([
+    db.getByBucket<Record<string, unknown>>('profile'),
+    db.getByBucket<Record<string, unknown>>('post'),
+  ]);
+  return { profilesRaw, postsRaw };
+}
+
+/**
+ * Agenda reaquecimento do cache em background. Não zera o cache atual: as buscas continuam
+ * rápidas com os dados antigos até o novo carregamento terminar, quando o cache é substituído.
+ * Recebe db para ser chamado como callback do storage após save/savePosts.
+ */
+export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
+  if (warmInProgress) {
+    rewarmPending = true;
+    return;
+  }
+  warmInProgress = true;
+  void (async () => {
+    try {
+      const { profilesRaw, postsRaw } = await loadSearchCacheData(db);
+      searchDataCache = { profilesRaw, postsRaw };
+    } finally {
+      warmInProgress = false;
+      if (rewarmPending) {
+        rewarmPending = false;
+        scheduleSearchCacheRewarm(db);
+      }
+    }
+  })();
+}
+
+/** Invalida o cache da busca (zera). Preferir scheduleSearchCacheRewarm(db) para não ter lentidão no front. */
 export function clearSearchCache(): void {
   searchDataCache = null;
+}
+
+/** Aquece o cache carregando perfis e posts do storage. Chamar na subida da API para a 1ª busca já ser rápida. */
+export async function warmSearchCache(db: CompositeStorage): Promise<void> {
+  const { profilesRaw, postsRaw } = await loadSearchCacheData(db);
+  searchDataCache = { profilesRaw, postsRaw };
 }
 
 function getIn(obj: unknown, ...paths: string[]): unknown {
@@ -536,10 +579,9 @@ export async function searchProfiles(
     if (arr.length > 0) pricingFilters[pricingActivationKeys[i]] = arr;
   }
 
-  const now = Date.now();
   let profilesRaw: { key: string; value: Record<string, unknown> }[];
   let postsRaw: { key: string; value: Record<string, unknown> }[];
-  if (searchDataCache && searchDataCache.expiresAt > now) {
+  if (searchDataCache) {
     profilesRaw = searchDataCache.profilesRaw;
     postsRaw = searchDataCache.postsRaw;
   } else {
@@ -547,11 +589,7 @@ export async function searchProfiles(
       db.getByBucket<Record<string, unknown>>('profile'),
       db.getByBucket<Record<string, unknown>>('post'),
     ]);
-    searchDataCache = {
-      profilesRaw,
-      postsRaw,
-      expiresAt: now + SEARCH_DATA_CACHE_TTL_MS,
-    };
+    searchDataCache = { profilesRaw, postsRaw };
   }
 
   const postsByHandle = new Map<string, Record<string, unknown>[]>();

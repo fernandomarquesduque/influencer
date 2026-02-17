@@ -11,19 +11,19 @@ export class CompositeStorage {
   constructor(
     private readonly rocks: RocksDBStorage,
     private readonly sqlite: SqliteSync,
-    /** Chamado após save/savePosts para invalidar cache da busca (ex.: clearSearchCache). */
-    private readonly onInvalidateSearch?: () => void
+    /** Chamado após save/savePosts com this (storage) para reaquecer cache em background sem zerar (ex.: scheduleSearchCacheRewarm). */
+    private readonly onInvalidateSearch?: (db: CompositeStorage) => void
   ) { }
 
   async save(entity: Entity & { handle: string }): Promise<{ path: string; bytes: number }> {
     const result = await this.rocks.save(entity);
-    this.onInvalidateSearch?.();
+    this.onInvalidateSearch?.(this);
     return result;
   }
 
   async savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number> {
     const n = await this.rocks.savePosts(profileHandle, posts, collectedAt);
-    this.onInvalidateSearch?.();
+    this.onInvalidateSearch?.(this);
     return n;
   }
 

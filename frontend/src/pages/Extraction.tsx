@@ -17,7 +17,7 @@ import {
   Avatar,
 } from 'antd'
 import { PlayCircleOutlined, StopOutlined, ReloadOutlined, TagOutlined, UserOutlined } from '@ant-design/icons'
-import { fetchCrawlStatus, startCrawl, stopCrawl, fetchProfiles, getProfilePicUrl, proxyImageUrl, type ProfileItem } from '../api'
+import { fetchCrawlStatus, startCrawl, stopCrawl, fetchProfiles, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem } from '../api'
 
 const { Title, Text } = Typography
 
@@ -232,8 +232,12 @@ export default function Extraction() {
                     <Avatar
                       size={40}
                       src={picUrl}
-                      icon={!picUrl ? <UserOutlined /> : undefined}
+                      icon={<UserOutlined />}
                       alt={handle}
+                      onError={() => {
+                        if (handle) queueRefreshProfile(handle).catch(() => {})
+                        return false
+                      }}
                     />
                     <Text type="secondary">#{index + 1}</Text>
                     <Tag color="blue">@{handle}</Tag>

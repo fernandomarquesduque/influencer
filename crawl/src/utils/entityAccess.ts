@@ -1,3 +1,4 @@
+import { ESTABLISHMENT_KEYWORDS_RAW } from "../cli/defaultTags.js";
 /**
  * Acesso genérico a campos em entidades dinâmicas (response completo).
  * Não assume estrutura fixa; tenta caminhos comuns e busca profunda na API do Instagram.
@@ -63,6 +64,20 @@ function deepFindIsPrivate(obj: unknown, seen = new Set<unknown>()): unknown {
   return undefined;
 }
 
+/** Busca profunda: public_phone_country_code (ex.: "55" para Brasil). */
+function deepFindCountryCode(obj: unknown, seen = new Set<unknown>()): unknown {
+  if (obj == null || seen.has(obj)) return undefined;
+  if (typeof obj !== 'object') return undefined;
+  seen.add(obj);
+  const o = obj as Record<string, unknown>;
+  if ('public_phone_country_code' in o) return o.public_phone_country_code;
+  for (const key of Object.keys(o)) {
+    const found = deepFindCountryCode(o[key], seen);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function toNumber(v: unknown): number {
   if (typeof v === 'number' && Number.isFinite(v)) return Math.floor(v);
   if (typeof v === 'string') {
@@ -106,15 +121,59 @@ const ACCOUNT_TYPE_PERSONAL = 1;
 const ACCOUNT_TYPE_CREATOR = 2;
 const ACCOUNT_TYPE_BUSINESS = 3;
 
-/** Termos que indicam estabelecimento comercial (categoria ou handle). Não incluir "salon"/"salão" para não excluir influenciadoras de beleza (ex.: Rafaella Cassol). */
-const ESTABLISHMENT_KEYWORDS = new Set([
-  'restaurante', 'radio', 'clinica', 'studio', 'estudio', 'lanche', 'lanches', 'ifood', 'cafe', 'café', 'store', 'loja', 'lojas', 'restaurant', 'bar', 'lanchonete', 'padaria', 'bakery',
-  'hotel', 'pousada', 'clinic', 'academia', 'gym', 'farmácia', 'farmacia', 'pharmacy', 'supermercado',
-  'pizzaria', 'hamburgueria', 'sorveteria', 'confeitaria', 'balada', 'nightclub', 'pub', 'cervejaria', 'brewery', 'vinícola', 'winery', 'food truck',
-  'gastrobar', 'gastropub', 'gastronomy', 'quintal', 'bistro', 'brasserie', 'steakhouse', 'grill', 'kitchen', 'rooftop', 'lounge',
-  'imobiliária', 'imobiliaria', 'imóveis', 'imoveis', 'real estate', 'realty', 'realestate',
-  'barsao', 'santomar',
-]);
+/**
+ * Normaliza texto para comparação de keywords: case insensitive e sem acentos.
+ * Garante que "Brasil" e "brasil" (e "Brasíl") deem match na mesma regra.
+ */
+function normalizeForKeyword(s: string): string {
+  return String(s)
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\u0300-\u036f/g, '');
+}
+
+/** Normaliza keyword sem trim, para preservar " sa ", " ltda" etc. (só devem dar match com espaço). */
+function normalizeKeywordForSet(s: string): string {
+  return String(s)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\u0300-\u036f/g, '');
+}
+
+/**
+ * Termos que indicam estabelecimento comercial ou empresa (categoria, handle, nome, bio).
+ * Não incluir "salon"/"salão" para não excluir influenciadoras de beleza (ex.: Rafaella Cassol).
+ * Regras: (1) handle contém keyword, (2) nome contém keyword, (3) bio contém keyword (só keywords com 5+ caracteres),
+ * (4) categoria contém keyword, (5) conta empresa API + categoria. Motivo/regra: getBusinessBlockReason().
+ * Comparação sempre case-insensitive e com acentos normalizados.
+ */
+/** Set de keywords normalizadas (sem acento, minúsculo; sem trim para preservar " sa ", " ltda"). */
+const ESTABLISHMENT_KEYWORDS = new Set(
+  ESTABLISHMENT_KEYWORDS_RAW.filter((s): s is string => typeof s === 'string').map(normalizeKeywordForSet)
+);
+
+/** Mínimo de caracteres para keyword ser validada na bio (evita falsos positivos com termos muito curtos). */
+const MIN_CHARS_BIO_KEYWORD = 5;
+
+/** Keywords de estabelecimento com 5+ caracteres: só essas são validadas na bio (evita falsos positivos). */
+const ESTABLISHMENT_KEYWORDS_BIO = new Set(
+  ESTABLISHMENT_KEYWORDS_RAW.filter((s): s is string => typeof s === 'string')
+    .filter((kw) => normalizeKeywordForSet(kw).trim().length >= MIN_CHARS_BIO_KEYWORD)
+    .map(normalizeKeywordForSet)
+);
+
+/** Verifica se texto contém alguma keyword do set (texto e set já em forma normalizada, ou normaliza aqui). */
+function textContainsAnyKeyword(text: string, keywordSet: Set<string>): boolean {
+  const n = normalizeForKeyword(text);
+  return [...keywordSet].some((kw) => n.includes(kw));
+}
+
+/** Retorna a primeira keyword do set que aparece no texto, ou undefined. */
+function findKeywordInText(text: string, keywordSet: Set<string>): string | undefined {
+  const n = normalizeForKeyword(text);
+  return [...keywordSet].find((kw) => n.includes(kw));
+}
 
 /** Extrai curtidas de um post Entity (NormalizedPost ou formato legado). */
 function getLikesFromPost(post: unknown): number | undefined {
@@ -130,13 +189,22 @@ function getLikesFromPost(post: unknown): number | undefined {
   return undefined;
 }
 
-/** Verifica se pelo menos um post tem mais que minLikes curtidas. */
-export function hasPostWithMinLikes(posts: unknown[], minLikes: number): boolean {
-  if (minLikes <= 0 || !Array.isArray(posts) || posts.length === 0) return true;
-  return posts.some((p) => {
+/**
+ * Verifica se há pelo menos minCount posts com no mínimo minLikes curtidas (>=).
+ * @param minCount Número mínimo de posts que devem ter >= minLikes (default 1 = pelo menos um post).
+ */
+export function hasPostWithMinLikes(posts: unknown[], minLikes: number, minCount: number = 1): boolean {
+  if (minLikes <= 0 || minCount <= 0 || !Array.isArray(posts)) return true;
+  if (posts.length === 0) return minCount <= 0;
+  let count = 0;
+  for (const p of posts) {
     const likes = getLikesFromPost(p);
-    return likes != null && likes > minLikes;
-  });
+    if (likes != null && likes >= minLikes) {
+      count++;
+      if (count >= minCount) return true;
+    }
+  }
+  return false;
 }
 
 function normalizeCategory(cat: unknown): string {
@@ -162,23 +230,125 @@ function getHandleOrUsername(entity: Record<string, unknown>): string {
   return s.replace(/^@/, '');
 }
 
+/** Bio/descrição do perfil (biography) para checagem de keywords. */
+function getBioNormalized(entity: Record<string, unknown>): string {
+  const bio = getIn(entity, 'data.user.biography', 'biography', 'bio', 'description');
+  if (bio == null) return '';
+  const s = String(bio).trim().toLowerCase().normalize('NFD').replace(/\u0300-\u036f/g, '');
+  return s;
+}
+
+/** Nome de exibição (full_name) normalizado para checagem de keywords. */
+function getFullNameNormalized(entity: Record<string, unknown>): string {
+  const name = getIn(entity, 'data.user.full_name', 'full_name', 'name');
+  if (name == null) return '';
+  return String(name).trim().toLowerCase().normalize('NFD').replace(/\u0300-\u036f/g, '');
+}
+
+/** Palavras que rejeitam o perfil (handle, nome, categoria ou bio). Usar sempre este array em todo o código. */
+export const REJECTED_PROFILE_KEYWORDS = new Set<string>(['jornal']);
+
+/** Handles que nunca devem ser coletados (ex.: perfis não brasileiros que passaram por bug). */
+export const BLOCKLIST_HANDLES = new Set<string>(['franya910']);
+
+/**
+ * Verifica se o handle está na lista de bloqueados (case insensitive).
+ */
+export function isBlocklistedHandle(handle: string): boolean {
+  if (!handle || typeof handle !== 'string') return false;
+  return BLOCKLIST_HANDLES.has(handle.trim().toLowerCase());
+}
+
+/**
+ * Verifica se algum termo de REJECTED_PROFILE_KEYWORDS aparece no texto (case insensitive).
+ */
+export function containsRejectedKeyword(text: string): boolean {
+  const normalized = text.trim().toLowerCase().normalize('NFD').replace(/\u0300-\u036f/g, '');
+  if (!normalized) return false;
+  for (const kw of REJECTED_PROFILE_KEYWORDS) {
+    if (normalized.includes(kw.toLowerCase())) return true;
+  }
+  return false;
+}
+
+/**
+ * Indica se o perfil contém alguma palavra de REJECTED_PROFILE_KEYWORDS (handle, nome, categoria ou bio).
+ * Esses perfis não devem ser coletados.
+ */
+export function hasRejectedProfileKeyword(entity: Record<string, unknown>): boolean {
+  const toSearch = [
+    getIn(entity, 'handle', 'username', 'data.user.username'),
+    getIn(entity, 'data.user.full_name', 'full_name'),
+    getIn(entity, 'data.user.category', 'category'),
+    getIn(entity, 'data.user.biography', 'biography'),
+  ]
+    .filter((v) => v != null && String(v).trim() !== '')
+    .map((v) => String(v).trim());
+  const combined = toSearch.join(' ');
+  return containsRejectedKeyword(combined);
+}
+
+/**
+ * Retorna o motivo do bloqueio por palavra rejeitada (regra + palavra) para log.
+ * Ex.: "handle contém 'jornal'", "bio contém 'jornal'". Retorna null se não houver match.
+ */
+export function getRejectedKeywordReason(entity: Record<string, unknown>): string | null {
+  const normalize = (v: unknown): string =>
+    (v != null ? String(v).trim().toLowerCase().normalize('NFD').replace(/\u0300-\u036f/g, '') : '');
+  const findKeyword = (text: string): string | undefined =>
+    [...REJECTED_PROFILE_KEYWORDS].find((kw) => text.includes(kw.toLowerCase()));
+
+  const handleStr = normalize(getIn(entity, 'handle', 'username', 'data.user.username'));
+  if (handleStr) {
+    const kw = findKeyword(handleStr);
+    if (kw) return `handle contém '${kw}'`;
+  }
+  const nameStr = normalize(getIn(entity, 'data.user.full_name', 'full_name'));
+  if (nameStr) {
+    const kw = findKeyword(nameStr);
+    if (kw) return `nome contém '${kw}'`;
+  }
+  const categoryStr = normalize(getIn(entity, 'data.user.category', 'category'));
+  if (categoryStr) {
+    const kw = findKeyword(categoryStr);
+    if (kw) return `categoria contém '${kw}'`;
+  }
+  const bioStr = normalize(getIn(entity, 'data.user.biography', 'biography'));
+  if (bioStr) {
+    const kw = findKeyword(bioStr);
+    if (kw) return `bio contém '${kw}'`;
+  }
+  return null;
+}
+
 /**
  * Indica se a entidade é perfil de negócio/estabelecimento (ex.: bar, restaurante).
- * Considera: (1) categoria com keywords, (2) handle/username com termos de estabelecimento (ex.: gastrobar, quintal).
+ * Considera: (1) categoria com keywords, (2) handle/nome com termos de estabelecimento,
+ * (3) bio/descrição contendo termos de estabelecimento. Não pode conter no nome nem na bio.
  */
 export function isBusinessFromEntity(entity: Record<string, unknown>): boolean {
   const category = getIn(entity, 'data.user.category', 'category');
   const categoryStr = normalizeCategory(category);
   const categoryMatchesEstablishment = categoryStr
-    ? [...ESTABLISHMENT_KEYWORDS].some((kw) => categoryStr.includes(kw))
+    ? textContainsAnyKeyword(categoryStr, ESTABLISHMENT_KEYWORDS)
     : false;
 
   const handleStr = getHandleOrUsername(entity);
   const handleMatchesEstablishment = handleStr
-    ? [...ESTABLISHMENT_KEYWORDS].some((kw) => handleStr.includes(kw))
+    ? textContainsAnyKeyword(handleStr, ESTABLISHMENT_KEYWORDS)
     : false;
 
-  if (handleMatchesEstablishment) return true;
+  const fullNameStr = getFullNameNormalized(entity);
+  const nameMatchesEstablishment = fullNameStr
+    ? textContainsAnyKeyword(fullNameStr, ESTABLISHMENT_KEYWORDS)
+    : false;
+
+  const bioStr = getBioNormalized(entity);
+  const bioMatchesEstablishment = bioStr
+    ? textContainsAnyKeyword(bioStr, ESTABLISHMENT_KEYWORDS_BIO)
+    : false;
+
+  if (handleMatchesEstablishment || nameMatchesEstablishment || bioMatchesEstablishment) return true;
 
   const handleSuggestsDoctorInfluencer = handleStr ? /^(dra\.|dr\.|dra_|dr_)/.test(handleStr) : false;
   const categoryIsClinicOnly = categoryStr
@@ -203,6 +373,60 @@ export function isBusinessFromEntity(entity: Record<string, unknown>): boolean {
   if (v === undefined) v = deepFindIsBusinessAccount(entity);
   const isBusiness = v === true || v === 'true' || v === 1;
   return isBusiness && effectiveCategoryEstablishment;
+}
+
+/**
+ * Retorna o motivo do bloqueio por estabelecimento (regra + palavra/campo) para log.
+ * Retorna null se a entidade não for considerada empresa.
+ */
+export function getBusinessBlockReason(entity: Record<string, unknown>): string | null {
+  const category = getIn(entity, 'data.user.category', 'category');
+  const categoryStr = normalizeCategory(category);
+  const handleStr = getHandleOrUsername(entity);
+  const fullNameStr = getFullNameNormalized(entity);
+  const bioStr = getBioNormalized(entity);
+
+  const handleKw = handleStr ? findKeywordInText(handleStr, ESTABLISHMENT_KEYWORDS) : undefined;
+  if (handleKw) return `handle contém '${handleKw}'`;
+
+  const nameKw = fullNameStr ? findKeywordInText(fullNameStr, ESTABLISHMENT_KEYWORDS) : undefined;
+  if (nameKw) return `nome contém '${nameKw}'`;
+
+  const bioKw = bioStr
+    ? findKeywordInText(bioStr, ESTABLISHMENT_KEYWORDS_BIO)
+    : undefined;
+  if (bioKw) return `bio contém '${bioKw}'`;
+
+  const categoryKw = categoryStr ? findKeywordInText(categoryStr, ESTABLISHMENT_KEYWORDS) : undefined;
+  const handleSuggestsDoctorInfluencer = handleStr ? /^(dra\.|dr\.|dra_|dr_)/.test(handleStr) : false;
+  const categoryIsClinicOnly = categoryStr
+    ? (categoryStr.includes('clinic') || categoryStr.includes('clinica'))
+    : false;
+  const effectiveCategoryEstablishment =
+    !!categoryKw && !(handleSuggestsDoctorInfluencer && categoryIsClinicOnly);
+
+  if (effectiveCategoryEstablishment && categoryKw)
+    return `categoria contém '${categoryKw}'`;
+
+  const accountType = getAccountType(entity);
+  if (accountType === ACCOUNT_TYPE_BUSINESS && effectiveCategoryEstablishment)
+    return 'conta empresa (API) + categoria estabelecimento';
+
+  const fromPaths = getIn(
+    entity,
+    'data.user.is_business',
+    'data.user.is_business_account',
+    'is_business',
+    'is_business_account',
+    'graphql.user.is_business_account'
+  );
+  let v = fromPaths;
+  if (v === undefined) v = deepFindIsBusinessAccount(entity);
+  const isBusiness = v === true || v === 'true' || v === 1;
+  if (isBusiness && effectiveCategoryEstablishment)
+    return 'conta empresa (API) + categoria estabelecimento';
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +524,8 @@ export interface InfluencerRejectionDiagnostic {
   pass: boolean;
   /** Motivo da rejeição (ex.: estabelecimento_comercial, perfil_privado, seguidores_abaixo_minimo) */
   reason?: string;
+  /** Regra + palavra que identificou empresa (ex.: "handle contém 'loja'", "bio contém 'restaurante'") */
+  businessBlockReason?: string;
   accountType?: number;
   followers: number;
   category?: string;
@@ -337,6 +563,7 @@ export function getInfluencerRejectionDiagnostic(
   if (excludeBusiness) {
     if (isBusiness) {
       diagnostic.reason = 'estabelecimento_comercial';
+      diagnostic.businessBlockReason = getBusinessBlockReason(entity) ?? undefined;
       return diagnostic;
     }
     if (accountType !== ACCOUNT_TYPE_PERSONAL && accountType !== ACCOUNT_TYPE_CREATOR && accountType !== ACCOUNT_TYPE_BUSINESS && accountType !== undefined) {
@@ -362,6 +589,7 @@ export function getInfluencerRejectionDiagnostic(
 
   if (!isPersonOrCreator(entity)) {
     diagnostic.reason = 'conta_empresa';
+    diagnostic.businessBlockReason = getBusinessBlockReason(entity) ?? undefined;
     return diagnostic;
   }
   if (minFollowers > 0 && followers < minFollowers) {
@@ -371,4 +599,75 @@ export function getInfluencerRejectionDiagnostic(
   }
   diagnostic.pass = true;
   return diagnostic;
+}
+
+// ---------------------------------------------------------------------------
+// 6) PERFIL BRASILEIRO (filtro: salvar apenas Brasil)
+// ---------------------------------------------------------------------------
+
+/** Termos que indicam perfil brasileiro (bio, nome, cidade, endereço). */
+const BRASIL_KEYWORDS = new Set([
+  'brasil', 'brazil', 'brasileira', 'brasileiro', 'brasileiros', 'brasileiras',
+  'são paulo', 'sao paulo', 'rio de janeiro', 'belo horizonte', 'curitiba', 'porto alegre', 'brasília', 'brasilia',
+  'salvador', 'fortaleza', 'recife', 'belém', 'belem', 'manaus', 'curitiba', 'florianópolis', 'florianopolis', 'floripa',
+  'sp', 'rj', 'mg', 'pr', 'rs', 'sc', 'ba', 'pe', 'ce', 'pa', 'am', 'df', 'go', 'pb', 'rn', 'al', 'se', 'ma', 'pi', 'to', 'ms', 'mt', 'es', 'ro', 'ac', 'ap', 'rr',
+  'bh ', ' bh', 'carioca', 'paulista', 'gaúcho', 'gaucho', 'mineiro', 'baiano', 'catarinense', 'paranaense', 'sulista', 'nordestino',
+  'curitibano', 'florianopolitano', 'porto-alegrense', 'recifense', 'fortalezense', 'salvadorense', 'belenense', 'manauara',
+  'litoral brasileiro', 'nordeste', 'norte', 'sul', 'sudeste', 'centro-oeste', 'amazonia', 'amazônia', 'pantanal',
+  'rio grande do sul', 'rio grande do norte', 'minas gerais', 'santa catarina', 'espírito santo', 'espirito santo',
+  'distrito federal', 'mato grosso', 'mato grosso do sul', 'rondônia', 'rondonia', 'acre', 'amapá', 'amapa', 'roraima', 'tocantins', 'pará', 'para ', 'maranhão', 'maranhao', 'piauí', 'piaui', 'ceará', 'ceara', 'paraíba', 'paraiba', 'alagoas', 'sergipe',
+  'campinas', 'guarulhos', 'niterói', 'niteroi', 'santos', 'sorocaba', 'ribeirão', 'ribeirao', 'uberlândia', 'uberlandia', 'joinville', 'blumenau', 'pelotas', 'canoas', 'natal', 'maceió', 'maceio', 'joão pessoa', 'joao pessoa', 'aracaju', 'teresina', 'são luís', 'sao luis', 'belém', 'belem', 'macapá', 'macapa', 'manaus', 'porto velho', 'rio branco', 'boavista', 'palmas', 'cuiabá', 'cuiaba', 'campo grande', 'goiânia', 'goiania',
+  'colombo', // Colombo (PR), região metropolitana de Curitiba
+]);
+
+function normalizeForBrazilCheck(v: unknown): string {
+  if (v == null) return '';
+  const s = typeof v === 'string' ? v : String(v);
+  return s.trim().toLowerCase().normalize('NFD').replace(/\u0300-\u036f/g, '');
+}
+
+/**
+ * Indica se o perfil parece ser brasileiro (país Brasil).
+ * Considera: (1) public_phone_country_code === 55, (2) biografia/nome/cidade/endereço com termos brasileiros.
+ * Quando não há nenhum dado disponível, retorna false (não salvar para evitar perfis de outros países).
+ */
+export function isLikelyBrazilianProfile(entity: Record<string, unknown>): boolean {
+  const code = getIn(
+    entity,
+    'data.user.public_phone_country_code',
+    'public_phone_country_code'
+  ) ?? deepFindCountryCode(entity);
+  if (code !== undefined && code !== null) {
+    const s = String(code).trim();
+    if (s === '55' || s === '+55') return true;
+  }
+
+  const bio = getIn(entity, 'data.user.biography', 'biography', 'bio');
+  const fullName = getIn(entity, 'data.user.full_name', 'full_name');
+  const city = getIn(entity, 'data.user.city_name', 'city_name');
+  const address = getIn(entity, 'data.user.address_street', 'address_street');
+  const combined = [bio, fullName, city, address]
+    .filter((x) => x != null && String(x).trim() !== '')
+    .map((x) => normalizeForBrazilCheck(x))
+    .join(' ');
+  if (!combined) return false;
+
+  const words = combined.split(/\s+/).filter(Boolean);
+  for (const w of words) {
+    const normalized = w.replace(/[^\p{L}\d]/gu, '').toLowerCase();
+    if (normalized.length < 2) continue;
+    if (BRASIL_KEYWORDS.has(normalized)) return true;
+    if (BRASIL_KEYWORDS.has(w)) return true;
+  }
+  if (combined.includes('brasil') || combined.includes('brazil') || combined.includes('brasileir')) return true;
+  // Para keywords curtas (ex.: sp, rj, pa), exige palavra inteira para evitar falso positivo (ex.: "Spain" → "sp")
+  for (const kw of BRASIL_KEYWORDS) {
+    if (kw.length <= 3) {
+      const re = new RegExp('(^|[\\s\\p{P}])' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([\\s\\p{P}]|$)', 'iu');
+      if (re.test(combined)) return true;
+    } else {
+      if (combined.includes(kw)) return true;
+    }
+  }
+  return false;
 }

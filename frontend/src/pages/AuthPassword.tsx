@@ -12,7 +12,7 @@ export default function AuthPassword() {
   const [form] = Form.useForm()
 
   if (!handle) {
-    navigate('/create', { replace: true })
+    navigate('/app/create', { replace: true })
     return null
   }
 
@@ -24,8 +24,8 @@ export default function AuthPassword() {
     setLoading(true)
     try {
       await setMyPassword(values.password)
-      message.success('Senha definida.')
-      navigate(`/activate/${handle}`, { replace: true })
+      message.success('Senha definida. Redirecionando para seu relatório...')
+      navigate(`/app/influencer/${encodeURIComponent(handle)}`, { state: { fromSignup: true }, replace: true })
     } catch (e) {
       message.error(e instanceof Error ? e.message : 'Falha ao definir senha')
     } finally {
@@ -34,9 +34,9 @@ export default function AuthPassword() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: '48px auto', padding: '0 16px' }}>
-      <Card title="Definir senha" style={{ boxShadow: '0 2px 8px rgba(0,0,0,.1)' }}>
-        <p style={{ marginBottom: 16, color: '#666' }}>
+    <div style={{ maxWidth: 420, margin: '0 auto' }}>
+      <Card title="Definir senha">
+        <p style={{ marginBottom: 16, color: 'var(--app-text-secondary)' }}>
           Perfil <strong>@{handle}</strong> validado. Defina uma senha para acessar sua conta.
         </p>
         <Form form={form} name="set-password" onFinish={onFinish} layout="vertical" requiredMark={false}>

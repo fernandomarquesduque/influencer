@@ -11,9 +11,13 @@ import {
   Button,
   Space,
   Collapse,
+  Drawer,
+  Grid,
 } from 'antd'
 import { SearchOutlined, FilterOutlined, ClearOutlined } from '@ant-design/icons'
-import { fetchProfilesSearch, type ProfileListItem, type ProfilesSearchQuery, type ProfilesSort, type ProfilesSearchFacets } from '../api'
+
+const { useBreakpoint } = Grid
+import { fetchProfilesSearch, fetchProfile, type ProfileListItem, type ProfilesSearchQuery, type ProfilesSort, type ProfilesSearchFacets } from '../api'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
@@ -80,7 +84,94 @@ export default function InfluencerList() {
     sort: 'engagement_desc',
   })
   const [limitReachedCode, setLimitReachedCode] = useState<string | null>(null)
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false)
   const scrollToRestoreRef = useRef<number | null>(null)
+  const screens = useBreakpoint()
+  const showFiltersSidebar = screens.lg
+
+  /** Handles cuja foto falhou e foi enfileirado refresh; atualizamos só esse item na lista quando o perfil voltar com URL nova. */
+  const handlesPendingImageRef = useRef<Set<string>>(new Set())
+  const imagePollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const dataRef = useRef<ProfileListItem[]>([])
+  useEffect(() => {
+    dataRef.current = data
+  }, [data])
+
+  const updateOneProfileInList = useRef<(handle: string, profile: Record<string, unknown>) => void>(() => { })
+  updateOneProfileInList.current = (handle: string, profile: Record<string, unknown>) => {
+    const h = String(handle).toLowerCase().replace(/^@/, '')
+    setData((prev) =>
+      prev.map((item) => {
+        const itemKey = String(item.key ?? item.handle ?? '').toLowerCase().replace(/^@/, '')
+        if (itemKey !== h) return item
+        const picUrl = profile.profile_pic_url != null && typeof profile.profile_pic_url === 'string' ? profile.profile_pic_url : item.profile_pic_url
+        const hdPicUrl = profile.hd_profile_pic_url != null && typeof profile.hd_profile_pic_url === 'string' ? profile.hd_profile_pic_url : item.hd_profile_pic_url
+        return {
+          ...item,
+          profile_pic_url: picUrl,
+          hd_profile_pic_url: hdPicUrl,
+          data: (profile.data ?? item.data) as Record<string, unknown> | undefined,
+        }
+      })
+    )
+  }
+
+  /** Quando uma foto falha, enfileiramos o handle e passamos a buscar só esse perfil (GET /profiles/:handle) a cada 15s; só removemos da fila quando a API devolver URL de foto nova (refresh concluído) ou após max tentativas. */
+  const addHandleForImageUpdate = useRef<(handle: string) => void>(() => { })
+  addHandleForImageUpdate.current = (handle: string) => {
+    const h = String(handle).toLowerCase().replace(/^@/, '')
+    if (!h) return
+    handlesPendingImageRef.current.add(h)
+    if (imagePollingIntervalRef.current) return
+    const REFETCH_INTERVAL_MS = 15_000
+    const REFETCH_MAX_PER_HANDLE = 12
+    const counts = new Map<string, number>()
+    imagePollingIntervalRef.current = setInterval(() => {
+      const set = handlesPendingImageRef.current
+      if (set.size === 0) {
+        if (imagePollingIntervalRef.current) {
+          clearInterval(imagePollingIntervalRef.current)
+          imagePollingIntervalRef.current = null
+        }
+        return
+      }
+      set.forEach((h) => {
+        const n = (counts.get(h) ?? 0) + 1
+        counts.set(h, n)
+        if (n > REFETCH_MAX_PER_HANDLE) {
+          set.delete(h)
+          counts.delete(h)
+          return
+        }
+        fetchProfile(h)
+          .then((p) => {
+            if (!p || typeof p !== 'object') return
+            const prof = p as Record<string, unknown>
+            const newPic = (prof.profile_pic_url ?? prof.hd_profile_pic_url) as string | undefined
+            const dataUser = prof.data as Record<string, unknown> | undefined
+            const newPicFromData = (dataUser?.user as Record<string, unknown> | undefined)?.profile_pic_url as string | undefined
+            const newUrl = newPic ?? newPicFromData
+            const current = dataRef.current.find((item) => String(item.key ?? item.handle ?? '').toLowerCase().replace(/^@/, '') === h)
+            const currentUser = (current?.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined
+            const currentUrl = (current?.profile_pic_url ?? current?.hd_profile_pic_url ?? currentUser?.profile_pic_url) as string | undefined
+            updateOneProfileInList.current(h, prof)
+            if (typeof newUrl === 'string' && newUrl !== currentUrl) {
+              set.delete(h)
+              counts.delete(h)
+            }
+          })
+          .catch(() => { })
+      })
+    }, REFETCH_INTERVAL_MS)
+  }
+  useEffect(() => {
+    return () => {
+      if (imagePollingIntervalRef.current) {
+        clearInterval(imagePollingIntervalRef.current)
+        imagePollingIntervalRef.current = null
+      }
+    }
+  }, [])
 
   const load = (overrides?: Partial<ProfilesSearchQuery>, signal?: AbortSignal) => {
     setLimitReachedCode(null)
@@ -182,7 +273,7 @@ export default function InfluencerList() {
   })
 
   if (user?.scope === 'influencer' && user.profile_handle) {
-    return <Navigate to={`/influencer/${encodeURIComponent(user.profile_handle.replace(/^@/, ''))}`} replace />
+    return <Navigate to={`/app/influencer/${encodeURIComponent(user.profile_handle.replace(/^@/, ''))}`} replace />
   }
 
   const runSearch = () => {
@@ -293,7 +384,7 @@ export default function InfluencerList() {
           padding: 24,
         }}
       >
-        <Title level={1} style={{ marginBottom: 32, fontWeight: 300, color: 'rgba(0,0,0,.85)' }}>
+        <Title level={1} style={{ marginBottom: 32, fontWeight: 300, color: 'var(--app-text)' }}>
           Buscar influenciadores
         </Title>
         <Space.Compact size="large" style={{ width: '100%', maxWidth: 584 }}>
@@ -318,28 +409,28 @@ export default function InfluencerList() {
     )
   }
 
-  const showFilters = facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter
+  const showFilters = !!user && (facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter)
+
+  const asideStyle: React.CSSProperties = {
+    flexShrink: 0,
+    width: 260,
+    padding: 16,
+    background: 'var(--aside-bg, #fafafa)',
+    borderRadius: 8,
+    border: '1px solid var(--aside-border, #f0f0f0)',
+    position: 'sticky',
+    top: 24,
+    alignSelf: 'flex-start',
+    maxHeight: 'calc(100vh - 48px)',
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+  }
 
   return (
-    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-      {showFilters && (
-        <aside
-          style={{
-            flexShrink: 0,
-            width: 260,
-            padding: 16,
-            background: 'var(--aside-bg, #fafafa)',
-            borderRadius: 8,
-            border: '1px solid var(--aside-border, #f0f0f0)',
-            position: 'sticky',
-            top: 24,
-            alignSelf: 'flex-start',
-            maxHeight: 'calc(100vh - 48px)',
-            overflowY: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
+    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', width: '100%' }}>
+      {showFilters && showFiltersSidebar && (
+        <aside style={asideStyle}>
           <div
             style={{
               position: 'sticky',
@@ -771,10 +862,105 @@ export default function InfluencerList() {
         </aside>
       )}
 
-      <main style={{ flex: 1, minWidth: 0 }}>
+      {showFilters && !showFiltersSidebar && (
+        <Drawer
+          title={<><FilterOutlined /> Filtros</>}
+          placement="right"
+          open={filterDrawerOpen}
+          onClose={() => setFilterDrawerOpen(false)}
+          width={Math.min(320, typeof window !== 'undefined' ? window.innerWidth - 24 : 320)}
+          styles={{ body: { paddingTop: 8 } }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <Typography.Title level={5} style={{ marginBottom: 8, marginTop: 0 }}>
+                <FilterOutlined /> {total === 0 ? 'Nenhum perfil encontrado' : `${total} perfil(is) encontrado(s)`}
+              </Typography.Title>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                {total === 0 && 'Tente outro termo ou remova filtros.'}
+                {total > 0 && (hasActiveFilters ? 'Com filtros aplicados' : 'Todos os resultados da busca')}
+              </Text>
+              {hasActiveFilters && (
+                <Button type="default" size="small" icon={<ClearOutlined />} onClick={clearFilters} style={{ marginTop: 8 }}>
+                  Limpar filtros
+                </Button>
+              )}
+            </div>
+            {facets != null && (
+              <div>
+                <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Ordenar</Text>
+                <Select
+                  size="small"
+                  value={query.sort ?? 'engagement_desc'}
+                  options={SORT_OPTIONS}
+                  style={{ width: '100%' }}
+                  onChange={(value) => {
+                    const newQuery = { ...query, sort: value as ProfilesSort, offset: 0 }
+                    setQuery(newQuery)
+                    load(newQuery)
+                  }}
+                />
+              </div>
+            )}
+            <div>
+              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Hashtags</Text>
+              {categoryFacets.length > 0 ? (
+                <Select
+                  mode="multiple"
+                  size="small"
+                  placeholder="Filtrar por hashtag..."
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  value={selectedCategories}
+                  options={categoryFacets.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                  onChange={(values) => {
+                    const newQuery = { ...query, categories: values.length ? values : undefined, offset: 0 }
+                    setQuery(newQuery)
+                    load(newQuery)
+                  }}
+                  style={{ width: '100%' }}
+                  maxTagCount="responsive"
+                />
+              ) : (
+                <Text type="secondary" style={{ fontSize: 12 }}>Nenhuma hashtag nos resultados.</Text>
+              )}
+            </div>
+            {facets?.content_type && facets.content_type.length > 0 && (
+              <div>
+                <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Tipo de conteúdo</Text>
+                <Select
+                  mode="multiple"
+                  size="small"
+                  placeholder="Filtrar por tipo..."
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  value={selectedContentTypes}
+                  options={facets.content_type.map(({ name, count }) => ({ value: name, label: `${CONTENT_TYPE_LABELS[name] ?? name} (${count})` }))}
+                  onChange={(vals) => updateFilter({ contentTypes: vals.length ? vals : undefined })}
+                  style={{ width: '100%' }}
+                  maxTagCount="responsive"
+                />
+              </div>
+            )}
+          </div>
+        </Drawer>
+      )}
 
+      <main style={{ flex: 1, minWidth: 0 }}>
+        {showFilters && !showFiltersSidebar && (
+          <Button
+            type="default"
+            icon={<FilterOutlined />}
+            onClick={() => setFilterDrawerOpen(true)}
+            style={{ marginBottom: 16 }}
+          >
+            Filtros {total > 0 ? `(${total})` : ''}
+          </Button>
+        )}
         <div style={{ marginBottom: 24, width: '100%' }}>
-          <Space.Compact size="large" style={{ width: '100%' }}>
+          <Space.Compact size="large" style={{ width: '100%', maxWidth: '100%' }}>
             <Input
               placeholder="Buscar por nome, @handle, categoria..."
               allowClear
@@ -819,11 +1005,13 @@ export default function InfluencerList() {
           <>
             <Row gutter={[16, 16]}>
               {data.map((item) => (
-                <Col key={item.key} xs={24} sm={24} md={12} lg={12} xl={8} xxl={6} style={{ minWidth: 0 }}>
+                <Col key={item.key} xs={24} sm={12} style={{ minWidth: 0 }}>
                   <ProfileSummaryCard
                     item={item}
                     variant="list"
                     onClick={() => openDetail(item.handle ?? item.key)}
+                    onImageRefreshQueued={(handle) => addHandleForImageUpdate.current(handle)}
+                    showMetrics={!!user}
                   />
                 </Col>
               ))}

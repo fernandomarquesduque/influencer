@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useEffect, useState, useMemo, useRef } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   Spin,
   Empty,
@@ -35,9 +35,10 @@ import {
   TeamOutlined,
   RiseOutlined,
   ThunderboltOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
-import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
+import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
@@ -96,7 +97,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const { handle: paramHandle } = useParams<{ handle: string }>()
   const handle = overrideHandle ?? paramHandle
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, isPublic, canEditProfile } = useAuth()
+  const fromSignup = (location.state as { fromSignup?: boolean } | null)?.fromSignup
   const isLimitedView = !user || isPublic
   const [profileLoading, setProfileLoading] = useState(true)
   const [postsLoading, setPostsLoading] = useState(true)
@@ -105,6 +108,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const [posts, setPosts] = useState<PostItem[]>([])
   const [postsTotal, setPostsTotal] = useState(0)
   const [dataRedacted, setDataRedacted] = useState(false)
+  const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
+  const refreshQueuedRef = useRef(false)
+  const refreshPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (!handle) return
@@ -162,6 +168,44 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     return () => { cancelled = true }
   }, [handle])
 
+  /** Refetch de perfil e posts após enfileirar refresh (para exibir novas URLs quando a re-extração terminar). */
+  const startRefreshPolling = useRef<(h: string) => void>(() => { })
+  startRefreshPolling.current = (h: string) => {
+    if (refreshPollingRef.current) return
+    let count = 0
+    const REFETCH_INTERVAL_MS = 20_000
+    const REFETCH_MAX = 6
+    const doRefetch = () => {
+      count += 1
+      fetchProfile(h).then((p) => {
+        const pr = p as Record<string, unknown> | null
+        if (pr?._redacted === true) setDataRedacted(true)
+        setProfile(p ?? null)
+      }).catch(() => { })
+      fetchPosts(h, 100, 0).then((res) => {
+        const r = res as { items: PostItem[]; total: number; _redacted?: boolean }
+        if (r._redacted === true) setDataRedacted(true)
+        setPosts(r.items ?? [])
+        setPostsTotal(r.total ?? 0)
+        setFailedPostImages(new Set())
+      }).catch(() => { })
+      if (count >= REFETCH_MAX && refreshPollingRef.current) {
+        clearInterval(refreshPollingRef.current)
+        refreshPollingRef.current = null
+      }
+    }
+    doRefetch()
+    refreshPollingRef.current = setInterval(doRefetch, REFETCH_INTERVAL_MS)
+  }
+  useEffect(() => {
+    return () => {
+      if (refreshPollingRef.current) {
+        clearInterval(refreshPollingRef.current)
+        refreshPollingRef.current = null
+      }
+    }
+  }, [])
+
   const userData = profile?.data?.user as Record<string, unknown> | undefined
   const displayHandle = (profile?.handle ?? profile?.username ?? profile?.key ?? handle ?? '') as string
   const fullName: string | undefined = profile?.full_name ?? (userData?.full_name != null ? String(userData.full_name) : undefined)
@@ -214,7 +258,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   if (!profile && !profileLoading) {
     return (
       <Empty description="Perfil não encontrado">
-        <Button type="primary" onClick={() => navigate('/')}>Voltar à lista</Button>
+        <Button type="primary" onClick={() => navigate('/app')}>Voltar à lista</Button>
       </Empty>
     )
   }
@@ -236,7 +280,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const isRedacted = dataRedacted && isLimitedView
 
   return (
-    <div style={{ maxWidth: 1120, margin: '0 auto', padding: '0 24px 48px' }}>
+    <div style={{ paddingBottom: 48 }}>
 
       {/* 1) Contexto: quem é este relatório + ações imediatas */}
       <div style={{ marginBottom: 24 }}>
@@ -252,12 +296,25 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         <Card size="small" style={{ marginTop: 16 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 20, justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0, flex: 1 }}>
-              <Avatar size={136} src={profilePic} style={{ border: '2px solid #f0f0f0', flexShrink: 0 }} />
+              <Avatar
+                size={136}
+                src={profilePic}
+                icon={<UserOutlined />}
+                style={{ border: '2px solid var(--app-border)', flexShrink: 0 }}
+                onError={() => {
+                  if (!refreshQueuedRef.current && handle) {
+                    refreshQueuedRef.current = true
+                    queueRefreshProfile(handle).catch(() => { })
+                    startRefreshPolling.current(handle)
+                  }
+                  return false
+                }}
+              />
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <Text strong style={{ fontSize: 17 }}>{fullName || displayHandle}</Text>
                   {!isRedacted && isVerified && <Tooltip title="Verificado"><span style={{ color: '#3897f0' }}>✓</span></Tooltip>}
-                  {!isRedacted && hasActivationData && <Tooltip title="Cadastro ativo"><SafetyOutlined style={{ color: '#52c41a' }} /></Tooltip>}
+                  {!isRedacted && hasActivationData && <Tooltip title="Cadastro ativo"><SafetyOutlined style={{ color: 'var(--app-success)' }} /></Tooltip>}
                   {!isRedacted && costTier ? (
                     <Tooltip title={'Custo médio: ' + String(costTier.label)}>
                       <Tag color="gold" style={{ margin: 0, fontWeight: 600 }}>{String(costTier.symbol)} {String(costTier.label)}</Tag>
@@ -266,7 +323,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                 </div>
                 {!isLimitedView && !isRedacted && <Text type="secondary" style={{ fontSize: 13 }}>@{displayHandle}</Text>}
                 {bio ? (
-                  <Paragraph style={{ margin: '6px 0 0', fontSize: 13, color: '#595959', whiteSpace: 'pre-wrap', maxWidth: 560 }}>
+                  <Paragraph style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--app-text-secondary)', whiteSpace: 'pre-wrap', maxWidth: 560 }}>
                     {bio}
                   </Paragraph>
                 ) : null}
@@ -289,11 +346,32 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         </Card>
       </div>
 
+      {fromSignup && handle && canEdit && !hasActivationData && (
+        <div style={{ marginBottom: 24, padding: 16, background: 'rgba(109, 94, 246, 0.08)', border: '1px solid rgba(109, 94, 246, 0.3)', borderRadius: 14, display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>Complete seu cadastro</Text>
+            <Text type="secondary" style={{ fontSize: 13 }}>Adicione cidade, contato e tipo de conteúdo para marcas encontrarem você.</Text>
+          </div>
+          <Button type="primary" onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}>
+            Completar cadastro
+          </Button>
+        </div>
+      )}
+
       {isRedacted && (
         <div style={{ marginBottom: 24, padding: 12, background: '#fff2e8', border: '1px solid #ffbb96', borderRadius: 8 }}>
-          <Text>
-            Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.
-          </Text>
+          {user ? (
+            <Text>
+              Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.
+            </Text>
+          ) : (
+            <>
+              <Text>Faça login para ver as métricas e os dados completos deste perfil.</Text>
+              <div style={{ marginTop: 8 }}>
+                <Link to="/login"><Button type="primary" size="small">Entrar</Button></Link>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -312,12 +390,12 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             <Col xs={24} sm={12} lg={8}>
               <Card size="small" style={{ height: '100%' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                  <div style={{ width: 48, height: 48, borderRadius: 10, background: '#e6f4ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <TeamOutlined style={{ fontSize: 22, color: '#1677ff' }} />
+                  <div style={{ width: 48, height: 48, borderRadius: 10, background: 'rgba(47, 128, 237, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <TeamOutlined style={{ fontSize: 22, color: 'var(--app-accent)' }} />
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <Text type="secondary" style={{ fontSize: 11 }}>Alcance</Text>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>{formatShortNum(followersCount)}</div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--app-text)', lineHeight: 1.2 }}>{formatShortNum(followersCount)}</div>
                     <Text type="secondary" style={{ fontSize: 11 }}>seguidores</Text>
                   </div>
                 </div>
@@ -341,11 +419,11 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               <Card size="small" style={{ height: '100%' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                   <div style={{ width: 48, height: 48, borderRadius: 10, background: '#fff7e6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <ThunderboltOutlined style={{ fontSize: 22, color: '#fa8c16' }} />
+                    <ThunderboltOutlined style={{ fontSize: 22, color: 'var(--app-accent)' }} />
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <Text type="secondary" style={{ fontSize: 11 }}>Interações</Text>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>{totalInteractions.toLocaleString('pt-BR')}</div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--app-text)', lineHeight: 1.2 }}>{totalInteractions.toLocaleString('pt-BR')}</div>
                     <Text type="secondary" style={{ fontSize: 11 }}>likes + comentários</Text>
                   </div>
                 </div>
@@ -356,20 +434,20 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             <Col xs={24} sm={8}>
               <Card size="small">
                 <Text type="secondary" style={{ fontSize: 11 }}>Média likes/post</Text>
-                <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{engagement.avg_likes.toLocaleString('pt-BR')}</div>
+                <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--app-text)', marginTop: 2 }}>{engagement.avg_likes.toLocaleString('pt-BR')}</div>
               </Card>
             </Col>
             <Col xs={24} sm={8}>
               <Card size="small">
                 <Text type="secondary" style={{ fontSize: 11 }}>Posts na análise</Text>
-                <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{engagement.posts_count}</div>
+                <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--app-text)', marginTop: 2 }}>{engagement.posts_count}</div>
               </Card>
             </Col>
             {mediaCount != null && (
               <Col xs={24} sm={8}>
                 <Card size="small">
                   <Text type="secondary" style={{ fontSize: 11 }}>Publicações no perfil</Text>
-                  <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginTop: 2 }}>{formatShortNum(mediaCount)}</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--app-text)', marginTop: 2 }}>{formatShortNum(mediaCount)}</div>
                 </Card>
               </Col>
             )}
@@ -407,7 +485,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               )}
             </div>
             {(collectedAt && formatDate(collectedAt) !== '—') || discoveredBy || discoveredValue ? (
-              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #f0f0f0', display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--app-border)', display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 {discoveredValue && (
                   <div><Text type="secondary" style={{ fontSize: 11 }}>Descoberto Por</Text><div style={{ fontSize: 13, marginTop: 2 }}>{discoveredValue}</div></div>
                 )}
@@ -421,14 +499,15 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       )}
 
       {/* 4) Contato e cadastro – oculto se público no limite */}
-      {!isRedacted && (
+
+      {!isLimitedView && !isRedacted && (
         <div style={{ marginBottom: 24 }}>
 
           {hasActivationData && (<>
             <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>CONTATO E CADASTRO</Text>
             <Card size="small">
               <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <SafetyOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                <SafetyOutlined style={{ color: 'var(--app-success)', fontSize: 16 }} />
                 <Text strong>Dados da ativação</Text>
               </div>
               <Descriptions column={1} bordered size="small" style={{ marginBottom: 0 }}>
@@ -484,7 +563,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       )}
 
       {/* Conteúdo analisado – oculto se público no limite */}
-      {!isRedacted && (categories.length > 0 || allHashtags.length > 0) && (
+      {!isLimitedView && !isRedacted && (categories.length > 0 || allHashtags.length > 0) && (
         <div style={{ marginBottom: 24 }}>
           <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.5px', display: 'block', marginBottom: 10 }}>CONTEÚDO ANALISADO</Text>
           <Card size="small">
@@ -515,7 +594,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
 
 
 
-      {!dataRedacted && !isLimitedView && !isRedacted && (
+      {!dataRedacted && !isLimitedView && !isRedacted && user?.scope !== 'influencer' && (
         <Tabs
           defaultActiveKey="posts"
           items={[
@@ -565,16 +644,30 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               position: 'relative',
                               display: 'block',
                               overflow: 'hidden',
-                              background: '#f0f0f0',
+                              background: 'var(--app-border)',
                             }}
                           >
                             {imgUrl ? (
-                              <Image
-                                alt=""
-                                src={proxyImageUrl(imgUrl)}
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                preview={false}
-                              />
+                              failedPostImages.has(post.key) ? (
+                                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  <FileImageOutlined style={{ fontSize: 40, color: '#bbb' }} />
+                                </div>
+                              ) : (
+                                <Image
+                                  alt=""
+                                  src={proxyImageUrl(imgUrl)}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                  preview={false}
+                                  onError={() => {
+                                    setFailedPostImages((prev) => new Set(prev).add(post.key))
+                                    if (!refreshQueuedRef.current && handle) {
+                                      refreshQueuedRef.current = true
+                                      queueRefreshProfile(handle).catch(() => { })
+                                      startRefreshPolling.current(handle)
+                                    }
+                                  }}
+                                />
+                              )
                             ) : (
                               <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <FileImageOutlined style={{ fontSize: 40, color: '#bbb' }} />

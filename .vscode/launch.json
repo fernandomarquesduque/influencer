@@ -33,6 +33,57 @@
         {
             "type": "node",
             "request": "launch",
+            "name": "Extract Feed",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "extract-feed",
+                "--",
+                "--limit",
+                "30",
+                "--delay-extra",
+                "1000"
+            ],
+            "cwd": "${workspaceFolder}/crawl",
+            "console": "integratedTerminal"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Extract Explore",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "extract-explore",
+                "--",
+                "--limit",
+                "30",
+                "--delay-extra",
+                "1000"
+            ],
+            "cwd": "${workspaceFolder}/crawl",
+            "console": "integratedTerminal"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Extract All (Hashtag → Feed → Explore)",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "extract-all",
+                "--",
+                "--limit",
+                "10",
+                "--delay-extra",
+                "1000"
+            ],
+            "cwd": "${workspaceFolder}/crawl",
+            "console": "integratedTerminal"
+        },
+        {
+            "type": "node",
+            "request": "launch",
             "name": "Frontend",
             "runtimeExecutable": "npm",
             "runtimeArgs": [

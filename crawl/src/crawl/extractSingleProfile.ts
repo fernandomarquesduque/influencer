@@ -3,12 +3,15 @@ import { DEFAULT_CRAWL_CONFIG, type CrawlConfig, type Entity } from '../types/in
 import { InstagramClient } from '../instagramClient/index.js';
 import { extractProfile } from '../profileExtractor/index.js';
 import {
+  getBusinessBlockReason,
   getFollowersFromEntity,
   getInfluencerRejectionDiagnostic,
   hasPostWithMinLikes,
+  hasRejectedProfileKeyword,
+  isBusinessFromEntity,
+  isBlocklistedHandle,
   isFollowingViewerFromEntity,
   isPersonOrCreator,
-  isPrivateFromEntity,
   qualifiesAsInfluencer,
   type InfluencerRejectionDiagnostic,
 } from '../utils/entityAccess.js';
@@ -27,8 +30,10 @@ export function buildConfigFromEnv(): CrawlConfig {
     return n;
   })();
   const minFollowersToSave = raw === 0 ? 0 : Math.max(raw, MIN_FOLLOWERS_FLOOR);
-  const minPostLikesRaw = parseInt(process.env.MIN_POST_LIKES ?? '0', 10);
-  const minPostLikesToSave = Number.isNaN(minPostLikesRaw) || minPostLikesRaw < 0 ? 0 : minPostLikesRaw;
+  const minPostLikesRaw = parseInt(process.env.MIN_POST_LIKES ?? String(DEFAULT_CRAWL_CONFIG.minPostLikesToSave), 10);
+  const minPostLikesToSave = Number.isNaN(minPostLikesRaw) || minPostLikesRaw < 0 ? DEFAULT_CRAWL_CONFIG.minPostLikesToSave : minPostLikesRaw;
+  const minPostsWithMinLikesRaw = parseInt(process.env.MIN_POSTS_WITH_MIN_LIKES ?? String(DEFAULT_CRAWL_CONFIG.minPostsWithMinLikesToSave), 10);
+  const minPostsWithMinLikesToSave = Number.isNaN(minPostsWithMinLikesRaw) || minPostsWithMinLikesRaw < 1 ? DEFAULT_CRAWL_CONFIG.minPostsWithMinLikesToSave : minPostsWithMinLikesRaw;
   return {
     ...DEFAULT_CRAWL_CONFIG,
     maxPostsPerTag: parseInt(process.env.MAX_POSTS_PER_TAG ?? String(DEFAULT_CRAWL_CONFIG.maxPostsPerTag), 10) || DEFAULT_CRAWL_CONFIG.maxPostsPerTag,
@@ -37,7 +42,9 @@ export function buildConfigFromEnv(): CrawlConfig {
     authStatePath: process.env.AUTH_STATE_PATH ?? DEFAULT_CRAWL_CONFIG.authStatePath,
     minFollowersToSave,
     minPostLikesToSave,
+    minPostsWithMinLikesToSave,
     excludeBusinessProfiles: process.env.EXCLUDE_BUSINESS_PROFILES !== 'false',
+    saveOnlyBrazilian: process.env.SAVE_ONLY_BRAZILIAN === 'true',
     maxPostsToAnalyzeForInsights: parseInt(process.env.MAX_POSTS_FOR_INSIGHTS ?? String(DEFAULT_CRAWL_CONFIG.maxPostsToAnalyzeForInsights), 10) || DEFAULT_CRAWL_CONFIG.maxPostsToAnalyzeForInsights,
   };
 }
@@ -48,23 +55,35 @@ export interface ExtractSingleProfileResult {
   handle: string;
   /** Motivo da rejeição (quando success=false e não foi erro de extração) */
   rejectionReason?: string;
+  /** Regra + palavra que identificou empresa (ex.: "handle contém 'loja'") — quando rejectionReason === 'empresa' */
+  businessBlockReason?: string;
   diagnostic?: InfluencerRejectionDiagnostic;
   /** URL do perfil obrigatório para seguir (quando rejectionReason === 'nao_segue_perfil') */
   followProfileUrl?: string;
+  /** Se o perfil segue a conta oficial (INSTAGRAM_PERFIL). Preenchido quando INSTAGRAM_PERFIL está definido; reutilizado no request-code para evitar abrir o perfil de novo. */
+  followsOfficialProfile?: boolean;
   error?: string;
   followers?: number;
   postsSaved?: number;
 }
 
+/** Opções para a extração. forRefresh = true pula todas as validações (só reextrai e salva, ex.: renovar imagens). */
+export interface ExtractSingleProfileOptions {
+  forRefresh?: boolean;
+}
+
 /**
  * Core: extrai um perfil usando uma page já aberta (para reuso de client/context na API).
  * A page não é fechada por esta função — quem chama deve fechar após salvar estado se necessário.
+ * A validação "ser seguidor da conta oficial" (INSTAGRAM_PERFIL) não é feita aqui; só no envio da mensagem no inbox (request-code).
+ * Com options.forRefresh = true nenhuma validação de qualificação é feita (apenas extrai e salva).
  */
 export async function extractSingleProfileWithPage(
   page: Page,
   handle: string,
   storage: CrawlStorage,
-  config: CrawlConfig
+  config: CrawlConfig,
+  options?: ExtractSingleProfileOptions
 ): Promise<ExtractSingleProfileResult> {
   const cleanHandle = handle.replace(/^@/, '').trim();
   if (!cleanHandle) {
@@ -79,36 +98,30 @@ export async function extractSingleProfileWithPage(
   const { profile: rawProfile, posts } = extracted;
   const raw = rawProfile as Record<string, unknown>;
 
-  const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');
-  if (requiredProfile && requiredProfile.length > 0) {
-    const followsRequired = isFollowingViewerFromEntity(raw);
-    if (!followsRequired) {
-      const followers = getFollowersFromEntity(raw);
-      const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
-      return {
-        success: false,
-        handle: cleanHandle,
-        saved: false,
-        rejectionReason: 'nao_segue_perfil',
-        diagnostic: { pass: false, reason: 'nao_segue_perfil', followers, followsRequiredProfile: false },
-        followProfileUrl,
-        followers,
-      };
-    }
-  }
-
   const followersFromRaw = getFollowersFromEntity(raw);
   const slim = buildSlimProfile(raw, cleanHandle, followersFromRaw, posts, 'seed', '');
   const followers = followersFromRaw > 0 ? followersFromRaw : getFollowersFromEntity(slim as Record<string, unknown>);
+  const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');
+  const followsOfficialProfile =
+    requiredProfile && requiredProfile.length > 0 ? isFollowingViewerFromEntity(raw) : undefined;
 
-  if (isPrivateFromEntity(raw)) {
+  if (options?.forRefresh) {
+    await storage.save(slim as Entity & { handle: string });
+    const collectedAt = String(slim._collected_at ?? new Date().toISOString());
+    const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
+    return { success: true, saved: true, handle: cleanHandle, followers, postsSaved, followsOfficialProfile };
+  }
+
+  if (isBusinessFromEntity(raw as Record<string, unknown>)) {
+    const businessBlockReason = getBusinessBlockReason(raw as Record<string, unknown>);
     return {
       success: false,
       handle: cleanHandle,
       saved: false,
-      rejectionReason: 'perfil_privado',
-      diagnostic: { pass: false, reason: 'perfil_privado', followers, isPrivate: true },
+      rejectionReason: 'empresa',
+      businessBlockReason: businessBlockReason ?? undefined,
       followers,
+      followsOfficialProfile,
     };
   }
 
@@ -123,6 +136,7 @@ export async function extractSingleProfileWithPage(
         rejectionReason: diagnostic.reason,
         diagnostic,
         followers,
+        followsOfficialProfile,
       };
     }
   } else {
@@ -135,6 +149,7 @@ export async function extractSingleProfileWithPage(
         rejectionReason: diagnostic.reason,
         diagnostic,
         followers,
+        followsOfficialProfile,
       };
     }
     if (minRequired > 0 && followers < minRequired) {
@@ -146,20 +161,44 @@ export async function extractSingleProfileWithPage(
         rejectionReason: diagnostic.reason,
         diagnostic,
         followers,
+        followsOfficialProfile,
       };
     }
   }
 
   if (config.minPostLikesToSave > 0) {
-    if (!hasPostWithMinLikes(posts, config.minPostLikesToSave)) {
+    if (!hasPostWithMinLikes(posts, config.minPostLikesToSave, config.minPostsWithMinLikesToSave)) {
       return {
         success: false,
         handle: cleanHandle,
         saved: false,
-        rejectionReason: 'nenhum_post_com_curtidas_minimas',
+        rejectionReason: `precisa de ${config.minPostsWithMinLikesToSave}+ posts com ${config.minPostLikesToSave}+ curtidas`,
         followers,
+        followsOfficialProfile,
       };
     }
+  }
+
+  if (isBlocklistedHandle(cleanHandle)) {
+    return {
+      success: false,
+      handle: cleanHandle,
+      saved: false,
+      rejectionReason: 'handle bloqueado',
+      followers,
+      followsOfficialProfile,
+    };
+  }
+
+  if (hasRejectedProfileKeyword(raw as Record<string, unknown>)) {
+    return {
+      success: false,
+      handle: cleanHandle,
+      saved: false,
+      rejectionReason: 'perfil com palavra rejeitada',
+      followers,
+      followsOfficialProfile,
+    };
   }
 
   await storage.save(slim as Entity & { handle: string });
@@ -171,6 +210,7 @@ export async function extractSingleProfileWithPage(
     handle: cleanHandle,
     followers,
     postsSaved,
+    followsOfficialProfile,
   };
 }
 

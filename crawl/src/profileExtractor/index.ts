@@ -81,33 +81,52 @@ const GET_FOLLOWERS_TIMEOUT_MS = 28_000;
 /** URL patterns para capturar resposta de perfil (GraphQL). */
 const PROFILE_RESPONSE_URL = /graphql\/query/i;
 
+export interface GetFollowersOptions {
+  /** Se definido, chama em vez de page.goto(profileUrl) (ex.: clique no autor para abrir perfil). */
+  doNavigate?: () => Promise<void>;
+  /** Se true, a página já está no perfil; não navega, só lê. Use após abrir perfil por clique. */
+  skipGoto?: boolean;
+}
+
+async function readFollowersFromCurrentPage(page: Page): Promise<number | null> {
+  await humanDelay();
+  await page.waitForTimeout(delayMs(1000));
+  const main = page.locator('main').first();
+  await main.waitFor({ state: 'visible', timeout: 8000 }).catch(() => null);
+  if ((await main.count()) === 0) return null;
+  await page.locator('a[href*="/followers/"]').first().waitFor({ state: 'visible', timeout: 6000 }).catch(() => null);
+  let followers: number | null = await getFollowersFromTitleAttribute(page);
+  if (followers == null) {
+    const textContent = await main.allTextContents().then((arr) => arr.join('\n'));
+    followers = parseFollowersFromText(textContent.replace(/\s+/g, ' '));
+  }
+  if (followers == null) {
+    const followersText = await page.locator('header, main').filter({ hasText: /seguidores|followers/i }).first().textContent().catch(() => null);
+    if (followersText) followers = parseFollowersFromText(followersText);
+  }
+  return followers;
+}
+
 /**
  * Retorna apenas o número de seguidores (para qualificar na descoberta).
+ * Com doNavigate: executa a função (ex.: clique no autor) em vez de page.goto(profileUrl).
  */
-export async function getFollowersFromProfile(page: Page, profileUrl: string): Promise<number | null> {
+export async function getFollowersFromProfile(page: Page, profileUrl: string, options?: GetFollowersOptions): Promise<number | null> {
   const timeoutPromise = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error('getFollowersFromProfile timeout')), GET_FOLLOWERS_TIMEOUT_MS)
   );
   try {
     const result = await Promise.race([
       (async (): Promise<number | null> => {
-        await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await humanDelay();
-        await page.waitForTimeout(delayMs(1000));
-        const main = page.locator('main').first();
-        await main.waitFor({ state: 'visible', timeout: 8000 }).catch(() => null);
-        if ((await main.count()) === 0) return null;
-        await page.locator('a[href*="/followers/"]').first().waitFor({ state: 'visible', timeout: 6000 }).catch(() => null);
-        let followers: number | null = await getFollowersFromTitleAttribute(page);
-        if (followers == null) {
-          const textContent = await main.allTextContents().then((arr) => arr.join('\n'));
-          followers = parseFollowersFromText(textContent.replace(/\s+/g, ' '));
+        if (options?.skipGoto) {
+          return readFollowersFromCurrentPage(page);
         }
-        if (followers == null) {
-          const followersText = await page.locator('header, main').filter({ hasText: /seguidores|followers/i }).first().textContent().catch(() => null);
-          if (followersText) followers = parseFollowersFromText(followersText);
+        if (options?.doNavigate) {
+          await options.doNavigate();
+        } else {
+          await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
         }
-        return followers;
+        return readFollowersFromCurrentPage(page);
       })(),
       timeoutPromise,
     ]);
@@ -120,10 +139,12 @@ export async function getFollowersFromProfile(page: Page, profileUrl: string): P
 /**
  * Retorna seguidores e o primeiro body de API com data.user (Polaris) capturado na página.
  * Usado na descoberta para rodar qualifiesAsInfluencer antes da extração completa.
+ * Com doNavigate: executa a função (ex.: clique no autor) em vez de page.goto(profileUrl); o listener é anexado antes.
  */
 export async function getFollowersAndMinimalProfile(
   page: Page,
-  profileUrl: string
+  profileUrl: string,
+  options?: GetFollowersOptions
 ): Promise<{ followers: number | null; minimalProfile: Record<string, unknown> | null }> {
   let capturedBody: Record<string, unknown> | null = null;
   const onResponse = async (response: import('playwright').Response) => {
@@ -143,24 +164,17 @@ export async function getFollowersAndMinimalProfile(
   };
   page.on('response', onResponse);
   try {
-    await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await humanDelay();
-    await page.waitForTimeout(delayMs(1000));
-    const main = page.locator('main').first();
-    await main.waitFor({ state: 'visible', timeout: 8000 }).catch(() => null);
-    let followers: number | null = null;
-    if ((await main.count()) > 0) {
-      await page.locator('a[href*="/followers/"]').first().waitFor({ state: 'visible', timeout: 6000 }).catch(() => null);
-      followers = await getFollowersFromTitleAttribute(page);
-      if (followers == null) {
-        const textContent = await main.allTextContents().then((arr) => arr.join('\n'));
-        followers = parseFollowersFromText(textContent.replace(/\s+/g, ' '));
-      }
-      if (followers == null) {
-        const followersText = await page.locator('header, main').filter({ hasText: /seguidores|followers/i }).first().textContent().catch(() => null);
-        if (followersText) followers = parseFollowersFromText(followersText);
-      }
+    if (options?.skipGoto) {
+      const followers = await readFollowersFromCurrentPage(page);
+      await page.waitForTimeout(500);
+      return { followers, minimalProfile: capturedBody };
     }
+    if (options?.doNavigate) {
+      await options.doNavigate();
+    } else {
+      await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    }
+    const followers = await readFollowersFromCurrentPage(page);
     await page.waitForTimeout(2000);
     return { followers, minimalProfile: capturedBody };
   } finally {
@@ -178,6 +192,15 @@ function hasDataUserWithMetrics(b: Record<string, unknown>): boolean {
   if (!hasDataUser(b)) return false;
   const user = (b.data as Record<string, unknown>).user as Record<string, unknown>;
   return user?.media_count != null || user?.following_count != null;
+}
+
+/** Retorna data.user.username do body (perfil da resposta). Usado para garantir que usamos o perfil visitado, não o viewer. */
+function getDataUserUsername(b: Record<string, unknown>): string | undefined {
+  const user = (b?.data as Record<string, unknown>)?.['user'];
+  if (user == null || typeof user !== 'object') return undefined;
+  const u = user as Record<string, unknown>;
+  const v = u.username;
+  return v != null ? String(v).trim() : undefined;
 }
 
 /** Merge profundo de objetos (para juntar timeline + respostas de perfil em uma só). */
@@ -324,6 +347,11 @@ export async function extractProfile(
       }
       await humanDelay();
       await page.waitForTimeout(delayMs(1500));
+
+      const urlAfterGoto = page.url();
+      if (urlAfterGoto.includes('/accounts/login') || urlAfterGoto.includes('/challenge/')) {
+        throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login');
+      }
     }
 
     const profilePath = `/${handle.replace(/^@/, '')}/`;
@@ -338,6 +366,20 @@ export async function extractProfile(
         throw new Error('RATE_LIMIT_429');
       }
       return null;
+    }
+
+    // Página de login: Instagram pediu para entrar (sessão expirada ou não logada)
+    const isLoginPage = await page.evaluate(() => {
+      const text = (document.body?.innerText ?? '').toLowerCase();
+      const href = (window.location?.href ?? '').toLowerCase();
+      return (
+        href.includes('/accounts/login') ||
+        href.includes('/challenge/') ||
+        /log in|entrar|iniciar sesión|sign up|create account|criar conta/i.test(text)
+      );
+    }).catch(() => false);
+    if (isLoginPage) {
+      throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login');
     }
 
     // Perfil não existe: Instagram exibe "Sorry, this page isn't available" (ou equivalente)
@@ -380,11 +422,25 @@ export async function extractProfile(
     return null;
   }
 
-  // Preferir resposta Polaris (data.user com media_count/following_count); senão qualquer data.user; senão merged.
+  // Garantir que usamos o perfil do usuário visitado (handle), não do viewer (logado). Várias respostas podem ter data.user.
+  const keyHandle = handle.toLowerCase().replace(/^@/, '');
+  const bodyForRequestedProfile = (predicate: (r: Record<string, unknown>) => boolean) =>
+    bodies.find((r) => {
+      if (!r || !predicate(r)) return false;
+      const username = getDataUserUsername(r);
+      return username != null && username.toLowerCase() === keyHandle;
+    }) as Record<string, unknown> | undefined;
+
   const merged = bodies.length > 1 ? deepMergeResponses(bodies) : bodies[0];
   const polarisFull = bodies.find((r): r is Record<string, unknown> => r != null && hasDataUserWithMetrics(r));
   const polarisAny = bodies.find((r): r is Record<string, unknown> => r != null && hasDataUser(r));
-  const rawForProfile = polarisFull ?? polarisAny ?? merged;
+  // Preferir body que seja do perfil solicitado (username === handle), para friendship_status correto (ex.: 2FA request-code).
+  const rawForProfile =
+    bodyForRequestedProfile(hasDataUserWithMetrics) ??
+    bodyForRequestedProfile(hasDataUser) ??
+    polarisFull ??
+    polarisAny ??
+    merged;
 
   try {
     await mkdir(RESPONSE_LOG_DIR, { recursive: true });

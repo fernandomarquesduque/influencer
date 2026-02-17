@@ -12,8 +12,8 @@ import {
   message,
   Select,
 } from 'antd'
-import { ArrowLeftOutlined, CheckCircleOutlined } from '@ant-design/icons'
-import { fetchProfile, fetchProfileActivation, saveProfileActivation, getProfilePicUrl, proxyImageUrl, type ProfileActivation, type PricingData } from '../api'
+import { ArrowLeftOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons'
+import { fetchProfile, fetchProfileActivation, saveProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileActivation, type PricingData } from '../api'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
 import { PRICE_BUCKETS, PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
 import { useAuth } from '../contexts/AuthContext'
@@ -39,11 +39,12 @@ export default function Activate() {
   const [saving, setSaving] = useState(false)
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
+  const [profilePicError, setProfilePicError] = useState(false)
 
   useEffect(() => {
     if (!handle) return
     if (!canEditProfile(handle)) {
-      navigate('/', { replace: true })
+      navigate('/app', { replace: true })
       return
     }
     let cancelled = false
@@ -127,7 +128,7 @@ export default function Activate() {
         pricing: Object.keys(pricingData).length ? pricingData : undefined,
       })
       message.success('Cadastro ativado com sucesso!')
-      navigate(`/influencer/${encodeURIComponent(handle)}`, { replace: true })
+      navigate(`/app/influencer/${encodeURIComponent(handle)}`, { replace: true })
     } catch {
       message.error('Falha ao salvar. Tente novamente.')
     } finally {
@@ -156,18 +157,26 @@ export default function Activate() {
 
   return (
     <div>
-      <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(`/influencer/${encodeURIComponent(handle)}`)} style={{ marginBottom: 16 }}>
+      <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}`)} style={{ marginBottom: 16 }}>
         Voltar ao perfil
       </Button>
 
       <Card style={{ maxWidth: 720, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-          {profilePic && (
+          {(profilePic && !profilePicError) ? (
             <img
               src={profilePic}
               alt=""
+              onError={() => {
+              setProfilePicError(true)
+              if (handle) queueRefreshProfile(handle).catch(() => {})
+            }}
               style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover' }}
             />
+          ) : (
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'var(--app-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <UserOutlined style={{ fontSize: 28, color: 'var(--app-text-tertiary)' }} />
+            </div>
           )}
           <div>
             <Title level={4} style={{ margin: 0 }}>

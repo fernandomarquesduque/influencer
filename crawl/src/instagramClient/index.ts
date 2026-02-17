@@ -158,4 +158,9 @@ export class InstagramClient {
   static exploreUrl(): string {
     return `${INSTAGRAM_ORIGIN}/explore/`;
   }
+
+  /** Feed principal (home): posts de quem você segue. Requer login. */
+  static homeFeedUrl(): string {
+    return INSTAGRAM_ORIGIN;
+  }
 }

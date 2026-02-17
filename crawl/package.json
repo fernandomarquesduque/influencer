@@ -6,6 +6,9 @@
   "scripts": {
     "build": "tsc && node -e \"require('fs').cpSync('src/api/openapi-rocksdb.json', 'dist/api/openapi-rocksdb.json'); require('fs').cpSync('src/api/openapi-sqlite.json', 'dist/api/openapi-sqlite.json')\"",
     "extract": "tsx src/cli/crawl-hashtag.ts -- --limit 30",
+    "extract-feed": "tsx src/cli/crawl-feed.ts",
+    "extract-explore": "tsx src/cli/crawl-explore.ts",
+    "extract-all": "tsx src/cli/crawl-all.ts",
     "login": "tsx src/cli/login.ts",
     "list-db": "tsx src/cli/list-db.ts",
     "check-db": "tsx src/cli/check-db.ts",

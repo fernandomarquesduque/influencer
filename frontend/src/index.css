@@ -1,9 +1,233 @@
-/* Ajustes gerais após Ant Design reset */
+/* Tema unificado (estilo landing em todo o site) */
+:root,
+[data-theme="light"] {
+  --app-bg: #F7F8FC;
+  --app-bg-blob1: rgba(109, 94, 246, 0.06);
+  --app-bg-blob2: rgba(47, 128, 237, 0.05);
+  --app-header-bg: rgba(247, 248, 252, 0.98);
+  --app-header-border: #E5E7EB;
+  --app-text: #111827;
+  --app-text-secondary: #374151;
+  --app-text-tertiary: #6B7280;
+  --app-modal-bg: #F7F8FC;
+  --app-primary: #6D5EF6;
+  --app-primary-dark: #5B4DE5;
+  --app-accent: #2F80ED;
+  --app-border: #E5E7EB;
+  --app-success: #22C55E;
+  --app-card-bg: #FFFFFF;
+  --app-card-radius: 20px;
+  --app-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --app-input-focus: 0 0 0 2px rgba(109, 94, 246, 0.2);
+}
+
+[data-theme="dark"] {
+  --app-bg: #0f0f14;
+  --app-bg-blob1: rgba(109, 94, 246, 0.12);
+  --app-bg-blob2: rgba(47, 128, 237, 0.08);
+  --app-header-bg: rgba(15, 15, 20, 0.98);
+  --app-header-border: rgba(255, 255, 255, 0.08);
+  --app-text: rgba(255, 255, 255, 0.92);
+  --app-text-secondary: rgba(255, 255, 255, 0.7);
+  --app-text-tertiary: rgba(255, 255, 255, 0.5);
+  --app-modal-bg: #0f0f14;
+  --app-primary: #7C6CF7;
+  --app-primary-dark: #6D5EF6;
+  --app-accent: #4C8DFF;
+  --app-border: rgba(255, 255, 255, 0.12);
+  --app-success: #22C55E;
+  --app-card-bg: #1a1a22;
+  --app-card-radius: 20px;
+  --app-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --app-input-focus: 0 0 0 2px rgba(124, 108, 247, 0.35);
+}
+
+/* Base */
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--app-bg);
+  color: var(--app-text);
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* Páginas com fundo e blobs (quando dentro de .app-layout) */
+.app-layout-content {
+  position: relative;
+  min-height: calc(100vh - 56px);
+  background: var(--app-bg);
+  overflow: hidden;
+}
+
+.app-layout-content::before,
+.app-layout-content::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app-layout-content::before {
+  top: -120px;
+  right: -120px;
+  width: 400px;
+  height: 400px;
+  background: var(--app-bg-blob1);
+}
+
+.app-layout-content::after {
+  bottom: -100px;
+  left: -100px;
+  width: 350px;
+  height: 350px;
+  background: var(--app-bg-blob2);
+}
+
+.app-page {
+  position: relative;
+  z-index: 1;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+@media (max-width: 768px) {
+  .app-page {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-page {
+    padding: 12px;
+  }
+}
+
+/* Cards no estilo landing */
+.app-card {
+  background: var(--app-card-bg);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-card-radius);
+  box-shadow: var(--app-card-shadow);
+}
+
+/* Botão primary com gradiente (alinhado à landing) */
+.ant-btn-primary {
+  background: linear-gradient(135deg, var(--app-primary), var(--app-accent)) !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(109, 94, 246, 0.25);
+}
+
+.ant-btn-primary:hover {
+  filter: brightness(0.95);
+  box-shadow: 0 4px 12px rgba(109, 94, 246, 0.35);
+}
+
+.ant-btn-primary:focus-visible {
+  outline: 2px solid var(--app-primary);
+  outline-offset: 2px;
+}
+
+/* Inputs: borda e focus */
+.ant-input:focus,
+.ant-input-focused,
+.ant-input-affix-wrapper:focus,
+.ant-input-affix-wrapper-focused {
+  border-color: var(--app-primary) !important;
+  box-shadow: var(--app-input-focus) !important;
+}
+
+.ant-select-focused:not(.ant-select-disabled).ant-select:not(.ant-select-customize-input) .ant-select-selector {
+  border-color: var(--app-primary) !important;
+  box-shadow: var(--app-input-focus) !important;
+}
+
+/* Card Ant Design sobrescrita para usar variáveis */
+.ant-card {
+  border-radius: var(--app-card-radius) !important;
+  border: 1px solid var(--app-border) !important;
+  box-shadow: var(--app-card-shadow) !important;
+}
+
+.ant-card-bordered {
+  background: var(--app-card-bg) !important;
+}
+
+/* Páginas sem Layout (Login, Premium) */
+.app-standalone-page {
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background: var(--app-bg);
+}
+
+.app-standalone-page::before,
+.app-standalone-page::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app-standalone-page::before {
+  top: -120px;
+  right: -120px;
+  width: 400px;
+  height: 400px;
+  background: var(--app-bg-blob1);
+}
+
+.app-standalone-page::after {
+  bottom: -100px;
+  left: -100px;
+  width: 350px;
+  height: 350px;
+  background: var(--app-bg-blob2);
+}
+
+.app-standalone-page .app-page {
+  position: relative;
+  z-index: 1;
+}
+
+/* Modal fullscreen (detalhe do influenciador) */
+.app-fullscreen-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--app-bg);
+  overflow: auto;
+}
+
+.app-fullscreen-modal::before,
+.app-fullscreen-modal::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app-fullscreen-modal::before {
+  top: -120px;
+  right: -120px;
+  width: 400px;
+  height: 400px;
+  background: var(--app-bg-blob1);
+}
+
+.app-fullscreen-modal::after {
+  bottom: -100px;
+  left: -100px;
+  width: 350px;
+  height: 350px;
+  background: var(--app-bg-blob2);
 }

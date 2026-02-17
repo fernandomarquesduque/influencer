@@ -2,17 +2,6 @@ import { useParams, useLocation } from 'react-router-dom'
 import InfluencerList from './InfluencerList'
 import InfluencerDetail from './InfluencerDetail'
 
-const fullscreenModalStyle: React.CSSProperties = {
-  position: 'fixed',
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  zIndex: 1000,
-  background: '#fff',
-  overflow: 'auto',
-}
-
 /**
  * Renderiza a lista de influenciadores e abre o detalhe em modal de tela inteira.
  * - Pela busca: handle vem do location.state (URL não muda, não expõe nickname).
@@ -28,8 +17,10 @@ export default function ListAndDetailModal() {
     <>
       <InfluencerList />
       {handle ? (
-        <div style={fullscreenModalStyle} aria-modal="true" role="dialog">
-          <InfluencerDetail overrideHandle={handle} />
+        <div className="app-fullscreen-modal" aria-modal="true" role="dialog">
+          <div className="app-page" style={{ paddingTop: 24, paddingBottom: 48 }}>
+            <InfluencerDetail overrideHandle={handle} />
+          </div>
         </div>
       ) : null}
     </>

@@ -172,22 +172,28 @@ export class SqliteSync {
     return this.rowToActivation(row);
   }
 
-  /** Retorna ativações para vários handles em uma única query (bem mais rápido que N×getActivation). */
+  /** Tamanho máximo do IN () por query (evita statement gigante e lentidão no SQLite). */
+  private static readonly BATCH_SIZE = 500;
+
+  /** Retorna ativações para vários handles em uma única query (bem mais rápido que N×getActivation). Em lotes para não sobrecarregar o SQLite. */
   getActivationsBatch(handles: string[]): Map<string, ProfileActivationData> {
     const out = new Map<string, ProfileActivationData>();
     if (handles.length === 0) return out;
     const normalized = [...new Set(handles.map((h) => h.toLowerCase().replace(/^@/, '')))];
-    const placeholders = normalized.map(() => '?').join(',');
-    const stmt = this.db.prepare(`
-      SELECT profile_handle, address, city, state, neighborhood, country,
-             whatsapp, tiktok, facebook, linkedin, twitter, websites,
-             gender, description, about_topics, pricing, content_type, activated_at, updated_at
-      FROM profile_activation WHERE profile_handle IN (${placeholders})
-    `);
-    const rows = stmt.all(...normalized) as Array<Record<string, unknown> & { profile_handle: string }>;
-    for (const row of rows) {
-      const handle = String(row.profile_handle ?? '').toLowerCase().replace(/^@/, '');
-      if (handle) out.set(handle, this.rowToActivation(row));
+    for (let i = 0; i < normalized.length; i += SqliteSync.BATCH_SIZE) {
+      const chunk = normalized.slice(i, i + SqliteSync.BATCH_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      const stmt = this.db.prepare(`
+        SELECT profile_handle, address, city, state, neighborhood, country,
+               whatsapp, tiktok, facebook, linkedin, twitter, websites,
+               gender, description, about_topics, pricing, content_type, activated_at, updated_at
+        FROM profile_activation WHERE profile_handle IN (${placeholders})
+      `);
+      const rows = stmt.all(...chunk) as Array<Record<string, unknown> & { profile_handle: string }>;
+      for (const row of rows) {
+        const handle = String(row.profile_handle ?? '').toLowerCase().replace(/^@/, '');
+        if (handle) out.set(handle, this.rowToActivation(row));
+      }
     }
     return out;
   }

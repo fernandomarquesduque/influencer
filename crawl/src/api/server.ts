@@ -1,7 +1,19 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response } from 'express';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/** Raiz do projeto crawl (onde ficam .env e .auth). Funciona com tsx (src/api) e com node após build (dist/api). */
+const _twoUp = path.resolve(__dirname, '../..');
+const CRAWL_ROOT = path.basename(_twoUp) === 'dist' ? path.resolve(__dirname, '../../..') : _twoUp;
+
+function resolveAuthStatePath(relativeOrAbsolute: string): string {
+  if (path.isAbsolute(relativeOrAbsolute)) return relativeOrAbsolute;
+  return path.resolve(CRAWL_ROOT, relativeOrAbsolute);
+}
 import swaggerUi from 'swagger-ui-express';
 import { createRequire } from 'node:module';
 import { RocksDBStorage } from '../storage/rocksdb.js';
@@ -13,13 +25,17 @@ import {
   buildConfigFromEnv,
   type ExtractSingleProfileResult,
 } from '../crawl/extractSingleProfile.js';
-import { searchProfiles, clearSearchCache, type ProfilesSearchQuery } from './profilesSearch.js';
+import { searchProfiles, scheduleSearchCacheRewarm, warmSearchCache, type ProfilesSearchQuery } from './profilesSearch.js';
 import { InstagramClient } from '../instagramClient/index.js';
+import { loginWithCredentials } from '../instagramClient/login.js';
 import { profileExtractDelay } from '../utils/delay.js';
 import { get429BackoffMs, record429 } from '../utils/rateLimit429.js';
 import { sendVerificationCode } from '../instagramClient/sendDirectMessage.js';
+import { extractProfile } from '../profileExtractor/index.js';
+import { isFollowingViewerFromEntity } from '../utils/entityAccess.js';
 import { AuthDb } from '../auth/authDb.js';
 import { authOptional, requireScopes, canEditProfile, type RequestWithAuth } from '../auth/middleware.js';
+import { checkApiRateLimit, getRetryAfterSeconds } from '../utils/apiRateLimit.js';
 import { signJwt, getJwtSecret } from '../auth/jwt.js';
 import { verifyPassword, hashPassword } from '../auth/password.js';
 import type { AuthScope } from '../auth/types.js';
@@ -47,9 +63,14 @@ app.use((req, _res, next) => {
   next();
 });
 
+/** Log de rejeições não tratadas (promises) para não perder erros em background. */
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  console.error('[API] unhandledRejection:', reason instanceof Error ? reason.stack : reason, promise);
+});
+
 const rocks = new RocksDBStorage({ dbPath: rocksPath });
 const sqlite = new SqliteSync(sqlitePath);
-const db = new CompositeStorage(rocks, sqlite, clearSearchCache);
+const db = new CompositeStorage(rocks, sqlite, (storage) => scheduleSearchCacheRewarm(storage));
 const authDb = new AuthDb(sqlitePath);
 
 /** Worker de extração por perfil: 1 client + 1 context quentes, fila com concorrência 1. */
@@ -60,12 +81,22 @@ let apiExtractBlockedUntil = 0;
 /** Contador de perfis extraídos nesta instância (para cooldown a cada N). */
 let apiExtractProfileCount = 0;
 
+/** Resultado de extract-profile em background (por handle, para polling). */
+const extractProfileResults = new Map<
+  string,
+  { status: 'pending' } | { status: 'done'; result: ExtractSingleProfileResult } | { status: 'error'; error: string }
+>();
+
+/** Fila de handles para re-extração quando imagem falha (renovar URLs). Uma execução por vez, em série com extract-profile. */
+const refreshProfileQueue: string[] = [];
+const refreshProfileQueueSet = new Set<string>();
+
 function getApiExtractClient(): InstagramClient {
   if (!apiExtractClient) {
     const config = buildConfigFromEnv();
     apiExtractClient = new InstagramClient({
       headless: config.headless,
-      authStatePath: config.authStatePath,
+      authStatePath: resolveAuthStatePath(config.authStatePath),
     });
   }
   return apiExtractClient;
@@ -85,6 +116,123 @@ function isBlockSignal(result: ExtractSingleProfileResult): boolean {
     err.includes('too many requests') ||
     err.includes('temporarily blocked')
   );
+}
+
+/** Indica se a mensagem de erro é de sessão expirada / não logada (para tentar login automático). */
+function isSessionExpiredError(msg: string): boolean {
+  return (
+    msg.includes('Sessão') &&
+    (msg.includes('expirada') || msg.includes('não logada') || msg.includes('npm run login'))
+  );
+}
+
+/** Executa uma extração (um perfil). Usado pelo extract-profile e pela fila de refresh. forRefresh=true pula todas as validações de qualificação. Se a sessão estiver expirada e houver INSTAGRAM_USER/PASSWORD no .env, tenta login automático e reextrai uma vez. */
+async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = false): Promise<ExtractSingleProfileResult> {
+  try {
+    const now = Date.now();
+    if (now < apiExtractBlockedUntil) {
+      return {
+        success: false,
+        handle,
+        error: `Rate limit ou bloqueio. Tente novamente em ${Math.ceil((apiExtractBlockedUntil - now) / 60000)} min.`,
+      };
+    }
+    await profileExtractDelay();
+    const cooldownEvery = Math.max(0, parseInt(process.env.COOLDOWN_EVERY ?? '10', 10) || 10);
+    const cooldownMinMs = Math.max(0, parseInt(process.env.COOLDOWN_MIN_MS ?? '60000', 10) || 60000);
+    const cooldownMaxMs = Math.max(cooldownMinMs, parseInt(process.env.COOLDOWN_MAX_MS ?? '180000', 10) || 180000);
+    if (cooldownEvery > 0 && apiExtractProfileCount > 0 && apiExtractProfileCount % cooldownEvery === 0) {
+      const cooldownMs = cooldownMinMs + Math.floor(Math.random() * (cooldownMaxMs - cooldownMinMs + 1));
+      await new Promise((r) => setTimeout(r, cooldownMs));
+    }
+    const client = getApiExtractClient();
+    await client.init();
+    const page = await client.newPage();
+    const config = buildConfigFromEnv();
+    const extractTimeoutMs = Math.max(60000, parseInt(process.env.PROFILE_PROCESS_TIMEOUT_MS ?? '180000', 10) || 180000);
+    const timeoutPromise = new Promise<ExtractSingleProfileResult>((_, reject) =>
+      setTimeout(() => reject(new Error(`Extract profile timeout (${extractTimeoutMs / 1000}s)`)), extractTimeoutMs)
+    );
+    let result: ExtractSingleProfileResult;
+    try {
+      result = await Promise.race([
+        extractSingleProfileWithPage(page, handle, db, config, { forRefresh }),
+        timeoutPromise,
+      ]);
+    } finally {
+      await page.close().catch(() => { });
+    }
+    await client.saveAuthState();
+
+    if (isBlockSignal(result)) {
+      record429();
+      apiExtractBlockedUntil = Date.now() + get429BackoffMs();
+      if (isLoginOrChallengeSignal(result)) {
+        await client.closeContext();
+      }
+      return result;
+    }
+    apiExtractProfileCount++;
+    return result;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+
+    if (
+      !didAutoLogin &&
+      isSessionExpiredError(msg) &&
+      process.env.INSTAGRAM_USER &&
+      process.env.INSTAGRAM_PASSWORD
+    ) {
+      console.log('[API] Sessão expirada detectada; executando login automático...');
+      if (apiExtractClient) {
+        await apiExtractClient.close().catch(() => { });
+        apiExtractClient = null;
+      }
+      const config = buildConfigFromEnv();
+      const authPath = resolveAuthStatePath(config.authStatePath);
+      const loginClient = new InstagramClient({ authStatePath: authPath, headless: config.headless });
+      try {
+        await loginClient.init();
+        const ok = await loginWithCredentials(
+          loginClient,
+          process.env.INSTAGRAM_USER,
+          process.env.INSTAGRAM_PASSWORD
+        );
+        await loginClient.close();
+        if (ok) {
+          console.log('[API] Login automático OK; reextraindo perfil...');
+          return runOneExtract(handle, forRefresh, true);
+        }
+      } catch (loginErr) {
+        console.error('[API] Login automático falhou:', loginErr instanceof Error ? loginErr.message : loginErr);
+      }
+    }
+
+    console.error(`[API] runOneExtract @${handle} exceção:`, msg, stack ?? '');
+    return { success: false, handle, error: msg };
+  }
+}
+
+/** Processa o próximo handle da fila de refresh (re-extração por falha de imagem). Uma execução por vez. */
+function processNextRefresh(): void {
+  if (refreshProfileQueue.length === 0) return;
+  const handle = refreshProfileQueue.shift()!;
+  console.log(`[API] Refresh de imagens iniciado: @${handle}`);
+  apiExtractQueue = apiExtractQueue
+    .then(() => runOneExtract(handle, true))
+    .then((result) => {
+      if (result.saved) console.log(`[API] Refresh de imagens concluído: @${handle}`);
+      else if (result.error) console.error(`[API] Refresh @${handle} falhou:`, result.error);
+      else if (result.rejectionReason) console.warn(`[API] Refresh @${handle} rejeitado:`, result.rejectionReason);
+    })
+    .catch((err) => {
+      console.error(`[API] Refresh @${handle} erro:`, err instanceof Error ? err.stack : err);
+    })
+    .finally(() => {
+      refreshProfileQueueSet.delete(handle.toLowerCase());
+      processNextRefresh();
+    });
 }
 
 /** Sinal de que a sessão caiu em login/challenge — deve fechar o context para recriar na próxima. */
@@ -190,7 +338,9 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
     authDb.saveProfileVerification(nickname, code, userId, expiresAt);
 
-    const authStatePath = process.env.INSTAGRAM_AUTH_STATE ?? '.auth/instagram.json';
+    const authStatePath = resolveAuthStatePath(
+      process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? '.auth/instagram.json'
+    );
     const isDev = process.env.NODE_ENV === 'development';
 
     if (!existsSync(authStatePath)) {
@@ -207,6 +357,59 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
     const delayMs = 2000;
     const client = new InstagramClient({ authStatePath, headless });
     try {
+      await client.init();
+
+      const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');
+      if (requiredProfile && requiredProfile.length > 0) {
+        const nickNorm = nickname.trim().toLowerCase();
+        const stored = extractProfileResults.get(nickNorm);
+        const followsFromExtract =
+          stored?.status === 'done' && stored.result && 'followsOfficialProfile' in stored.result
+            ? (stored.result as { followsOfficialProfile?: boolean }).followsOfficialProfile
+            : undefined;
+
+        if (followsFromExtract === true) {
+          // Reutiliza resultado da extração (perfil já foi aberto uma vez); não abre de novo.
+        } else if (followsFromExtract === false) {
+          const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
+          res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl });
+          return;
+        } else {
+          // Sem resultado recente da extração: abre o perfil uma vez para checar.
+          const page = await client.newPage();
+          try {
+            const config = buildConfigFromEnv();
+            const extracted = await extractProfile(page, nickname, 'seed', '', config);
+            if (!extracted) {
+              if (isDev) {
+                res.status(200).json({ sent: false, code, error: 'Perfil não encontrado ou indisponível.' });
+              } else {
+                res.status(400).json({ error: 'Perfil não encontrado ou indisponível.' });
+              }
+              return;
+            }
+            const profileEntity = extracted.profile as Record<string, unknown>;
+            const dataUser = (profileEntity?.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined;
+            const entityUsername = dataUser?.username != null ? String(dataUser.username).trim().toLowerCase() : null;
+            if (entityUsername == null || entityUsername !== nickNorm) {
+              if (isDev) {
+                res.status(200).json({ sent: false, code, error: entityUsername == null ? 'Não foi possível verificar o perfil. Tente novamente.' : 'Resposta da API não corresponde ao perfil solicitado.' });
+              } else {
+                res.status(400).json({ error: 'Perfil não encontrado ou indisponível.' });
+              }
+              return;
+            }
+            if (!isFollowingViewerFromEntity(profileEntity)) {
+              const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
+              res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl });
+              return;
+            }
+          } finally {
+            await page.close().catch(() => { });
+          }
+        }
+      }
+
       let result = await sendVerificationCode(client, nickname, code);
       for (let attempt = 1; !result.ok && attempt < maxAttempts; attempt++) {
         await new Promise((r) => setTimeout(r, delayMs));
@@ -478,31 +681,94 @@ app.delete('/api/admin/users/:id', requireScopes('adm'), (req: RequestWithAuth, 
   }
 });
 
-/** Proxy de imagem para evitar bloqueio por CORS/referrer (ex.: CDN do Instagram). */
+/** Headers para o proxy de imagem: CDN do Instagram (fbcdn) exige Referer + User-Agent de navegador. */
+const PROXY_IMAGE_HEADERS: Record<string, string> = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Referer': 'https://www.instagram.com/',
+  'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Sec-Fetch-Dest': 'image',
+  'Sec-Fetch-Mode': 'no-cors',
+};
+
+/** Timeout em ms para cada tentativa de fetch no proxy de imagem. */
+const PROXY_FETCH_TIMEOUT_MS = 12_000;
+
+/** Fallbacks (proxy público) quando a requisição direta ao CDN retorna 403 ou falha. wsrv.nl é focado em imagens e costuma funcionar com CDNs. */
+const FALLBACK_PROXIES: ((targetUrl: string) => string)[] = [
+  (u) => `https://wsrv.nl/?url=${encodeURIComponent(u)}`,
+  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+];
+
+type FetchResponse = Awaited<ReturnType<typeof fetch>>;
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit & { timeoutMs?: number } = {}
+): Promise<FetchResponse> {
+  const { timeoutMs = PROXY_FETCH_TIMEOUT_MS, ...fetchOptions } = options;
+  const ac = new AbortController();
+  const id = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { ...fetchOptions, signal: ac.signal });
+    return r;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+/** Proxy de imagem para evitar bloqueio por CORS/CORP (ex.: CDN do Instagram). Timeout + fallbacks em caso de 403 ou erro. */
 app.get('/api/proxy-image', async (req: Request, res: Response) => {
   const url = (req.query.url as string)?.trim();
   if (!url || (!url.startsWith('https://') && !url.startsWith('http://'))) {
     res.status(400).json({ error: 'Query "url" obrigatória e deve ser http(s).' });
     return;
   }
-  try {
-    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } });
-    if (!r.ok) {
-      res.status(r.status).end();
-      return;
-    }
-    const contentType = r.headers.get('content-type') || 'image/jpeg';
+  const tryStream = async (response: FetchResponse): Promise<boolean> => {
+    if (!response.ok) return false;
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
     res.setHeader('content-type', contentType);
     res.setHeader('cache-control', 'public, max-age=86400');
-    const buf = await r.arrayBuffer();
+    const buf = await response.arrayBuffer();
     res.end(Buffer.from(buf));
+    return true;
+  };
+
+  try {
+    let r = await fetchWithTimeout(url, { headers: PROXY_IMAGE_HEADERS });
+    if (r.ok) {
+      const done = await tryStream(r);
+      if (done) return;
+    }
+    if (r.status === 403 || !r.ok) {
+      for (const toProxyUrl of FALLBACK_PROXIES) {
+        try {
+          const proxyUrl = toProxyUrl(url);
+          r = await fetchWithTimeout(proxyUrl, { headers: { Accept: 'image/*,*/*;q=0.8' } });
+          if (r.ok) {
+            const done = await tryStream(r);
+            if (done) return;
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+    res.status(404).end();
   } catch (e) {
-    res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
+    console.error('[API] proxy-image 502:', e instanceof Error ? e.message : e);
+    res.status(502).end();
   }
 });
 
-app.get('/api/profiles', async (req: Request, res: Response) => {
+/** Lista bruta de perfis (com dados completos). Apenas autenticados — evita extração pública. */
+app.get('/api/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Faça login para acessar a lista de perfis.', code: 'UNAUTHORIZED' });
+      return;
+    }
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Number(req.query.offset) || 0;
     const since = (req.query.since as string)?.trim();
@@ -528,7 +794,42 @@ app.get('/api/profiles', async (req: Request, res: Response) => {
 });
 
 const PUBLIC_PAGE_SIZE = 12;
-const PUBLIC_MAX_REQUESTS_PER_DAY = 200;
+/** Limite diário de buscas para anônimos e usuários public (proteção contra extração em massa). Configurável por API_PUBLIC_MAX_REQUESTS_PER_DAY. */
+const PUBLIC_MAX_REQUESTS_PER_DAY = Number(process.env.API_PUBLIC_MAX_REQUESTS_PER_DAY) || 50;
+/** Requisições por minuto por IP (anônimo). Configurável por API_RATE_LIMIT_PER_MIN_IP. */
+const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 30;
+/** Requisições por minuto por usuário (public/influencer). Configurável por API_RATE_LIMIT_PER_MIN_USER. */
+const RATE_LIMIT_PER_MIN_USER = Number(process.env.API_RATE_LIMIT_PER_MIN_USER) || 60;
+/** Requisições por minuto para adm/assinante. Configurável por API_RATE_LIMIT_PER_MIN_SUBSCRIBER. */
+const RATE_LIMIT_PER_MIN_SUBSCRIBER = Number(process.env.API_RATE_LIMIT_PER_MIN_SUBSCRIBER) || 120;
+
+function getClientKeyForRateLimit(req: RequestWithAuth): string {
+  if (req.user) return `u:${req.user.sub}`;
+  const ip = (req.ip || (req as unknown as { socket?: { remoteAddress?: string } }).socket?.remoteAddress || 'unknown').toString();
+  const ipHash = crypto.createHash('sha256').update(ip + (process.env.ANON_SEARCH_SALT || '')).digest('hex');
+  return `ip:${ipHash}`;
+}
+
+function getRateLimitMax(req: RequestWithAuth): number {
+  if (!req.user) return RATE_LIMIT_PER_MIN_IP;
+  if (req.user.scope === 'adm' || req.user.scope === 'assinante') return RATE_LIMIT_PER_MIN_SUBSCRIBER;
+  return RATE_LIMIT_PER_MIN_USER;
+}
+
+/** Middleware: limita requisições por minuto (proteção contra crawlers). Retorna 429 se exceder. */
+function rateLimitDataApi(req: RequestWithAuth, res: Response, next: () => void): void {
+  const key = getClientKeyForRateLimit(req);
+  const max = getRateLimitMax(req);
+  if (!checkApiRateLimit(key, max)) {
+    res.setHeader('Retry-After', String(getRetryAfterSeconds(key)));
+    res.status(429).json({
+      error: 'Muitas requisições. Aguarde um minuto antes de tentar novamente.',
+      code: 'RATE_LIMIT',
+    });
+    return;
+  }
+  next();
+}
 
 /** Retorna true se o visitante é público (ou anônimo) e já atingiu o limite de requisições/dia — nesse caso as APIs de perfil/ativação/posts devem retornar dados redigidos. Admin e assinante nunca sofrem limite. */
 function publicAtLimit(req: RequestWithAuth): boolean {
@@ -591,8 +892,35 @@ function redactPostsItems(items: Array<{ key: string;[k: string]: unknown }>): A
   });
 }
 
+/** Engajamento zerado para respostas sem login (nenhum dado de métrica retornado). */
+const ZERO_ENGAGEMENT = {
+  posts_count: 0,
+  total_likes: 0,
+  total_comments: 0,
+  total_views: 0,
+  avg_likes: 0,
+  avg_comments: 0,
+  avg_views: 0,
+  engagement_rate: 0,
+};
+
+/** Remove dados de métrica da listagem de busca quando o usuário não está logado. */
+function redactSearchResultForAnonymous(result: { total: number; items: Record<string, unknown>[]; facets: Record<string, unknown> }): typeof result {
+  const items = result.items.map((item) => {
+    const out = { ...item };
+    out.followers_count = 0;
+    out.engagement = ZERO_ENGAGEMENT;
+    return out;
+  });
+  const facets = { ...result.facets };
+  facets.engagement_rate = [];
+  facets.avg_likes = [];
+  facets.posts_count = [];
+  return { total: result.total, items, facets };
+}
+
 /** Listagem de perfis com filtros avançados e engajamento. Público (anônimo ou scope public): 1ª página, até PUBLIC_MAX_REQUESTS_PER_DAY requisições/dia. */
-app.get('/api/profiles/search', async (req: RequestWithAuth, res: Response) => {
+app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
     const q = (req.query.q as string)?.trim();
     const parseNumList = (v: unknown): number[] | undefined => {
@@ -678,20 +1006,24 @@ app.get('/api/profiles/search', async (req: RequestWithAuth, res: Response) => {
       offset,
     };
     const result = await searchProfiles(db, query);
+    if (!req.user) {
+      res.json(redactSearchResultForAnonymous(result as unknown as { total: number; items: Record<string, unknown>[]; facets: Record<string, unknown> }));
+      return;
+    }
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
 });
 
-/** Dados de ativação do perfil (cadastro completo na plataforma). Para público que atingiu limite diário, retorna vazio para evitar vazamento. */
-app.get('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Response) => {
+/** Dados de ativação do perfil (cadastro completo na plataforma). Sem login não retorna dados (contato, preços). */
+app.get('/api/profiles/:handle/activation', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
-    const handle = (req.params.handle || '').replace(/^@/, '');
-    if (publicAtLimit(req)) {
+    if (!req.user || publicAtLimit(req)) {
       res.status(200).json({ _redacted: true });
       return;
     }
+    const handle = (req.params.handle || '').replace(/^@/, '');
     const data = sqlite.getActivation(handle);
     if (data == null) {
       res.status(200).json({});
@@ -751,7 +1083,7 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
 });
 
 /** Perfil por handle. Para público que atingiu limite diário, retorna versão redigida (sem contagens, bio, etc.) para evitar vazamento. */
-app.get('/api/profiles/:handle', async (req: RequestWithAuth, res: Response) => {
+app.get('/api/profiles/:handle', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
     const handle = (req.params.handle || '').replace(/^@/, '');
     const key = handle.toLowerCase();
@@ -761,7 +1093,8 @@ app.get('/api/profiles/:handle', async (req: RequestWithAuth, res: Response) => 
       return;
     }
     const profile = value as Record<string, unknown>;
-    if (publicAtLimit(req)) {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!req.user || publicAtLimit(req)) {
       res.json(redactProfile(profile));
       return;
     }
@@ -772,7 +1105,7 @@ app.get('/api/profiles/:handle', async (req: RequestWithAuth, res: Response) => 
 });
 
 /** Posts do perfil. Para público que atingiu limite diário, retorna posts sem métricas (likes, comentários, views). */
-app.get('/api/posts', async (req: RequestWithAuth, res: Response) => {
+app.get('/api/posts', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
     const profileFilter = (req.query.profile as string)?.toLowerCase().replace(/^@/, '');
     const limit = Math.min(Number(req.query.limit) || 50, 200);
@@ -790,7 +1123,7 @@ app.get('/api/posts', async (req: RequestWithAuth, res: Response) => {
       }
       return { key, ...item };
     });
-    if (publicAtLimit(req)) {
+    if (!req.user || publicAtLimit(req)) {
       res.json({ total, items: redactPostsItems(slice), _redacted: true });
       return;
     }
@@ -800,7 +1133,7 @@ app.get('/api/posts', async (req: RequestWithAuth, res: Response) => {
   }
 });
 
-app.get('/api/buckets/:bucket', async (req: Request, res: Response) => {
+app.get('/api/buckets/:bucket', requireScopes('adm'), async (req: Request, res: Response) => {
   try {
     const bucket = req.params.bucket;
     if (bucket !== 'profile' && bucket !== 'post') {
@@ -814,7 +1147,7 @@ app.get('/api/buckets/:bucket', async (req: Request, res: Response) => {
   }
 });
 
-app.delete('/api/clear', async (_req: Request, res: Response) => {
+app.delete('/api/clear', requireScopes('adm'), async (_req: Request, res: Response) => {
   try {
     await db.clearAll();
     res.json({ ok: true, message: 'Todos os dados do banco foram removidos.' });
@@ -823,20 +1156,68 @@ app.delete('/api/clear', async (_req: Request, res: Response) => {
   }
 });
 
-app.get('/api/crawl/status', (_req: Request, res: Response) => {
+app.get('/api/crawl/status', requireScopes('adm'), (_req: Request, res: Response) => {
   res.json({
     running: crawlInProgress,
     ...(lastCrawlResult && { last: lastCrawlResult }),
   });
 });
 
-app.post('/api/crawl/stop', (_req: Request, res: Response) => {
+app.post('/api/crawl/stop', requireScopes('adm'), (_req: Request, res: Response) => {
   crawlAbortRequested = true;
   res.json({ ok: true, message: 'Parada solicitada. O crawl encerrará após o perfil atual.' });
 });
 
-/** Extrai um perfil específico por URL ou handle. Fila com concorrência 1, delay e backoff em 429/challenge. */
-app.post('/api/crawl/extract-profile', async (req: Request, res: Response) => {
+/** Executa extração e grava resultado em extractProfileResults (para polling). */
+async function runExtractAndStore(handle: string): Promise<void> {
+  try {
+    const result = await runOneExtract(handle, true);
+    if (isBlockSignal(result)) {
+      extractProfileResults.set(handle, {
+        status: 'error',
+        error: result.error ?? 'Bloqueio ou rate limit (429/challenge). Não tente de novo agora.',
+      });
+      return;
+    }
+    extractProfileResults.set(handle, { status: 'done', result });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isLoginRelated = /ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR|sessão|login/i.test(msg);
+    let error = isLoginRelated
+      ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login'
+      : msg;
+    if (msg === 'Perfil não encontrado') {
+      error = 'Perfil não encontrado. Se o perfil existir, a sessão do Instagram pode ter expirado. Execute na pasta crawl: npm run login';
+    }
+    extractProfileResults.set(handle, { status: 'error', error });
+  }
+}
+
+/** Status da extração em background (GET para polling). Apenas adm. */
+app.get('/api/crawl/extract-profile/status', requireScopes('adm'), (req: Request, res: Response) => {
+  const handle = (req.query?.handle ?? '').toString().trim().replace(/^@/, '');
+  if (!handle) {
+    res.status(400).json({ error: 'Query "handle" é obrigatória.' });
+    return;
+  }
+  const stored = extractProfileResults.get(handle.toLowerCase());
+  if (!stored) {
+    res.status(200).json({ status: 'pending', handle });
+    return;
+  }
+  if (stored.status === 'pending') {
+    res.status(200).json({ status: 'pending', handle });
+    return;
+  }
+  if (stored.status === 'done') {
+    res.status(200).json({ status: 'done', handle, result: stored.result });
+    return;
+  }
+  res.status(200).json({ status: 'error', handle, error: stored.error });
+});
+
+/** Extrai um perfil específico por URL ou handle (cadastro de influenciador). Retorna 202 imediatamente; a extração roda em background. Apenas adm. */
+app.post('/api/crawl/extract-profile', requireScopes('adm'), (req: Request, res: Response) => {
   let handle = (req.body?.handle ?? req.body?.url ?? '').toString().trim();
   if (!handle) {
     res.status(400).json({ error: 'Envie "handle" (ex.: rafaellacassol) ou "url" (ex.: https://www.instagram.com/rafaellacassol/).' });
@@ -853,90 +1234,76 @@ app.post('/api/crawl/extract-profile', async (req: Request, res: Response) => {
       return;
     }
   }
-  handle = handle.replace(/^@/, '');
+  handle = handle.replace(/^@/, '').toLowerCase();
 
-  const authStatePath = process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? '.auth/instagram.json';
+  const authStatePath = resolveAuthStatePath(
+    process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? '.auth/instagram.json'
+  );
   if (!existsSync(authStatePath)) {
     res.status(503).json({
       success: false,
       handle,
-      error: 'Sessão do Instagram não configurada. Execute o login na pasta crawl: npm run login',
+      error: `Sessão do Instagram não configurada. Execute o login na pasta crawl: npm run login (arquivo esperado: ${authStatePath})`,
     });
     return;
   }
 
-  const doExtract = async (): Promise<void> => {
-    const send = (status: number, body: object) => {
-      if (res.headersSent) return;
-      res.status(status).json(body);
-    };
-    const now = Date.now();
-    if (now < apiExtractBlockedUntil) {
-      const retryAfterSec = Math.ceil((apiExtractBlockedUntil - now) / 1000);
-      if (!res.headersSent) res.set('Retry-After', String(retryAfterSec));
-      send(503, {
-        success: false,
-        handle,
-        error: `Rate limit ou bloqueio detectado. Tente novamente em ${Math.ceil(retryAfterSec / 60)} min.`,
-      });
-      return;
-    }
-    try {
-      await profileExtractDelay();
-      const cooldownEvery = Math.max(0, parseInt(process.env.COOLDOWN_EVERY ?? '10', 10) || 10);
-      const cooldownMinMs = Math.max(0, parseInt(process.env.COOLDOWN_MIN_MS ?? '60000', 10) || 60000);
-      const cooldownMaxMs = Math.max(cooldownMinMs, parseInt(process.env.COOLDOWN_MAX_MS ?? '180000', 10) || 180000);
-      if (cooldownEvery > 0 && apiExtractProfileCount > 0 && apiExtractProfileCount % cooldownEvery === 0) {
-        const cooldownMs = cooldownMinMs + Math.floor(Math.random() * (cooldownMaxMs - cooldownMinMs + 1));
-        await new Promise((r) => setTimeout(r, cooldownMs));
-      }
-      const client = getApiExtractClient();
-      await client.init();
-      const page = await client.newPage();
-      const config = buildConfigFromEnv();
-      let result: ExtractSingleProfileResult;
-      try {
-        result = await extractSingleProfileWithPage(page, handle, db, config);
-      } finally {
-        await page.close().catch(() => {});
-      }
-      await client.saveAuthState();
+  const now = Date.now();
+  if (now < apiExtractBlockedUntil) {
+    res.status(503).json({
+      success: false,
+      handle,
+      error: `Rate limit ou bloqueio. Tente novamente em ${Math.ceil((apiExtractBlockedUntil - now) / 60000)} min.`,
+    });
+    res.set('Retry-After', String(Math.ceil(get429BackoffMs() / 1000)));
+    return;
+  }
 
-      if (isBlockSignal(result)) {
-        record429();
-        apiExtractBlockedUntil = Date.now() + get429BackoffMs();
-        if (isLoginOrChallengeSignal(result)) {
-          await client.closeContext();
-        }
-        if (!res.headersSent) res.set('Retry-After', String(Math.ceil(get429BackoffMs() / 1000)));
-        send(503, {
-          success: false,
-          handle,
-          error: result.error ?? 'Bloqueio ou rate limit (429/challenge). Não tente de novo agora.',
-        });
-        return;
-      }
-      apiExtractProfileCount++;
-      send(200, result);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const isLoginRelated = /ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR|sessão|login/i.test(msg);
-      const error = isLoginRelated
-        ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login'
-        : msg;
-      send(500, {
-        success: false,
-        handle,
-        error,
-      });
-    }
-  };
+  extractProfileResults.set(handle, { status: 'pending' });
+  res.status(202).json({
+    accepted: true,
+    handle,
+    message: 'Extração em andamento. Consulte GET /api/crawl/extract-profile/status?handle=' + handle,
+  });
 
-  apiExtractQueue = apiExtractQueue.then(doExtract).catch(() => {});
-  await apiExtractQueue;
+  apiExtractQueue = apiExtractQueue
+    .then(() => runExtractAndStore(handle))
+    .catch((err) => {
+      console.error('[API] extract-profile erro:', err instanceof Error ? err.stack : err);
+      extractProfileResults.set(handle, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    });
 });
 
-app.post('/api/crawl', async (req: Request, res: Response) => {
+/** Enfileira re-extração do perfil (renovar URLs de imagem quando falham). Apenas adm. */
+app.post('/api/crawl/queue-refresh', requireScopes('adm'), (req: Request, res: Response) => {
+  let handle = (req.body?.handle ?? req.body?.url ?? '').toString().trim();
+  if (!handle) {
+    res.status(400).json({ error: 'Envie "handle" (ex.: rafaellacassol).' });
+    return;
+  }
+  if (handle.startsWith('http://') || handle.startsWith('https://')) {
+    try {
+      const u = new URL(handle);
+      const path = u.pathname.replace(/\/$/, '');
+      const match = path.match(/\/([^/]+)$/);
+      handle = match ? match[1] : handle;
+    } catch {
+      res.status(400).json({ error: 'URL inválida.' });
+      return;
+    }
+  }
+  handle = handle.replace(/^@/, '').toLowerCase();
+  if (refreshProfileQueueSet.has(handle)) {
+    res.status(202).json({ queued: false, handle, message: 'Perfil já está na fila de atualização.' });
+    return;
+  }
+  refreshProfileQueue.push(handle);
+  refreshProfileQueueSet.add(handle);
+  processNextRefresh();
+  res.status(202).json({ queued: true, handle, message: 'Perfil na fila para re-extração (renovar imagens). Uma execução por vez.' });
+});
+
+app.post('/api/crawl', requireScopes('adm'), async (req: Request, res: Response) => {
   if (crawlInProgress) {
     res.status(409).json({ error: 'Crawl já em andamento. Aguarde ou consulte GET /api/crawl/status.' });
     return;
@@ -989,8 +1356,17 @@ app.get('/api-docs', (_req: Request, res: Response) => {
   res.redirect(302, '/api-docs/rocksdb');
 });
 
-app.listen(PORT, () => {
-  console.log(`API: http://localhost:${PORT}`);
-  console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
-  console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
+(async () => {
+  console.log('Aquecendo cache de busca (perfis + posts)...');
+  const t0 = Date.now();
+  await warmSearchCache(db);
+  console.log(`Cache de busca aquecido em ${((Date.now() - t0) / 1000).toFixed(1)}s.`);
+  app.listen(PORT, () => {
+    console.log(`API: http://localhost:${PORT}`);
+    console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
+    console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
+  });
+})().catch((err) => {
+  console.error('Falha ao iniciar a API:', err);
+  process.exit(1);
 });

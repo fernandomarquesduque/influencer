@@ -9,7 +9,7 @@ export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/'
+  const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/app'
 
   const onFinish = async (values: { login: string; password: string }) => {
     setLoading(true)
@@ -25,8 +25,9 @@ export default function Login() {
   }
 
   return (
-    <div style={{ maxWidth: 400, margin: '48px auto' }}>
-      <Card title="Entrar" style={{ boxShadow: '0 2px 8px rgba(0,0,0,.1)' }}>
+    <div className="app-standalone-page">
+      <div className="app-page" style={{ maxWidth: 400, margin: '0 auto', paddingTop: 48, paddingBottom: 48 }}>
+        <Card title="Entrar">
         <Form
           name="login"
           onFinish={onFinish}
@@ -51,7 +52,8 @@ export default function Login() {
             </Button>
           </Form.Item>
         </Form>
-      </Card>
+        </Card>
+      </div>
     </div>
   )
 }

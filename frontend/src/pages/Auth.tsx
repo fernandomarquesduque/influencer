@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Form, Input, Button, Card, message, Collapse } from 'antd'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
 import { requestVerificationCode, verifyProfile, extractProfileToBackend, type ExtractProfileResult } from '../api'
 import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
@@ -54,7 +54,7 @@ function RejectionFullScreen({
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
-        background: '#f8fafc',
+        background: 'var(--app-bg)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -295,6 +295,7 @@ export default function Auth() {
   const { user, refreshUser, loginWithToken } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const [step, setStep] = useState<'nickname' | 'code'>('nickname')
   const [nickname, setNickname] = useState('')
   const [loading, setLoading] = useState(false)
@@ -302,7 +303,10 @@ export default function Auth() {
   const [rejectionInfo, setRejectionInfo] = useState<ExtractProfileResult | null>(null)
   const [form] = Form.useForm()
 
-  const savedNickname = (location.state as { nickname?: string })?.nickname
+  const fromState = (location.state as { nickname?: string })?.nickname
+  const fromQuery = searchParams.get('u') || searchParams.get('@')
+  const savedNickname = fromState || (fromQuery ? fromQuery.replace(/^@/, '').trim().toLowerCase() : undefined)
+
   useEffect(() => {
     if (savedNickname && form) {
       form.setFieldsValue({ nickname: savedNickname })
@@ -322,6 +326,10 @@ export default function Auth() {
         return
       }
       const data = await requestVerificationCode(n)
+      if (data.rejectionReason === 'nao_segue_perfil') {
+        setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
+        return
+      }
       setNickname(n)
       setStep('code')
       form.setFieldValue('code', data.code ?? '')
@@ -353,7 +361,7 @@ export default function Auth() {
         await refreshUser()
         message.success('Perfil validado com sucesso!')
       }
-      navigate('/create/password', { state: { handle: nickname }, replace: true })
+      navigate('/app/create/password', { state: { handle: nickname }, replace: true })
     } catch (e) {
       message.error(e instanceof Error ? e.message : 'Código inválido ou expirado')
     } finally {
@@ -378,7 +386,7 @@ export default function Auth() {
       <div
         style={{
           minHeight: '100vh',
-          background: 'linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)',
+          background: 'var(--app-bg)',
           padding: '40px 16px 48px',
           display: 'flex',
           flexDirection: 'column',
@@ -395,11 +403,11 @@ export default function Auth() {
                   height: 64,
                   margin: '0 auto 16px',
                   borderRadius: 16,
-                  background: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)',
+                  background: 'linear-gradient(135deg, var(--app-primary), var(--app-accent))',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: '0 8px 24px rgba(124, 58, 237, 0.35)',
+                  boxShadow: '0 8px 24px rgba(109, 94, 246, 0.35)',
                 }}
               >
                 <RocketOutlined style={{ fontSize: 28, color: '#fff' }} />
@@ -408,7 +416,7 @@ export default function Auth() {
                 style={{
                   fontSize: 26,
                   fontWeight: 700,
-                  color: '#1e293b',
+                  color: 'var(--app-text)',
                   margin: 0,
                   lineHeight: 1.3,
                   letterSpacing: '-0.02em',
@@ -419,7 +427,7 @@ export default function Auth() {
               <p
                 style={{
                   fontSize: 16,
-                  color: '#64748b',
+                  color: 'var(--app-text-secondary)',
                   marginTop: 12,
                   lineHeight: 1.5,
                 }}
@@ -433,7 +441,7 @@ export default function Auth() {
             title={
               step === 'nickname' ? (
                 <span style={{ fontSize: 16, fontWeight: 600 }}>
-                  <UserOutlined style={{ marginRight: 8, color: '#7c3aed' }} />
+                  <UserOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
                   Começar cadastro
                 </span>
               ) : (
@@ -443,11 +451,7 @@ export default function Auth() {
                 </span>
               )
             }
-            style={{
-              boxShadow: '0 4px 20px rgba(0,0,0,.08)',
-              borderRadius: 16,
-              overflow: 'hidden',
-            }}
+            style={{ overflow: 'hidden' }}
             styles={{ body: { paddingTop: step === 'nickname' ? 8 : 24 } }}
           >
             {user?.profile_handle && step === 'nickname' && (
@@ -468,13 +472,13 @@ export default function Auth() {
 
             {step === 'nickname' && (
               <>
-                <p style={{ color: '#64748b', marginBottom: 20, fontSize: 14, lineHeight: 1.5 }}>
+                <p style={{ color: 'var(--app-text-secondary)', marginBottom: 20, fontSize: 14, lineHeight: 1.5 }}>
                   Digite seu <strong>@ do Instagram</strong>. Enviamos um código de ativação por <strong>mensagem direta</strong> no Instagram.
                 </p>
                 <Form form={form} name="request-code" onFinish={onRequestCode} layout="vertical" requiredMark={false}>
                   <Form.Item name="nickname" label="Seu nickname no Instagram" rules={[{ required: true, message: 'Informe seu @ do Instagram' }]}>
                     <Input
-                      prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
+                      prefix={<UserOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
                       placeholder="ex: seu_usuario"
                       size="large"
                       autoComplete="username"
@@ -500,8 +504,8 @@ export default function Auth() {
 
             {step === 'code' && (
               <>
-                <div style={{ marginBottom: 16, padding: 14, background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 12 }}>
-                  <p style={{ margin: 0, color: '#1e40af', fontSize: 14 }}>
+                <div style={{ marginBottom: 16, padding: 14, background: 'rgba(47, 128, 237, 0.08)', border: '1px solid rgba(47, 128, 237, 0.3)', borderRadius: 12 }}>
+                  <p style={{ margin: 0, color: 'var(--app-accent)', fontSize: 14 }}>
                     Enviamos um código de 6 dígitos por <strong>mensagem no Instagram</strong> para <strong>@{nickname}</strong>. Confira o Direct e digite abaixo.
                   </p>
                 </div>

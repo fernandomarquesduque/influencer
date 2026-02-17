@@ -19,7 +19,7 @@ import {
   SafetyOutlined,
   CheckCircleOutlined,
 } from '@ant-design/icons'
-import { getProfilePicUrl, proxyImageUrl, type EngagementStats, type ProfileActivation } from '../api'
+import { getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type EngagementStats, type ProfileActivation } from '../api'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 
@@ -59,9 +59,13 @@ interface ProfileSummaryCardProps {
   item: ProfileSummaryCardItem
   variant?: 'list' | 'detail'
   onClick?: () => void
+  /** Chamado quando a foto falha e um refresh é enfileirado; recebe o handle para a listagem atualizar só esse item. */
+  onImageRefreshQueued?: (handle: string) => void
+  /** Se false, não exibe métricas (usuário não logado). */
+  showMetrics?: boolean
 }
 
-export default function ProfileSummaryCard({ item, variant = 'list', onClick }: ProfileSummaryCardProps) {
+export default function ProfileSummaryCard({ item, variant = 'list', onClick, onImageRefreshQueued, showMetrics = true }: ProfileSummaryCardProps) {
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
   const name = (item.full_name || item.handle) as string
   const eng = item.engagement
@@ -201,6 +205,14 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
             border: '3px solid #f0f0f0',
             boxShadow: '0 2px 8px rgba(0,0,0,.08)',
           }}
+          onError={() => {
+            const h = item.handle ?? item.key
+            if (h) {
+              queueRefreshProfile(h).catch(() => {})
+              onImageRefreshQueued?.(String(h))
+            }
+            return false
+          }}
         />
         <div style={{ textAlign: 'center', marginTop: 10, width: '100%', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -293,7 +305,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
         )}
       </div>
 
-      {/* Rodapé fixo: barra de métricas + curtidas/comentários + média */}
+      {/* Rodapé fixo: barra de métricas + curtidas/comentários + média (ou placeholder se não logado) */}
       <div
         style={{
           marginTop: 'auto',
@@ -302,69 +314,77 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick }: 
           borderTop: '1px solid #f0f0f0',
         }}
       >
-        {/* Barra: seguidores / engajamento / posts */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'center',
-            gap: 24,
-            padding: '10px 0',
-            marginBottom: 12,
-            borderBottom: '1px solid #f0f0f0',
-          }}
-        >
-          <Tooltip title="Seguidores">
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 16, fontWeight: 700, color: '#262626' }}>
-                {formatShortNum(item.followers_count)}
-              </div>
-              <div style={{ fontSize: 11, color: '#8e8e8e' }}>seguidores</div>
+        {showMetrics ? (
+          <>
+            {/* Barra: seguidores / engajamento / posts */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: variant === 'list' ? 8 : 24,
+                padding: '10px 0',
+                marginBottom: 12,
+                borderBottom: '1px solid #f0f0f0',
+              }}
+            >
+              <Tooltip title="Seguidores">
+                <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }}>
+                  <div style={{ fontSize: variant === 'list' ? 14 : 16, fontWeight: 700, color: '#262626' }}>
+                    {formatShortNum(item.followers_count)}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#8e8e8e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>seguidores</div>
+                </div>
+              </Tooltip>
+              <Tooltip title="Engajamento (likes + comentários / seguidores)">
+                <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }}>
+                  <div style={{ fontSize: variant === 'list' ? 14 : 16, fontWeight: 700, color: engagementColor(eng.engagement_rate) }}>
+                    {eng.engagement_rate.toFixed(1)}%
+                  </div>
+                  <div style={{ fontSize: 10, color: '#8e8e8e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>engajamento</div>
+                </div>
+              </Tooltip>
+              <Tooltip title="Posts analisados">
+                <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }}>
+                  <div style={{ fontSize: variant === 'list' ? 14 : 16, fontWeight: 700, color: '#262626' }}>
+                    {eng.posts_count}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#8e8e8e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>posts</div>
+                </div>
+              </Tooltip>
             </div>
-          </Tooltip>
-          <Tooltip title="Engajamento (likes + comentários / seguidores)">
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 16, fontWeight: 700, color: engagementColor(eng.engagement_rate) }}>
-                {eng.engagement_rate.toFixed(1)}%
-              </div>
-              <div style={{ fontSize: 11, color: '#8e8e8e' }}>engajamento</div>
-            </div>
-          </Tooltip>
-          <Tooltip title="Posts analisados">
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 16, fontWeight: 700, color: '#262626' }}>
-                {eng.posts_count}
-              </div>
-              <div style={{ fontSize: 11, color: '#8e8e8e' }}>posts</div>
-            </div>
-          </Tooltip>
-        </div>
 
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 16,
-            flexWrap: 'wrap',
-            marginBottom: 4,
-          }}
-        >
-          <Space size={6}>
-            <HeartOutlined style={{ color: '#eb2f96', fontSize: 14 }} />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {formatShortNum(eng.total_likes)} curtidas
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 16,
+                flexWrap: 'wrap',
+                marginBottom: 4,
+              }}
+            >
+              <Space size={6}>
+                <HeartOutlined style={{ color: '#eb2f96', fontSize: 14 }} />
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {formatShortNum(eng.total_likes)} curtidas
+                </Text>
+              </Space>
+              <Space size={6}>
+                <CommentOutlined style={{ color: '#1890ff', fontSize: 14 }} />
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {formatShortNum(eng.total_comments)} comentários
+                </Text>
+              </Space>
+            </div>
+            <Text type="secondary" style={{ fontSize: 11, textAlign: 'center', display: 'block' }}>
+              Média {eng.avg_likes.toLocaleString('pt-BR')} likes/post
             </Text>
-          </Space>
-          <Space size={6}>
-            <CommentOutlined style={{ color: '#1890ff', fontSize: 14 }} />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {formatShortNum(eng.total_comments)} comentários
-            </Text>
-          </Space>
-        </div>
-        <Text type="secondary" style={{ fontSize: 11, textAlign: 'center', display: 'block' }}>
-          Média {eng.avg_likes.toLocaleString('pt-BR')} likes/post
-        </Text>
+          </>
+        ) : (
+          <Text type="secondary" style={{ fontSize: 12, textAlign: 'center', display: 'block', padding: '8px 0' }}>
+            Faça login para ver as métricas
+          </Text>
+        )}
       </div>
     </div>
   )
