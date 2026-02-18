@@ -93,6 +93,34 @@ export class RocksDBStorage {
   }
 
   /**
+   * Remove um valor por bucket e key.
+   */
+  async delete(bucket: string, key: string): Promise<void> {
+    const db = await this.getDb();
+    const fullKey = dbKey(bucket, key);
+    try {
+      await db.del(fullKey);
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'LEVEL_NOT_FOUND') {
+        return;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Remove todas as chaves de um bucket que tenham o keyPrefix dado (ex.: bucket "post", keyPrefix "handle_" remove todos os posts do perfil).
+   */
+  async deleteByKeyPrefix(bucket: string, keyPrefix: string): Promise<number> {
+    const keys = await this.listKeys(bucket);
+    const toDelete = keyPrefix ? keys.filter((k) => k.startsWith(keyPrefix)) : keys;
+    if (toDelete.length === 0) return 0;
+    const db = await this.getDb();
+    await db.batch(toDelete.map((k) => ({ type: 'del' as const, key: dbKey(bucket, k) })));
+    return toDelete.length;
+  }
+
+  /**
    * Lista todas as chaves de um bucket.
    */
   async listKeys(bucket: string): Promise<string[]> {

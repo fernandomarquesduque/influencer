@@ -45,10 +45,6 @@ export default function Landing() {
   const [finalHandle, setFinalHandle] = useState('')
   const [inputError, setInputError] = useState('')
 
-  const scrollTo = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
-  }
-
   /** Leva o usuário para o fluxo de validação com o @ preenchido (se houver). */
   const goToValidate = (nickname: string) => {
     const n = normalizeHandle(nickname)

@@ -86,6 +86,29 @@ export class SqliteSync {
   private ensureSchema(): void {
     this.db.exec('PRAGMA foreign_keys = OFF; DROP TABLE IF EXISTS post; DROP TABLE IF EXISTS profiles; PRAGMA foreign_keys = ON;');
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS project (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        client_name TEXT,
+        budget_min REAL,
+        budget_max REAL,
+        category TEXT,
+        requirements TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS project_application (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id),
+        profile_handle TEXT NOT NULL,
+        message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(project_id, profile_handle)
+      );
+    `);
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS profile_activation (
         profile_handle TEXT PRIMARY KEY,
         address TEXT,
@@ -172,6 +195,18 @@ export class SqliteSync {
     return this.rowToActivation(row);
   }
 
+  /** Remove os dados de ativação do perfil (LGPD: exclusão de conta). */
+  deleteActivation(profileHandle: string): void {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    this.db.prepare('DELETE FROM profile_activation WHERE profile_handle = ?').run(handle);
+  }
+
+  /** Remove candidaturas do perfil em projetos (LGPD: exclusão de conta). */
+  deleteProjectApplicationsByHandle(profileHandle: string): void {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    this.db.prepare('DELETE FROM project_application WHERE profile_handle = ?').run(handle);
+  }
+
   /** Tamanho máximo do IN () por query (evita statement gigante e lentidão no SQLite). */
   private static readonly BATCH_SIZE = 500;
 
@@ -230,9 +265,99 @@ export class SqliteSync {
 
   clearAll(): void {
     this.db.exec('DELETE FROM profile_activation;');
+    this.db.exec('DELETE FROM project_application;');
+    this.db.exec('DELETE FROM project;');
+  }
+
+  /** Projetos para influenciadores (estilo Workana). */
+  listProjects(opts?: { status?: string; category?: string; limit?: number; offset?: number }): { total: number; items: ProjectRow[] } {
+    const status = opts?.status ?? 'open';
+    const category = opts?.category?.trim();
+    const limit = Math.min(Math.max(1, opts?.limit ?? 50), 100);
+    const offset = Math.max(0, opts?.offset ?? 0);
+    let where = 'WHERE status = ?';
+    const params: (string | number)[] = [status];
+    if (category) {
+      where += ' AND (category = ? OR category LIKE ?)';
+      params.push(category, `%${category}%`);
+    }
+    const countRow = this.db.prepare(`SELECT COUNT(*) as c FROM project ${where}`).get(...params) as { c: number };
+    const total = countRow?.c ?? 0;
+    const rows = this.db.prepare(
+      `SELECT id, title, description, client_name, budget_min, budget_max, category, requirements, status, created_at, updated_at
+       FROM project ${where}
+       ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    ).all(...params, limit, offset) as ProjectRow[];
+    return { total, items: rows };
+  }
+
+  getProjectById(id: number): ProjectRow | null {
+    const row = this.db.prepare(
+      'SELECT id, title, description, client_name, budget_min, budget_max, category, requirements, status, created_at, updated_at FROM project WHERE id = ?'
+    ).get(id) as ProjectRow | undefined;
+    return row ?? null;
+  }
+
+  createProject(data: Omit<ProjectRow, 'id' | 'created_at' | 'updated_at'>): number {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(`
+      INSERT INTO project (title, description, client_name, budget_min, budget_max, category, requirements, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const info = stmt.run(
+      data.title,
+      data.description,
+      data.client_name ?? null,
+      data.budget_min ?? null,
+      data.budget_max ?? null,
+      data.category ?? null,
+      data.requirements ?? null,
+      data.status ?? 'open',
+      now,
+      now
+    );
+    return info.lastInsertRowid as number;
+  }
+
+  applyToProject(projectId: number, profileHandle: string, message?: string): boolean {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    const now = new Date().toISOString();
+    try {
+      this.db.prepare(
+        'INSERT INTO project_application (project_id, profile_handle, message, created_at) VALUES (?, ?, ?, ?)'
+      ).run(projectId, handle, message ?? null, now);
+      return true;
+    } catch (e) {
+      return false; // duplicate or FK
+    }
+  }
+
+  getProjectApplicationsCount(projectId: number): number {
+    const row = this.db.prepare('SELECT COUNT(*) as c FROM project_application WHERE project_id = ?').get(projectId) as { c: number };
+    return row?.c ?? 0;
+  }
+
+  hasApplied(projectId: number, profileHandle: string): boolean {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    const row = this.db.prepare('SELECT 1 FROM project_application WHERE project_id = ? AND profile_handle = ?').get(projectId, handle);
+    return !!row;
   }
 
   close(): void {
     this.db.close();
   }
+}
+
+export interface ProjectRow {
+  id: number;
+  title: string;
+  description: string;
+  client_name: string | null;
+  budget_min: number | null;
+  budget_max: number | null;
+  category: string | null;
+  requirements: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
 }

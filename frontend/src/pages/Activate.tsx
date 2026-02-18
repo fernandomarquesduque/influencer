@@ -11,9 +11,11 @@ import {
   Typography,
   message,
   Select,
+  Modal,
+  Collapse,
 } from 'antd'
-import { ArrowLeftOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons'
-import { fetchProfile, fetchProfileActivation, saveProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileActivation, type PricingData } from '../api'
+import { ArrowLeftOutlined, CheckCircleOutlined, UserOutlined, DeleteOutlined } from '@ant-design/icons'
+import { fetchProfile, fetchProfileActivation, saveProfileActivation, deleteAccount, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileActivation, type PricingData } from '../api'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
 import { PRICE_BUCKETS, PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
 import { useAuth } from '../contexts/AuthContext'
@@ -33,10 +35,11 @@ const PRICE_OPTIONS = PRICE_BUCKETS.map((b) => ({ value: b.value, label: b.label
 export default function Activate() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
-  const { canEditProfile } = useAuth()
+  const { canEditProfile, logout } = useAuth()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
   const [profilePicError, setProfilePicError] = useState(false)
@@ -128,7 +131,7 @@ export default function Activate() {
         pricing: Object.keys(pricingData).length ? pricingData : undefined,
       })
       message.success('Cadastro ativado com sucesso!')
-      navigate(`/app/influencer/${encodeURIComponent(handle)}`, { replace: true })
+      navigate('/app/projects', { replace: true })
     } catch {
       message.error('Falha ao salvar. Tente novamente.')
     } finally {
@@ -289,6 +292,55 @@ export default function Activate() {
               Ativar cadastro
             </Button>
           </Form.Item>
+
+          <Collapse
+            ghost
+            defaultActiveKey={[]}
+            style={{ marginTop: 32, border: 'none', background: 'transparent' }}
+            items={[{
+              key: 'delete-account',
+              label: <span style={{ fontSize: 12, color: 'var(--app-text-tertiary)' }}>Excluir minha conta</span>,
+              children: (
+                <>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+                    Em conformidade com a LGPD, você pode excluir permanentemente sua conta e todos os dados armazenados (perfil, cadastro de ativação, posts). Esta ação não pode ser desfeita.
+                  </Text>
+                  <Button
+                    type="primary"
+                    danger
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    loading={deleting}
+                    onClick={() => {
+                      Modal.confirm({
+                        title: 'Excluir conta permanentemente?',
+                        content: 'Todos os seus dados serão removidos (cadastro, perfil, posts). Você não poderá acessar a plataforma com esta conta. Esta ação não pode ser desfeita.',
+                        okText: 'Sim, excluir minha conta',
+                        okType: 'danger',
+                        cancelText: 'Cancelar',
+                        onOk: async () => {
+                          setDeleting(true)
+                          try {
+                            await deleteAccount()
+                            message.success('Conta excluída.')
+                            logout()
+                            navigate('/login', { replace: true })
+                          } catch (e) {
+                            message.error(e instanceof Error ? e.message : 'Falha ao excluir conta')
+                          } finally {
+                            setDeleting(false)
+                          }
+                        },
+                      })
+                    }}
+                  >
+                    Excluir minha conta
+                  </Button>
+                </>
+              ),
+              style: { border: 'none', paddingLeft: 0, paddingRight: 0 },
+            }]}
+          />
         </Form>
       </Card>
     </div>

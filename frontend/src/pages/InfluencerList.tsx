@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useNavigate, useSearchParams, useLocation, Link, Navigate } from 'react-router-dom'
+import { useNavigate, useSearchParams, useLocation, useParams, Link, Navigate } from 'react-router-dom'
 import {
   Row,
   Col,
@@ -66,6 +66,7 @@ const PUBLIC_LIMIT_CODES = ['PUBLIC_PAGE_LIMIT', 'PUBLIC_FILTERS_NOT_ALLOWED', '
 export default function InfluencerList() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { handle: urlHandle } = useParams<{ handle?: string }>()
   const { user, isPublic } = useAuth()
   const { getCache, saveCache } = useListCache()
   const isLimitedView = !user || isPublic
@@ -272,8 +273,12 @@ export default function InfluencerList() {
     }
   })
 
-  if (user?.scope === 'influencer' && user.profile_handle) {
-    return <Navigate to={`/app/influencer/${encodeURIComponent(user.profile_handle.replace(/^@/, ''))}`} replace />
+  const myHandle = user?.profile_handle?.replace(/^@/, '').toLowerCase()
+  const isViewingOwnProfile = user?.scope === 'influencer' && myHandle && urlHandle
+    ? decodeURIComponent(urlHandle).toLowerCase() === myHandle
+    : false
+  if (user?.scope === 'influencer' && user.profile_handle && !isViewingOwnProfile) {
+    return <Navigate to="/app/projects" replace />
   }
 
   const runSearch = () => {

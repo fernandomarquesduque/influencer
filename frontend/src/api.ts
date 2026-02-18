@@ -603,3 +603,93 @@ export async function deleteAdminUser(id: number): Promise<void> {
   })
   if (!res.ok) throw new Error('Falha ao excluir usuário')
 }
+
+/** LGPD: excluir permanentemente a própria conta e todos os dados armazenados (perfil, ativação, posts). Requer scope influencer. */
+export async function deleteAccount(): Promise<void> {
+  const res = await fetch(`${API_BASE}/account`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(err?.error || 'Falha ao excluir conta')
+  }
+}
+
+/** Projetos para influenciadores (estilo Workana). */
+export interface ProjectItem {
+  id: number
+  title: string
+  description: string
+  client_name: string | null
+  budget_min: number | null
+  budget_max: number | null
+  category: string | null
+  requirements: string | null
+  status: string
+  created_at: string
+  updated_at: string
+  applications_count?: number
+  has_applied?: boolean
+}
+
+export async function fetchProjects(params?: {
+  status?: string
+  category?: string
+  limit?: number
+  offset?: number
+}): Promise<{ total: number; items: ProjectItem[] }> {
+  const search = new URLSearchParams()
+  if (params?.status) search.set('status', params.status)
+  if (params?.category) search.set('category', params.category)
+  if (params?.limit != null) search.set('limit', String(params.limit))
+  if (params?.offset != null) search.set('offset', String(params.offset))
+  const res = await fetch(`${API_BASE}/projects?${search.toString()}`, {
+    headers: { ...authHeaders() },
+  })
+  if (res.status === 401) throw new Error('Faça login para ver os projetos')
+  if (!res.ok) throw new Error('Falha ao carregar projetos')
+  return res.json()
+}
+
+export async function fetchProject(id: number): Promise<ProjectItem | null> {
+  const res = await fetch(`${API_BASE}/projects/${id}`, {
+    headers: { ...authHeaders() },
+  })
+  if (res.status === 404) return null
+  if (res.status === 401) throw new Error('Faça login para ver o projeto')
+  if (!res.ok) throw new Error('Falha ao carregar projeto')
+  return res.json()
+}
+
+export async function applyToProject(projectId: number, message?: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ message: message || '' }),
+  })
+  const data = await res.json().catch(() => ({})) as { error?: string }
+  if (res.status === 401) throw new Error(data.error || 'Faça login para se candidatar')
+  if (res.status === 409) throw new Error(data.error || 'Você já se candidatou')
+  if (!res.ok) throw new Error(data.error || 'Falha ao enviar candidatura')
+}
+
+export async function createProject(payload: {
+  title: string
+  description: string
+  client_name?: string
+  budget_min?: number
+  budget_max?: number
+  category?: string
+  requirements?: string
+  status?: string
+}): Promise<ProjectItem> {
+  const res = await fetch(`${API_BASE}/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({})) as ProjectItem & { error?: string }
+  if (!res.ok) throw new Error(data.error || 'Falha ao criar projeto')
+  return data
+}

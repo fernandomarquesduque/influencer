@@ -14,6 +14,7 @@
     "check-db": "tsx src/cli/check-db.ts",
     "api": "tsx src/api/server.ts",
     "create-admin": "tsx src/scripts/create-admin.ts",
+    "seed-projects": "tsx scripts/seed-projects.ts",
     "router-port-forward": "tsx src/scripts/router-port-forward.ts"
   },
   "dependencies": {

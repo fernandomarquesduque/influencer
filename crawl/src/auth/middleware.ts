@@ -38,6 +38,21 @@ export function requireScopes(...allowed: AuthScope[]) {
   };
 }
 
+/** Permite acesso sem autenticação ou com um dos scopes. Usado para rotas de cadastro (ex.: extract-profile no /app/create). */
+export function requireScopesOrPublic(...allowed: AuthScope[]) {
+  return (req: RequestWithAuth, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      next();
+      return;
+    }
+    if (allowed.includes(req.user.scope)) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: 'Sem permissão para esta ação', code: 'FORBIDDEN' });
+  };
+}
+
 /** Retorna true se o usuário tem scope adm (acesso total). */
 export function isAdm(payload: JwtPayload): boolean {
   return payload.scope === 'adm';

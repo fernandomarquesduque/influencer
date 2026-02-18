@@ -34,7 +34,7 @@ import { sendVerificationCode } from '../instagramClient/sendDirectMessage.js';
 import { extractProfile } from '../profileExtractor/index.js';
 import { isFollowingViewerFromEntity } from '../utils/entityAccess.js';
 import { AuthDb } from '../auth/authDb.js';
-import { authOptional, requireScopes, canEditProfile, type RequestWithAuth } from '../auth/middleware.js';
+import { authOptional, requireScopes, requireScopesOrPublic, canEditProfile, type RequestWithAuth } from '../auth/middleware.js';
 import { checkApiRateLimit, getRetryAfterSeconds } from '../utils/apiRateLimit.js';
 import { signJwt, getJwtSecret } from '../auth/jwt.js';
 import { verifyPassword, hashPassword } from '../auth/password.js';
@@ -279,6 +279,15 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
       { sub: String(user.id), username: user.username, scope: user.scope as AuthScope, profile_handle: user.profile_handle ?? undefined },
       secret
     );
+    let profile_activated: boolean | undefined;
+    if (user.scope === 'influencer') {
+      if (!user.profile_handle || !String(user.profile_handle).trim()) {
+        profile_activated = false;
+      } else {
+        const handle = String(user.profile_handle).replace(/^@/, '').trim().toLowerCase();
+        profile_activated = !!sqlite.getActivation(handle)?.activated_at;
+      }
+    }
     res.json({
       token,
       user: {
@@ -286,6 +295,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
         username: user.username,
         scope: user.scope,
         profile_handle: user.profile_handle,
+        ...(profile_activated !== undefined && { profile_activated }),
       },
     });
   } catch (e) {
@@ -293,18 +303,30 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   }
 });
 
-/** Usuário atual (a partir do JWT). */
+/** Usuário atual (a partir do JWT). Para influencer com profile_handle, inclui profile_activated (cadastro de ativação completo). */
 app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
   if (!req.user) {
     res.status(200).json({ user: null });
     return;
+  }
+  const profileHandle = req.user.profile_handle ?? null;
+  let profile_activated: boolean | undefined;
+  if (req.user.scope === 'influencer') {
+    if (!profileHandle || !String(profileHandle).trim()) {
+      profile_activated = false;
+    } else {
+      const handle = String(profileHandle).replace(/^@/, '').trim().toLowerCase();
+      const activation = sqlite.getActivation(handle);
+      profile_activated = !!(activation?.activated_at);
+    }
   }
   res.json({
     user: {
       id: Number(req.user.sub),
       username: req.user.username,
       scope: req.user.scope,
-      profile_handle: req.user.profile_handle ?? null,
+      profile_handle: profileHandle,
+      ...(profile_activated !== undefined && { profile_activated }),
     },
   });
 });
@@ -675,6 +697,31 @@ app.delete('/api/admin/users/:id', requireScopes('adm'), (req: RequestWithAuth, 
       return;
     }
     authDb.deleteUser(id);
+    res.status(204).end();
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** LGPD: excluir conta do próprio usuário (influencer). Remove todos os dados: ativação, perfil, posts e conta de login. */
+app.delete('/api/account', requireScopes('influencer'), async (req: RequestWithAuth, res: Response) => {
+  try {
+    const handle = (req.user!.profile_handle || '').replace(/^@/, '').trim().toLowerCase();
+    if (!handle) {
+      res.status(400).json({ error: 'Conta sem perfil vinculado.' });
+      return;
+    }
+    const user = authDb.getByProfileHandle(handle);
+    if (!user) {
+      res.status(404).json({ error: 'Usuário não encontrado.' });
+      return;
+    }
+    sqlite.deleteActivation(handle);
+    sqlite.deleteProjectApplicationsByHandle(handle);
+    await rocks.deleteByKeyPrefix('post', `${handle}:`);
+    await rocks.delete('profile', handle);
+    authDb.clearProfileVerification(handle);
+    authDb.deleteUser(user.id);
     res.status(204).end();
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -1133,6 +1180,120 @@ app.get('/api/posts', rateLimitDataApi, async (req: RequestWithAuth, res: Respon
   }
 });
 
+/** Projetos para influenciadores (estilo Workana). Lista e detalhe: usuário logado. Criar: adm. Candidatar: influenciador. */
+app.get('/api/projects', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Faça login para ver os projetos.', code: 'UNAUTHORIZED' });
+      return;
+    }
+    const status = (req.query.status as string) || 'open';
+    const category = (req.query.category as string)?.trim();
+    const limit = Math.min(Math.max(1, Number(req.query.limit) || 20), 50);
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const result = sqlite.listProjects({ status, category, limit, offset });
+    const profileHandle = req.user?.profile_handle ?? authDb.getById(Number(req.user?.sub ?? 0))?.profile_handle ?? undefined;
+    const items = profileHandle
+      ? result.items.map((p) => ({
+          ...p,
+          has_applied: sqlite.hasApplied(p.id, profileHandle),
+        }))
+      : result.items;
+    res.json({ total: result.total, items });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.get('/api/projects/:id', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Faça login para ver o projeto.', code: 'UNAUTHORIZED' });
+      return;
+    }
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      res.status(400).json({ error: 'ID inválido' });
+      return;
+    }
+    const project = sqlite.getProjectById(id);
+    if (!project) {
+      res.status(404).json({ error: 'Projeto não encontrado' });
+      return;
+    }
+    const applicationsCount = sqlite.getProjectApplicationsCount(id);
+    const hasApplied = req.user.profile_handle
+      ? sqlite.hasApplied(id, req.user.profile_handle)
+      : false;
+    res.json({ ...project, applications_count: applicationsCount, has_applied: hasApplied });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.post('/api/projects', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    const title = (body.title as string)?.trim();
+    const description = (body.description as string)?.trim();
+    if (!title || !description) {
+      res.status(400).json({ error: 'Título e descrição são obrigatórios' });
+      return;
+    }
+    const id = sqlite.createProject({
+      title,
+      description,
+      client_name: (body.client_name as string)?.trim() || null,
+      budget_min: typeof body.budget_min === 'number' ? body.budget_min : (body.budget_min != null ? Number(body.budget_min) : null),
+      budget_max: typeof body.budget_max === 'number' ? body.budget_max : (body.budget_max != null ? Number(body.budget_max) : null),
+      category: (body.category as string)?.trim() || null,
+      requirements: (body.requirements as string)?.trim() || null,
+      status: (body.status as string) === 'closed' ? 'closed' : 'open',
+    });
+    const project = sqlite.getProjectById(id);
+    res.status(201).json(project);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.post('/api/projects/:id/apply', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Faça login para se candidatar.', code: 'UNAUTHORIZED' });
+      return;
+    }
+    const handle = req.user.profile_handle?.replace(/^@/, '');
+    if (!handle) {
+      res.status(400).json({ error: 'Complete seu perfil de influenciador para se candidatar.' });
+      return;
+    }
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      res.status(400).json({ error: 'ID inválido' });
+      return;
+    }
+    const project = sqlite.getProjectById(id);
+    if (!project) {
+      res.status(404).json({ error: 'Projeto não encontrado' });
+      return;
+    }
+    if (project.status !== 'open') {
+      res.status(400).json({ error: 'Este projeto não está mais aceitando candidaturas.' });
+      return;
+    }
+    const message = (req.body as { message?: string })?.message?.trim();
+    const ok = sqlite.applyToProject(id, handle, message);
+    if (!ok) {
+      res.status(409).json({ error: 'Você já se candidatou a este projeto.' });
+      return;
+    }
+    res.status(201).json({ success: true, message: 'Candidatura enviada.' });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 app.get('/api/buckets/:bucket', requireScopes('adm'), async (req: Request, res: Response) => {
   try {
     const bucket = req.params.bucket;
@@ -1193,8 +1354,8 @@ async function runExtractAndStore(handle: string): Promise<void> {
   }
 }
 
-/** Status da extração em background (GET para polling). Apenas adm. */
-app.get('/api/crawl/extract-profile/status', requireScopes('adm'), (req: Request, res: Response) => {
+/** Status da extração em background (GET para polling). Público ou adm (fluxo de cadastro em /app/create). */
+app.get('/api/crawl/extract-profile/status', requireScopesOrPublic('adm'), (req: Request, res: Response) => {
   const handle = (req.query?.handle ?? '').toString().trim().replace(/^@/, '');
   if (!handle) {
     res.status(400).json({ error: 'Query "handle" é obrigatória.' });
@@ -1216,8 +1377,8 @@ app.get('/api/crawl/extract-profile/status', requireScopes('adm'), (req: Request
   res.status(200).json({ status: 'error', handle, error: stored.error });
 });
 
-/** Extrai um perfil específico por URL ou handle (cadastro de influenciador). Retorna 202 imediatamente; a extração roda em background. Apenas adm. */
-app.post('/api/crawl/extract-profile', requireScopes('adm'), (req: Request, res: Response) => {
+/** Extrai um perfil específico por URL ou handle (cadastro de influenciador). Retorna 202 imediatamente; a extração roda em background. Público ou adm (fluxo /app/create). */
+app.post('/api/crawl/extract-profile', requireScopesOrPublic('adm'), (req: Request, res: Response) => {
   let handle = (req.body?.handle ?? req.body?.url ?? '').toString().trim();
   if (!handle) {
     res.status(400).json({ error: 'Envie "handle" (ex.: rafaellacassol) ou "url" (ex.: https://www.instagram.com/rafaellacassol/).' });

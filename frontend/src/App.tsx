@@ -8,12 +8,14 @@ import Login from './pages/Login'
 import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
 import ListAndDetailModal from './pages/ListAndDetailModal'
+import Projects from './pages/Projects'
 import Extraction from './pages/Extraction'
 import ExtractProfile from './pages/ExtractProfile'
 import Activate from './pages/Activate'
 import Auth from './pages/Auth'
 import AuthPassword from './pages/AuthPassword'
 import AuthRejected from './pages/AuthRejected'
+import MediaKit from './pages/MediaKit'
 
 function RedirectInfluencerToApp() {
   const { handle } = useParams<{ handle: string }>()
@@ -38,6 +40,10 @@ export default function App() {
         <Route path="/app" element={<ListCacheProvider><Layout /></ListCacheProvider>}>
           <Route index element={<ListAndDetailModal />} />
           <Route path="influencer/:handle" element={<ListAndDetailModal />} />
+          <Route path="influencer/:handle/media-kit" element={<MediaKit />} />
+          <Route path="projects" element={<Projects />} />
+          <Route path="projects/new" element={<Projects />} />
+          <Route path="projects/:id" element={<Projects />} />
           <Route path="create" element={<Auth />} />
           <Route path="create/password" element={<AuthPassword />} />
           <Route path="create/rejected" element={<AuthRejected />} />

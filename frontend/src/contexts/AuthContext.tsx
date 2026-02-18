@@ -18,6 +18,8 @@ export interface AuthUser {
   username: string
   scope: AuthScope
   profile_handle: string | null
+  /** Para scope influencer: true se o cadastro de ativação foi concluído (activated_at preenchido). */
+  profile_activated?: boolean
 }
 
 interface AuthState {
@@ -53,7 +55,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data?.user) {
-        setState((s) => ({ ...s, user: data.user, loading: false }))
+        const u = data.user
+        setState((s) => ({
+          ...s,
+          user: {
+            id: u.id,
+            username: u.username,
+            scope: u.scope,
+            profile_handle: u.profile_handle ?? null,
+            profile_activated: u.profile_activated,
+          },
+          loading: false,
+        }))
         return
       }
     } catch {
@@ -96,6 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           username: data.user.username,
           scope: data.user.scope,
           profile_handle: data.user.profile_handle ?? null,
+          profile_activated: data.user.profile_activated,
         }
         : null,
       loading: false,
@@ -112,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         username: user.username,
         scope: user.scope,
         profile_handle: user.profile_handle ?? null,
+        profile_activated: user.profile_activated,
       },
       loading: false,
     })
@@ -131,7 +146,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data?.user) {
-        setState((s) => ({ ...s, user: data.user }))
+        const u = data.user
+        setState((s) => ({
+          ...s,
+          user: {
+            id: u.id,
+            username: u.username,
+            scope: u.scope,
+            profile_handle: u.profile_handle ?? null,
+            profile_activated: u.profile_activated,
+          },
+        }))
       }
     } catch {
       // ignore
