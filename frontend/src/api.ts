@@ -443,7 +443,7 @@ export interface ExtractProfileResult {
   postsSaved?: number
 }
 
-const EXTRACT_STATUS_POLL_MS = 2500
+const EXTRACT_STATUS_POLL_MS = 1000
 const EXTRACT_STATUS_MAX_POLLS = 120 // ~5 min
 
 /** Extrai um perfil (POST retorna 202; resultado vem em background). Faz polling até done/error. */

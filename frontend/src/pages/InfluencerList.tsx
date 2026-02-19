@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useNavigate, useSearchParams, useLocation, useParams, Link, Navigate } from 'react-router-dom'
+import { useNavigate, useSearchParams, useParams, Link, Navigate } from 'react-router-dom'
 import {
   Row,
   Col,
@@ -65,7 +65,6 @@ const PUBLIC_LIMIT_CODES = ['PUBLIC_PAGE_LIMIT', 'PUBLIC_FILTERS_NOT_ALLOWED', '
 
 export default function InfluencerList() {
   const navigate = useNavigate()
-  const location = useLocation()
   const { handle: urlHandle } = useParams<{ handle?: string }>()
   const { user, isPublic } = useAuth()
   const { getCache, saveCache } = useListCache()

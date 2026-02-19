@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import { ConfigProvider, theme as antdTheme } from 'antd'
+import { App as AntdApp, ConfigProvider, theme as antdTheme } from 'antd'
 import ptBR from 'antd/locale/pt_BR'
 import { ThemeProvider, useTheme } from './contexts/ThemeContext'
 import App from './App'
@@ -21,9 +21,11 @@ function ThemedConfig() {
         algorithm: theme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
       }}
     >
-      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '') || '/'}>
-        <App />
-      </BrowserRouter>
+      <AntdApp>
+        <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '') || '/'}>
+          <App />
+        </BrowserRouter>
+      </AntdApp>
     </ConfigProvider>
   )
 }

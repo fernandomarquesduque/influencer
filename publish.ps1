@@ -16,12 +16,20 @@ New-Item -ItemType Directory -Path $PublishRoot -Force | Out-Null
 
 # 2) Build frontend
 Write-Host "Build frontend ..." -ForegroundColor Yellow
-Push-Location (Join-Path $ProjectRoot "frontend")
+$frontendPath = Join-Path $ProjectRoot "frontend"
+Push-Location $frontendPath
 try {
+    $errAct = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
     npm ci 2>&1 | Out-Null
-    if (-not $?) { throw "npm ci falhou" }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "npm ci falhou (ex.: EPERM); tentando npm install ..." -ForegroundColor Yellow
+        npm install 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = $errAct; throw "npm install falhou" }
+    }
     npm run build
-    if (-not $?) { throw "npm run build falhou" }
+    $ErrorActionPreference = $errAct
+    if ($LASTEXITCODE -ne 0) { throw "npm run build falhou" }
 } finally {
     Pop-Location
 }

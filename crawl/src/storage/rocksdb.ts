@@ -109,14 +109,24 @@ export class RocksDBStorage {
   }
 
   /**
-   * Remove todas as chaves de um bucket que tenham o keyPrefix dado (ex.: bucket "post", keyPrefix "handle_" remove todos os posts do perfil).
+   * Remove todas as chaves de um bucket que tenham o keyPrefix dado (ex.: bucket "post", keyPrefix "handle:" remove todos os posts do perfil).
+   * Usa iterator por intervalo para não iterar todo o bucket (evita ~26s quando há muitos posts).
    */
   async deleteByKeyPrefix(bucket: string, keyPrefix: string): Promise<number> {
-    const keys = await this.listKeys(bucket);
-    const toDelete = keyPrefix ? keys.filter((k) => k.startsWith(keyPrefix)) : keys;
-    if (toDelete.length === 0) return 0;
     const db = await this.getDb();
-    await db.batch(toDelete.map((k) => ({ type: 'del' as const, key: dbKey(bucket, k) })));
+    const fullPrefix = dbKey(bucket, keyPrefix);
+    const limitKey = fullPrefix.slice(0, -1) + String.fromCharCode(fullPrefix.charCodeAt(fullPrefix.length - 1) + 1);
+    const toDelete: string[] = [];
+    const stream = db.iterator({ gte: fullPrefix, lt: limitKey });
+    try {
+      for await (const [fullKey] of stream) {
+        toDelete.push(fullKey);
+      }
+    } finally {
+      await stream.close();
+    }
+    if (toDelete.length === 0) return 0;
+    await db.batch(toDelete.map((k) => ({ type: 'del' as const, key: k })));
     return toDelete.length;
   }
 

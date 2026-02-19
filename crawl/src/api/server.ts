@@ -28,7 +28,8 @@ import {
 import { searchProfiles, scheduleSearchCacheRewarm, warmSearchCache, type ProfilesSearchQuery } from './profilesSearch.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { loginWithCredentials } from '../instagramClient/login.js';
-import { profileExtractDelay } from '../utils/delay.js';
+import { profileExtractDelay, profileExtractDelayForApi } from '../utils/delay.js';
+import { logTimestamp } from '../utils/logTimestamp.js';
 import { get429BackoffMs, record429 } from '../utils/rateLimit429.js';
 import { sendVerificationCode } from '../instagramClient/sendDirectMessage.js';
 import { extractProfile } from '../profileExtractor/index.js';
@@ -130,8 +131,8 @@ function isSessionExpiredError(msg: string): boolean {
   );
 }
 
-/** Executa uma extração (um perfil). Usado pelo extract-profile e pela fila de refresh. forRefresh=true pula todas as validações de qualificação. Se a sessão estiver expirada e houver INSTAGRAM_USER/PASSWORD no .env, tenta login automático e reextrai uma vez. */
-async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = false): Promise<ExtractSingleProfileResult> {
+/** Executa uma extração (um perfil). Usado pelo extract-profile e pela fila de refresh. forRefresh=true pula todas as validações de qualificação. fromExtractProfileApi=true usa delay curto (2s em vez de 8–20s). Se a sessão estiver expirada e houver INSTAGRAM_USER/PASSWORD no .env, tenta login automático e reextrai uma vez. */
+async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = false, fromExtractProfileApi = false): Promise<ExtractSingleProfileResult> {
   try {
     const now = Date.now();
     if (now < apiExtractBlockedUntil) {
@@ -141,7 +142,7 @@ async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = 
         error: `Rate limit ou bloqueio. Tente novamente em ${Math.ceil((apiExtractBlockedUntil - now) / 60000)} min.`,
       };
     }
-    await profileExtractDelay();
+    await (fromExtractProfileApi ? profileExtractDelayForApi() : profileExtractDelay());
     const cooldownEvery = Math.max(0, parseInt(process.env.COOLDOWN_EVERY ?? '10', 10) || 10);
     const cooldownMinMs = Math.max(0, parseInt(process.env.COOLDOWN_MIN_MS ?? '60000', 10) || 60000);
     const cooldownMaxMs = Math.max(cooldownMinMs, parseInt(process.env.COOLDOWN_MAX_MS ?? '180000', 10) || 180000);
@@ -160,7 +161,7 @@ async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = 
     let result: ExtractSingleProfileResult;
     try {
       result = await Promise.race([
-        extractSingleProfileWithPage(page, handle, db, config, { forRefresh }),
+        extractSingleProfileWithPage(page, handle, db, config, { forRefresh, fastMode: fromExtractProfileApi }),
         timeoutPromise,
       ]);
     } finally {
@@ -243,6 +244,7 @@ function processNextRefresh(): void {
       return runOneExtract(handle, true);
     })
     .then(async (result) => {
+      if (result == null) return;
       if (result.saved) console.log(`[API] Refresh de imagens concluído: @${handle}`);
       else if (result.error) {
         console.error(`[API] Refresh @${handle} falhou:`, result.error);
@@ -379,12 +381,15 @@ app.patch('/api/auth/me/password', (req: RequestWithAuth, res: Response) => {
 
 /** Solicita código de ativação 2FA: envia (via inbox do Instagram) um código para o nickname. Pode ser chamado sem login (2FA é o login). */
 app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) => {
+  const t0 = Date.now();
+  const logStep = (msg: string) => console.log(`[request-code] ${logTimestamp()} +${Date.now() - t0}ms ${msg}`);
   try {
     const nickname = (req.body?.nickname ?? req.body?.handle ?? '').toString().trim().replace(/^@/, '');
     if (!nickname) {
       res.status(400).json({ error: 'Informe o nickname do Instagram' });
       return;
     }
+    logStep(`Iniciando para @${nickname}`);
     const userId = req.user ? Number(req.user.sub) : null;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
@@ -396,6 +401,7 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
     const isDev = process.env.NODE_ENV === 'development';
 
     if (!existsSync(authStatePath)) {
+      logStep('Sessão não configurada (arquivo ausente).');
       if (isDev) {
         res.status(200).json({ sent: false, code, error: 'Sessão do Instagram não configurada. Use o código acima para testar.' });
       } else {
@@ -404,12 +410,13 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
       return;
     }
 
-    const headless = process.env.HEADFUL === 'true' ? false : process.env.HEADFUL === 'false' ? true : process.env.NODE_ENV === 'production' ? true : false;
     const maxAttempts = 3;
     const delayMs = 2000;
-    const client = new InstagramClient({ authStatePath, headless });
+    // Reutiliza o mesmo browser do extract-profile para não perder ~550ms abrindo outro Chromium
+    const client = getApiExtractClient();
     try {
       await client.init();
+      logStep('Browser pronto (reutilizado).');
 
       const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');
       if (requiredProfile && requiredProfile.length > 0) {
@@ -421,17 +428,21 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
             : undefined;
 
         if (followsFromExtract === true) {
-          // Reutiliza resultado da extração (perfil já foi aberto uma vez); não abre de novo.
+          logStep('Usando cache (segue perfil), pulando abertura de perfil.');
         } else if (followsFromExtract === false) {
+          logStep('Cache: não segue perfil, retornando erro.');
           const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
           res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl });
           return;
         } else {
-          // Sem resultado recente da extração: abre o perfil uma vez para checar.
+          logStep('Sem cache: abrindo perfil para verificar se segue...');
           const page = await client.newPage();
           try {
             const config = buildConfigFromEnv();
-            const extracted = await extractProfile(page, nickname, 'seed', '', config);
+            const tExtract = Date.now();
+            const extracted = await extractProfile(page, nickname, 'seed', '', config, { fastMode: true });
+            logStep(`extractProfile concluído em ${Date.now() - tExtract}ms.`);
+            logStep('Verificando perfil (username, segue oficial)...');
             if (!extracted) {
               if (isDev) {
                 res.status(200).json({ sent: false, code, error: 'Perfil não encontrado ou indisponível.' });
@@ -456,18 +467,26 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
               res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl });
               return;
             }
+            logStep('Perfil OK.');
           } finally {
-            await page.close().catch(() => { });
+            // Fechar página em background para não travar o fluxo (page.close() pode demorar)
+            void page.close().then(() => { /* página fechada */ }).catch(() => {});
+            logStep('Página em fechamento (background).');
           }
         }
       }
 
+      logStep('Enviando código por Direct...');
+      const tSend = Date.now();
       let result = await sendVerificationCode(client, nickname, code);
       for (let attempt = 1; !result.ok && attempt < maxAttempts; attempt++) {
+        logStep(`sendVerificationCode tentativa ${attempt} retornou ok=false, nova tentativa em ${delayMs}ms...`);
         await new Promise((r) => setTimeout(r, delayMs));
         result = await sendVerificationCode(client, nickname, code);
       }
+      logStep(`sendVerificationCode concluído em ${Date.now() - tSend}ms (ok=${result.ok}).`);
       if (!result.ok) {
+        logStep(`Erro: ${result.error ?? 'desconhecido'}`);
         if (isDev) {
           res.status(200).json({ sent: false, code, error: result.error });
         } else {
@@ -476,16 +495,19 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
         return;
       }
     } finally {
-      await client.close();
+      // Não fechar o client: é compartilhado (getApiExtractClient) para o próximo request ser rápido
     }
 
+    logStep(`Total ${Date.now() - t0}ms — enviando resposta 200.`);
     if (isDev) {
       res.status(200).json({ sent: true, code });
     } else {
       res.status(200).json({ sent: true });
     }
   } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+    const errMsg = e instanceof Error ? e.message : String(e);
+    console.error(`[request-code] ${logTimestamp()} +${Date.now() - t0}ms ERRO:`, errMsg, e instanceof Error ? e.stack : '');
+    res.status(500).json({ error: errMsg });
   }
 });
 
@@ -1371,10 +1393,10 @@ app.post('/api/crawl/stop', requireScopes('adm'), (_req: Request, res: Response)
   res.json({ ok: true, message: 'Parada solicitada. O crawl encerrará após o perfil atual.' });
 });
 
-/** Executa extração e grava resultado em extractProfileResults (para polling). */
+/** Executa extração e grava resultado em extractProfileResults (para polling). Usa delay curto e modo rápido. */
 async function runExtractAndStore(handle: string): Promise<void> {
   try {
-    const result = await runOneExtract(handle, true);
+    const result = await runOneExtract(handle, true, false, true);
     if (isBlockSignal(result)) {
       extractProfileResults.set(handle, {
         status: 'error',
@@ -1599,6 +1621,11 @@ app.get('/api-docs', (_req: Request, res: Response) => {
     console.log(`API: http://localhost:${PORT}`);
     console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
     console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
+    // Aquecer o browser em background para o primeiro extract-profile não esperar abrir o Chromium
+    getApiExtractClient()
+      .init()
+      .then(() => console.log('Browser (Chromium) aquecido e pronto para extract-profile.'))
+      .catch((err) => console.warn('Warmup do browser falhou (primeiro extract-profile pode demorar):', err instanceof Error ? err.message : err));
   });
 })().catch((err) => {
   console.error('Falha ao iniciar a API:', err);

@@ -36,12 +36,27 @@ export class InstagramClient {
       '--disable-setuid-sandbox',
       '--no-first-run',
       '--no-zygote',
+      // Reduz tempo de abertura
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--disable-sync',
+      '--disable-translate',
+      '--mute-audio',
+      '--no-default-browser-check',
     ];
-    const baseOptions = {
+    const baseOptions: Parameters<typeof chromium.launch>[0] = {
       headless: this.headless,
       args,
       timeout: launchTimeout,
     };
+
+    // Chrome instalado (channel) costuma abrir mais rápido que o Chromium do Playwright
+    const channel = process.env.PLAYWRIGHT_CHROME_CHANNEL?.trim();
+    if (channel) {
+      this.browser = await chromium.launch({ ...baseOptions, channel });
+      return;
+    }
 
     // Usa apenas Chromium na pasta do projeto: PLAYWRIGHT_CHROMIUM_EXECUTABLE ou Chromium instalado
     // via PLAYWRIGHT_BROWSERS_PATH (ex: ./browser) + npx playwright install chromium

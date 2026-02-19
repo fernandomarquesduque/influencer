@@ -5,7 +5,8 @@ import type { Entity, DiscoveredBy } from '../types/index.js';
 import type { CrawlConfig } from '../types/index.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { buildNormalizedPost } from '../utils/slimPost.js';
-import { delayMs, humanDelay } from '../utils/delay.js';
+import { delayMs, delayMsFast, humanDelay, humanDelayFast } from '../utils/delay.js';
+import { logTimestamp } from '../utils/logTimestamp.js';
 import { record429 } from '../utils/rateLimit429.js';
 
 const RESPONSE_LOG_DIR = process.env.RESPONSE_LOG_DIR ?? './data/response-log';
@@ -277,6 +278,8 @@ function extractPostsFromRawResponse(raw: unknown, collectedAt: string): Entity[
 export interface ExtractProfileOptions {
   /** Quando true, a página já está no perfil (ex.: após getFollowersFromProfile); evita novo goto e reduz scroll/delays. */
   pageAlreadyOnProfile?: boolean;
+  /** Quando true, usa delays mínimos (extract-profile API, usuário esperando). */
+  fastMode?: boolean;
 }
 
 /**
@@ -291,11 +294,16 @@ export async function extractProfile(
   _config: CrawlConfig,
   options: ExtractProfileOptions = {}
 ): Promise<{ profile: Entity & { handle: string }; posts: Entity[] } | null> {
-  const { pageAlreadyOnProfile = false } = options;
+  const t0 = Date.now();
+  const logStep = (msg: string) => console.log(`[extractProfile] ${logTimestamp()} @${handle} +${Date.now() - t0}ms ${msg}`);
+  const { pageAlreadyOnProfile = false, fastMode = false } = options;
   const profileUrl = InstagramClient.profileUrl(handle);
+  const d = fastMode ? delayMsFast : delayMs;
+  const humanD = fastMode ? humanDelayFast : humanDelay;
   /** Metadados + body para debug e limite de memória; só guardamos body quando status ok e JSON. */
   const captured: { url: string; status: number; body?: unknown }[] = [];
   let had429 = false;
+  logStep(`iniciando (fastMode=${fastMode})`);
 
   const onResponse = async (response: Response) => {
     const url = response.url();
@@ -331,12 +339,13 @@ export async function extractProfile(
 
   try {
     if (pageAlreadyOnProfile) {
-      // Página já está no perfil; recarregar para disparar as requests (Polaris + timeline) e capturá-las.
+      logStep('recarregando página (já no perfil)...');
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
-      await humanDelay();
-      await page.waitForTimeout(delayMs(1500));
+      await humanD();
+      await page.waitForTimeout(fastMode ? 400 : d(1500));
     } else {
       try {
+        logStep('goto perfil...');
         await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
       } catch (navErr) {
         const navMsg = navErr instanceof Error ? navErr.message : String(navErr);
@@ -345,8 +354,9 @@ export async function extractProfile(
         }
         throw navErr;
       }
-      await humanDelay();
-      await page.waitForTimeout(delayMs(1500));
+      logStep('página carregada, delay...');
+      await humanD();
+      await page.waitForTimeout(fastMode ? 400 : d(1500));
 
       const urlAfterGoto = page.url();
       if (urlAfterGoto.includes('/accounts/login') || urlAfterGoto.includes('/challenge/')) {
@@ -354,6 +364,7 @@ export async function extractProfile(
       }
     }
 
+    logStep('aguardando URL do perfil...');
     const profilePath = `/${handle.replace(/^@/, '')}/`;
     const onProfile = await page.waitForFunction(
       (path) => !window.location.pathname.includes('/p/') && window.location.pathname.includes(path),
@@ -361,12 +372,14 @@ export async function extractProfile(
       { timeout: pageAlreadyOnProfile ? 5000 : 10000 }
     ).catch(() => null);
     if (!onProfile) {
+      logStep('perfil não visível ou timeout.');
       if (had429) {
         record429();
         throw new Error('RATE_LIMIT_429');
       }
       return null;
     }
+    logStep('perfil visível, scroll e espera...');
 
     // Página de login: só confiar na URL (texto da página dá falso positivo: "Entrar" aparece em botões do perfil)
     const isLoginPage = await page.evaluate(() => {
@@ -386,28 +399,29 @@ export async function extractProfile(
       throw new Error('Perfil não encontrado');
     }
 
-    await page.waitForTimeout(delayMs(pageAlreadyOnProfile ? 400 : 1000));
+    await page.waitForTimeout(d(pageAlreadyOnProfile ? 400 : 1000));
 
     if (pageAlreadyOnProfile) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight * 0.5)).catch(() => null);
-      await page.waitForTimeout(delayMs(400));
+      await page.waitForTimeout(d(400));
       await page.mouse.wheel(0, 600).catch(() => null);
-      await page.waitForTimeout(delayMs(800));
+      await page.waitForTimeout(d(800));
     } else {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight * 0.5)).catch(() => null);
-      await page.waitForTimeout(delayMs(500));
+      await page.waitForTimeout(fastMode ? 200 : d(500));
       await page.mouse.wheel(0, 800).catch(() => null);
-      await page.waitForTimeout(delayMs(1000));
+      await page.waitForTimeout(fastMode ? 400 : d(1000));
     }
 
-    // Dar tempo para a resposta Polaris (data.user com media_count/following_count) chegar.
-    await page.waitForTimeout(2000);
+    logStep('aguardando respostas da API (Polaris)...');
+    await page.waitForTimeout(fastMode ? 600 : 2000);
   } finally {
     page.off('response', onResponse);
   }
 
   const bodies = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
   const hasUsableProfile = bodies.some((b) => hasDataUser(b));
+  logStep(`pronto: ${bodies.length} respostas, hasUsableProfile=${hasUsableProfile}`);
 
   if (bodies.length === 0 || !hasUsableProfile) {
     if (had429) {

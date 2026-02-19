@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import { DEFAULT_CRAWL_CONFIG, type CrawlConfig, type Entity } from '../types/index.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { extractProfile } from '../profileExtractor/index.js';
+import { logTimestamp } from '../utils/logTimestamp.js';
 import {
   getBusinessBlockReason,
   getFollowersFromEntity,
@@ -67,9 +68,10 @@ export interface ExtractSingleProfileResult {
   postsSaved?: number;
 }
 
-/** Opções para a extração. forRefresh = true pula todas as validações (só reextrai e salva, ex.: renovar imagens). */
+/** Opções para a extração. forRefresh = true pula todas as validações (só reextrai e salva, ex.: renovar imagens). fastMode = true usa delays mínimos (extract-profile API). */
 export interface ExtractSingleProfileOptions {
   forRefresh?: boolean;
+  fastMode?: boolean;
 }
 
 /**
@@ -91,28 +93,36 @@ export async function extractSingleProfileWithPage(
   }
   const minRequired = config.minFollowersToSave > 0 ? Math.max(config.minFollowersToSave, MIN_FOLLOWERS_FLOOR) : 0;
 
-  const extracted = await extractProfile(page, cleanHandle, 'seed', '', config);
+  const fastMode = options?.fastMode ?? false;
+  const extracted = await extractProfile(page, cleanHandle, 'seed', '', config, { fastMode });
   if (!extracted) {
     return { success: false, handle: cleanHandle, error: 'Falha ao extrair perfil (página ou API)' };
   }
+  const t0 = Date.now();
+  const logStep = (msg: string) => console.log(`[extractSingleProfile] ${logTimestamp()} @${cleanHandle} +${Date.now() - t0}ms ${msg}`);
+  logStep('extractProfile retornou, construindo slim...');
   const { profile: rawProfile, posts } = extracted;
   const raw = rawProfile as Record<string, unknown>;
 
   const followersFromRaw = getFollowersFromEntity(raw);
   const slim = buildSlimProfile(raw, cleanHandle, followersFromRaw, posts, 'seed', '');
+  logStep('slim construído, verificando qualificação...');
   const followers = followersFromRaw > 0 ? followersFromRaw : getFollowersFromEntity(slim as Record<string, unknown>);
   const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');
   const followsOfficialProfile =
     requiredProfile && requiredProfile.length > 0 ? isFollowingViewerFromEntity(raw) : undefined;
 
   if (options?.forRefresh) {
+    logStep('forRefresh: salvando perfil...');
     await storage.save(slim as Entity & { handle: string });
     const collectedAt = String(slim._collected_at ?? new Date().toISOString());
-    // Mantém apenas os posts da última extração: remove os antigos (URLs expiradas) antes de salvar os novos.
     if (typeof storage.deletePostsByHandle === 'function') {
+      logStep('deletando posts antigos...');
       await storage.deletePostsByHandle(slim.handle);
     }
+    logStep('salvando posts...');
     const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
+    logStep(`pronto (${postsSaved} posts).`);
     return { success: true, saved: true, handle: cleanHandle, followers, postsSaved, followsOfficialProfile };
   }
 
@@ -205,9 +215,12 @@ export async function extractSingleProfileWithPage(
     };
   }
 
+  logStep('salvando perfil...');
   await storage.save(slim as Entity & { handle: string });
   const collectedAt = String(slim._collected_at ?? new Date().toISOString());
+  logStep('salvando posts...');
   const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
+  logStep(`pronto (${postsSaved} posts).`);
   return {
     success: true,
     saved: true,

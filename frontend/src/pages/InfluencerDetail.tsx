@@ -17,6 +17,7 @@ import {
   message,
 } from 'antd'
 import {
+  EditOutlined,
   FileImageOutlined,
   HeartOutlined,
   CommentOutlined,
@@ -456,7 +457,6 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               { label: 'Posts/sem', value: reportInsights?.consistency?.postsPerWeekByWeek?.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
             ]}
             onBack={() => navigate(-1)}
-            onEditProfile={canEdit && handle ? () => navigate(`/activate/${encodeURIComponent(handle)}`) : undefined}
             onUpdateInstagram={isAdm && handle ? async () => {
               const r = await queueRefreshProfile(handle, { priority: true })
               if (r.queued) message.success(r.message)
@@ -501,7 +501,16 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                 defaultActiveKey={[]}
                 items={[{
                   key: 'contato',
-                  label: <><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />Contato e dados da ativação</>,
+                  label: (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
+                      <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />Contato e dados da ativação</span>
+                      {canEdit && handle && (
+                        <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
+                          Editar
+                        </Button>
+                      )}
+                    </div>
+                  ),
                   children: (
                     <>
                       {activation.pricing && (() => {
@@ -558,7 +567,20 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                 style={{ borderRadius: r, overflow: 'hidden', border: 'none', boxShadow: sh }}
               />
             ) : (
-              <ReportSection variant="analytical" sectionTitle={false} title={<><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />Contato e dados da ativação</>}>
+              <ReportSection
+                variant="analytical"
+                sectionTitle={false}
+                title={
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />Contato e dados da ativação</span>
+                    {canEdit && handle && (
+                      <Button type="default" size="small" icon={<EditOutlined />} onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)} style={{ borderRadius: r }}>
+                        Editar
+                      </Button>
+                    )}
+                  </div>
+                }
+              >
                 {activation.pricing && (() => {
                   const costTier = getCostTier(activation.pricing)
                   const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {

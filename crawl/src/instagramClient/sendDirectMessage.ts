@@ -1,6 +1,7 @@
 import type { Page } from 'playwright';
 import { InstagramClient } from './index.js';
 import { randomDelay } from '../utils/delay.js';
+import { logTimestamp } from '../utils/logTimestamp.js';
 
 const INSTAGRAM_ORIGIN = 'https://www.instagram.com';
 const DIRECT_NEW_URL = `${INSTAGRAM_ORIGIN}/direct/new/`;
@@ -10,8 +11,13 @@ function log(msg: string): void {
   if (DEBUG) console.log(`[sendDM] ${msg}`);
 }
 
+/** Log sempre visível (para acompanhar request-code). Formato: ddMMyyyyHHmmss +Xms msg */
+function logStep(t0: number, msg: string): void {
+  console.log(`[sendDM] ${logTimestamp()} +${Date.now() - t0}ms ${msg}`);
+}
+
 /** Fecha modais do Instagram (notificações "Ativar notificações", salvar login, etc.) que bloqueiam cliques. */
-async function dismissModals(page: Page, maxAttempts = 5): Promise<void> {
+async function dismissModals(page: Page, maxAttempts = 3): Promise<void> {
   const notNowSelectors = [
     // Modal "Ativar notificações" (container _a9-z com botão "Agora não")
     'div._a9-z button._a9_1',
@@ -31,8 +37,8 @@ async function dismissModals(page: Page, maxAttempts = 5): Promise<void> {
       try {
         const btn = page.locator(sel).first();
         if ((await btn.count()) > 0) {
-          await btn.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
-          await btn.click({ timeout: 3000 });
+          await btn.waitFor({ state: 'visible', timeout: 1000 }).catch(() => {});
+          await btn.click({ timeout: 2000 });
           log(`modal fechado: ${sel}`);
           closed = true;
           await randomDelay(150, 300);
@@ -63,28 +69,35 @@ export async function sendDirectMessage(
     return { ok: false, error: 'Handle e mensagem são obrigatórios' };
   }
 
+  const t0 = Date.now();
+  logStep(t0, `Iniciando para @${cleanHandle}`);
   const page = await client.newPage();
   try {
     log(`abrindo ${DIRECT_NEW_URL}`);
-    await page.goto(DIRECT_NEW_URL, { waitUntil: 'domcontentloaded', timeout: 2000 });
-    await randomDelay(400, 700);
+    logStep(t0, 'Abrindo /direct/new/...');
+    const directTimeout = Math.max(8000, parseInt(process.env.DIRECT_PAGE_TIMEOUT_MS ?? '12000', 10) || 12000);
+    await page.goto(DIRECT_NEW_URL, { waitUntil: 'domcontentloaded', timeout: directTimeout });
+    logStep(t0, 'Página direct carregada.');
+    await randomDelay(200, 400);
 
     const currentUrl = page.url();
     if (currentUrl.includes('/accounts/login') || currentUrl.includes('/challenge/')) {
+      logStep(t0, 'Redirecionado para login/challenge — sessão expirada.');
       return { ok: false, error: 'Sessão do Instagram expirada ou não logada. Faça login novamente (npm run login no crawl).' };
     }
 
-    // Fecha modal "Ativar notificações" e outros que aparecem após carregar
+    logStep(t0, 'Fechando modais...');
     await dismissModals(page);
-    await randomDelay(200, 400);
+    await randomDelay(100, 250);
     await dismissModals(page);
 
+    logStep(t0, 'Procurando botão Enviar mensagem ou campo de busca...');
     // Tela "Suas mensagens" vazia: clicar em "Enviar mensagem" para abrir o composer (campo de busca)
     try {
       const sendMessageBtn = page.locator('div[role="button"]:has-text("Enviar mensagem"), div[role="button"]:has-text("Send message")').first();
-      await sendMessageBtn.click({ timeout: 3000 });
+      await sendMessageBtn.click({ timeout: 1200 });
       log('clicado em Enviar mensagem (tela vazia)');
-      await randomDelay(150, 300);
+      await randomDelay(80, 200);
       await dismissModals(page);
     } catch {
       // Não está na tela vazia ou já no composer
@@ -107,7 +120,7 @@ export async function sendDirectMessage(
       const el = page.locator(sel).first();
       if ((await el.count()) > 0) {
         try {
-          await el.waitFor({ state: 'visible', timeout: 3000 });
+          await el.waitFor({ state: 'visible', timeout: 2500 });
           searchInput = el;
           log(`campo de busca encontrado: ${sel}`);
           break;
@@ -117,14 +130,16 @@ export async function sendDirectMessage(
       }
     }
     if (!searchInput) {
+      logStep(t0, 'Campo de busca não encontrado.');
       return { ok: false, error: 'Não foi possível encontrar o campo de busca do Direct.' };
     }
-
+    logStep(t0, 'Campo de busca encontrado, digitando handle...');
     await searchInput.click();
     await randomDelay(50, 120);
     await searchInput.fill(cleanHandle);
     await randomDelay(200, 400);
 
+    logStep(t0, 'Clicando no resultado do usuário...');
     // Clicar no resultado do usuário (sugestões dentro do dialog)
     const userResultSelectors = [
       `div[role="dialog"] a[href*="/${cleanHandle}/"]`,
@@ -139,7 +154,7 @@ export async function sendDirectMessage(
     for (const sel of userResultSelectors) {
       try {
         const el = page.locator(sel).first();
-        await el.waitFor({ state: 'visible', timeout: 3000 });
+        await el.waitFor({ state: 'visible', timeout: 2500 });
         await el.click();
         userClicked = true;
         log(`usuário selecionado: ${sel}`);
@@ -149,30 +164,32 @@ export async function sendDirectMessage(
       }
     }
     if (!userClicked) {
+      logStep(t0, 'Usuário não encontrado na busca.');
       return { ok: false, error: `Usuário @${cleanHandle} não encontrado na busca. Verifique o nickname ou se já existe conversa.` };
     }
-
-    await randomDelay(150, 300);
+    logStep(t0, 'Usuário selecionado, avançando para conversa...');
+    await randomDelay(100, 200);
 
     // Botão "Conversa" / "Chat" no dialog para avançar para o composer da mensagem
     try {
       const chatBtn = page.locator('div[role="dialog"] div[role="button"]:has-text("Conversa"), div[role="dialog"] div[role="button"]:has-text("Chat")').first();
-      await chatBtn.click({ timeout: 3000 });
+      await chatBtn.click({ timeout: 2500 });
       log('clicado em Conversa');
-      await randomDelay(150, 300);
+      await randomDelay(80, 180);
     } catch {
       // Pode já ter avançado ou o botão ter outro texto
     }
 
     // Esperar a conversa carregar e fechar modais de novo
-    await randomDelay(250, 500);
+    await randomDelay(150, 350);
     try {
-      await page.waitForURL(/\/direct\//, { timeout: 5000 }).catch(() => { });
+      await page.waitForURL(/\/direct\//, { timeout: 4000 }).catch(() => { });
     } catch {
       // ignore
     }
     await dismissModals(page);
     await randomDelay(120, 250);
+    logStep(t0, 'Procurando campo de mensagem...');
 
     const messageInputSelectors = [
       'div[contenteditable="true"][aria-label*="Message"]',
@@ -268,14 +285,17 @@ export async function sendDirectMessage(
       }
       if (sendClicked) {
         await randomDelay(150, 300);
+        logStep(t0, `Concluído em ${Date.now() - t0}ms (ok=true).`);
         return { ok: true };
       }
       lastError = 'Não foi possível encontrar o botão Enviar.';
     }
 
+    logStep(t0, `Concluído em ${Date.now() - t0}ms (ok=false): ${lastError}`);
     return { ok: false, error: lastError ?? 'Falha ao enviar após várias tentativas.' };
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
+    logStep(t0, `ERRO: ${err}`);
     log(`erro: ${err}`);
     return { ok: false, error: err };
   } finally {

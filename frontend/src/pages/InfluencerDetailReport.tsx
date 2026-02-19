@@ -4,8 +4,6 @@
 import React, { useState } from 'react'
 import { Button, Card, Tag, Avatar, Progress, Skeleton, Tabs, Tooltip } from 'antd'
 import {
-  ArrowLeftOutlined,
-  EditOutlined,
   SyncOutlined,
   UserOutlined,
   CheckCircleFilled,
@@ -59,9 +57,6 @@ export interface ReportHeroProps {
   score?: number
   /** Tooltip da barra de progresso (ex.: explicação do score) */
   scoreTooltip?: string
-  /** Botão para o dono do perfil editar (leva à página de ativação/cadastro) */
-  onEditProfile?: () => void
-  editProfileLabel?: string
   /** Botão para admin forçar re-extração prioritária do perfil no Instagram */
   onUpdateInstagram?: () => void
 }
@@ -80,7 +75,7 @@ export function ReportHero({
   scoreSelo,
   highlights,
   secondaryMetrics,
-  onBack,
+  onBack: _onBack,
   onCta,
   onAvatarError,
   ctaLabel = 'Gerar Media Kit Profissional',
@@ -88,8 +83,6 @@ export function ReportHero({
   extraContent,
   score: scoreValue,
   scoreTooltip,
-  onEditProfile,
-  editProfileLabel = 'Editar perfil',
   onUpdateInstagram,
 }: ReportHeroProps) {
   const atHandle = handleProp ? `@${handleProp.replace(/^@/, '')}` : ''
@@ -210,19 +203,6 @@ export function ReportHero({
               >
                 {ctaLabel}
               </Button>
-              {onEditProfile && (
-                <Button
-                  type="default"
-                  size={isMobile ? 'small' : 'middle'}
-                  icon={<EditOutlined />}
-                  onClick={onEditProfile}
-                  className="report-hero-edit"
-                  style={{ borderRadius: r.md }}
-                  aria-label={editProfileLabel}
-                >
-                  {editProfileLabel}
-                </Button>
-              )}
               {onUpdateInstagram && (
                 <Tooltip title="Força re-extração do perfil no Instagram (prioritária, só admin)">
                   <Button

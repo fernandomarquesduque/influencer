@@ -43,6 +43,11 @@ export function delayMs(ms: number): number {
   return Math.max(100, Math.round(ms * getFastMultiplier()) + getDelayExtraMs());
 }
 
+/** Delay fixo para modo rápido (extract-profile API). Usa multiplicador 0.3 para reduzir ~70%. */
+export function delayMsFast(ms: number): number {
+  return Math.max(100, Math.round(ms * 0.3));
+}
+
 /**
  * Delay entre perfis no fluxo da API (extrair perfil). Usa MIN_DELAY_MS / MAX_DELAY_MS do env.
  * Padrão 8–20 s para reduzir bloqueio quando vários perfis são extraídos em sequência.
@@ -51,5 +56,20 @@ export function profileExtractDelay(): Promise<void> {
   const min = Math.max(0, parseInt(process.env.MIN_DELAY_MS ?? '8000', 10) || 8000);
   const max = Math.max(min, parseInt(process.env.MAX_DELAY_MS ?? '20000', 10) || 20000);
   const ms = min + Math.floor(Math.random() * (max - min + 1));
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Delay curto para extract-profile via API (um perfil por vez, usuário esperando).
+ * Usa EXTRACT_PROFILE_DELAY_MS do env (padrão 2000ms). Muito mais rápido que profileExtractDelay.
+ */
+export function profileExtractDelayForApi(): Promise<void> {
+  const ms = Math.max(0, parseInt(process.env.EXTRACT_PROFILE_DELAY_MS ?? '2000', 10) || 2000);
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** humanDelay enxuto para modo rápido (extract-profile API). ~1–2 s em vez de 5–9 s. */
+export function humanDelayFast(): Promise<void> {
+  const ms = 1000 + Math.floor(Math.random() * 1000);
   return new Promise((r) => setTimeout(r, ms));
 }
