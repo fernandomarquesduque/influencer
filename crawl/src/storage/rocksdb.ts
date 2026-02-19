@@ -198,6 +198,22 @@ export class RocksDBStorage {
   }
 
   /**
+   * Remove o perfil do bucket "profile" (ex.: perfil não encontrado no Instagram).
+   */
+  async deleteProfileByHandle(profileHandle: string): Promise<void> {
+    const key = profileHandle.toLowerCase().replace(/^@/, '');
+    await this.delete('profile', key);
+  }
+
+  /**
+   * Remove todos os posts de um perfil (key prefix = handle:). Usado no refresh para manter só os da última extração.
+   */
+  async deletePostsByHandle(profileHandle: string): Promise<number> {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    return this.deleteByKeyPrefix('post', handle + ':');
+  }
+
+  /**
    * Salva posts no bucket "post" (key = profileHandle:shortcode).
    * Deve receber apenas posts normalizados (buildNormalizedPost); não persistir JSON bruto da API.
    */

@@ -73,7 +73,7 @@ export async function discoverAndProcessByHashtag(
           return zero;
         }
       } else {
-        crawlLogDiscovery('Rode: npm run login (sessão em .auth/instagram.json) ou defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
+        crawlLogDiscovery('Rode: npm run login (sessão em data/instagram-auth.json) ou defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
         return zero;
       }
     }
@@ -568,7 +568,7 @@ export async function discoverAndProcessByHomeFeed(
           return zero;
         }
       } else {
-        crawlLogDiscovery('Rode: npm run login (sessão em .auth/instagram.json) ou defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
+        crawlLogDiscovery('Rode: npm run login (sessão em data/instagram-auth.json) ou defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
         return zero;
       }
     }
@@ -938,7 +938,7 @@ export async function discoverAndProcessByExplore(
           return zero;
         }
       } else {
-        crawlLogDiscovery('Rode: npm run login (sessão em .auth/instagram.json) ou defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
+        crawlLogDiscovery('Rode: npm run login (sessão em data/instagram-auth.json) ou defina INSTAGRAM_USER e INSTAGRAM_PASSWORD no .env.');
         return zero;
       }
     }

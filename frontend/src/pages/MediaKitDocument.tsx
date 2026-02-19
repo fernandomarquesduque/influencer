@@ -661,9 +661,6 @@ function ValuePage({
   conversation,
   resumoPositivo,
   nichoTemas,
-  activation,
-  costTier,
-  pricingRows,
   header,
   footer,
 }: {
@@ -671,15 +668,9 @@ function ValuePage({
   conversation: { rate: number; label: string }
   resumoPositivo: string[]
   nichoTemas: string[]
-  activation: ProfileActivation | null
-  costTier: { symbol: string; label: string } | null
-  pricingRows: { label: string; value: string }[]
   header: React.ReactNode
   footer: React.ReactNode
 }) {
-  const hasPricing = pricingRows.length > 0
-  const hasContact = Boolean(activation?.whatsapp || activation?.city || activation?.state)
-
   const min = Math.max(0, valorEstimado?.min ?? 0)
   const max = Math.max(min, valorEstimado?.max ?? 0)
   const porque = sanitizeText(valorEstimado?.porque || '')
@@ -764,93 +755,114 @@ function ValuePage({
           </>
         ) : null}
 
-        {(hasPricing || hasContact) ? (
-          <>
-            <SectionTitle>Contato e preços</SectionTitle>
+        {footer}
+      </View>
+    </Page>
+  )
+}
 
-            <View style={{ flexDirection: 'row' }}>
-              <View style={{ flex: 1, marginRight: s.lg }}>
-                {hasPricing ? (
-                  <Card title="Tabela de valores">
-                    {pricingRows.map((row, i) => (
-                      <View
-                        key={i}
-                        style={{
-                          flexDirection: 'row',
-                          justifyContent: 'space-between',
-                          paddingVertical: 10,
-                          borderTopWidth: i === 0 ? 0 : 1,
-                          borderTopColor: c.borderLight,
-                        }}
-                      >
-                        <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
-                          {sanitizeText(row.label)}
-                        </Text>
-                        <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: c.text }}>
-                          {sanitizeText(row.value)}
-                        </Text>
-                      </View>
-                    ))}
-                    {costTier ? (
-                      <View style={{ marginTop: 10 }}>
-                        <Text style={{ fontSize: typo.caption, color: c.textMuted }}>
-                          Custo médio:{' '}
-                          <Text style={{ fontWeight: 'bold', color: c.textSecondary }}>
-                            {costTier.symbol} {costTier.label}
-                          </Text>
-                        </Text>
-                      </View>
-                    ) : null}
-                  </Card>
-                ) : (
-                  <Card title="Tabela de valores">
+function ContactAndPricingPage({
+  activation,
+  costTier,
+  pricingRows,
+  header,
+  footer,
+}: {
+  activation: ProfileActivation | null
+  costTier: { symbol: string; label: string } | null
+  pricingRows: { label: string; value: string }[]
+  header: React.ReactNode
+  footer: React.ReactNode
+}) {
+  const hasPricing = pricingRows.length > 0
+
+  return (
+    <Page size="A4" style={styles.page}>
+      {header}
+      <View style={styles.pageContent}>
+        <SectionTitle first>Contato e preços</SectionTitle>
+
+        <View style={{ flexDirection: 'row' }}>
+          <View style={{ flex: 1, marginRight: s.lg }}>
+            {hasPricing ? (
+              <Card title="Tabela de valores">
+                {pricingRows.map((row, i) => (
+                  <View
+                    key={i}
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      paddingVertical: 10,
+                      borderTopWidth: i === 0 ? 0 : 1,
+                      borderTopColor: c.borderLight,
+                    }}
+                  >
                     <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
-                      Valores sob consulta — envio tabela completa conforme formato e período da campanha.
+                      {sanitizeText(row.label)}
                     </Text>
-                  </Card>
-                )}
-              </View>
-
-              <View style={{ width: 230 }}>
-                <Card title="Contato">
-                  {(activation?.city || activation?.state) ? (
-                    <Text style={{ fontSize: typo.body, color: c.text, marginBottom: 8 }}>
-                      {sanitizeText([activation.city, activation.state].filter(Boolean).join(', '))}
+                    <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: c.text }}>
+                      {sanitizeText(row.value)}
                     </Text>
-                  ) : (
-                    <Text style={{ fontSize: typo.body, color: c.text, marginBottom: 8 }}>
-                      Disponível para campanhas
-                    </Text>
-                  )}
-
-                  {activation?.whatsapp ? (
-                    <>
-                      <Text style={{ fontSize: typo.caption, color: c.textMuted }}>WhatsApp</Text>
-                      <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: c.text }}>
-                        {sanitizeText(String(activation.whatsapp))}
+                  </View>
+                ))}
+                {costTier ? (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={{ fontSize: typo.caption, color: c.textMuted }}>
+                      Custo médio:{' '}
+                      <Text style={{ fontWeight: 'bold', color: c.textSecondary }}>
+                        {costTier.symbol} {costTier.label}
                       </Text>
-                    </>
-                  ) : (
-                    <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
-                      WhatsApp não informado
                     </Text>
-                  )}
+                  </View>
+                ) : null}
+              </Card>
+            ) : (
+              <Card title="Tabela de valores">
+                <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
+                  Valores sob consulta — envio tabela completa conforme formato e período da campanha.
+                </Text>
+              </Card>
+            )}
+          </View>
 
-                  {activation?.content_type?.length ? (
-                    <View style={{ marginTop: 12 }}>
-                      <Text style={{ fontSize: typo.caption, color: c.textMuted, marginBottom: 6 }}>
-                        Entrega
-                      </Text>
-                      <Text style={{ fontSize: typo.body, color: c.textSecondary, lineHeight: 1.45 }}>
-                        {activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}
-                      </Text>
-                    </View>
-                  ) : null}
-                </Card>
-              </View>
-            </View>
-          </>
-        ) : null}
+          <View style={{ width: 230 }}>
+            <Card title="Contato">
+              {(activation?.city || activation?.state) ? (
+                <Text style={{ fontSize: typo.body, color: c.text, marginBottom: 8 }}>
+                  {sanitizeText([activation.city, activation.state].filter(Boolean).join(', '))}
+                </Text>
+              ) : (
+                <Text style={{ fontSize: typo.body, color: c.text, marginBottom: 8 }}>
+                  Disponível para campanhas
+                </Text>
+              )}
+
+              {activation?.whatsapp ? (
+                <>
+                  <Text style={{ fontSize: typo.caption, color: c.textMuted }}>WhatsApp</Text>
+                  <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: c.text }}>
+                    {sanitizeText(String(activation.whatsapp))}
+                  </Text>
+                </>
+              ) : (
+                <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
+                  WhatsApp não informado
+                </Text>
+              )}
+
+              {activation?.content_type?.length ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={{ fontSize: typo.caption, color: c.textMuted, marginBottom: 6 }}>
+                    Entrega
+                  </Text>
+                  <Text style={{ fontSize: typo.body, color: c.textSecondary, lineHeight: 1.45 }}>
+                    {activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}
+                  </Text>
+                </View>
+              ) : null}
+            </Card>
+          </View>
+        </View>
 
         {footer}
       </View>
@@ -1235,12 +1247,19 @@ export function MediaKitDocument({
         conversation={conversation}
         resumoPositivo={getResumoPositivo(resumoExecutivo)}
         nichoTemas={nichoTemas}
-        activation={activation}
-        costTier={costTier}
-        pricingRows={pricingRows}
         header={header}
         footer={footer}
       />
+
+      {(pricingRows.length > 0 || activation?.whatsapp || activation?.city || activation?.state) && (
+        <ContactAndPricingPage
+          activation={activation}
+          costTier={costTier}
+          pricingRows={pricingRows}
+          header={header}
+          footer={footer}
+        />
+      )}
 
       <PostDetailPage
         topPosts={topPosts}

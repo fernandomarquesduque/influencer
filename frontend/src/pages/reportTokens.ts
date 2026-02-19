@@ -4,7 +4,7 @@
  */
 export const reportTokens = {
   colors: {
-    pageBg: '#f8fafc',
+    pageBg: 'transparent',
     pageBgBlob: 'rgba(99, 102, 241, 0.04)',
     cardBg: '#ffffff',
     cardBgSoft: '#fafbfc',

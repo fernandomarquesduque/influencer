@@ -108,6 +108,10 @@ export async function extractSingleProfileWithPage(
   if (options?.forRefresh) {
     await storage.save(slim as Entity & { handle: string });
     const collectedAt = String(slim._collected_at ?? new Date().toISOString());
+    // Mantém apenas os posts da última extração: remove os antigos (URLs expiradas) antes de salvar os novos.
+    if (typeof storage.deletePostsByHandle === 'function') {
+      await storage.deletePostsByHandle(slim.handle);
+    }
     const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
     return { success: true, saved: true, handle: cleanHandle, followers, postsSaved, followsOfficialProfile };
   }

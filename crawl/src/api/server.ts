@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response } from 'express';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-/** Raiz do projeto crawl (onde ficam .env e .auth). Funciona com tsx (src/api) e com node após build (dist/api). */
+/** Raiz do projeto crawl (onde ficam .env e data/). Funciona com tsx (src/api) e com node após build (dist/api). */
 const _twoUp = path.resolve(__dirname, '../..');
 const CRAWL_ROOT = path.basename(_twoUp) === 'dist' ? path.resolve(__dirname, '../../..') : _twoUp;
 
@@ -90,6 +90,10 @@ const extractProfileResults = new Map<
 /** Fila de handles para re-extração quando imagem falha (renovar URLs). Uma execução por vez, em série com extract-profile. */
 const refreshProfileQueue: string[] = [];
 const refreshProfileQueueSet = new Set<string>();
+/** Handles enfileirados com priority=true (admin); ao processar, não aplica o intervalo de 60 min. */
+const refreshPriorityHandles = new Set<string>();
+/** Só enfileirar/executar refresh se a última extração do perfil foi há mais de 60 min (evita re-extração em loop quando cache ainda serve dado antigo). */
+const REFRESH_MIN_INTERVAL_MS = 60 * 60 * 1000;
 
 function getApiExtractClient(): InstagramClient {
   if (!apiExtractClient) {
@@ -214,17 +218,43 @@ async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = 
   }
 }
 
-/** Processa o próximo handle da fila de refresh (re-extração por falha de imagem). Uma execução por vez. */
+/** Processa o próximo handle da fila de refresh (re-extração por falha de imagem). Uma execução por vez. Só executa se última extração foi há mais de 60 min. */
 function processNextRefresh(): void {
   if (refreshProfileQueue.length === 0) return;
   const handle = refreshProfileQueue.shift()!;
-  console.log(`[API] Refresh de imagens iniciado: @${handle}`);
   apiExtractQueue = apiExtractQueue
-    .then(() => runOneExtract(handle, true))
-    .then((result) => {
+    .then(async () => {
+      const isPriority = refreshPriorityHandles.has(handle);
+      if (isPriority) refreshPriorityHandles.delete(handle);
+      if (!isPriority) {
+        const profile = await db.loadByHandle(handle);
+        const collectedAt = profile && typeof (profile as { _collected_at?: string })._collected_at === 'string'
+          ? (profile as { _collected_at: string })._collected_at
+          : null;
+        if (collectedAt) {
+          const lastMs = Date.now() - new Date(collectedAt).getTime();
+          if (lastMs < REFRESH_MIN_INTERVAL_MS) {
+            console.log(`[API] Refresh @${handle} ignorado: última extração há ${Math.round(lastMs / 60000)} min (mínimo 60 min).`);
+            return;
+          }
+        }
+      }
+      console.log(`[API] Refresh de imagens iniciado: @${handle}${isPriority ? ' (prioritário)' : ''}`);
+      return runOneExtract(handle, true);
+    })
+    .then(async (result) => {
       if (result.saved) console.log(`[API] Refresh de imagens concluído: @${handle}`);
-      else if (result.error) console.error(`[API] Refresh @${handle} falhou:`, result.error);
-      else if (result.rejectionReason) console.warn(`[API] Refresh @${handle} rejeitado:`, result.rejectionReason);
+      else if (result.error) {
+        console.error(`[API] Refresh @${handle} falhou:`, result.error);
+        if (result.error === 'Perfil não encontrado' || String(result.error).includes('Perfil não encontrado')) {
+          try {
+            await db.deleteProfileCompletely(handle);
+            console.log(`[API] Perfil @${handle} excluído completamente (não existe mais no Instagram).`);
+          } catch (err) {
+            console.error(`[API] Erro ao excluir perfil @${handle}:`, err instanceof Error ? err.message : err);
+          }
+        }
+      } else if (result.rejectionReason) console.warn(`[API] Refresh @${handle} rejeitado:`, result.rejectionReason);
     })
     .catch((err) => {
       console.error(`[API] Refresh @${handle} erro:`, err instanceof Error ? err.stack : err);
@@ -361,7 +391,7 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
     authDb.saveProfileVerification(nickname, code, userId, expiresAt);
 
     const authStatePath = resolveAuthStatePath(
-      process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? '.auth/instagram.json'
+      process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json'
     );
     const isDev = process.env.NODE_ENV === 'development';
 
@@ -775,6 +805,10 @@ app.get('/api/proxy-image', async (req: Request, res: Response) => {
   const tryStream = async (response: FetchResponse): Promise<boolean> => {
     if (!response.ok) return false;
     const contentType = response.headers.get('content-type') || 'image/jpeg';
+    // CDN do Instagram às vezes retorna 200 com HTML (ex.: "imagem indisponível"); não repassar como imagem
+    if (!contentType.toLowerCase().includes('image/') && !contentType.toLowerCase().includes('octet-stream')) {
+      return false;
+    }
     res.setHeader('content-type', contentType);
     res.setHeader('cache-control', 'public, max-age=86400');
     const buf = await response.arrayBuffer();
@@ -788,6 +822,7 @@ app.get('/api/proxy-image', async (req: Request, res: Response) => {
       const done = await tryStream(r);
       if (done) return;
     }
+    console.warn('[API] proxy-image: CDN retornou', r.status, 'para', url.slice(0, 80) + '...');
     if (r.status === 403 || !r.ok) {
       for (const toProxyUrl of FALLBACK_PROXIES) {
         try {
@@ -797,15 +832,22 @@ app.get('/api/proxy-image', async (req: Request, res: Response) => {
             const done = await tryStream(r);
             if (done) return;
           }
-        } catch {
+        } catch (err) {
+          console.warn('[API] proxy-image fallback falhou:', err instanceof Error ? err.message : err);
           continue;
         }
       }
     }
-    res.status(404).end();
+    res.status(404).setHeader('content-type', 'application/json').json({
+      error: 'Imagem não disponível',
+      reason: 'CDN retornou erro ou URL expirada; fallbacks não conseguiram buscar a imagem.',
+    });
   } catch (e) {
     console.error('[API] proxy-image 502:', e instanceof Error ? e.message : e);
-    res.status(502).end();
+    res.status(502).setHeader('content-type', 'application/json').json({
+      error: 'Erro no proxy de imagem',
+      reason: e instanceof Error ? e.message : String(e),
+    });
   }
 });
 
@@ -1398,7 +1440,7 @@ app.post('/api/crawl/extract-profile', requireScopesOrPublic('adm'), (req: Reque
   handle = handle.replace(/^@/, '').toLowerCase();
 
   const authStatePath = resolveAuthStatePath(
-    process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? '.auth/instagram.json'
+    process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json'
   );
   if (!existsSync(authStatePath)) {
     res.status(503).json({
@@ -1435,8 +1477,13 @@ app.post('/api/crawl/extract-profile', requireScopesOrPublic('adm'), (req: Reque
     });
 });
 
-/** Enfileira re-extração do perfil (renovar URLs de imagem quando falham). Apenas adm. */
-app.post('/api/crawl/queue-refresh', requireScopes('adm'), (req: Request, res: Response) => {
+/** Enfileira re-extração do perfil (renovar URLs de imagem). Adm ou influencer. Com priority=true (só adm) coloca na frente da fila e ignora o intervalo de 60 min. */
+app.post('/api/crawl/queue-refresh', requireScopes('adm', 'influencer'), async (req: Request, res: Response) => {
+  const priority = req.body?.priority === true;
+  if (priority && (req as RequestWithAuth).user?.scope !== 'adm') {
+    res.status(403).json({ error: 'Apenas administradores podem forçar atualização prioritária.' });
+    return;
+  }
   let handle = (req.body?.handle ?? req.body?.url ?? '').toString().trim();
   if (!handle) {
     res.status(400).json({ error: 'Envie "handle" (ex.: rafaellacassol).' });
@@ -1458,10 +1505,36 @@ app.post('/api/crawl/queue-refresh', requireScopes('adm'), (req: Request, res: R
     res.status(202).json({ queued: false, handle, message: 'Perfil já está na fila de atualização.' });
     return;
   }
-  refreshProfileQueue.push(handle);
+  if (!priority) {
+    const profile = await db.loadByHandle(handle);
+    const collectedAt = profile && typeof (profile as { _collected_at?: string })._collected_at === 'string'
+      ? (profile as { _collected_at: string })._collected_at
+      : null;
+    if (collectedAt) {
+      const lastMs = Date.now() - new Date(collectedAt).getTime();
+      if (lastMs < REFRESH_MIN_INTERVAL_MS) {
+        res.status(202).json({
+          queued: false,
+          handle,
+          message: `Última extração há ${Math.round(lastMs / 60000)} min. Só é possível re-extrair após 60 min.`,
+        });
+        return;
+      }
+    }
+  }
+  if (priority) {
+    refreshProfileQueue.unshift(handle);
+    refreshPriorityHandles.add(handle);
+  } else {
+    refreshProfileQueue.push(handle);
+  }
   refreshProfileQueueSet.add(handle);
   processNextRefresh();
-  res.status(202).json({ queued: true, handle, message: 'Perfil na fila para re-extração (renovar imagens). Uma execução por vez.' });
+  res.status(202).json({
+    queued: true,
+    handle,
+    message: priority ? 'Perfil na fila com prioridade para re-extração.' : 'Perfil na fila para re-extração (renovar imagens). Uma execução por vez.',
+  });
 });
 
 app.post('/api/crawl', requireScopes('adm'), async (req: Request, res: Response) => {

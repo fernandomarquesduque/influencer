@@ -48,7 +48,7 @@ async function dismissModals(page: Page, maxAttempts = 5): Promise<void> {
 
 /**
  * Envia uma mensagem direct (inbox) do Instagram para o usuário com o handle informado.
- * Requer sessão logada (auth state em .auth/instagram.json).
+ * Requer sessão logada (auth state em data/instagram-auth.json).
  * @param client InstagramClient já com auth state carregado
  * @param handle Nickname do Instagram (sem @)
  * @param message Texto da mensagem a enviar

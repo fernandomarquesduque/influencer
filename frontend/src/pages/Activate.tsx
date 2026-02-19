@@ -13,11 +13,36 @@ import {
   Select,
   Modal,
   Collapse,
+  Steps,
+  Space,
+  Divider,
 } from 'antd'
-import { ArrowLeftOutlined, CheckCircleOutlined, UserOutlined, DeleteOutlined } from '@ant-design/icons'
-import { fetchProfile, fetchProfileActivation, saveProfileActivation, deleteAccount, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileActivation, type PricingData } from '../api'
+import {
+  ArrowLeftOutlined,
+  CheckCircleOutlined,
+  UserOutlined,
+  MessageOutlined,
+  LinkOutlined,
+  GlobalOutlined,
+} from '@ant-design/icons'
+import {
+  fetchProfile,
+  fetchProfileActivation,
+  saveProfileActivation,
+  deleteAccount,
+  getProfilePicUrl,
+  proxyImageUrl,
+  queueRefreshProfile,
+  type ProfileActivation,
+  type PricingData,
+} from '../api'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
-import { PRICE_BUCKETS, PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
+import {
+  PRICE_BUCKETS,
+  PRICING_FIELD_KEYS,
+  PRICING_FIELD_LABELS,
+  type PricingFieldKey,
+} from '../constants/pricingBuckets'
 import { useAuth } from '../contexts/AuthContext'
 
 const { Title, Text } = Typography
@@ -32,20 +57,59 @@ const GENDER_OPTIONS = [
 
 const PRICE_OPTIONS = PRICE_BUCKETS.map((b) => ({ value: b.value, label: b.label }))
 
+/** Faixa intermediária para "Preencher com padrão". */
+const DEFAULT_PRICE_BUCKET = 1000
+
+const PRICING_FIELD_HELP: Record<PricingFieldKey, string> = {
+  post_unique: 'Post único no feed (publipost)',
+  stories: 'Stories (24h)',
+  package_monthly: 'Pacote mensal recorrente',
+  commission: 'Comissão / afiliado',
+  permuta: 'Permuta (produto/serviço)',
+  image_rights: 'Uso de imagem (direitos de uso)',
+  content_delivery: 'Entrega de conteúdo (sem postar)',
+  launch: 'Lançamento / campanha',
+}
+
+function normalizeUrl(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return `https://${trimmed}`
+}
+
+function formatWhatsApp(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  const digits = value.replace(/\D/g, '')
+  if (digits.length <= 2) return digits ? `+${digits}` : ''
+  if (digits.length <= 4) return `+${digits.slice(0, 2)} (${digits.slice(2)}`
+  if (digits.length <= 9) return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4)}`
+  return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9, 13)}`
+}
+
+function parseWhatsAppDigits(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  return value.replace(/\D/g, '')
+}
+
 export default function Activate() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
-  const { canEditProfile, logout } = useAuth()
+  const { canEditProfile, logout, loading: authLoading } = useAuth()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [draftSaving, setDraftSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [step, setStep] = useState(0)
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
   const [profilePicError, setProfilePicError] = useState(false)
 
   useEffect(() => {
     if (!handle) return
+    if (authLoading) return
     if (!canEditProfile(handle)) {
       navigate('/app', { replace: true })
       return
@@ -62,7 +126,7 @@ export default function Activate() {
         const pic = getProfilePicUrl(profile)
         setProfilePic(pic ? proxyImageUrl(pic) : undefined)
       }
-      const act = activation as ProfileActivation
+      const act = (activation || {}) as ProfileActivation
       const pricingForm: Record<string, number | undefined> = {}
       if (act.pricing && typeof act.pricing === 'object') {
         for (const k of PRICING_FIELD_KEYS) {
@@ -94,44 +158,50 @@ export default function Activate() {
     }).finally(() => {
       if (!cancelled) setLoading(false)
     })
-    return () => { cancelled = true }
-  }, [handle, form])
+    return () => {
+      cancelled = true
+    }
+  }, [handle, form, canEditProfile, navigate, authLoading])
+
+  const buildPayload = (values: Record<string, unknown>) => {
+    const pricing = values.pricing as Record<string, number | string> | undefined
+    const pricingData: PricingData = {}
+    if (pricing && typeof pricing === 'object') {
+      for (const key of PRICING_FIELD_KEYS) {
+        const v = pricing[key]
+        if (typeof v === 'number' && Number.isFinite(v)) pricingData[key] = String(v)
+        if (typeof v === 'string' && v.trim()) pricingData[key] = v.trim()
+      }
+    }
+    return {
+      address: typeof values.address === 'string' ? values.address?.trim() || undefined : undefined,
+      city: typeof values.city === 'string' ? values.city?.trim() || undefined : undefined,
+      state: typeof values.state === 'string' ? values.state?.trim() || undefined : undefined,
+      neighborhood: typeof values.neighborhood === 'string' ? values.neighborhood?.trim() || undefined : undefined,
+      country: typeof values.country === 'string' ? values.country?.trim() || undefined : undefined,
+      whatsapp: typeof values.whatsapp === 'string' ? values.whatsapp?.trim() || undefined : undefined,
+      tiktok: typeof values.tiktok === 'string' ? normalizeUrl(values.tiktok).trim() || undefined : undefined,
+      facebook: typeof values.facebook === 'string' ? normalizeUrl(values.facebook).trim() || undefined : undefined,
+      linkedin: typeof values.linkedin === 'string' ? normalizeUrl(values.linkedin).trim() || undefined : undefined,
+      twitter: typeof values.twitter === 'string' ? normalizeUrl(values.twitter).trim() || undefined : undefined,
+      websites: typeof values.websites === 'string' ? values.websites?.trim() || undefined : undefined,
+      gender: typeof values.gender === 'string' ? values.gender || undefined : undefined,
+      description: typeof values.description === 'string' ? values.description?.trim() || undefined : undefined,
+      about_topics: typeof values.about_topics === 'string' ? values.about_topics?.trim() || undefined : undefined,
+      content_type: Array.isArray(values.content_type) && values.content_type.length
+        ? values.content_type.filter((x): x is string => typeof x === 'string')
+        : undefined,
+      pricing: Object.keys(pricingData).length ? pricingData : undefined,
+    }
+  }
 
   const onFinish = async (values: Record<string, unknown>) => {
     if (!handle) return
     setSaving(true)
     try {
-      const pricing = values.pricing as Record<string, number | string> | undefined
-      const pricingData: PricingData = {}
-      if (pricing && typeof pricing === 'object') {
-        for (const key of PRICING_FIELD_KEYS) {
-          const v = pricing[key]
-          if (typeof v === 'number' && Number.isFinite(v)) pricingData[key] = String(v)
-          if (typeof v === 'string' && v.trim()) pricingData[key] = v.trim()
-        }
-      }
-      await saveProfileActivation(handle, {
-        address: typeof values.address === 'string' ? values.address?.trim() || undefined : undefined,
-        city: typeof values.city === 'string' ? values.city?.trim() || undefined : undefined,
-        state: typeof values.state === 'string' ? values.state?.trim() || undefined : undefined,
-        neighborhood: typeof values.neighborhood === 'string' ? values.neighborhood?.trim() || undefined : undefined,
-        country: typeof values.country === 'string' ? values.country?.trim() || undefined : undefined,
-        whatsapp: typeof values.whatsapp === 'string' ? values.whatsapp?.trim() || undefined : undefined,
-        tiktok: typeof values.tiktok === 'string' ? values.tiktok?.trim() || undefined : undefined,
-        facebook: typeof values.facebook === 'string' ? values.facebook?.trim() || undefined : undefined,
-        linkedin: typeof values.linkedin === 'string' ? values.linkedin?.trim() || undefined : undefined,
-        twitter: typeof values.twitter === 'string' ? values.twitter?.trim() || undefined : undefined,
-        websites: typeof values.websites === 'string' ? values.websites?.trim() || undefined : undefined,
-        gender: typeof values.gender === 'string' ? values.gender || undefined : undefined,
-        description: typeof values.description === 'string' ? values.description?.trim() || undefined : undefined,
-        about_topics: typeof values.about_topics === 'string' ? values.about_topics?.trim() || undefined : undefined,
-        content_type: Array.isArray(values.content_type) && values.content_type.length
-          ? values.content_type.filter((x): x is string => typeof x === 'string')
-          : undefined,
-        pricing: Object.keys(pricingData).length ? pricingData : undefined,
-      })
+      await saveProfileActivation(handle, buildPayload(values))
       message.success('Cadastro ativado com sucesso!')
-      navigate('/app/projects', { replace: true })
+      navigate(`/app/influencer/${encodeURIComponent(handle)}`, { replace: true })
     } catch {
       message.error('Falha ao salvar. Tente novamente.')
     } finally {
@@ -139,9 +209,43 @@ export default function Activate() {
     }
   }
 
+  const onSaveDraft = async () => {
+    if (!handle) return
+    try {
+      const values = await form.validateFields().catch(() => form.getFieldsValue())
+      setDraftSaving(true)
+      await saveProfileActivation(handle, buildPayload(values as Record<string, unknown>))
+      message.success('Rascunho salvo.')
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : 'Falha ao salvar rascunho.')
+    } finally {
+      setDraftSaving(false)
+    }
+  }
+
+  const fillPricingDefault = () => {
+    const current = form.getFieldValue('pricing') || {}
+    const next = { ...current }
+    for (const key of PRICING_FIELD_KEYS) {
+      next[key] = DEFAULT_PRICE_BUCKET
+    }
+    form.setFieldsValue({ pricing: next })
+    message.info('Faixas preenchidas com o padrão (R$ 1.000 – R$ 2.500).')
+  }
+
+  const clearPricing = () => {
+    form.setFieldsValue({
+      pricing: PRICING_FIELD_KEYS.reduce<Record<string, undefined>>((acc, k) => {
+        acc[k] = undefined
+        return acc
+      }, {}),
+    })
+    message.info('Valores de preço limpos.')
+  }
+
   if (!handle) {
     return (
-      <div>
+      <div style={{ padding: 24 }}>
         <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
           Voltar
         </Button>
@@ -150,7 +254,7 @@ export default function Activate() {
     )
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div style={{ textAlign: 'center', padding: 48 }}>
         <Spin size="large" />
@@ -158,191 +262,401 @@ export default function Activate() {
     )
   }
 
+  const steps = [
+    { title: 'Essencial', description: 'O mínimo para ativar' },
+    { title: 'Redes & Contato', description: 'Opcional' },
+    { title: 'Conteúdo & Valores', description: 'Tipos e faixas' },
+  ]
+
   return (
-    <div>
-      <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}`)} style={{ marginBottom: 16 }}>
-        Voltar ao perfil
-      </Button>
-
-      <Card style={{ maxWidth: 720, margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-          {(profilePic && !profilePicError) ? (
-            <img
-              src={profilePic}
-              alt=""
-              onError={() => {
-              setProfilePicError(true)
-              if (handle) queueRefreshProfile(handle).catch(() => {})
-            }}
-              style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover' }}
-            />
-          ) : (
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'var(--app-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <UserOutlined style={{ fontSize: 28, color: 'var(--app-text-tertiary)' }} />
-            </div>
-          )}
-          <div>
-            <Title level={4} style={{ margin: 0 }}>
-              Finalizar cadastro
-            </Title>
-            <Text type="secondary">@{handle}{profileName ? ` · ${profileName}` : ''}</Text>
-          </div>
-        </div>
-
-        <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
-          Preencha os dados abaixo para ativar seu cadastro na plataforma.
-        </Text>
-
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={onFinish}
+    <div style={{ minHeight: '100vh', background: '#f5f6f8', padding: '24px 16px' }}>
+      <div style={{ maxWidth: 640, margin: '0 auto' }}>
+        <Button
+          type="link"
+          icon={<ArrowLeftOutlined />}
+          onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}`)}
+          style={{ marginBottom: 16 }}
         >
-          <Title level={5} style={{ marginTop: 0, marginBottom: 16 }}>Endereço</Title>
-          <Form.Item name="address" label="Endereço completo">
-            <Input placeholder="Rua, número, complemento" />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item name="neighborhood" label="Bairro">
-                <Input placeholder="Bairro" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item name="city" label="Cidade">
-                <Input placeholder="Cidade" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item name="state" label="Estado">
-                <Input placeholder="Estado (UF)" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item name="country" label="País">
-                <Input placeholder="País" />
-              </Form.Item>
-            </Col>
-          </Row>
+          Voltar ao perfil
+        </Button>
 
-          <Title level={5} style={{ marginTop: 24, marginBottom: 16 }}>Contato e redes</Title>
-          <Form.Item name="whatsapp" label="WhatsApp">
-            <Input placeholder="Número com DDI (ex: +55 11 99999-9999)" />
-          </Form.Item>
-          <Form.Item name="tiktok" label="TikTok">
-            <Input placeholder="URL do perfil no TikTok" />
-          </Form.Item>
-          <Form.Item name="facebook" label="Facebook">
-            <Input placeholder="URL do perfil no Facebook" />
-          </Form.Item>
-          <Form.Item name="linkedin" label="LinkedIn">
-            <Input placeholder="URL do perfil no LinkedIn" />
-          </Form.Item>
-          <Form.Item name="twitter" label="X (Twitter)">
-            <Input placeholder="URL do perfil no X / Twitter" />
-          </Form.Item>
-          <Form.Item name="websites" label="Websites">
-            <Input.TextArea
-              placeholder="Um ou mais sites (separados por vírgula ou linha)"
-              rows={3}
-            />
-          </Form.Item>
-
-          <Title level={5} style={{ marginTop: 24, marginBottom: 16 }}>Perfil</Title>
-          <Form.Item name="content_type" label="Tipo de conteúdo">
-            <Select
-              mode="multiple"
-              placeholder="Selecione os tipos que classificam seu conteúdo (ex.: fitness, moda)"
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              options={CONTENT_TYPE_OPTIONS}
-              maxTagCount="responsive"
-            />
-          </Form.Item>
-          <Form.Item name="gender" label="Gênero">
-            <Select placeholder="Selecione" allowClear options={GENDER_OPTIONS} />
-          </Form.Item>
-          <Form.Item name="description" label="Descrição sobre você">
-            <Input.TextArea placeholder="Texto livre sobre você, trajetória, proposta de valor" rows={4} />
-          </Form.Item>
-          <Form.Item name="about_topics" label="Sobre o que você fala">
-            <Input.TextArea placeholder="Temas, nichos, assuntos que você aborda (ex.: maternidade, moda, viagens)" rows={3} />
-          </Form.Item>
-
-          <Title level={5} style={{ marginTop: 24, marginBottom: 16 }}>Valores e formatos</Title>
-          <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-            Selecione a faixa de preço para cada formato (apenas para categorização).
-          </Text>
-          {PRICING_FIELD_KEYS.map((key) => (
-            <Form.Item key={key} name={['pricing', key]} label={PRICING_FIELD_LABELS[key as PricingFieldKey]}>
-              <Select
-                placeholder="Selecione a faixa"
-                allowClear
-                options={PRICE_OPTIONS}
-                style={{ width: '100%' }}
+        <Card
+          style={{
+            boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+            borderRadius: 12,
+            overflow: 'hidden',
+          }}
+        >
+          {/* Cabeçalho premium */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 24 }}>
+            {profilePic && !profilePicError ? (
+              <img
+                src={profilePic}
+                alt=""
+                onError={() => {
+                  setProfilePicError(true)
+                  if (handle) queueRefreshProfile(handle).catch(() => {})
+                }}
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '3px solid #f0f0f0',
+                }}
               />
-            </Form.Item>
-          ))}
+            ) : (
+              <div
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: '50%',
+                  background: '#f0f0f0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <UserOutlined style={{ fontSize: 32, color: '#bfbfbf' }} />
+              </div>
+            )}
+            <div style={{ flex: 1 }}>
+              <Title level={4} style={{ margin: 0, fontWeight: 600 }}>
+                Finalizar cadastro
+              </Title>
+              <Text type="secondary" style={{ fontSize: 14 }}>
+                @{handle}
+                {profileName ? ` · ${profileName}` : ''}
+              </Text>
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary" style={{ fontSize: 13 }}>
+                  Isso leva menos de 2 minutos. Você pode pular etapas e preencher depois.
+                </Text>
+              </div>
+            </div>
+          </div>
 
-          <Form.Item style={{ marginTop: 24, marginBottom: 0 }}>
-            <Button type="primary" htmlType="submit" icon={<CheckCircleOutlined />} loading={saving} size="large">
-              Ativar cadastro
-            </Button>
-          </Form.Item>
+          <Steps current={step} size="small" style={{ marginBottom: 28 }}>
+            {steps.map((s, i) => (
+              <Steps.Step key={i} title={s.title} description={s.description} />
+            ))}
+          </Steps>
 
-          <Collapse
-            ghost
-            defaultActiveKey={[]}
-            style={{ marginTop: 32, border: 'none', background: 'transparent' }}
-            items={[{
-              key: 'delete-account',
-              label: <span style={{ fontSize: 12, color: 'var(--app-text-tertiary)' }}>Excluir minha conta</span>,
-              children: (
+          <Form form={form} layout="vertical" onFinish={onFinish}>
+            {/* Passo 1: Essencial */}
+            <div style={{ display: step === 0 ? 'block' : 'none' }}>
+              <>
+                <Form.Item
+                  name="gender"
+                  label="Gênero"
+                  extra="Opcional."
+                >
+                  <Select placeholder="Selecione (opcional)" allowClear options={GENDER_OPTIONS} />
+                </Form.Item>
+                <Form.Item
+                  name="about_topics"
+                  label="Sobre o que você fala"
+                  extra="Temas e nichos que você aborda. Ex.: maternidade, moda, viagens."
+                >
+                  <Input.TextArea
+                    placeholder="Ex.: maternidade, moda, viagens, fitness"
+                    rows={2}
+                    showCount
+                    maxLength={500}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="description"
+                  label="Descrição sobre você"
+                  extra="Sua trajetória e proposta de valor em poucas linhas."
+                >
+                  <Input.TextArea
+                    placeholder="Conte um pouco sobre você e o que você oferece"
+                    rows={4}
+                    showCount
+                    maxLength={2000}
+                  />
+                </Form.Item>
+                <Divider orientation="left" plain style={{ margin: '16px 0 12px' }}>
+                  Localização
+                </Divider>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+                  Cidade e estado ajudam marcas a encontrar você. Opcional.
+                </Text>
+                <Row gutter={16}>
+                  <Col xs={24} sm={12}>
+                    <Form.Item name="city" label="Cidade">
+                      <Input placeholder="Ex.: São Paulo" />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} sm={12}>
+                    <Form.Item name="state" label="Estado (UF)">
+                      <Input placeholder="Ex.: SP" maxLength={2} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Collapse
+                  ghost
+                  items={[
+                    {
+                      key: 'address',
+                      label: <Text type="secondary">Detalhes avançados (endereço completo)</Text>,
+                      children: (
+                        <>
+                          <Form.Item name="address" label="Endereço completo">
+                            <Input placeholder="Rua, número, complemento" />
+                          </Form.Item>
+                          <Form.Item name="neighborhood" label="Bairro">
+                            <Input placeholder="Bairro" />
+                          </Form.Item>
+                          <Form.Item name="country" label="País">
+                            <Input placeholder="País" />
+                          </Form.Item>
+                        </>
+                      ),
+                    },
+                  ]}
+                />
+              </>
+            </div>
+
+            {/* Passo 2: Redes & Contato */}
+            <div style={{ display: step === 1 ? 'block' : 'none' }}>
+              <>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                  Adicione redes e contato para marcas entrarem em contato. Tudo opcional.
+                </Text>
+                <Collapse
+                  defaultActiveKey={['social']}
+                  items={[
+                    {
+                      key: 'social',
+                      label: 'Adicionar redes (opcional)',
+                      children: (
+                        <Row gutter={[16, 0]}>
+                          <Col xs={24} md={12}>
+                            <Form.Item
+                              name="whatsapp"
+                              label={
+                                <Space>
+                                  <MessageOutlined />
+                                  WhatsApp
+                                </Space>
+                              }
+                              extra="Ex.: +55 (11) 99999-9999. Use 10 a 13 dígitos (com DDI)."
+                              rules={[
+                                {
+                                  validator: (_, v) => {
+                                    if (!v || !String(v).trim()) return Promise.resolve()
+                                    const digits = parseWhatsAppDigits(v)
+                                    if (digits.length < 10 || digits.length > 13) {
+                                      return Promise.reject(new Error('Use 10 a 13 dígitos (com DDI).'))
+                                    }
+                                    return Promise.resolve()
+                                  },
+                                },
+                              ]}
+                              normalize={(v) => (v ? formatWhatsApp(v) : v)}
+                            >
+                              <Input placeholder="+55 (11) 99999-9999" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item
+                              name="tiktok"
+                              label={<Space><LinkOutlined /> TikTok</Space>}
+                              normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                            >
+                              <Input placeholder="https://tiktok.com/@seuuser" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item
+                              name="facebook"
+                              label={<Space><LinkOutlined /> Facebook</Space>}
+                              normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                            >
+                              <Input placeholder="https://facebook.com/seuperfil" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item
+                              name="linkedin"
+                              label={<Space><LinkOutlined /> LinkedIn</Space>}
+                              normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                            >
+                              <Input placeholder="https://linkedin.com/in/seuperfil" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item
+                              name="twitter"
+                              label={<Space><LinkOutlined /> X (Twitter)</Space>}
+                              normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                            >
+                              <Input placeholder="https://x.com/seuuser" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item
+                              name="websites"
+                              label={<Space><GlobalOutlined /> Websites</Space>}
+                              extra="Um ou mais sites, separados por vírgula ou linha."
+                            >
+                              <Input.TextArea placeholder="https://meusite.com" rows={2} />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                      ),
+                    },
+                  ]}
+                />
+              </>
+            </div>
+
+            {/* Passo 3: Conteúdo & Valores */}
+            <div style={{ display: step === 2 ? 'block' : 'none' }}>
+              <>
+                <Form.Item
+                  name="content_type"
+                  label="Tipo de conteúdo"
+                  extra="Selecione os tipos que classificam seu conteúdo (ex.: fitness, moda)."
+                >
+                  <Select
+                    mode="multiple"
+                    placeholder="Ex.: fitness, moda, viagens"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    options={CONTENT_TYPE_OPTIONS}
+                    maxTagCount="responsive"
+                  />
+                </Form.Item>
+                <Divider orientation="left" plain>
+                  Valores e formatos
+                </Divider>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+                  Faixa de preço por formato (apenas para categorização). Você pode pular ou preencher em lote.
+                </Text>
+                <Space style={{ marginBottom: 16 }}>
+                  <Button size="small" onClick={fillPricingDefault}>
+                    Preencher com padrão
+                  </Button>
+                  <Button size="small" onClick={clearPricing}>
+                    Limpar
+                  </Button>
+                </Space>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {PRICING_FIELD_KEYS.map((key) => (
+                    <div
+                      key={key}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 16,
+                        padding: '12px 0',
+                        borderBottom: '1px solid #f0f0f0',
+                      }}
+                    >
+                      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 2 }}>
+                          {PRICING_FIELD_LABELS[key as PricingFieldKey]}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+                          {PRICING_FIELD_HELP[key as PricingFieldKey]}
+                        </div>
+                      </div>
+                      <div style={{ flex: '0 0 220px' }}>
+                        <Form.Item name={['pricing', key]} noStyle>
+                          <Select
+                            placeholder="Faixa"
+                            allowClear
+                            options={PRICE_OPTIONS}
+                            style={{ width: '100%' }}
+                          />
+                        </Form.Item>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            </div>
+
+            {/* Navegação e ações */}
+            <Divider style={{ margin: '24px 0 16px' }} />
+            <Space wrap size="middle">
+              {step > 0 && (
+                <Button onClick={() => setStep((s) => s - 1)}>
+                  Voltar
+                </Button>
+              )}
+              {step < 2 && (
+                <Button type="primary" onClick={() => setStep((s) => s + 1)}>
+                  Próximo
+                </Button>
+              )}
+              {step === 2 && (
                 <>
-                  <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
-                    Em conformidade com a LGPD, você pode excluir permanentemente sua conta e todos os dados armazenados (perfil, cadastro de ativação, posts). Esta ação não pode ser desfeita.
-                  </Text>
+                  <Button loading={draftSaving} onClick={onSaveDraft}>
+                    Salvar rascunho
+                  </Button>
                   <Button
                     type="primary"
-                    danger
-                    size="small"
-                    icon={<DeleteOutlined />}
-                    loading={deleting}
-                    onClick={() => {
-                      Modal.confirm({
-                        title: 'Excluir conta permanentemente?',
-                        content: 'Todos os seus dados serão removidos (cadastro, perfil, posts). Você não poderá acessar a plataforma com esta conta. Esta ação não pode ser desfeita.',
-                        okText: 'Sim, excluir minha conta',
-                        okType: 'danger',
-                        cancelText: 'Cancelar',
-                        onOk: async () => {
-                          setDeleting(true)
-                          try {
-                            await deleteAccount()
-                            message.success('Conta excluída.')
-                            logout()
-                            navigate('/login', { replace: true })
-                          } catch (e) {
-                            message.error(e instanceof Error ? e.message : 'Falha ao excluir conta')
-                          } finally {
-                            setDeleting(false)
-                          }
-                        },
-                      })
-                    }}
+                    htmlType="submit"
+                    icon={<CheckCircleOutlined />}
+                    loading={saving}
+                    size="large"
                   >
-                    Excluir minha conta
+                    Ativar cadastro
                   </Button>
                 </>
-              ),
-              style: { border: 'none', paddingLeft: 0, paddingRight: 0 },
-            }]}
-          />
-        </Form>
-      </Card>
+              )}
+            </Space>
+          </Form>
+        </Card>
+
+        {/* Excluir conta: fora do wizard, o mais sutil possível */}
+        <div style={{ textAlign: 'center', marginTop: 32, paddingBottom: 24 }}>
+          <button
+            type="button"
+            onClick={() => {
+              Modal.confirm({
+                title: 'Excluir conta permanentemente?',
+                content:
+                  'Todos os seus dados serão removidos (perfil, cadastro, posts). Esta ação não pode ser desfeita.',
+                okText: 'Sim, excluir minha conta',
+                okType: 'danger',
+                cancelText: 'Cancelar',
+                onOk: async () => {
+                  setDeleting(true)
+                  try {
+                    await deleteAccount()
+                    message.success('Conta excluída.')
+                    logout()
+                    navigate('/login', { replace: true })
+                  } catch (e) {
+                    message.error(e instanceof Error ? e.message : 'Falha ao excluir conta')
+                  } finally {
+                    setDeleting(false)
+                  }
+                },
+              })
+            }}
+            disabled={deleting}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              fontSize: 12,
+              color: '#8c8c8c',
+              textDecoration: 'none',
+            }}
+          >
+            Excluir minha conta
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

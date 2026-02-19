@@ -471,17 +471,21 @@ export async function extractProfileToBackend(handleOrUrl: string): Promise<Extr
   throw new Error('Extração demorou demais. Tente novamente.')
 }
 
-/** Enfileira re-extração do perfil para renovar URLs de imagem (quando falham). Uma execução por vez no backend. */
-export async function queueRefreshProfile(handle: string): Promise<{ queued: boolean; handle: string; message: string }> {
+/** Enfileira re-extração do perfil para renovar URLs de imagem. priority=true (só adm) coloca na frente da fila e ignora intervalo de 60 min. */
+export async function queueRefreshProfile(
+  handle: string,
+  options?: { priority?: boolean }
+): Promise<{ queued: boolean; handle: string; message: string }> {
   const h = handle.replace(/^@/, '').trim()
   if (!h) return { queued: false, handle: h, message: 'Handle vazio.' }
   const res = await fetch(`${API_BASE}/crawl/queue-refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ handle: h }),
+    body: JSON.stringify({ handle: h, priority: options?.priority === true }),
   })
   const data = await res.json().catch(() => ({}))
   if (res.status === 400) return { queued: false, handle: h, message: data.error || 'Requisição inválida' }
+  if (res.status === 403) return { queued: false, handle: h, message: data.error || 'Sem permissão.' }
   return { queued: !!data.queued, handle: h, message: data.message || (data.queued ? 'Na fila.' : 'Já na fila.') }
 }
 
@@ -527,7 +531,10 @@ export async function fetchProfileActivation(handle: string): Promise<ProfileAct
   })
   if (!res.ok) throw new Error('Falha ao carregar ativação')
   const data = await res.json()
-  return data && typeof data === 'object' ? data : {}
+  if (!data || typeof data !== 'object' || (data as { _redacted?: boolean })._redacted === true) {
+    return {}
+  }
+  return data as ProfileActivation
 }
 
 export async function saveProfileActivation(handle: string, data: Omit<ProfileActivation, 'activated_at' | 'updated_at'>): Promise<ProfileActivation> {

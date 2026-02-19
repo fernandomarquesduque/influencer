@@ -20,7 +20,7 @@ export class InstagramClient {
 
   constructor(options: InstagramClientOptions = {}) {
     this.headless = options.headless ?? true;
-    this.authStatePath = options.authStatePath ?? '.auth/instagram.json';
+    this.authStatePath = options.authStatePath ?? 'data/instagram-auth.json';
   }
 
   async init(): Promise<void> {

@@ -12,6 +12,7 @@ import { buildSlimProfile } from '../utils/slimProfile.js';
 export interface CrawlStorage {
   save(entity: Entity & { handle: string }): Promise<{ path: string; bytes: number }>;
   savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number>;
+  deletePostsByHandle?(profileHandle: string): Promise<number>;
   listHandles(): Promise<Set<string>>;
   clearAll(): Promise<void>;
 }
@@ -241,7 +242,7 @@ export async function runCrawl(
       }
       crawlLog('Sessão Instagram OK.');
     } else {
-      crawlLog('INSTAGRAM_USER ou INSTAGRAM_PASSWORD não definidos no .env; usando apenas sessão salva em .auth/instagram.json se existir.');
+      crawlLog('INSTAGRAM_USER ou INSTAGRAM_PASSWORD não definidos no .env; usando apenas sessão salva em data/instagram-auth.json se existir.');
     }
     crawlLog(`Hashtag: ${tag}, max posts: ${effectiveMaxPosts}, max perfis: ${effectiveMaxProfiles}, min seguidores: ${config.minFollowersToSave}, regra: ${config.minPostsWithMinLikesToSave}+ posts com ${config.minPostLikesToSave}+ curtidas`);
     if (process.env.CRAWL_SAFE === '1' || process.env.CRAWL_SAFE === 'true') {
@@ -319,7 +320,7 @@ export async function runCrawlFromFeed(
       }
       crawlLog('Sessão Instagram OK.');
     } else {
-      crawlLog('INSTAGRAM_USER ou INSTAGRAM_PASSWORD não definidos no .env; usando apenas sessão salva em .auth/instagram.json se existir.');
+      crawlLog('INSTAGRAM_USER ou INSTAGRAM_PASSWORD não definidos no .env; usando apenas sessão salva em data/instagram-auth.json se existir.');
     }
     crawlLog(`Feed principal: max posts: ${config.maxPostsPerTag}, max perfis: ${effectiveMaxProfiles}, min seguidores: ${config.minFollowersToSave}, regra: ${config.minPostsWithMinLikesToSave}+ posts com ${config.minPostLikesToSave}+ curtidas`);
     if (process.env.CRAWL_SAFE === '1' || process.env.CRAWL_SAFE === 'true') {
@@ -396,7 +397,7 @@ export async function runCrawlFromExplore(
       }
       crawlLog('Sessão Instagram OK.');
     } else {
-      crawlLog('INSTAGRAM_USER ou INSTAGRAM_PASSWORD não definidos no .env; usando apenas sessão salva em .auth/instagram.json se existir.');
+      crawlLog('INSTAGRAM_USER ou INSTAGRAM_PASSWORD não definidos no .env; usando apenas sessão salva em data/instagram-auth.json se existir.');
     }
     crawlLog(`Explore: max perfis: ${effectiveMaxProfiles}, min seguidores: ${config.minFollowersToSave}, regra: ${config.minPostsWithMinLikesToSave}+ posts com ${config.minPostLikesToSave}+ curtidas`);
     if (process.env.CRAWL_SAFE === '1' || process.env.CRAWL_SAFE === 'true') {

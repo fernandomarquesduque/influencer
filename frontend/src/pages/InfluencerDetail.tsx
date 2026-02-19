@@ -14,6 +14,7 @@ import {
   Typography,
   Tooltip,
   Collapse,
+  message,
 } from 'antd'
 import {
   FileImageOutlined,
@@ -160,7 +161,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const { handle: paramHandle } = useParams<{ handle: string }>()
   const handle = overrideHandle ?? paramHandle
   const navigate = useNavigate()
-  const { user, isPublic, canEditProfile } = useAuth()
+  const { user, isPublic, canEditProfile, isAdm } = useAuth()
 
   const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
   const isInfluencerOwnProfileIncomplete = user?.scope === 'influencer' && canEditProfile(handle ?? '') && user?.profile_activated === false
@@ -413,7 +414,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
 
 
       {isRedacted && (
-        <div style={{ width: '100%', marginTop: '20px', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
+        <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
           <div style={{ marginBottom: s.lg, padding: s.sm, background: '#fff2e8', border: '1px solid #ffbb96', borderRadius: r }}>
             {user ? (
               <Text>Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.</Text>
@@ -456,6 +457,11 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             ]}
             onBack={() => navigate(-1)}
             onEditProfile={canEdit && handle ? () => navigate(`/activate/${encodeURIComponent(handle)}`) : undefined}
+            onUpdateInstagram={isAdm && handle ? async () => {
+              const r = await queueRefreshProfile(handle, { priority: true })
+              if (r.queued) message.success(r.message)
+              else message.warning(r.message)
+            } : undefined}
             onCta={goToMediaKitOrLogin}
             onAvatarError={() => {
               if (!refreshQueuedRef.current && handle) {

@@ -287,11 +287,9 @@ export default function InfluencerList() {
   }
 
   const openDetail = (handleOrKey: string) => {
-    const prev = getCache()
-    if (prev && prev.q === qFromUrl.trim()) {
-      saveCache({ ...prev, scrollPosition: typeof window !== 'undefined' ? window.scrollY : 0 })
-    }
-    navigate(location.pathname + location.search, { state: { detailHandle: handleOrKey } })
+    const path = `/app/influencer/${encodeURIComponent(handleOrKey)}`
+    const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   /** Categorias e engajamento vêm da sumarização da API (facets), não dos itens da página atual */

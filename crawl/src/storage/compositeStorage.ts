@@ -21,6 +21,22 @@ export class CompositeStorage {
     return result;
   }
 
+  async deletePostsByHandle(profileHandle: string): Promise<number> {
+    return this.rocks.deletePostsByHandle(profileHandle);
+  }
+
+  /**
+   * Remove o perfil completamente (RocksDB + SQLite). Usado quando o refresh falha com "Perfil não encontrado".
+   */
+  async deleteProfileCompletely(profileHandle: string): Promise<void> {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    await this.rocks.deleteProfileByHandle(handle);
+    await this.rocks.deletePostsByHandle(handle);
+    this.sqlite.deleteActivation(handle);
+    this.sqlite.deleteProjectApplicationsByHandle(handle);
+    this.onInvalidateSearch?.(this);
+  }
+
   async savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number> {
     const n = await this.rocks.savePosts(profileHandle, posts, collectedAt);
     this.onInvalidateSearch?.(this);

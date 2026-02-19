@@ -24,7 +24,7 @@ Ferramenta de extração de perfis de microinfluenciadores no Instagram com **fo
 
 ## Uso
 
-**Login (persiste sessão em `.auth/instagram.json`):**
+**Login (persiste sessão em `data/instagram-auth.json`):**
 
 ```bash
 npm run login
@@ -86,5 +86,5 @@ Se o login falhar ("Login falhou (verifique usuário/senha ou desafio do Instagr
    ```bash
    LOGIN_DEBUG=true npm run login
    ```
-4. O Instagram pode **bloquear ou desafiar** automação (headless). Se funcionar com `HEADFUL=true` e falhar em headless, use login com navegador visível uma vez para gerar a sessão; depois o crawl pode reutilizar `.auth/instagram.json`.
+4. O Instagram pode **bloquear ou desafiar** automação (headless). Se funcionar com `HEADFUL=true` e falhar em headless, use login com navegador visível uma vez para gerar a sessão; depois o crawl pode reutilizar `data/instagram-auth.json`.
 5. Se aparecer **"Senha incorreta"** ou similar na página, o script tenta exibir essa mensagem no console quando `LOGIN_DEBUG=true`.

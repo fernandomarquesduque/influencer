@@ -30,26 +30,73 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   })
 }
 
-async function fetchImageAsDataUrl(url: string, retries = 2): Promise<string | null> {
+const IMAGE_FETCH_TIMEOUT_MS = 5_000
+const POST_IMAGES_PHASE_MAX_MS = 20_000
+const MAX_URL_CANDIDATES_PER_POST = 3
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout')), ms)
+    ),
+  ])
+}
+
+async function fetchImageAsDataUrl(url: string, retries = 1): Promise<string | null> {
   const headers = { ...authHeaders() }
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url, { mode: 'cors', credentials: 'include', headers })
+      const res = await withTimeout(
+        fetch(url, { mode: 'cors', credentials: 'include', headers }),
+        IMAGE_FETCH_TIMEOUT_MS
+      )
       if (!res.ok) {
-        if (attempt < retries) await new Promise((r) => setTimeout(r, 600))
+        if (attempt < retries) await new Promise((r) => setTimeout(r, 200))
         continue
       }
-      const blob = await res.blob()
+      const blob = await withTimeout(res.blob(), IMAGE_FETCH_TIMEOUT_MS)
       if (!blob.type.startsWith('image/')) return null
-      return blobToDataUrl(blob)
+      return await blobToDataUrl(blob)
     } catch {
-      if (attempt < retries) await new Promise((r) => setTimeout(r, 600))
+      if (attempt < retries) await new Promise((r) => setTimeout(r, 200))
     }
   }
   return null
 }
 
 const MIN_PDF_SIZE = 1000 // 1KB mínimo para considerar PDF válido
+
+const MEDIA_KIT_CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutos
+
+interface MediaKitCacheEntry {
+  profile: ProfileItem
+  posts: PostItem[]
+  activation: ProfileActivation | null
+  reportInsights: ReturnType<typeof buildReportInsights> | null
+  profilePicDataUrl: string | null
+  postImageDataUrls: Record<string, string>
+  postImageDataUrlsOrdered: string[]
+  cachedAt: number
+}
+
+const mediaKitCache = new Map<string, MediaKitCacheEntry>()
+
+function getCachedMediaKit(handle: string): MediaKitCacheEntry | null {
+  const key = handle.replace(/^@/, '').toLowerCase()
+  const entry = mediaKitCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.cachedAt > MEDIA_KIT_CACHE_TTL_MS) {
+    mediaKitCache.delete(key)
+    return null
+  }
+  return entry
+}
+
+function setCachedMediaKit(handle: string, entry: Omit<MediaKitCacheEntry, 'cachedAt'>): void {
+  const key = handle.replace(/^@/, '').toLowerCase()
+  mediaKitCache.set(key, { ...entry, cachedAt: Date.now() })
+}
 
 export default function MediaKit() {
   const { handle } = useParams<{ handle: string }>()
@@ -78,6 +125,49 @@ export default function MediaKit() {
     const h = handle.replace(/^@/, '')
 
     try {
+      const cached = getCachedMediaKit(h)
+      if (cached) {
+        setStatus('generating')
+        setProgress('Gerando PDF (dados em cache)...')
+        if (abortRef.current) return
+        const doc = (
+          <MediaKitDocument
+            profile={cached.profile}
+            posts={cached.posts}
+            activation={cached.activation}
+            reportInsights={cached.reportInsights}
+            profilePicDataUrl={cached.profilePicDataUrl}
+            postImageDataUrls={cached.postImageDataUrls}
+            postImageDataUrlsOrdered={cached.postImageDataUrlsOrdered}
+          />
+        )
+        const blob = await pdf(doc).toBlob()
+        if (abortRef.current) return
+        if (!blob || blob.size < MIN_PDF_SIZE) {
+          mediaKitCache.delete(h.toLowerCase())
+          setError('O PDF gerado está vazio ou inválido.')
+          setStatus('error')
+          return
+        }
+        if (typeof effectRunId === 'number' && effectRunId !== effectRunIdRef.current) return
+        setStatus('saving')
+        setProgress('Salvando arquivo...')
+        const filename = `MediaKit_${h}.pdf`
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        a.style.display = 'none'
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+        setSavedPath(filename)
+        setValidated(blob.size >= MIN_PDF_SIZE)
+        setStatus('done')
+        return
+      }
+
       setStatus('loading_data')
       setProgress('Carregando perfil...')
 
@@ -156,7 +246,7 @@ export default function MediaKit() {
       }
 
       async function tryLoadPostImage(post: PostItem): Promise<boolean> {
-        const candidates = getPostImageUrlCandidates(post)
+        const candidates = getPostImageUrlCandidates(post).slice(0, MAX_URL_CANDIDATES_PER_POST)
         for (const rawUrl of candidates) {
           const url = proxyImageUrl(rawUrl)
           if (!url) continue
@@ -165,19 +255,17 @@ export default function MediaKit() {
             setPostImageDataUrl(post, dataUrl)
             return true
           }
-          await new Promise((r) => setTimeout(r, 350))
+          await new Promise((r) => setTimeout(r, 150))
         }
         return false
       }
 
-      await new Promise((r) => setTimeout(r, 400))
-      for (let i = 0; i < topPostsForImages.length; i++) {
-        const post = topPostsForImages[i]
-        if (post && !getPostImageByKeys(post, postImageDataUrls)) {
-          await tryLoadPostImage(post)
-          await new Promise((r) => setTimeout(r, 300))
-        }
-      }
+      const loadOne = (post: PostItem | undefined) =>
+        post && !getPostImageByKeys(post, postImageDataUrls) ? tryLoadPostImage(post) : Promise.resolve(false)
+      await Promise.race([
+        Promise.all(topPostsForImages.slice(0, 3).map((post) => loadOne(post))),
+        new Promise<void>((resolve) => setTimeout(resolve, POST_IMAGES_PHASE_MAX_MS)),
+      ])
 
       const postImageDataUrlsOrdered: string[] = []
       function getPostImageByKeys(post: PostItem | undefined, map: Record<string, string>): string {
@@ -206,6 +294,17 @@ export default function MediaKit() {
       }
 
       if (abortRef.current) return
+
+      setCachedMediaKit(h, {
+        profile,
+        posts,
+        activation: Object.keys(activation).length ? activation : null,
+        reportInsights,
+        profilePicDataUrl,
+        postImageDataUrls: { ...postImageDataUrls },
+        postImageDataUrlsOrdered: [...postImageDataUrlsOrdered],
+      })
+
       setStatus('generating')
       setProgress('Gerando PDF...')
 

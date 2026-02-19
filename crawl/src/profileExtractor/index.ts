@@ -368,15 +368,10 @@ export async function extractProfile(
       return null;
     }
 
-    // Página de login: Instagram pediu para entrar (sessão expirada ou não logada)
+    // Página de login: só confiar na URL (texto da página dá falso positivo: "Entrar" aparece em botões do perfil)
     const isLoginPage = await page.evaluate(() => {
-      const text = (document.body?.innerText ?? '').toLowerCase();
       const href = (window.location?.href ?? '').toLowerCase();
-      return (
-        href.includes('/accounts/login') ||
-        href.includes('/challenge/') ||
-        /log in|entrar|iniciar sesión|sign up|create account|criar conta/i.test(text)
-      );
+      return href.includes('/accounts/login') || href.includes('/challenge/');
     }).catch(() => false);
     if (isLoginPage) {
       throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login');

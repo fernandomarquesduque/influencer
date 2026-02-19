@@ -178,7 +178,7 @@ export async function loginWithCredentials(
         console.error(
           '[login] Instagram respondeu com erro HTTP' + code + '. ' +
           'Causas comuns: Chrome 109 bloqueado pelo Instagram, IP/firewall do servidor, ou rede. ' +
-          'Solução recomendada: faça o login em outro PC (Windows 10+ com Chrome atual), copie o arquivo .auth/instagram.json para esta pasta no servidor e reinicie a API.'
+          'Solução recomendada: faça o login em outro PC (Windows 10+ com Chrome atual), copie o arquivo data/instagram-auth.json para esta pasta no servidor e reinicie a API.'
         );
       }
       throw gotoErr;

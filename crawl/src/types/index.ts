@@ -32,7 +32,7 @@ export const DEFAULT_CRAWL_CONFIG: CrawlConfig = {
   maxPostsPerTag: 30,
   maxProfiles: 100,
   headless: true,
-  authStatePath: '.auth/instagram.json',
+  authStatePath: 'data/instagram-auth.json',
   randomDelayMinMs: 2000,
   randomDelayMaxMs: 6000,
   maxRetries: 2,

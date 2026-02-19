@@ -1,6 +1,13 @@
 import 'dotenv/config';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { InstagramClient } from '../instagramClient/index.js';
 import { loginWithCredentials } from '../instagramClient/login.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/** Raiz do projeto crawl (mesmo que server.ts). */
+const CRAWL_ROOT = path.resolve(__dirname, '../..');
+const DEFAULT_AUTH_PATH = path.join(CRAWL_ROOT, 'data', 'instagram-auth.json');
 
 async function main(): Promise<void> {
   const user = process.env.INSTAGRAM_USER;
@@ -10,9 +17,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const authPath = process.env.AUTH_STATE_PATH
+    ? path.isAbsolute(process.env.AUTH_STATE_PATH)
+      ? process.env.AUTH_STATE_PATH
+      : path.resolve(CRAWL_ROOT, process.env.AUTH_STATE_PATH)
+    : DEFAULT_AUTH_PATH;
+
   const client = new InstagramClient({
     headless: process.env.HEADFUL !== 'true',
-    authStatePath: process.env.AUTH_STATE_PATH ?? '.auth/instagram.json',
+    authStatePath: authPath,
   });
 
   try {

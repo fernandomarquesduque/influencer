@@ -6,6 +6,7 @@ import { Button, Card, Tag, Avatar, Progress, Skeleton, Tabs, Tooltip } from 'an
 import {
   ArrowLeftOutlined,
   EditOutlined,
+  SyncOutlined,
   UserOutlined,
   CheckCircleFilled,
   WarningFilled,
@@ -61,6 +62,8 @@ export interface ReportHeroProps {
   /** Botão para o dono do perfil editar (leva à página de ativação/cadastro) */
   onEditProfile?: () => void
   editProfileLabel?: string
+  /** Botão para admin forçar re-extração prioritária do perfil no Instagram */
+  onUpdateInstagram?: () => void
 }
 
 const AVATAR_SIZE = 160
@@ -87,11 +90,12 @@ export function ReportHero({
   scoreTooltip,
   onEditProfile,
   editProfileLabel = 'Editar perfil',
+  onUpdateInstagram,
 }: ReportHeroProps) {
   const atHandle = handleProp ? `@${handleProp.replace(/^@/, '')}` : ''
   const avatarSize = isMobile ? AVATAR_SIZE_MOBILE : AVATAR_SIZE
-  const pad = isMobile ? s.md : s.xl
-  const gap = isMobile ? s.md : s.xl
+  const pad = isMobile ? s.md : s.md
+  const gap = isMobile ? s.md : s.md
   const progressGradient = scoreValue != null
     ? (scoreValue >= 70 ? `linear-gradient(90deg, ${c.success} 0%, #34d399 100%)` : scoreValue >= 40 ? `linear-gradient(90deg, ${c.primary} 0%, #818cf8 100%)` : `linear-gradient(90deg, ${c.warning} 0%, #fbbf24 100%)`)
     : undefined
@@ -110,14 +114,7 @@ export function ReportHero({
         }}
       >
         <div style={{ position: 'absolute', inset: 0, background: c.heroBlob, pointerEvents: 'none' }} />
-        <Button
-          type="text"
-          icon={<ArrowLeftOutlined />}
-          onClick={onBack}
-          className="report-hero-back"
-          style={{ color: c.textSecondary, position: 'absolute', top: isMobile ? s.md : s.lg, left: isMobile ? s.md : s.lg, zIndex: 1 }}
-          aria-label="Voltar"
-        />
+
         <div style={{ display: 'flex', alignItems: 'center', gap, flexWrap: 'wrap', position: 'relative', zIndex: 0 }}>
           <Avatar
             size={avatarSize}
@@ -225,6 +222,20 @@ export function ReportHero({
                 >
                   {editProfileLabel}
                 </Button>
+              )}
+              {onUpdateInstagram && (
+                <Tooltip title="Força re-extração do perfil no Instagram (prioritária, só admin)">
+                  <Button
+                    type="default"
+                    size={isMobile ? 'small' : 'middle'}
+                    icon={<SyncOutlined />}
+                    onClick={onUpdateInstagram}
+                    style={{ borderRadius: r.md }}
+                    aria-label="Atualizar Instagram"
+                  >
+                    Atualizar Instagram
+                  </Button>
+                </Tooltip>
               )}
             </div>
           </div>
