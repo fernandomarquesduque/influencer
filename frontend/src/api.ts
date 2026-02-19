@@ -7,7 +7,7 @@ export function setAuthToken(token: string | null): void {
   authToken = token
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {}
 }
 

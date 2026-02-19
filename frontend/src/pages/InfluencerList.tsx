@@ -278,7 +278,7 @@ export default function InfluencerList() {
     ? decodeURIComponent(urlHandle).toLowerCase() === myHandle
     : false
   if (user?.scope === 'influencer' && user.profile_handle && !isViewingOwnProfile) {
-    return <Navigate to="/app/projects" replace />
+    return <Navigate to={myHandle ? `/app/influencer/${encodeURIComponent(myHandle)}` : '/app'} replace />
   }
 
   const runSearch = () => {

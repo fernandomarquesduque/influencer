@@ -718,8 +718,8 @@ export function StickyCTA({
   primaryLabel: string
   primarySubtext: string
   onPrimary: () => void
-  secondaryLabel: string
-  onSecondary: () => void
+  secondaryLabel?: string
+  onSecondary?: () => void
   visible: boolean
 }) {
   if (!visible) return null
@@ -728,7 +728,7 @@ export function StickyCTA({
       <div style={{ width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: s.sm }}>
         <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#1a1a1a', height: 48 }} onClick={onPrimary}>{primaryLabel}</Button>
         <div style={{ ...typ.caption, color: c.textMuted, textAlign: 'center' }}>{primarySubtext}</div>
-        <Button type="default" size="middle" block style={{ borderRadius: r.md }} onClick={onSecondary}>{secondaryLabel}</Button>
+        {secondaryLabel && onSecondary ? <Button type="default" size="middle" block style={{ borderRadius: r.md }} onClick={onSecondary}>{secondaryLabel}</Button> : null}
       </div>
     </div>
   )

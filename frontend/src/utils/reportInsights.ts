@@ -18,6 +18,18 @@ function toNum(v: unknown): number {
   return 0
 }
 
+/** Extrai número de seguidores do perfil (top-level, data.user.follower_count ou data.user.edge_followed_by.count). */
+function getFollowersCount(profile: ProfileItem | null | undefined): number {
+  if (!profile) return 0
+  if (typeof profile.followers_count === 'number' && profile.followers_count >= 0) return profile.followers_count
+  const user = profile.data?.user as Record<string, unknown> | undefined
+  if (user && typeof (user as { follower_count?: number }).follower_count === 'number')
+    return (user as { follower_count: number }).follower_count
+  const edge = user?.edge_followed_by as { count?: number } | undefined
+  if (edge != null && typeof edge.count === 'number') return edge.count
+  return 0
+}
+
 function getPostTimestamp(p: PostItem): number | null {
   const takenAt = p.post?.taken_at
   if (takenAt != null && typeof takenAt === 'number') return takenAt
@@ -52,9 +64,7 @@ export function computeInfluencerScore(
   posts: PostItem[],
   engagement: EngagementStats
 ): InfluencerScore {
-  const followersCount = typeof profile?.followers_count === 'number'
-    ? profile.followers_count
-    : (profile?.data?.user as { follower_count?: number } | undefined)?.follower_count ?? 0
+  const followersCount = getFollowersCount(profile)
   const userData = profile?.data?.user as Record<string, unknown> | undefined
 
   const totalInteractions = engagement.total_likes + engagement.total_comments
@@ -473,9 +483,7 @@ export function getValorEstimadoRocksDB(
   engagement: EngagementStats
 ): ValorEstimadoInsight {
   const userData = profile?.data?.user as Record<string, unknown> | undefined
-  const followers = typeof profile?.followers_count === 'number'
-    ? profile.followers_count
-    : (userData?.follower_count as number | undefined) ?? 0
+  const followers = getFollowersCount(profile)
   const er = engagement.engagement_rate ?? 0
   const hasViews = (engagement.total_views ?? 0) > 0
   const avgViews = engagement.avg_views ?? 0
@@ -564,9 +572,7 @@ export function buildReportInsights(
   posts: PostItem[]
 ) {
   const limited = posts.slice(0, REPORT_POSTS_LIMIT)
-  const followersCount = typeof profile?.followers_count === 'number'
-    ? profile.followers_count
-    : (profile?.data?.user as { follower_count?: number } | undefined)?.follower_count ?? 0
+  const followersCount = getFollowersCount(profile)
   const engagement = computeEngagementFromPosts(limited, followersCount)
   const score = computeInfluencerScore(profile, limited, engagement)
   const diagnostico = getDiagnosticoIA(profile, limited, engagement, score)

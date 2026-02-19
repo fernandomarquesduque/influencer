@@ -40,7 +40,7 @@ export default function App() {
         <Route path="/app" element={<ListCacheProvider><Layout /></ListCacheProvider>}>
           <Route index element={<ListAndDetailModal />} />
           <Route path="influencer/:handle" element={<ListAndDetailModal />} />
-          <Route path="influencer/:handle/media-kit" element={<MediaKit />} />
+          <Route path="influencer/:handle/media-kit" element={<RequireAuth requireLogin><MediaKit /></RequireAuth>} />
           <Route path="projects" element={<Projects />} />
           <Route path="projects/new" element={<Projects />} />
           <Route path="projects/:id" element={<Projects />} />

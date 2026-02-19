@@ -63,9 +63,9 @@ export default function Layout() {
 
   useEffect(() => {
     if (user?.scope === 'influencer' && myHandle && !allowedForInfluencer) {
-      navigate('/app/projects', { replace: true })
+      navigate(myProfilePath, { replace: true })
     }
-  }, [user?.scope, myHandle, allowedForInfluencer, navigate])
+  }, [user?.scope, myHandle, myProfilePath, allowedForInfluencer, navigate])
 
   useEffect(() => {
     if (!user) {

@@ -27,7 +27,6 @@ import {
   LinkedinOutlined,
   TwitterOutlined,
   CheckCircleFilled,
-  ShareAltOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
@@ -162,6 +161,26 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const handle = overrideHandle ?? paramHandle
   const navigate = useNavigate()
   const { user, isPublic, canEditProfile } = useAuth()
+
+  const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
+  const isInfluencerOwnProfileIncomplete = user?.scope === 'influencer' && canEditProfile(handle ?? '') && user?.profile_activated === false
+  const goToMediaKitOrLogin = () => {
+    if (isInfluencerOwnProfileIncomplete && handle) {
+      navigate(`/activate/${encodeURIComponent(handle)}`)
+      return
+    }
+    if (user) {
+      if (handle) navigate(mediaKitPath)
+      else document.getElementById('cta-final')?.scrollIntoView({ behavior: 'smooth' })
+    } else {
+      navigate('/login', { state: { from: { pathname: mediaKitPath } } })
+    }
+  }
+  const mediaKitCtaLabel = isInfluencerOwnProfileIncomplete
+    ? 'Finalize seu cadastro para gerar Media Kit'
+    : user
+      ? 'Gerar Media Kit Profissional'
+      : 'Faça login para gerar Media Kit'
   const isLimitedView = !user || isPublic
   const [profileLoading, setProfileLoading] = useState(true)
   const [postsLoading, setPostsLoading] = useState(true)
@@ -394,7 +413,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
 
 
       {isRedacted && (
-        <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
+        <div style={{ width: '100%', marginTop: '20px', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
           <div style={{ marginBottom: s.lg, padding: s.sm, background: '#fff2e8', border: '1px solid #ffbb96', borderRadius: r }}>
             {user ? (
               <Text>Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.</Text>
@@ -437,7 +456,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             ]}
             onBack={() => navigate(-1)}
             onEditProfile={canEdit && handle ? () => navigate(`/activate/${encodeURIComponent(handle)}`) : undefined}
-            onCta={() => document.getElementById('diagnostico-secao')?.scrollIntoView({ behavior: 'smooth' })}
+            onCta={goToMediaKitOrLogin}
             onAvatarError={() => {
               if (!refreshQueuedRef.current && handle) {
                 refreshQueuedRef.current = true
@@ -835,22 +854,13 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                 type="primary"
                 size="large"
                 style={{ borderRadius: radiusLarge, paddingLeft: s.xl, paddingRight: s.xl, height: 52, background: gold, borderColor: gold, color: '#1a1a1a', marginBottom: s.sm }}
-                onClick={() => handle && navigate(`/app/influencer/${encodeURIComponent(handle)}/media-kit`)}
+                onClick={goToMediaKitOrLogin}
               >
-                Gerar Media Kit Profissional
+                {mediaKitCtaLabel}
               </Button>
               <div style={{ ...typ.caption, color: c.textMuted, marginBottom: s.sm }}>Pronto em 30s · PDF bonito · Envie para marcas</div>
             </>
           )}
-          <Button
-            type="default"
-            size="large"
-            icon={<ShareAltOutlined />}
-            style={{ borderRadius: r }}
-            onClick={() => { if (navigator.share) navigator.share({ title: `Relatório ${fullName || displayHandle}`, url: window.location.href, text: `Relatório de Influencer: ${fullName || displayHandle}` }).catch(() => { }) }}
-          >
-            Compartilhar Link
-          </Button>
         </div>
 
         {!isLimitedView && !isRedacted && (() => {
@@ -900,11 +910,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
 
       <StickyCTA
         visible={isMobile && !isRedacted}
-        primaryLabel="Gerar Media Kit Profissional"
+        primaryLabel={mediaKitCtaLabel}
         primarySubtext="Pronto em 30s · PDF bonito · Envie para marcas"
-        onPrimary={() => handle ? navigate(`/app/influencer/${encodeURIComponent(handle)}/media-kit`) : document.getElementById('cta-final')?.scrollIntoView({ behavior: 'smooth' })}
-        secondaryLabel="Compartilhar Link"
-        onSecondary={() => { if (navigator.share) navigator.share({ title: `Relatório ${fullName || displayHandle}`, url: window.location.href, text: `Relatório de Influencer: ${fullName || displayHandle}` }).catch(() => { }) }}
+        onPrimary={goToMediaKitOrLogin}
       />
 
       <style>{`
