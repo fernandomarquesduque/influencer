@@ -116,15 +116,19 @@ export async function sendDirectMessage(
       'input[aria-label*="Pesquisar"]',
     ];
     let searchInput: ReturnType<Page['locator']> | null = null;
-    for (const sel of searchSelectors) {
+    for (let i = 0; i < searchSelectors.length; i++) {
+      const sel = searchSelectors[i];
       const el = page.locator(sel).first();
       if ((await el.count()) > 0) {
         try {
+          const tWait = Date.now();
           await el.waitFor({ state: 'visible', timeout: 2500 });
+          logStep(t0, `Campo busca seletor ${i + 1}/${searchSelectors.length} OK em ${Date.now() - tWait}ms`);
           searchInput = el;
           log(`campo de busca encontrado: ${sel}`);
           break;
         } catch {
+          logStep(t0, `Campo busca seletor ${i + 1}/${searchSelectors.length} falhou`);
           continue;
         }
       }
@@ -151,15 +155,20 @@ export async function sendDirectMessage(
       `[role="option"]:has-text("${cleanHandle}")`,
     ];
     let userClicked = false;
-    for (const sel of userResultSelectors) {
+    for (let i = 0; i < userResultSelectors.length; i++) {
+      const sel = userResultSelectors[i];
       try {
         const el = page.locator(sel).first();
+        const tWait = Date.now();
         await el.waitFor({ state: 'visible', timeout: 2500 });
+        logStep(t0, `Resultado usuário seletor ${i + 1}/${userResultSelectors.length} visível em ${Date.now() - tWait}ms`);
         await el.click();
         userClicked = true;
+        logStep(t0, `Usuário clicado (seletor ${i + 1})`);
         log(`usuário selecionado: ${sel}`);
         break;
       } catch {
+        logStep(t0, `Resultado usuário seletor ${i + 1}/${userResultSelectors.length} falhou`);
         continue;
       }
     }
@@ -182,8 +191,11 @@ export async function sendDirectMessage(
 
     // Esperar a conversa carregar e fechar modais de novo
     await randomDelay(150, 350);
+    logStep(t0, 'Aguardando URL /direct/ (timeout 4s)...');
     try {
+      const tUrl = Date.now();
       await page.waitForURL(/\/direct\//, { timeout: 4000 }).catch(() => { });
+      logStep(t0, `URL /direct/ OK em ${Date.now() - tUrl}ms`);
     } catch {
       // ignore
     }
@@ -202,14 +214,14 @@ export async function sendDirectMessage(
       'textarea[placeholder*="Mensagem"]',
       '[contenteditable="true"]',
     ];
-    // Botão Enviar: pode ser texto ou ícone (avião); clicar no botão que contém o ícone
+    // Botão Enviar: div[role="button"] com texto costuma funcionar primeiro (DOM atual do Instagram)
     const sendSelectors = [
+      'div[role="button"]:has-text("Enviar")',
+      'div[role="button"]:has-text("Send")',
       'button:has(svg[aria-label="Enviar"]), button:has(svg[aria-label="Send"])',
       'div[role="button"]:has(svg[aria-label="Enviar"]), div[role="button"]:has(svg[aria-label="Send"])',
       'button:has-text("Enviar")',
       'button:has-text("Send")',
-      'div[role="button"]:has-text("Enviar")',
-      'div[role="button"]:has-text("Send")',
       'svg[aria-label="Enviar"]',
       'svg[aria-label="Send"]',
     ];
@@ -218,6 +230,7 @@ export async function sendDirectMessage(
     let lastError: string | undefined;
 
     for (let attempt = 1; attempt <= maxSendAttempts; attempt++) {
+      logStep(t0, `Tentativa envio ${attempt}/${maxSendAttempts}`);
       log(`tentativa de envio ${attempt}/${maxSendAttempts}`);
       if (attempt > 1) {
         await dismissModals(page);
@@ -225,25 +238,33 @@ export async function sendDirectMessage(
       }
 
       let messageInput: ReturnType<Page['locator']> | null = null;
-      for (const sel of messageInputSelectors) {
+      const msgTimeout = attempt === 1 ? 5000 : 3000;
+      for (let i = 0; i < messageInputSelectors.length; i++) {
+        const sel = messageInputSelectors[i];
         const el = page.locator(sel).first();
         if ((await el.count()) > 0) {
           try {
-            await el.waitFor({ state: 'visible', timeout: attempt === 1 ? 5000 : 3000 });
+            const tMsg = Date.now();
+            await el.waitFor({ state: 'visible', timeout: msgTimeout });
+            logStep(t0, `Campo mensagem seletor ${i + 1}/${messageInputSelectors.length} OK em ${Date.now() - tMsg}ms`);
             messageInput = el;
             log(`campo de mensagem encontrado: ${sel}`);
             break;
           } catch {
+            logStep(t0, `Campo mensagem seletor ${i + 1}/${messageInputSelectors.length} falhou (timeout ${msgTimeout}ms)`);
             continue;
           }
         }
       }
       if (!messageInput) {
         lastError = 'Não foi possível encontrar o campo de mensagem.';
+        logStep(t0, 'Campo mensagem: nenhum seletor funcionou');
         continue;
       }
 
       try {
+        logStep(t0, 'Clicando no campo e preenchendo mensagem...');
+        const tFill = Date.now();
         await messageInput.click();
         await randomDelay(30, 80);
         try {
@@ -251,41 +272,53 @@ export async function sendDirectMessage(
         } catch {
           await messageInput.pressSequentially(message, { delay: 15 });
         }
+        logStep(t0, `Mensagem preenchida em ${Date.now() - tFill}ms`);
         await randomDelay(40, 100);
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
+        logStep(t0, `Erro ao preencher: ${lastError}`);
         continue;
       }
 
       // Botão Enviar fica habilitado logo após digitar; espera curta e clica
       await randomDelay(50, 120);
+      logStep(t0, 'Procurando botão Enviar...');
       let sendClicked = false;
-      for (const sel of sendSelectors) {
+      for (let i = 0; i < sendSelectors.length; i++) {
+        const sel = sendSelectors[i];
         try {
           const btn = page.locator(sel).first();
+          const tSend = Date.now();
           await btn.waitFor({ state: 'visible', timeout: 1500 });
           await btn.click();
+          logStep(t0, `Botão Enviar seletor ${i + 1}/${sendSelectors.length} OK em ${Date.now() - tSend}ms`);
           sendClicked = true;
           log(`botão Enviar clicado: ${sel}`);
           break;
         } catch {
+          logStep(t0, `Botão Enviar seletor ${i + 1}/${sendSelectors.length} falhou`);
           continue;
         }
       }
       if (!sendClicked) {
         // Última tentativa: clicar em qualquer svg Enviar/Send com force (pode estar coberto)
+        logStep(t0, 'Tentando svg force como fallback...');
         try {
+          const tSvg = Date.now();
           const sendIcon = page.locator('svg[aria-label="Enviar"], svg[aria-label="Send"]').first();
           await sendIcon.click({ force: true, timeout: 2000 });
+          logStep(t0, `Botão Enviar (svg force) OK em ${Date.now() - tSvg}ms`);
           sendClicked = true;
           log('botão Enviar clicado (svg force)');
         } catch {
+          logStep(t0, 'Botão Enviar (svg force) falhou');
           // ignore
         }
       }
       if (sendClicked) {
         await randomDelay(150, 300);
         logStep(t0, `Concluído em ${Date.now() - t0}ms (ok=true).`);
+        logStep(t0, 'Fechando página...');
         return { ok: true };
       }
       lastError = 'Não foi possível encontrar o botão Enviar.';
@@ -299,7 +332,9 @@ export async function sendDirectMessage(
     log(`erro: ${err}`);
     return { ok: false, error: err };
   } finally {
+    const tClose = Date.now();
     await page.close().catch(() => { });
+    logStep(t0, `Página fechada em ${Date.now() - tClose}ms`);
   }
 }
 

@@ -96,7 +96,7 @@ function parseWhatsAppDigits(value: string | undefined): string {
 export default function Activate() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
-  const { canEditProfile, logout, loading: authLoading } = useAuth()
+  const { canEditProfile, logout, refreshUser, loading: authLoading } = useAuth()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -195,11 +195,37 @@ export default function Activate() {
     }
   }
 
+  const scrollToFirstError = () => {
+    setTimeout(() => {
+      const firstError = document.querySelector('.ant-form-item-has-error')
+      if (!firstError) return
+      const target = firstError.previousElementSibling ?? firstError
+      target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+    }, 100)
+  }
+
+  const goToNextStep = () => {
+    const onError = () => {
+      scrollToFirstError()
+      Modal.warning({
+        title: 'Campos obrigatórios',
+        content: 'Preencha os campos obrigatórios para continuar.',
+        okText: 'Entendi',
+      })
+    }
+    if (step === 0) {
+      form.validateFields(['city', 'state']).then(() => setStep((s) => s + 1)).catch(onError)
+    } else if (step === 1) {
+      form.validateFields(['whatsapp']).then(() => setStep((s) => s + 1)).catch(onError)
+    }
+  }
+
   const onFinish = async (values: Record<string, unknown>) => {
     if (!handle) return
     setSaving(true)
     try {
       await saveProfileActivation(handle, buildPayload(values))
+      await refreshUser()
       message.success('Cadastro ativado com sucesso!')
       navigate(`/app/influencer/${encodeURIComponent(handle)}`, { replace: true })
     } catch {
@@ -215,6 +241,7 @@ export default function Activate() {
       const values = await form.validateFields().catch(() => form.getFieldsValue())
       setDraftSaving(true)
       await saveProfileActivation(handle, buildPayload(values as Record<string, unknown>))
+      await refreshUser()
       message.success('Rascunho salvo.')
     } catch (e) {
       message.error(e instanceof Error ? e.message : 'Falha ao salvar rascunho.')
@@ -263,9 +290,9 @@ export default function Activate() {
   }
 
   const steps = [
-    { title: 'Essencial', description: 'O mínimo para ativar' },
-    { title: 'Redes & Contato', description: 'Opcional' },
-    { title: 'Conteúdo & Valores', description: 'Tipos e faixas' },
+    { title: 'Essencial', description: '' },
+    { title: 'Redes & Contato', description: '' },
+    { title: 'Conteúdo & Valores', description: '' },
   ]
 
   return (
@@ -295,7 +322,7 @@ export default function Activate() {
                 alt=""
                 onError={() => {
                   setProfilePicError(true)
-                  if (handle) queueRefreshProfile(handle).catch(() => {})
+                  if (handle) queueRefreshProfile(handle).catch(() => { })
                 }}
                 style={{
                   width: 72,
@@ -342,7 +369,19 @@ export default function Activate() {
             ))}
           </Steps>
 
-          <Form form={form} layout="vertical" onFinish={onFinish}>
+          <Form
+            form={form}
+            layout="vertical"
+            onFinish={onFinish}
+            onFinishFailed={() => {
+              Modal.warning({
+                title: 'Campos obrigatórios',
+                content: 'Preencha os campos obrigatórios para continuar.',
+                okText: 'Entendi',
+              })
+            }}
+            scrollToFirstError
+          >
             {/* Passo 1: Essencial */}
             <div style={{ display: step === 0 ? 'block' : 'none' }}>
               <>
@@ -377,20 +416,22 @@ export default function Activate() {
                     maxLength={2000}
                   />
                 </Form.Item>
-                <Divider orientation="left" plain style={{ margin: '16px 0 12px' }}>
-                  Localização
-                </Divider>
-                <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
-                  Cidade e estado ajudam marcas a encontrar você. Opcional.
-                </Text>
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ margin: '16px 0 12px' }}>
+                    Localização
+                  </div>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+                    Cidade e estado ajudam marcas a encontrar você.
+                  </Text>
+                </div>
                 <Row gutter={16}>
                   <Col xs={24} sm={12}>
-                    <Form.Item name="city" label="Cidade">
+                    <Form.Item name="city" label="Cidade" rules={[{ required: true, message: 'Informe a cidade' }]}>
                       <Input placeholder="Ex.: São Paulo" />
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>
-                    <Form.Item name="state" label="Estado (UF)">
+                    <Form.Item name="state" label="Estado (UF)" rules={[{ required: true, message: 'Informe o estado (UF)' }]}>
                       <Input placeholder="Ex.: SP" maxLength={2} />
                     </Form.Item>
                   </Col>
@@ -422,96 +463,84 @@ export default function Activate() {
 
             {/* Passo 2: Redes & Contato */}
             <div style={{ display: step === 1 ? 'block' : 'none' }}>
-              <>
-                <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                  Adicione redes e contato para marcas entrarem em contato. Tudo opcional.
-                </Text>
-                <Collapse
-                  defaultActiveKey={['social']}
-                  items={[
-                    {
-                      key: 'social',
-                      label: 'Adicionar redes (opcional)',
-                      children: (
-                        <Row gutter={[16, 0]}>
-                          <Col xs={24} md={12}>
-                            <Form.Item
-                              name="whatsapp"
-                              label={
-                                <Space>
-                                  <MessageOutlined />
-                                  WhatsApp
-                                </Space>
-                              }
-                              extra="Ex.: +55 (11) 99999-9999. Use 10 a 13 dígitos (com DDI)."
-                              rules={[
-                                {
-                                  validator: (_, v) => {
-                                    if (!v || !String(v).trim()) return Promise.resolve()
-                                    const digits = parseWhatsAppDigits(v)
-                                    if (digits.length < 10 || digits.length > 13) {
-                                      return Promise.reject(new Error('Use 10 a 13 dígitos (com DDI).'))
-                                    }
-                                    return Promise.resolve()
-                                  },
-                                },
-                              ]}
-                              normalize={(v) => (v ? formatWhatsApp(v) : v)}
-                            >
-                              <Input placeholder="+55 (11) 99999-9999" />
-                            </Form.Item>
-                          </Col>
-                          <Col xs={24} md={12}>
-                            <Form.Item
-                              name="tiktok"
-                              label={<Space><LinkOutlined /> TikTok</Space>}
-                              normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
-                            >
-                              <Input placeholder="https://tiktok.com/@seuuser" />
-                            </Form.Item>
-                          </Col>
-                          <Col xs={24} md={12}>
-                            <Form.Item
-                              name="facebook"
-                              label={<Space><LinkOutlined /> Facebook</Space>}
-                              normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
-                            >
-                              <Input placeholder="https://facebook.com/seuperfil" />
-                            </Form.Item>
-                          </Col>
-                          <Col xs={24} md={12}>
-                            <Form.Item
-                              name="linkedin"
-                              label={<Space><LinkOutlined /> LinkedIn</Space>}
-                              normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
-                            >
-                              <Input placeholder="https://linkedin.com/in/seuperfil" />
-                            </Form.Item>
-                          </Col>
-                          <Col xs={24} md={12}>
-                            <Form.Item
-                              name="twitter"
-                              label={<Space><LinkOutlined /> X (Twitter)</Space>}
-                              normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
-                            >
-                              <Input placeholder="https://x.com/seuuser" />
-                            </Form.Item>
-                          </Col>
-                          <Col xs={24} md={12}>
-                            <Form.Item
-                              name="websites"
-                              label={<Space><GlobalOutlined /> Websites</Space>}
-                              extra="Um ou mais sites, separados por vírgula ou linha."
-                            >
-                              <Input.TextArea placeholder="https://meusite.com" rows={2} />
-                            </Form.Item>
-                          </Col>
-                        </Row>
-                      ),
-                    },
-                  ]}
-                />
-              </>
+              <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                Adicione redes e contato para marcas entrarem em contato. WhatsApp é obrigatório.
+              </Text>
+              <Row gutter={[16, 0]}>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="whatsapp"
+                    label={
+                      <Space>
+                        <MessageOutlined />
+                        WhatsApp
+                      </Space>
+                    }
+                    extra="Ex.: +55 (11) 99999-9999. Use 10 a 13 dígitos (com DDI)."
+                    rules={[
+                      { required: true, message: 'Informe o WhatsApp' },
+                      {
+                        validator: (_, v) => {
+                          if (!v || !String(v).trim()) return Promise.resolve()
+                          const digits = parseWhatsAppDigits(v)
+                          if (digits.length < 10 || digits.length > 13) {
+                            return Promise.reject(new Error('Use 10 a 13 dígitos (com DDI).'))
+                          }
+                          return Promise.resolve()
+                        },
+                      },
+                    ]}
+                    normalize={(v) => (v ? formatWhatsApp(v) : v)}
+                  >
+                    <Input placeholder="+55 (11) 99999-9999" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="tiktok"
+                    label={<Space><LinkOutlined /> TikTok</Space>}
+                    normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                  >
+                    <Input placeholder="https://tiktok.com/@seuuser" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="facebook"
+                    label={<Space><LinkOutlined /> Facebook</Space>}
+                    normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                  >
+                    <Input placeholder="https://facebook.com/seuperfil" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="linkedin"
+                    label={<Space><LinkOutlined /> LinkedIn</Space>}
+                    normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                  >
+                    <Input placeholder="https://linkedin.com/in/seuperfil" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="twitter"
+                    label={<Space><LinkOutlined /> X (Twitter)</Space>}
+                    normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                  >
+                    <Input placeholder="https://x.com/seuuser" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="websites"
+                    label={<Space><GlobalOutlined /> Websites</Space>}
+                    extra="Um ou mais sites, separados por vírgula ou linha."
+                  >
+                    <Input.TextArea placeholder="https://meusite.com" rows={2} />
+                  </Form.Item>
+                </Col>
+              </Row>
             </div>
 
             {/* Passo 3: Conteúdo & Valores */}
@@ -521,6 +550,7 @@ export default function Activate() {
                   name="content_type"
                   label="Tipo de conteúdo"
                   extra="Selecione os tipos que classificam seu conteúdo (ex.: fitness, moda)."
+                  rules={[{ type: 'array' as const, min: 1, message: 'Selecione pelo menos um tipo de conteúdo' }]}
                 >
                   <Select
                     mode="multiple"
@@ -532,9 +562,9 @@ export default function Activate() {
                     maxTagCount="responsive"
                   />
                 </Form.Item>
-                <Divider orientation="left" plain>
+                <div>
                   Valores e formatos
-                </Divider>
+                </div>
                 <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
                   Faixa de preço por formato (apenas para categorização). Você pode pular ou preencher em lote.
                 </Text>
@@ -591,7 +621,7 @@ export default function Activate() {
                 </Button>
               )}
               {step < 2 && (
-                <Button type="primary" onClick={() => setStep((s) => s + 1)}>
+                <Button type="primary" onClick={goToNextStep}>
                   Próximo
                 </Button>
               )}
@@ -657,6 +687,6 @@ export default function Activate() {
           </button>
         </div>
       </div>
-    </div>
+    </div >
   )
 }

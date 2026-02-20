@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Form, Input, Button, Card, message, Collapse } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
-import { requestVerificationCode, verifyProfile, extractProfileToBackend, type ExtractProfileResult } from '../api'
+import { requestCodeWithExtract, verifyProfile, type ExtractProfileResult } from '../api'
 import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
@@ -320,12 +320,7 @@ export default function Auth() {
     setLoading(true)
     setShowInstallLoader(true)
     try {
-      const extractResult = await extractProfileToBackend(n)
-      if (!extractResult.success) {
-        setRejectionInfo(extractResult)
-        return
-      }
-      const data = await requestVerificationCode(n)
+      const data = await requestCodeWithExtract(n)
       if (data.rejectionReason === 'nao_segue_perfil') {
         setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
         return
@@ -341,7 +336,9 @@ export default function Auth() {
         message.warning(data.error)
       }
     } catch (e) {
-      message.error(e instanceof Error ? e.message : 'Falha ao extrair perfil ou enviar código')
+      const err = e instanceof Error ? e.message : 'Falha ao extrair perfil ou enviar código'
+      message.error(err)
+      setRejectionInfo({ success: false, handle: n, error: err })
     } finally {
       setLoading(false)
       setShowInstallLoader(false)

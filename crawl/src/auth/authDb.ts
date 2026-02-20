@@ -139,8 +139,17 @@ export class AuthDb {
   }
 
   deleteUser(id: number): void {
+    if (!Number.isInteger(id) || id < 1) {
+      throw new Error('deleteUser: id inválido');
+    }
     this.db.prepare('DELETE FROM auth_public_request WHERE user_id = ?').run(id);
-    this.db.prepare('DELETE FROM auth_user WHERE id = ?').run(id);
+    const result = this.db.prepare('DELETE FROM auth_user WHERE id = ?').run(id) as { changes: number };
+    if (result.changes === 0) {
+      throw new Error('Usuário não encontrado');
+    }
+    if (result.changes > 1) {
+      throw new Error('deleteUser: esperado 1 linha removida, removidas ' + result.changes);
+    }
   }
 
   /** Quantidade de requisições à API de busca feitas pelo usuário hoje (limite/dia definido em server: PUBLIC_MAX_REQUESTS_PER_DAY). */

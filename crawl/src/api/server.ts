@@ -164,10 +164,15 @@ async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = 
         extractSingleProfileWithPage(page, handle, db, config, { forRefresh, fastMode: fromExtractProfileApi }),
         timeoutPromise,
       ]);
+      console.log(`[runOneExtract] @${handle} extração concluída, fechando página...`);
     } finally {
+      const tClose = Date.now();
       await page.close().catch(() => { });
+      console.log(`[runOneExtract] @${handle} página fechada em ${Date.now() - tClose}ms`);
     }
+    const tAuth = Date.now();
     await client.saveAuthState();
+    console.log(`[runOneExtract] @${handle} auth state salvo em ${Date.now() - tAuth}ms`);
 
     if (isBlockSignal(result)) {
       record429();
@@ -379,40 +384,26 @@ app.patch('/api/auth/me/password', (req: RequestWithAuth, res: Response) => {
   res.status(200).json({ ok: true });
 });
 
-/** Solicita código de ativação 2FA: envia (via inbox do Instagram) um código para o nickname. Pode ser chamado sem login (2FA é o login). */
-app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) => {
+/** Executa o fluxo de envio de código (client init, verificação segue, sendDM). Compartilhado por request-code e request-code-with-extract. */
+async function performRequestCodeFlow(
+  nickname: string,
+  code: string,
+  _userId: number | null
+): Promise<{ sent: boolean; error?: string; followProfileUrl?: string; nao_segue_perfil?: boolean }> {
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[request-code] ${logTimestamp()} +${Date.now() - t0}ms ${msg}`);
+  logStep(`Iniciando para @${nickname}`);
+  const authStatePath = resolveAuthStatePath(
+    process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json'
+  );
+  if (!existsSync(authStatePath)) {
+    logStep('Sessão não configurada (arquivo ausente).');
+    return { sent: false, error: 'Sessão do Instagram não configurada. Execute o login do crawl (npm run login).' };
+  }
+
+  const maxAttempts = 3;
+  const delayMs = 2000;
   try {
-    const nickname = (req.body?.nickname ?? req.body?.handle ?? '').toString().trim().replace(/^@/, '');
-    if (!nickname) {
-      res.status(400).json({ error: 'Informe o nickname do Instagram' });
-      return;
-    }
-    logStep(`Iniciando para @${nickname}`);
-    const userId = req.user ? Number(req.user.sub) : null;
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    authDb.saveProfileVerification(nickname, code, userId, expiresAt);
-
-    const authStatePath = resolveAuthStatePath(
-      process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json'
-    );
-    const isDev = process.env.NODE_ENV === 'development';
-
-    if (!existsSync(authStatePath)) {
-      logStep('Sessão não configurada (arquivo ausente).');
-      if (isDev) {
-        res.status(200).json({ sent: false, code, error: 'Sessão do Instagram não configurada. Use o código acima para testar.' });
-      } else {
-        res.status(503).json({ error: 'Sessão do Instagram não configurada. Execute o login do crawl (npm run login).' });
-      }
-      return;
-    }
-
-    const maxAttempts = 3;
-    const delayMs = 2000;
-    // Reutiliza o mesmo browser do extract-profile para não perder ~550ms abrindo outro Chromium
     const client = getApiExtractClient();
     try {
       await client.init();
@@ -431,9 +422,7 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
           logStep('Usando cache (segue perfil), pulando abertura de perfil.');
         } else if (followsFromExtract === false) {
           logStep('Cache: não segue perfil, retornando erro.');
-          const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
-          res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl });
-          return;
+          return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
         } else {
           logStep('Sem cache: abrindo perfil para verificar se segue...');
           const page = await client.newPage();
@@ -444,28 +433,16 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
             logStep(`extractProfile concluído em ${Date.now() - tExtract}ms.`);
             logStep('Verificando perfil (username, segue oficial)...');
             if (!extracted) {
-              if (isDev) {
-                res.status(200).json({ sent: false, code, error: 'Perfil não encontrado ou indisponível.' });
-              } else {
-                res.status(400).json({ error: 'Perfil não encontrado ou indisponível.' });
-              }
-              return;
+              return { sent: false, error: 'Perfil não encontrado ou indisponível.' };
             }
             const profileEntity = extracted.profile as Record<string, unknown>;
             const dataUser = (profileEntity?.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined;
             const entityUsername = dataUser?.username != null ? String(dataUser.username).trim().toLowerCase() : null;
             if (entityUsername == null || entityUsername !== nickNorm) {
-              if (isDev) {
-                res.status(200).json({ sent: false, code, error: entityUsername == null ? 'Não foi possível verificar o perfil. Tente novamente.' : 'Resposta da API não corresponde ao perfil solicitado.' });
-              } else {
-                res.status(400).json({ error: 'Perfil não encontrado ou indisponível.' });
-              }
-              return;
+              return { sent: false, error: entityUsername == null ? 'Não foi possível verificar o perfil. Tente novamente.' : 'Resposta da API não corresponde ao perfil solicitado.' };
             }
             if (!isFollowingViewerFromEntity(profileEntity)) {
-              const followProfileUrl = `https://www.instagram.com/${requiredProfile}/`;
-              res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl });
-              return;
+              return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
             }
             logStep('Perfil OK.');
           } finally {
@@ -487,26 +464,126 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
       logStep(`sendVerificationCode concluído em ${Date.now() - tSend}ms (ok=${result.ok}).`);
       if (!result.ok) {
         logStep(`Erro: ${result.error ?? 'desconhecido'}`);
-        if (isDev) {
-          res.status(200).json({ sent: false, code, error: result.error });
-        } else {
-          res.status(503).json({ error: result.error ?? 'Falha ao enviar mensagem no Instagram.' });
-        }
-        return;
+        return { sent: false, error: result.error ?? 'Falha ao enviar mensagem no Instagram.' };
       }
     } finally {
       // Não fechar o client: é compartilhado (getApiExtractClient) para o próximo request ser rápido
     }
 
-    logStep(`Total ${Date.now() - t0}ms — enviando resposta 200.`);
-    if (isDev) {
-      res.status(200).json({ sent: true, code });
-    } else {
-      res.status(200).json({ sent: true });
-    }
+    logStep(`Total ${Date.now() - t0}ms — sucesso.`);
+    return { sent: true };
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     console.error(`[request-code] ${logTimestamp()} +${Date.now() - t0}ms ERRO:`, errMsg, e instanceof Error ? e.stack : '');
+    return { sent: false, error: errMsg };
+  }
+}
+
+/** Solicita código de ativação 2FA: envia (via inbox do Instagram) um código para o nickname. Pode ser chamado sem login (2FA é o login). */
+app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) => {
+  try {
+    const nickname = (req.body?.nickname ?? req.body?.handle ?? '').toString().trim().replace(/^@/, '');
+    if (!nickname) {
+      res.status(400).json({ error: 'Informe o nickname do Instagram' });
+      return;
+    }
+    const userId = req.user ? Number(req.user.sub) : null;
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
+
+    const result = await performRequestCodeFlow(nickname, code, userId);
+    if (result.nao_segue_perfil && result.followProfileUrl) {
+      res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl: result.followProfileUrl });
+      return;
+    }
+    if (result.error && !result.sent) {
+      const isDev = process.env.NODE_ENV === 'development';
+      if (isDev && result.error.includes('não configurada')) {
+        res.status(200).json({ sent: false, code, error: result.error });
+      } else {
+        res.status(503).json({ error: result.error });
+      }
+      return;
+    }
+    const isDev = process.env.NODE_ENV === 'development';
+    res.status(200).json(isDev ? { sent: true, code } : { sent: true });
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    res.status(500).json({ error: errMsg });
+  }
+});
+
+/** Extract + request-code em sequência (sem frontend entre as etapas). Para testes e uso direto. */
+app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), async (req: RequestWithAuth, res: Response) => {
+  const t0 = Date.now();
+  const logStep = (msg: string) => console.log(`[request-code-with-extract] ${logTimestamp()} +${Date.now() - t0}ms ${msg}`);
+  try {
+    const now = Date.now();
+    if (now < apiExtractBlockedUntil) {
+      res.status(503).json({ error: `Rate limit. Tente novamente em ${Math.ceil((apiExtractBlockedUntil - now) / 60000)} min.` });
+      return;
+    }
+    const nickname = (req.body?.nickname ?? req.body?.handle ?? '').toString().trim().replace(/^@/, '').toLowerCase();
+    if (!nickname) {
+      res.status(400).json({ error: 'Informe o nickname do Instagram' });
+      return;
+    }
+    logStep(`Iniciando extract + send para @${nickname}`);
+
+    const authStatePath = resolveAuthStatePath(process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json');
+    if (!existsSync(authStatePath)) {
+      res.status(503).json({ error: 'Sessão do Instagram não configurada. Execute o login do crawl (npm run login).' });
+      return;
+    }
+
+    const handle = nickname.replace(/^@/, '');
+    extractProfileResults.set(handle, { status: 'pending' });
+    apiExtractQueue = apiExtractQueue
+      .then(() => runExtractAndStore(handle))
+      .catch((err) => {
+        console.error('[API] extract-profile erro:', err instanceof Error ? err.stack : err);
+        extractProfileResults.set(handle, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+      });
+
+    const pollMs = 200;
+    const maxWaitMs = 120000;
+    const startWait = Date.now();
+    while (Date.now() - startWait < maxWaitMs) {
+      await new Promise((r) => setTimeout(r, pollMs));
+      const stored = extractProfileResults.get(handle);
+      if (stored?.status === 'done') {
+        logStep(`Extract pronto em ${Date.now() - t0}ms, enviando código...`);
+        break;
+      }
+      if (stored?.status === 'error') {
+        res.status(400).json({ error: stored.error ?? 'Erro na extração' });
+        return;
+      }
+    }
+    const stored = extractProfileResults.get(handle);
+    if (stored?.status !== 'done') {
+      res.status(504).json({ error: 'Extração demorou demais.' });
+      return;
+    }
+
+    const userId = req.user ? Number(req.user.sub) : null;
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
+
+    const result = await performRequestCodeFlow(nickname, code, userId);
+    if (result.nao_segue_perfil && result.followProfileUrl) {
+      res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl: result.followProfileUrl });
+      return;
+    }
+    if (result.error && !result.sent) {
+      res.status(503).json({ error: result.error });
+      return;
+    }
+    logStep(`Concluído em ${Date.now() - t0}ms`);
+    res.status(200).json({ sent: true, code: process.env.NODE_ENV === 'development' ? code : undefined });
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    logStep(`ERRO: ${errMsg}`);
     res.status(500).json({ error: errMsg });
   }
 });
@@ -687,7 +764,7 @@ app.put('/api/admin/users/:id', requireScopes('adm'), (req: RequestWithAuth, res
       }
       updates.scope = scope;
     }
-    if (body.profile_handle !== undefined) updates.profile_handle = (body.profile_handle as string).trim() || null;
+    if (body.profile_handle !== undefined) updates.profile_handle = body.profile_handle != null ? (String(body.profile_handle).trim() || null) : null;
     authDb.updateUser(id, updates);
     const updated = authDb.getById(id);
     if (!updated) {
@@ -1395,8 +1472,11 @@ app.post('/api/crawl/stop', requireScopes('adm'), (_req: Request, res: Response)
 
 /** Executa extração e grava resultado em extractProfileResults (para polling). Usa delay curto e modo rápido. */
 async function runExtractAndStore(handle: string): Promise<void> {
+  const t0 = Date.now();
   try {
+    console.log(`[runExtractAndStore] @${handle} runOneExtract iniciando...`);
     const result = await runOneExtract(handle, true, false, true);
+    console.log(`[runExtractAndStore] @${handle} runOneExtract retornou em ${Date.now() - t0}ms, gravando resultado...`);
     if (isBlockSignal(result)) {
       extractProfileResults.set(handle, {
         status: 'error',
@@ -1405,6 +1485,7 @@ async function runExtractAndStore(handle: string): Promise<void> {
       return;
     }
     extractProfileResults.set(handle, { status: 'done', result });
+    console.log(`[runExtractAndStore] ${logTimestamp()} @${handle} pronto em ${Date.now() - t0}ms (status=done)`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const isLoginRelated = /ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR|sessão|login/i.test(msg);
@@ -1435,6 +1516,7 @@ app.get('/api/crawl/extract-profile/status', requireScopesOrPublic('adm'), (req:
     return;
   }
   if (stored.status === 'done') {
+    console.log(`[extract-status] ${logTimestamp()} @${handle} retornando done (frontend vai chamar request-code)`);
     res.status(200).json({ status: 'done', handle, result: stored.result });
     return;
   }

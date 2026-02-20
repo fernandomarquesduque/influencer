@@ -162,7 +162,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const { handle: paramHandle } = useParams<{ handle: string }>()
   const handle = overrideHandle ?? paramHandle
   const navigate = useNavigate()
-  const { user, isPublic, canEditProfile, isAdm } = useAuth()
+  const { user, isPublic, canEditProfile, isAdm, loading: authLoading } = useAuth()
 
   const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
   const isInfluencerOwnProfileIncomplete = user?.scope === 'influencer' && canEditProfile(handle ?? '') && user?.profile_activated === false
@@ -201,8 +201,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   }, [])
   const refreshPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Só busca perfil/ativação/posts depois do auth carregar, para o token já estar em api.ts na primeira carga (evita dados zerados no primeiro acesso).
   useEffect(() => {
-    if (!handle) return
+    if (!handle || authLoading) return
     let cancelled = false
     setProfileLoading(true)
     setDataRedacted(false)
@@ -218,10 +219,10 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         if (!cancelled) setProfileLoading(false)
       })
     return () => { cancelled = true }
-  }, [handle])
+  }, [handle, authLoading])
 
   useEffect(() => {
-    if (!handle) return
+    if (!handle || authLoading) return
     let cancelled = false
     fetchProfileActivation(handle)
       .then((a) => {
@@ -237,10 +238,10 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       })
       .catch(() => { if (!cancelled) setActivation(null) })
     return () => { cancelled = true }
-  }, [handle])
+  }, [handle, authLoading])
 
   useEffect(() => {
-    if (!handle) return
+    if (!handle || authLoading) return
     let cancelled = false
     setPostsLoading(true)
     fetchPosts(handle, 100, 0)
@@ -255,7 +256,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       .catch(() => { if (!cancelled) setPosts([]) })
       .finally(() => { if (!cancelled) setPostsLoading(false) })
     return () => { cancelled = true }
-  }, [handle])
+  }, [handle, authLoading])
 
   const startRefreshPolling = useRef<(h: string) => void>(() => { })
   startRefreshPolling.current = (h: string) => {

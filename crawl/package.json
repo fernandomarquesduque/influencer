@@ -14,8 +14,10 @@
     "check-db": "tsx src/cli/check-db.ts",
     "api": "tsx src/api/server.ts",
     "create-admin": "tsx src/scripts/create-admin.ts",
+    "create-admin:server": "node dist/scripts/create-admin.js",
     "seed-projects": "tsx scripts/seed-projects.ts",
-    "router-port-forward": "tsx src/scripts/router-port-forward.ts"
+    "router-port-forward": "tsx src/scripts/router-port-forward.ts",
+    "test:request-code": "tsx scripts/test-request-code-with-extract.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

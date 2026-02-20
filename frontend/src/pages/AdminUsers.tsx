@@ -106,8 +106,13 @@ export default function AdminUsers() {
   }
 
   const onDelete = async (id: number) => {
+    const uid = Number(id)
+    if (!Number.isInteger(uid) || uid < 1) {
+      message.error('ID de usuário inválido')
+      return
+    }
     try {
-      await deleteAdminUser(id)
+      await deleteAdminUser(uid)
       message.success('Usuário excluído')
       load()
     } catch (e) {
@@ -149,21 +154,25 @@ export default function AdminUsers() {
             {
               title: 'Ações',
               width: 140,
-              render: (_, row: AdminUser) => (
-                <Space>
-                  <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
-                    Editar
-                  </Button>
-                  <Popconfirm
-                    title="Excluir este usuário?"
-                    onConfirm={() => onDelete(row.id)}
-                  >
-                    <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                      Excluir
+              render: (_, row: AdminUser) => {
+                const userId = row.id
+                return (
+                  <Space>
+                    <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
+                      Editar
                     </Button>
-                  </Popconfirm>
-                </Space>
-              ),
+                    <Popconfirm
+                      key={`delete-${userId}`}
+                      title="Excluir este usuário?"
+                      onConfirm={() => onDelete(userId)}
+                    >
+                      <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                        Excluir
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                )
+              },
             },
           ]}
           pagination={{ pageSize: 20 }}
