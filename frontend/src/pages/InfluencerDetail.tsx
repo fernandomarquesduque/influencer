@@ -19,9 +19,11 @@ import {
 import {
   EditOutlined,
   FileImageOutlined,
+  FileTextOutlined,
   HeartOutlined,
   CommentOutlined,
   EyeOutlined,
+  RiseOutlined,
   SafetyOutlined,
   MessageOutlined,
   VideoCameraOutlined,
@@ -51,6 +53,7 @@ import {
   StickyCTA,
   ReportSkeleton,
 } from './InfluencerDetailReport'
+import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
 
 const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh, typography: typ, layout: lay } = t
@@ -163,11 +166,14 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const handle = overrideHandle ?? paramHandle
   const navigate = useNavigate()
   const { user, isPublic, canEditProfile, isAdm, loading: authLoading } = useAuth()
+  debugger;
 
   const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
-  const isInfluencerOwnProfileIncomplete = user?.scope === 'influencer' && canEditProfile(handle ?? '') && user?.profile_activated === false
+  const canEdit = handle ? canEditProfile(handle) : false
+  const mustCompleteCadastro = user?.scope === 'influencer' && canEdit && user?.profile_activated !== true
+
   const goToMediaKitOrLogin = () => {
-    if (isInfluencerOwnProfileIncomplete && handle) {
+    if (mustCompleteCadastro && handle) {
       navigate(`/activate/${encodeURIComponent(handle)}`)
       return
     }
@@ -178,7 +184,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       navigate('/login', { state: { from: { pathname: mediaKitPath } } })
     }
   }
-  const mediaKitCtaLabel = isInfluencerOwnProfileIncomplete
+  const mediaKitCtaLabel = mustCompleteCadastro
     ? 'Finalize seu cadastro para gerar Media Kit'
     : user
       ? 'Gerar Media Kit Profissional'
@@ -354,7 +360,6 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       activation.linkedin?.trim() || activation.twitter?.trim() || activation.websites?.trim() ||
       activation.description?.trim() || activation.about_topics?.trim())
 
-  const canEdit = handle ? canEditProfile(handle) : false
   const isRedacted = dataRedacted && isLimitedView
 
   const tierLabel = followersCount < 10_000 ? 'Nano Influencer' : followersCount < 50_000 ? 'Micro Influencer' : followersCount < 500_000 ? 'Mid Influencer' : 'Macro Influencer'
@@ -492,6 +497,14 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                 bestHour={reportInsights.consistency.bestHour}
               />
             ) : null}
+          />
+        )}
+
+        {!hasActivationData && canEdit && handle && (
+          <ActivationCtaPanel
+            handle={handle}
+            isMobile={isMobile}
+            marginBottom={gap}
           />
         )}
 
@@ -657,7 +670,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                     />
                   </Col>
                   <Col xs={24} md={12} style={{ display: 'flex' }}>
-                    <AudienceQualityCard rate={reportInsights.conversation.rate} label={reportInsights.conversation.label} tooltip={METRIC_TOOLTIPS.conversacao} style={{ flex: 1, minHeight: '100%' }} />
+                    <AudienceQualityCard rate={reportInsights.conversation.rate} label={reportInsights.conversation.label} color={reportInsights.conversation.color} tooltip={METRIC_TOOLTIPS.conversacao} style={{ flex: 1, minHeight: '100%' }} />
                   </Col>
                 </Row>
               </Col>
@@ -677,12 +690,17 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             <Row gutter={rowGutter} align="stretch" style={{ marginBottom: gap }}>
               {hasResumo && (
                 <Col xs={24} md={sideBySide ? 12 : 24} style={sideBySide ? { display: 'flex' } : undefined}>
-                  <Card size="small" className="report-card report-card--hover" style={{ ...cardStyle, flex: 1, minHeight: sideBySide ? '100%' : undefined, background: cardBgStrategic }}>
-                    <div style={{ ...typH3, color: c.text, marginBottom: s.md }}>Resumo Executivo</div>
+                  <Card size="small" className="report-card report-card--hover" style={{ ...cardStyle, flex: 1, minHeight: sideBySide ? '100%' : undefined, background: '#fafbfc', border: `1px solid ${c.borderLight}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: s.md }}>
+                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(99, 102, 241, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <FileTextOutlined style={{ fontSize: 16, color: '#6366f1' }} />
+                      </div>
+                      <div style={{ ...typH3, color: c.text, margin: 0 }}>Resumo Executivo</div>
+                    </div>
                     <ul style={{ margin: 0, paddingLeft: 20, listStyle: 'none' }}>
                       {(reportInsights?.resumoExecutivo ?? []).map((bullet, i) => (
                         <li key={i} style={{ marginBottom: s.sm, display: 'flex', gap: s.sm, alignItems: 'flex-start' }}>
-                          <span style={{ color: c.primary, fontWeight: 600 }}>•</span>
+                          <span style={{ color: c.textMuted, fontWeight: 500, fontSize: 8 }}>•</span>
                           <span style={{ ...typ.body, color: c.text }}>{bullet}</span>
                         </li>
                       ))}
@@ -692,13 +710,13 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               )}
               {hasGrowth && (
                 <Col xs={24} md={sideBySide ? 12 : 24} style={sideBySide ? { display: 'flex' } : undefined}>
-                  <ReportSection variant="analytical" title="Potencial de Crescimento" style={sideBySide ? { flex: 1, minHeight: '100%' } : undefined}>
+                  <ReportSection variant="analytical" title={<div style={{ display: 'flex', alignItems: 'center', gap: s.sm }}><div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(16, 185, 129, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><RiseOutlined style={{ fontSize: 16, color: '#059669' }} /></div>Potencial de Crescimento</div>} style={sideBySide ? { flex: 1, minHeight: '100%', background: '#fafbfc', border: `1px solid ${c.borderLight}` } : { background: '#fafbfc', border: `1px solid ${c.borderLight}` }}>
                     <Text style={{ ...typ.bodySmall, color: c.text, display: 'block', marginBottom: s.sm }}>
                       Se você aumentar sua frequência de postagem mantendo o mesmo engajamento, seu perfil pode dobrar em 6 a 9 meses.
                     </Text>
                     <Space size={s.xs} wrap>
                       {(reportInsights?.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas] : activation?.content_type?.length ? activation.content_type.slice(0, 3).map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct) : ['Esportes', 'Família', 'Lifestyle']).map((label) => (
-                        <Tag key={label} style={{ borderRadius: r }}>{label}</Tag>
+                        <Tag key={label} style={{ borderRadius: r, background: 'rgba(0,0,0,0.04)', border: 'none', color: c.text }}>{label}</Tag>
                       ))}
                     </Space>
                   </ReportSection>
@@ -726,12 +744,14 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                   </div>
                 </Tooltip>
                 <Tooltip title={METRIC_TOOLTIPS.mediaLikesPost} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                    <RiseOutlined style={{ fontSize: 20, color: c.primary }} />
                     <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.avg_likes.toLocaleString('pt-BR')}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>média likes/post</span></span>
                   </div>
                 </Tooltip>
                 <Tooltip title={METRIC_TOOLTIPS.totalPosts} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                    <FileImageOutlined style={{ fontSize: 20, color: '#52c41a' }} />
                     <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.posts_count}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>posts</span></span>
                   </div>
                 </Tooltip>
@@ -882,7 +902,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               <Button
                 type="primary"
                 size="large"
-                style={{ borderRadius: radiusLarge, paddingLeft: s.xl, paddingRight: s.xl, height: 52, background: gold, borderColor: gold, color: '#1a1a1a', marginBottom: s.sm }}
+                style={{ borderRadius: radiusLarge, paddingLeft: s.xl, paddingRight: s.xl, height: 52, background: gold, borderColor: gold, color: '#fff', marginBottom: s.sm }}
                 onClick={goToMediaKitOrLogin}
               >
                 {mediaKitCtaLabel}

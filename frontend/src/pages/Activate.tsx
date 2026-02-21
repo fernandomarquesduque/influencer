@@ -355,11 +355,7 @@ export default function Activate() {
                 @{handle}
                 {profileName ? ` · ${profileName}` : ''}
               </Text>
-              <div style={{ marginTop: 6 }}>
-                <Text type="secondary" style={{ fontSize: 13 }}>
-                  Isso leva menos de 2 minutos. Você pode pular etapas e preencher depois.
-                </Text>
-              </div>
+
             </div>
           </div>
 

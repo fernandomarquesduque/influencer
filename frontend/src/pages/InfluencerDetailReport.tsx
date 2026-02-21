@@ -10,6 +10,8 @@ import {
   WarningFilled,
   RocketOutlined,
   FileImageOutlined,
+  DollarOutlined,
+  CommentOutlined,
 } from '@ant-design/icons'
 import { reportTokens as t } from './reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
@@ -108,7 +110,7 @@ export function ReportHero({
       >
         <div style={{ position: 'absolute', inset: 0, background: c.heroBlob, pointerEvents: 'none' }} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap, flexWrap: 'wrap', position: 'relative', zIndex: 0 }}>
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'center' : 'center', justifyContent: isMobile ? 'center' : undefined, gap, flexWrap: 'wrap', position: 'relative', zIndex: 0, textAlign: isMobile ? 'center' : undefined }}>
           <Avatar
             size={avatarSize}
             src={profilePic}
@@ -117,10 +119,10 @@ export function ReportHero({
             style={{ border: '3px solid #fff', boxShadow: sh.md, flexShrink: 0 }}
             onError={() => { onAvatarError(); return false }}
           />
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: isMobile ? undefined : 1, minWidth: 0, width: isMobile ? '100%' : undefined, textAlign: isMobile ? 'center' : undefined }}>
             {(name || atHandle || hasRightBadge) && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: s.sm, marginBottom: s.xs }}>
-                <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: isMobile ? 'center' : 'space-between', gap: s.sm, marginBottom: s.xs }}>
+                <div style={{ minWidth: 0, textAlign: isMobile ? 'center' : undefined }}>
                   {name && <h1 style={{ ...typ.hero, color: c.text, margin: 0, marginBottom: 2, lineHeight: 1.2, fontSize: isMobile ? 22 : typ.hero.fontSize }}>{name}</h1>}
                   {atHandle && <div style={{ ...typ.body, color: c.textSecondary, fontWeight: 500, fontSize: isMobile ? 13 : typ.body.fontSize }}>{atHandle}</div>}
                 </div>
@@ -146,7 +148,7 @@ export function ReportHero({
               </div>
             )}
             {hasRightBadge && (percentil != null || scoreSelo) && (
-              <div style={{ ...typ.caption, color: c.textSecondary, marginBottom: s.xs, textAlign: 'right' }}>
+              <div style={{ ...typ.caption, color: c.textSecondary, marginBottom: s.xs, textAlign: isMobile ? 'center' : 'right' }}>
                 {percentil != null && (
                   <Tooltip title={METRIC_TOOLTIPS.topPercentil} placement="top">
                     <span style={{ fontWeight: 600, color: c.primary, cursor: 'help' }}>Top {percentil}%</span>
@@ -164,7 +166,7 @@ export function ReportHero({
             {!hasRightBadge && badgeLabel != null && (
               <Tag style={{ background: c.primary, color: '#fff', border: 'none', borderRadius: r.full, padding: isMobile ? '2px 10px' : '4px 12px', marginBottom: s.sm, fontSize: typ.caption.fontSize }}>{badgeLabel}</Tag>
             )}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.sm : s.lg, marginBottom: secondaryMetrics ? s.xs : scoreValue != null ? s.sm : s.md }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.sm : s.lg, marginBottom: secondaryMetrics ? s.xs : scoreValue != null ? s.sm : s.md, justifyContent: isMobile ? 'center' : undefined }}>
               {highlights.map(({ label, value }) => {
                 const tooltipKey = label === 'Seguidores' ? 'seguidores' : label === 'ER' ? 'er' : label === 'Posts/sem' ? 'postsPerSemana' : null
                 const tip = tooltipKey ? METRIC_TOOLTIPS[tooltipKey as keyof typeof METRIC_TOOLTIPS] : null
@@ -174,13 +176,13 @@ export function ReportHero({
               })}
             </div>
             {secondaryMetrics && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.sm : s.lg, alignItems: 'center', ...typ.bodySmall, color: c.textSecondary, marginBottom: scoreValue != null ? s.sm : s.md }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.sm : s.lg, alignItems: 'center', justifyContent: isMobile ? 'center' : undefined, ...typ.bodySmall, color: c.textSecondary, marginBottom: scoreValue != null ? s.sm : s.md }}>
                 {secondaryMetrics}
               </div>
             )}
             {scoreValue != null && progressGradient && (() => {
               const bar = (
-                <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: s.md, width: '100%', maxWidth: 320, cursor: scoreTooltip ? 'help' : undefined }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: s.md, width: '100%', maxWidth: 320, marginLeft: isMobile ? 'auto' : undefined, marginRight: isMobile ? 'auto' : undefined, cursor: scoreTooltip ? 'help' : undefined }}>
                   <Progress
                     percent={scoreValue}
                     showInfo={false}
@@ -194,12 +196,12 @@ export function ReportHero({
               )
               return scoreTooltip ? <Tooltip title={scoreTooltip} placement="top">{bar}</Tooltip> : bar
             })()}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', justifyContent: isMobile ? 'center' : undefined }}>
               <Button
                 type="primary"
                 size={isMobile ? 'small' : 'middle'}
                 onClick={onCta}
-                style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#1a1a1a', fontWeight: 600 }}
+                style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#fff', fontWeight: 600 }}
               >
                 {ctaLabel}
               </Button>
@@ -623,14 +625,39 @@ export function ProofCarousel({
   )
 }
 
+// Tons suaves e elegantes para cada tema
+const THEME_MAP = {
+  success: { bg: '#f8fdfb', border: 'rgba(16, 185, 129, 0.12)', accent: '#059669', iconBg: 'rgba(16, 185, 129, 0.06)' },
+  warning: { bg: '#fefdf9', border: 'rgba(180, 83, 9, 0.12)', accent: '#b45309', iconBg: 'rgba(180, 83, 9, 0.06)' },
+  danger: { bg: '#fefaf9', border: 'rgba(185, 28, 28, 0.1)', accent: '#b91c1c', iconBg: 'rgba(185, 28, 28, 0.06)' },
+} as const
+
 // ——— AudienceQualityCard ———
-export function AudienceQualityCard({ rate, label, tooltip, style: styleProp }: { rate: number; label: string; tooltip?: string; style?: React.CSSProperties }) {
+export function AudienceQualityCard({ rate, label, tooltip, color = 'success', style: styleProp }: { rate: number; label: string; tooltip?: string; color?: 'success' | 'warning' | 'danger'; style?: React.CSSProperties }) {
+  const theme = THEME_MAP[color]
   const card = (
-    <Card size="small" className="report-card" style={{ borderRadius: r.lg, border: 'none', boxShadow: sh.sm, padding: s.lg, background: c.successBg, cursor: tooltip ? 'help' : undefined, ...styleProp }}>
-      <div style={{ ...typ.caption, color: c.textSecondary, marginBottom: 4 }}>Seu público conversa?</div>
-      <div style={{ fontSize: 28, fontWeight: 800, color: c.text }}>{rate}%</div>
-      <div style={{ ...typ.bodySmall, color: c.text }}>{label}</div>
-    </Card>
+    <div
+      className="report-card"
+      style={{
+        borderRadius: r.lg,
+        border: `1px solid ${theme.border}`,
+        boxShadow: sh.sm,
+        padding: s.lg,
+        background: theme.bg,
+        cursor: tooltip ? 'help' : undefined,
+        minHeight: '100%',
+        ...styleProp,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: 8 }}>
+        <div style={{ width: 34, height: 34, borderRadius: '50%', background: theme.iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CommentOutlined style={{ fontSize: 16, color: theme.accent }} />
+        </div>
+        <div style={{ ...typ.overline, color: c.textSecondary, letterSpacing: '0.04em', textTransform: 'uppercase', fontSize: 11, fontWeight: 600 }}>Seu público conversa?</div>
+      </div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: c.text, marginBottom: 4 }}>{rate}%</div>
+      <div style={{ ...typ.bodySmall, color: c.textSecondary }}>{label}</div>
+    </div>
   )
   return tooltip ? <Tooltip title={tooltip} placement="top">{card}</Tooltip> : card
 }
@@ -653,16 +680,31 @@ export function ConsistencyMiniChart({ data, bestDay, bestHour }: { data: number
 
 // ——— PricingHighlight ———
 export function PricingHighlight({ min, max, porque, onCta, hideCta, tooltip, style: styleProp }: { min: number; max: number; porque: string; onCta: () => void; hideCta?: boolean; tooltip?: string; style?: React.CSSProperties }) {
-  const titleEl = <div style={{ ...typ.overline, color: c.textSecondary, marginBottom: 4, cursor: tooltip ? 'help' : undefined, display: 'inline-block' }}>Valor estimado por post</div>
-  const card = (
-    <Card size="small" className="report-card pricing-highlight" style={{ borderRadius: r.xl, border: 'none', boxShadow: sh.lg, padding: s.lg, background: c.goldLight, ...styleProp }}>
-      {tooltip ? <Tooltip title={tooltip} placement="top">{titleEl}</Tooltip> : titleEl}
-      <div style={{ fontSize: 28, fontWeight: 800, color: c.text, marginBottom: 4 }}>R$ {min} – R$ {max}</div>
-      <p style={{ ...typ.bodySmall, color: c.textSecondary, margin: 0, marginBottom: hideCta ? 0 : s.lg }}>{porque}</p>
-      {!hideCta && <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#1a1a1a' }} onClick={onCta}>Gerar Media Kit Profissional</Button>}
-    </Card>
+  const titleEl = <div style={{ ...typ.overline, color: c.textSecondary, letterSpacing: '0.04em', cursor: tooltip ? 'help' : undefined, display: 'inline-block', textTransform: 'uppercase', fontSize: 11, fontWeight: 600 }}>Valor estimado por post</div>
+  return (
+    <div
+      className="report-card pricing-highlight"
+      style={{
+        borderRadius: r.lg,
+        border: `1px solid rgba(180, 83, 9, 0.1)`,
+        boxShadow: sh.sm,
+        padding: s.lg,
+        background: '#fefdf9',
+        minHeight: '100%',
+        ...styleProp,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: 8 }}>
+        <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(180, 83, 9, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <DollarOutlined style={{ fontSize: 16, color: '#b45309' }} />
+        </div>
+        {tooltip ? <Tooltip title={tooltip} placement="top">{titleEl}</Tooltip> : titleEl}
+      </div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: c.text, marginBottom: 4 }}>R$ {min} – R$ {max}</div>
+      <p style={{ ...typ.bodySmall, color: c.textSecondary, margin: 0, marginBottom: hideCta ? 0 : s.lg, lineHeight: 1.5 }}>{porque}</p>
+      {!hideCta && <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#fff' }} onClick={onCta}>Gerar Media Kit Profissional</Button>}
+    </div>
   )
-  return card
 }
 
 // ——— BrandMatchCard ———
@@ -717,7 +759,7 @@ export function StickyCTA({
   return (
     <div className="report-sticky-cta" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: s.md, background: c.glassBg, backdropFilter: 'blur(12px)', borderTop: `1px solid ${c.borderLight}`, zIndex: 100, boxShadow: '0 -4px 20px rgba(0,0,0,0.06)' }}>
       <div style={{ width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: s.sm }}>
-        <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#1a1a1a', height: 48 }} onClick={onPrimary}>{primaryLabel}</Button>
+        <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#fff', height: 48 }} onClick={onPrimary}>{primaryLabel}</Button>
         <div style={{ ...typ.caption, color: c.textMuted, textAlign: 'center' }}>{primarySubtext}</div>
         {secondaryLabel && onSecondary ? <Button type="default" size="middle" block style={{ borderRadius: r.md }} onClick={onSecondary}>{secondaryLabel}</Button> : null}
       </div>

@@ -120,6 +120,7 @@ body {
 .ant-btn-primary {
   background: linear-gradient(135deg, var(--app-primary), var(--app-accent)) !important;
   border: none !important;
+  color: #fff !important;
   box-shadow: 0 2px 8px rgba(109, 94, 246, 0.25);
 }
 
