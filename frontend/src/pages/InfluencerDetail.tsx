@@ -343,13 +343,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     )
   }
 
-  if (!profile && !profileLoading) {
-    return (
-      <Empty description="Perfil não encontrado">
-        <Button type="primary" onClick={() => navigate('/app')}>Voltar à lista</Button>
-      </Empty>
-    )
-  }
+
 
   const profilePic = proxyImageUrl(getProfilePicUrl(profile))
 

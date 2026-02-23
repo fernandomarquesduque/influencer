@@ -445,7 +445,7 @@ export default function InfluencerList() {
             }}
           >
             <Typography.Title level={5} style={{ marginBottom: 8, marginTop: 0 }}>
-              <FilterOutlined /> {total === 0 ? 'Nenhum perfil encontrado' : `${total} perfil(is) encontrado(s)`}
+              <FilterOutlined /> {total === 0 ? 'Nenhum influencer encontrado' : `${total} influencers`}
             </Typography.Title>
             <div style={{ marginBottom: 0 }}>
               <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>

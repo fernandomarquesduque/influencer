@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import {
   Card,
   Avatar,
@@ -5,6 +6,7 @@ import {
   Space,
   Typography,
   Tooltip,
+  Spin,
 } from 'antd'
 import {
   UserOutlined,
@@ -71,6 +73,19 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
   const eng = item.engagement
   const categories = (Array.isArray(item.categories) ? item.categories : []) as string[]
   const avatarSize = variant === 'detail' ? 128 : 112
+
+  /** Loader fica visível até a imagem ser carregada com sucesso (onLoad). Em erro, escondemos o loader e mostramos fallback. */
+  const [imageLoading, setImageLoading] = useState(!!pic)
+  const [imageError, setImageError] = useState(false)
+  useEffect(() => {
+    if (pic) {
+      setImageLoading(true)
+      setImageError(false)
+    } else {
+      setImageLoading(false)
+      setImageError(false)
+    }
+  }, [pic])
   const location = item.activation && (item.activation.city || item.activation.state)
     ? [item.activation.city, item.activation.state].filter(Boolean).join(', ')
     : null
@@ -194,26 +209,81 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
         </div>
       )}
 
-      {/* Topo: avatar + nome estilo rede social */}
+      {/* Topo: avatar + nome estilo rede social — loader até a imagem ser resolvida (onLoad) */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 12 }}>
-        <Avatar
-          size={avatarSize}
-          src={pic}
-          icon={<UserOutlined />}
-          style={{
-            flexShrink: 0,
-            border: '3px solid #f0f0f0',
-            boxShadow: '0 2px 8px rgba(0,0,0,.08)',
-          }}
-          onError={() => {
-            const h = item.handle ?? item.key
-            if (h) {
-              queueRefreshProfile(h).catch(() => {})
-              onImageRefreshQueued?.(String(h))
-            }
-            return false
-          }}
-        />
+        <div style={{ position: 'relative', flexShrink: 0, width: avatarSize, height: avatarSize }}>
+          {pic ? (
+            <>
+              <img
+                src={pic}
+                alt=""
+                aria-hidden
+                style={{
+                  width: avatarSize,
+                  height: avatarSize,
+                  borderRadius: '50%',
+                  border: '3px solid #f0f0f0',
+                  boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+                  objectFit: 'cover',
+                  visibility: imageLoading || imageError ? 'hidden' : 'visible',
+                  position: imageLoading ? 'absolute' : 'relative',
+                }}
+                onLoad={() => setImageLoading(false)}
+                onError={() => {
+                  setImageLoading(false)
+                  setImageError(true)
+                  const h = item.handle ?? item.key
+                  if (h) {
+                    queueRefreshProfile(h).catch(() => {})
+                    onImageRefreshQueued?.(String(h))
+                  }
+                }}
+              />
+              {imageLoading && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: avatarSize,
+                    height: avatarSize,
+                    borderRadius: '50%',
+                    background: '#f5f5f5',
+                    border: '3px solid #f0f0f0',
+                    boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1,
+                  }}
+                >
+                  <Spin size="default" />
+                </div>
+              )}
+              {imageError && (
+                <Avatar
+                  size={avatarSize}
+                  icon={<UserOutlined />}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    zIndex: 1,
+                    border: '3px solid #f0f0f0',
+                    boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+                  }}
+                />
+              )}
+            </>
+          ) : (
+            <Avatar
+              size={avatarSize}
+              icon={<UserOutlined />}
+              style={{
+                border: '3px solid #f0f0f0',
+                boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+              }}
+            />
+          )}
+        </div>
         <div style={{ textAlign: 'center', marginTop: 10, width: '100%', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap' }}>
             <Text

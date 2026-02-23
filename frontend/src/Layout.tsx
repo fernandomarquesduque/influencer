@@ -163,7 +163,12 @@ export default function Layout() {
 
                         {isAdm && (
                           <Link to="/app" style={isActive('/app') && location.pathname === '/app' ? navLinkActiveStyle : navLinkStyle}>
-                            Início
+                            Influencers
+                          </Link>
+                        )}
+                        {(isAdm) && (
+                          <Link to="/app/projects" style={isActive('/app/projects') ? navLinkActiveStyle : navLinkStyle}>
+                            Anúnciantes
                           </Link>
                         )}
 

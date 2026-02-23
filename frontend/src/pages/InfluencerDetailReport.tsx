@@ -1,8 +1,8 @@
 /**
  * Subcomponentes do relatório premium (ReportHero, ScoreOverview, InsightCardsGrid, etc.)
  */
-import React, { useState } from 'react'
-import { Button, Card, Tag, Avatar, Progress, Skeleton, Tabs, Tooltip } from 'antd'
+import React, { useState, useEffect } from 'react'
+import { Button, Card, Tag, Avatar, Progress, Skeleton, Tabs, Tooltip, Spin } from 'antd'
 import {
   SyncOutlined,
   UserOutlined,
@@ -91,6 +91,19 @@ export function ReportHero({
   const avatarSize = isMobile ? AVATAR_SIZE_MOBILE : AVATAR_SIZE
   const pad = isMobile ? s.md : s.md
   const gap = isMobile ? s.md : s.md
+
+  const [imageLoading, setImageLoading] = useState(!!profilePic)
+  const [imageError, setImageError] = useState(false)
+  useEffect(() => {
+    if (profilePic) {
+      setImageLoading(true)
+      setImageError(false)
+    } else {
+      setImageLoading(false)
+      setImageError(false)
+    }
+  }, [profilePic])
+
   const progressGradient = scoreValue != null
     ? (scoreValue >= 70 ? `linear-gradient(90deg, ${c.success} 0%, #34d399 100%)` : scoreValue >= 40 ? `linear-gradient(90deg, ${c.primary} 0%, #818cf8 100%)` : `linear-gradient(90deg, ${c.warning} 0%, #fbbf24 100%)`)
     : undefined
@@ -111,14 +124,73 @@ export function ReportHero({
         <div style={{ position: 'absolute', inset: 0, background: c.heroBlob, pointerEvents: 'none' }} />
 
         <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'center' : 'center', justifyContent: isMobile ? 'center' : undefined, gap, flexWrap: 'wrap', position: 'relative', zIndex: 0, textAlign: isMobile ? 'center' : undefined }}>
-          <Avatar
-            size={avatarSize}
-            src={profilePic}
-            icon={<UserOutlined />}
-            alt={name || atHandle || 'Foto do perfil'}
-            style={{ border: '3px solid #fff', boxShadow: sh.md, flexShrink: 0 }}
-            onError={() => { onAvatarError(); return false }}
-          />
+          <div style={{ position: 'relative', flexShrink: 0, width: avatarSize, height: avatarSize }}>
+            {profilePic ? (
+              <>
+                <img
+                  src={profilePic}
+                  alt={name || atHandle || 'Foto do perfil'}
+                  style={{
+                    width: avatarSize,
+                    height: avatarSize,
+                    borderRadius: '50%',
+                    border: '3px solid #fff',
+                    boxShadow: sh.md,
+                    objectFit: 'cover',
+                    visibility: imageLoading || imageError ? 'hidden' : 'visible',
+                    position: imageLoading ? 'absolute' : 'relative',
+                  }}
+                  onLoad={() => setImageLoading(false)}
+                  onError={() => {
+                    setImageLoading(false)
+                    setImageError(true)
+                    onAvatarError()
+                  }}
+                />
+                {imageLoading && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: avatarSize,
+                      height: avatarSize,
+                      borderRadius: '50%',
+                      background: '#f0f0f0',
+                      border: '3px solid #fff',
+                      boxShadow: sh.md,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 1,
+                    }}
+                  >
+                    <Spin size="default" />
+                  </div>
+                )}
+                {imageError && (
+                  <Avatar
+                    size={avatarSize}
+                    icon={<UserOutlined />}
+                    alt={name || atHandle || 'Foto do perfil'}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      zIndex: 1,
+                      border: '3px solid #fff',
+                      boxShadow: sh.md,
+                    }}
+                  />
+                )}
+              </>
+            ) : (
+              <Avatar
+                size={avatarSize}
+                icon={<UserOutlined />}
+                alt={name || atHandle || 'Foto do perfil'}
+                style={{ border: '3px solid #fff', boxShadow: sh.md }}
+              />
+            )}
+          </div>
           <div style={{ flex: isMobile ? undefined : 1, minWidth: 0, width: isMobile ? '100%' : undefined, textAlign: isMobile ? 'center' : undefined }}>
             {(name || atHandle || hasRightBadge) && (
               <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: isMobile ? 'center' : 'space-between', gap: s.sm, marginBottom: s.xs }}>
