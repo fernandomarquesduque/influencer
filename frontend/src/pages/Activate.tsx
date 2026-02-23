@@ -106,6 +106,7 @@ export default function Activate() {
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
   const [profilePicError, setProfilePicError] = useState(false)
+  const [profilePicLoading, setProfilePicLoading] = useState(false)
 
   useEffect(() => {
     if (!handle) return
@@ -124,7 +125,9 @@ export default function Activate() {
       if (profile) {
         setProfileName((profile.full_name as string) || (profile.username as string) || handle)
         const pic = getProfilePicUrl(profile)
-        setProfilePic(pic ? proxyImageUrl(pic) : undefined)
+        const picUrl = pic ? proxyImageUrl(pic) : undefined
+        setProfilePic(picUrl)
+        setProfilePicLoading(!!picUrl)
       }
       const act = (activation || {}) as ProfileActivation
       const pricingForm: Record<string, number | undefined> = {}
@@ -317,21 +320,46 @@ export default function Activate() {
           {/* Cabeçalho premium */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 24 }}>
             {profilePic && !profilePicError ? (
-              <img
-                src={profilePic}
-                alt=""
-                onError={() => {
-                  setProfilePicError(true)
-                  if (handle) queueRefreshProfile(handle).catch(() => { })
-                }}
-                style={{
-                  width: 72,
-                  height: 72,
-                  borderRadius: '50%',
-                  objectFit: 'cover',
-                  border: '3px solid #f0f0f0',
-                }}
-              />
+              <div style={{ position: 'relative', flexShrink: 0, width: 72, height: 72 }}>
+                <img
+                  src={profilePic}
+                  alt=""
+                  onLoad={() => setProfilePicLoading(false)}
+                  onError={() => {
+                    setProfilePicLoading(false)
+                    setProfilePicError(true)
+                    if (handle) queueRefreshProfile(handle).catch(() => { })
+                  }}
+                  style={{
+                    width: 72,
+                    height: 72,
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    border: '3px solid #f0f0f0',
+                    visibility: profilePicLoading ? 'hidden' : 'visible',
+                    position: profilePicLoading ? 'absolute' : 'relative',
+                  }}
+                />
+                {profilePicLoading && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: 72,
+                      height: 72,
+                      borderRadius: '50%',
+                      background: '#f0f0f0',
+                      border: '3px solid #f0f0f0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 1,
+                    }}
+                  >
+                    <Spin size="default" />
+                  </div>
+                )}
+              </div>
             ) : (
               <div
                 style={{

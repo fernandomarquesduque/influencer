@@ -405,13 +405,16 @@ export default function MediaKit() {
             </>
           }
           extra={[
-            <Button key="back" onClick={() => navigate(-1)}>
-              Voltar ao relatório
+            <Button key="back"
+              style={{ marginBottom: 10 }}
+              onClick={() => navigate(-1)}>
+              Voltar
             </Button>,
             handle && (
               <Button
                 key="again"
                 type="primary"
+                style={{ marginBottom: 10 }}
                 onClick={() => {
                   setStatus('loading_data')
                   setError(null)

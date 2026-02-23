@@ -325,21 +325,21 @@ export async function requestCodeWithExtract(nickname: string): Promise<RequestC
   return { ...body, sent: body.sent ?? true, success: true }
 }
 
-/** Solicita envio do código de ativação 2FA para o nickname (via inbox do Instagram). Requer login. */
-export async function requestVerificationCode(nickname: string): Promise<RequestCodeResponse> {
+/** Solicita envio do código de ativação 2FA para o nickname (via inbox do Instagram). Não entra na fila de extração; execução direta (cadastro em /app/create). */
+export async function requestVerificationCode(nickname: string): Promise<RequestCodeResponse & { success?: boolean }> {
   const res = await fetch(`${API_BASE}/auth/request-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ nickname: nickname.replace(/^@/, '').trim() }),
   })
   const body = await res.json().catch(() => ({})) as { error?: string; followProfileUrl?: string; sent?: boolean; code?: string }
+  if (res.status === 400 && body.error === 'nao_segue_perfil') {
+    return { sent: false, success: false, rejectionReason: 'nao_segue_perfil', followProfileUrl: body.followProfileUrl }
+  }
   if (!res.ok) {
-    if (res.status === 400 && body.error === 'nao_segue_perfil') {
-      return { sent: false, rejectionReason: 'nao_segue_perfil', followProfileUrl: body.followProfileUrl }
-    }
     throw new Error(body.error || 'Falha ao solicitar código')
   }
-  return { ...body, sent: body.sent ?? true }
+  return { ...body, sent: body.sent ?? true, success: true }
 }
 
 /** Valida com o código recebido no Instagram. Sem login: retorna token+user (2FA como login). */

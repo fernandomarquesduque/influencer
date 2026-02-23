@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Form, Input, Button, Card, message, Collapse } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
-import { requestCodeWithExtract, verifyProfile, type ExtractProfileResult } from '../api'
+import { requestVerificationCode, verifyProfile, type ExtractProfileResult } from '../api'
 import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
@@ -320,7 +320,7 @@ export default function Auth() {
     setLoading(true)
     setShowInstallLoader(true)
     try {
-      const data = await requestCodeWithExtract(n)
+      const data = await requestVerificationCode(n)
       if (data.rejectionReason === 'nao_segue_perfil') {
         setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
         return
@@ -492,7 +492,7 @@ export default function Auth() {
                       icon={<MessageOutlined />}
                       style={{ height: 48, borderRadius: 10, fontWeight: 600 }}
                     >
-                      Enviar código por mensagem no Instagram
+                      Cadastrar Instagram
                     </Button>
                   </Form.Item>
                 </Form>
@@ -518,6 +518,7 @@ export default function Auth() {
                     <Input
                       placeholder="000000"
                       size="large"
+                      type="number"
                       maxLength={6}
                       autoComplete="one-time-code"
                       style={{ letterSpacing: 8, textAlign: 'center', fontSize: 18, borderRadius: 10 }}

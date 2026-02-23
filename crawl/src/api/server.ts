@@ -88,6 +88,9 @@ const extractProfileResults = new Map<
   { status: 'pending' } | { status: 'done'; result: ExtractSingleProfileResult } | { status: 'error'; error: string }
 >();
 
+/** Promise que resolve quando todos os envios de código 2FA (request-code) em andamento terminarem. A fila de extract/refresh espera isso para dar prioridade absoluta ao 2FA. */
+let requestCodeFlushPromise: Promise<void> = Promise.resolve();
+
 /** Fila de handles para re-extração quando imagem falha (renovar URLs). Uma execução por vez, em série com extract-profile. */
 const refreshProfileQueue: string[] = [];
 const refreshProfileQueueSet = new Set<string>();
@@ -229,6 +232,7 @@ function processNextRefresh(): void {
   if (refreshProfileQueue.length === 0) return;
   const handle = refreshProfileQueue.shift()!;
   apiExtractQueue = apiExtractQueue
+    .then(() => requestCodeFlushPromise)
     .then(async () => {
       const isPriority = refreshPriorityHandles.has(handle);
       if (isPriority) refreshPriorityHandles.delete(handle);
@@ -322,7 +326,8 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
         profile_activated = false;
       } else {
         const handle = String(user.profile_handle).replace(/^@/, '').trim().toLowerCase();
-        profile_activated = !!sqlite.getActivation(handle)?.activated_at;
+        const act = sqlite.getActivation(handle);
+        profile_activated = !!(act?.whatsapp && String(act.whatsapp).trim());
       }
     }
     res.json({
@@ -354,7 +359,7 @@ app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
     } else {
       const handle = String(profileHandle).replace(/^@/, '').trim().toLowerCase();
       const activation = sqlite.getActivation(handle);
-      profile_activated = !!(activation?.activated_at);
+      profile_activated = !!(activation?.whatsapp && String(activation.whatsapp).trim());
     }
   }
   res.json({
@@ -479,7 +484,7 @@ async function performRequestCodeFlow(
   }
 }
 
-/** Solicita código de ativação 2FA: envia (via inbox do Instagram) um código para o nickname. Pode ser chamado sem login (2FA é o login). */
+/** Solicita código de ativação 2FA: envia (via inbox do Instagram) um código para o nickname. Pode ser chamado sem login (2FA é o login). Prioridade absoluta: invocado imediatamente; a fila de extract/refresh espera o 2FA terminar. */
 app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) => {
   try {
     const nickname = (req.body?.nickname ?? req.body?.handle ?? '').toString().trim().replace(/^@/, '');
@@ -491,7 +496,11 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
 
-    const result = await performRequestCodeFlow(nickname, code, userId);
+    const flowPromise = performRequestCodeFlow(nickname, code, userId);
+    requestCodeFlushPromise = requestCodeFlushPromise.then(async () => {
+      await flowPromise;
+    });
+    const result = await flowPromise;
     if (result.nao_segue_perfil && result.followProfileUrl) {
       res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl: result.followProfileUrl });
       return;
@@ -539,6 +548,7 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
     const handle = nickname.replace(/^@/, '');
     extractProfileResults.set(handle, { status: 'pending' });
     apiExtractQueue = apiExtractQueue
+      .then(() => requestCodeFlushPromise)
       .then(() => runExtractAndStore(handle))
       .catch((err) => {
         console.error('[API] extract-profile erro:', err instanceof Error ? err.stack : err);
@@ -570,7 +580,11 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
 
-    const result = await performRequestCodeFlow(nickname, code, userId);
+    const flowPromise = performRequestCodeFlow(nickname, code, userId);
+    requestCodeFlushPromise = requestCodeFlushPromise.then(async () => {
+      await flowPromise;
+    });
+    const result = await flowPromise;
     if (result.nao_segue_perfil && result.followProfileUrl) {
       res.status(400).json({ error: 'nao_segue_perfil', followProfileUrl: result.followProfileUrl });
       return;
@@ -1583,6 +1597,7 @@ app.post('/api/crawl/extract-profile', requireScopesOrPublic('adm'), (req: Reque
   });
 
   apiExtractQueue = apiExtractQueue
+    .then(() => requestCodeFlushPromise)
     .then(() => runExtractAndStore(handle))
     .catch((err) => {
       console.error('[API] extract-profile erro:', err instanceof Error ? err.stack : err);
