@@ -832,13 +832,22 @@ app.delete('/api/admin/users/:id', requireScopes('adm'), (req: RequestWithAuth, 
   }
 });
 
-/** LGPD: excluir conta do próprio usuário (influencer). Remove todos os dados: ativação, perfil, posts e conta de login. */
-app.delete('/api/account', requireScopes('influencer'), async (req: RequestWithAuth, res: Response) => {
+/** LGPD: excluir conta. Influencer: própria conta (via profile_handle do JWT). Adm: qualquer conta via query handle=. */
+app.delete('/api/account', requireScopes('adm', 'influencer'), async (req: RequestWithAuth, res: Response) => {
   try {
-    const handle = (req.user!.profile_handle || '').replace(/^@/, '').trim().toLowerCase();
-    if (!handle) {
-      res.status(400).json({ error: 'Conta sem perfil vinculado.' });
-      return;
+    let handle: string;
+    if (req.user!.scope === 'adm') {
+      handle = (req.query?.handle ?? '').toString().trim().replace(/^@/, '').toLowerCase();
+      if (!handle) {
+        res.status(400).json({ error: 'Informe o handle (query: handle=)' });
+        return;
+      }
+    } else {
+      handle = (req.user!.profile_handle || '').replace(/^@/, '').trim().toLowerCase();
+      if (!handle) {
+        res.status(400).json({ error: 'Conta sem perfil vinculado.' });
+        return;
+      }
     }
     const user = authDb.getByProfileHandle(handle);
     if (!user) {

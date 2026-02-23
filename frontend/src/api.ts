@@ -631,9 +631,10 @@ export async function deleteAdminUser(id: number): Promise<void> {
   if (!res.ok) throw new Error('Falha ao excluir usuário')
 }
 
-/** LGPD: excluir permanentemente a própria conta e todos os dados armazenados (perfil, ativação, posts). Requer scope influencer. */
-export async function deleteAccount(): Promise<void> {
-  const res = await fetch(`${API_BASE}/account`, {
+/** LGPD: excluir conta. Influencer: própria conta. Adm: pode passar handle para excluir conta de outro usuário. */
+export async function deleteAccount(handle?: string): Promise<void> {
+  const url = handle ? `${API_BASE}/account?handle=${encodeURIComponent(handle.replace(/^@/, ''))}` : `${API_BASE}/account`
+  const res = await fetch(url, {
     method: 'DELETE',
     headers: { ...authHeaders() },
   })

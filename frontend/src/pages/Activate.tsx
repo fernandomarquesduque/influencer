@@ -96,7 +96,7 @@ function parseWhatsAppDigits(value: string | undefined): string {
 export default function Activate() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
-  const { canEditProfile, logout, refreshUser, loading: authLoading } = useAuth()
+  const { canEditProfile, logout, refreshUser, isAdm, loading: authLoading } = useAuth()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -647,19 +647,25 @@ export default function Activate() {
             type="button"
             onClick={() => {
               Modal.confirm({
-                title: 'Excluir conta permanentemente?',
+                title: isAdm && handle ? 'Excluir conta deste influenciador?' : 'Excluir conta permanentemente?',
                 content:
-                  'Todos os seus dados serão removidos (perfil, cadastro, posts). Esta ação não pode ser desfeita.',
-                okText: 'Sim, excluir minha conta',
+                  isAdm && handle
+                    ? `Todos os dados de @${handle} serão removidos (perfil, cadastro, posts). Esta ação não pode ser desfeita.`
+                    : 'Todos os seus dados serão removidos (perfil, cadastro, posts). Esta ação não pode ser desfeita.',
+                okText: isAdm && handle ? 'Sim, excluir conta' : 'Sim, excluir minha conta',
                 okType: 'danger',
                 cancelText: 'Cancelar',
                 onOk: async () => {
                   setDeleting(true)
                   try {
-                    await deleteAccount()
+                    await deleteAccount(isAdm && handle ? handle : undefined)
                     message.success('Conta excluída.')
-                    logout()
-                    navigate('/login', { replace: true })
+                    if (isAdm && handle) {
+                      navigate('/app', { replace: true })
+                    } else {
+                      logout()
+                      navigate('/login', { replace: true })
+                    }
                   } catch (e) {
                     message.error(e instanceof Error ? e.message : 'Falha ao excluir conta')
                   } finally {
@@ -679,7 +685,7 @@ export default function Activate() {
               textDecoration: 'none',
             }}
           >
-            Excluir minha conta
+            {isAdm && handle ? 'Excluir conta do influenciador' : 'Excluir minha conta'}
           </button>
         </div>
       </div>
