@@ -1,46 +1,5 @@
-/* Tema unificado (estilo landing em todo o site) */
-:root,
-[data-theme="light"] {
-  --app-bg: #F7F8FC;
-  --app-bg-blob1: rgba(109, 94, 246, 0.06);
-  --app-bg-blob2: rgba(47, 128, 237, 0.05);
-  --app-header-bg: rgba(247, 248, 252, 0.98);
-  --app-header-border: #E5E7EB;
-  --app-text: #111827;
-  --app-text-secondary: #374151;
-  --app-text-tertiary: #6B7280;
-  --app-modal-bg: #F7F8FC;
-  --app-primary: #6D5EF6;
-  --app-primary-dark: #5B4DE5;
-  --app-accent: #2F80ED;
-  --app-border: #E5E7EB;
-  --app-success: #22C55E;
-  --app-card-bg: #FFFFFF;
-  --app-card-radius: 20px;
-  --app-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  --app-input-focus: 0 0 0 2px rgba(109, 94, 246, 0.2);
-}
-
-[data-theme="dark"] {
-  --app-bg: #0f0f14;
-  --app-bg-blob1: rgba(109, 94, 246, 0.12);
-  --app-bg-blob2: rgba(47, 128, 237, 0.08);
-  --app-header-bg: rgba(15, 15, 20, 0.98);
-  --app-header-border: rgba(255, 255, 255, 0.08);
-  --app-text: rgba(255, 255, 255, 0.92);
-  --app-text-secondary: rgba(255, 255, 255, 0.7);
-  --app-text-tertiary: rgba(255, 255, 255, 0.5);
-  --app-modal-bg: #0f0f14;
-  --app-primary: #7C6CF7;
-  --app-primary-dark: #6D5EF6;
-  --app-accent: #4C8DFF;
-  --app-border: rgba(255, 255, 255, 0.12);
-  --app-success: #22C55E;
-  --app-card-bg: #1a1a22;
-  --app-card-radius: 20px;
-  --app-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --app-input-focus: 0 0 0 2px rgba(124, 108, 247, 0.35);
-}
+/* Folha de estilo central – Busca Influencer (estilos globais) */
+@import './theme.css';
 
 /* Base */
 body {
@@ -116,17 +75,26 @@ body {
   box-shadow: var(--app-card-shadow);
 }
 
-/* Botão primary com gradiente (alinhado à landing) */
+/* Progress line: forçar largura total do trilho (Ant Design aplica size na outer) */
+.ant-progress-line .ant-progress-outer {
+  width: 100% !important;
+}
+.ant-progress-line {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Botão primary com gradiente (paleta do PDF) */
 .ant-btn-primary {
   background: linear-gradient(135deg, var(--app-primary), var(--app-accent)) !important;
   border: none !important;
-  color: #fff !important;
-  box-shadow: 0 2px 8px rgba(109, 94, 246, 0.25);
+  color: var(--brand-white) !important;
+  box-shadow: 0 2px 8px rgba(104, 39, 143, 0.25);
 }
 
 .ant-btn-primary:hover {
   filter: brightness(0.95);
-  box-shadow: 0 4px 12px rgba(109, 94, 246, 0.35);
+  box-shadow: 0 4px 12px rgba(104, 39, 143, 0.35);
 }
 
 .ant-btn-primary:focus-visible {

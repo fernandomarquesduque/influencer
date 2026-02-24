@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { Button, Dropdown } from 'antd'
+import type { MenuProps } from 'antd'
 import {
   CheckCircleOutlined,
   FileTextOutlined,
@@ -13,17 +15,21 @@ import {
   BulbOutlined,
   DollarOutlined,
   UnorderedListOutlined,
+  BgColorsOutlined,
+  CaretDownFilled,
 } from '@ant-design/icons'
+import { useTheme, THEME_OPTIONS, type ThemeMode } from '../contexts/ThemeContext'
 
+/* Paleta central (index.css): --brand-primary, --brand-accent, --app-* */
 const colors = {
-  primary: '#6D5EF6',
-  accent: '#2F80ED',
-  text: '#111827',
-  textSecondary: '#374151',
-  textMuted: '#6B7280',
-  border: '#E5E7EB',
-  success: '#22C55E',
-  white: '#FFFFFF',
+  primary: 'var(--app-primary)',
+  accent: 'var(--app-accent)',
+  text: 'var(--app-text)',
+  textSecondary: 'var(--app-text-secondary)',
+  textMuted: 'var(--app-text-tertiary)',
+  border: 'var(--app-border)',
+  success: 'var(--app-success)',
+  white: 'var(--brand-white)',
 }
 
 const cardStyle: React.CSSProperties = {
@@ -41,6 +47,8 @@ function normalizeHandle(value: string): string {
 
 export default function Landing() {
   const navigate = useNavigate()
+  const { theme, setTheme } = useTheme()
+  const currentThemeLabel = THEME_OPTIONS.find((o: { value: ThemeMode; label: string }) => o.value === theme)?.label ?? 'Tema'
   const [handle, setHandle] = useState('')
   const [finalHandle, setFinalHandle] = useState('')
   const [inputError, setInputError] = useState('')
@@ -126,8 +134,38 @@ export default function Landing() {
           />
 
         </Link>
-        <nav style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-
+        <nav style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Dropdown
+            menu={{
+              items: THEME_OPTIONS.map((opt: { value: ThemeMode; label: string }) => ({
+                key: opt.value,
+                label: opt.label,
+                onClick: () => setTheme(opt.value),
+              })) as MenuProps['items'],
+            }}
+            trigger={['click']}
+            placement="bottomRight"
+          >
+            <Button
+              type="text"
+              icon={<BgColorsOutlined />}
+              style={{
+                color: 'var(--app-text-secondary)',
+                height: 40,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                borderRadius: 10,
+                padding: '0 12px',
+                fontWeight: 500,
+              }}
+              title="Tema"
+              aria-label="Escolher tema"
+            >
+              <span style={{ fontSize: 14 }}>{currentThemeLabel}</span>
+              <CaretDownFilled style={{ fontSize: 12, opacity: 0.8 }} />
+            </Button>
+          </Dropdown>
           <Link to="/login" style={navLinkStyle}>Entrar</Link>
           <Link
             to="/app/create"
@@ -238,7 +276,7 @@ export default function Landing() {
                 width: 48,
                 height: 48,
                 borderRadius: '50%',
-                background: 'linear-gradient(135deg, #E0E7FF, #C7D2FE)',
+                background: 'var(--app-hero-gradient)',
               }}
             />
             <span style={{ fontWeight: 600, color: 'var(--app-text)' }}>@seuusuario</span>
@@ -253,7 +291,7 @@ export default function Landing() {
                 key={i}
                 style={{
                   padding: '12px 10px',
-                  background: '#F9FAFB',
+                  background: 'var(--app-bg)',
                   borderRadius: 12,
                   textAlign: 'center',
                 }}
@@ -349,7 +387,7 @@ export default function Landing() {
             Analisar perfil grátis
           </button>
         </div>
-        {inputError ? <p style={{ textAlign: 'center', fontSize: 13, color: '#dc2626', marginTop: 8 }}>{inputError}</p> : null}
+        {inputError ? <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--app-error)', marginTop: 8 }}>{inputError}</p> : null}
         <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--app-text-tertiary)', marginTop: 12 }}>
           Enviaremos um código de ativação por DM. Não pedimos sua senha.
         </p>
@@ -376,7 +414,7 @@ export default function Landing() {
             { step: 3, icon: <DownloadOutlined style={{ fontSize: 24, color: colors.primary }} />, title: 'Baixe seu relatório e veja o painel', text: 'Acesse o relatório em PDF e o painel online.' },
           ].map((item) => (
             <div key={item.step} style={{ ...cardStyle, padding: 28, textAlign: 'center' }}>
-              <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <div style={{ width: 48, height: 48, borderRadius: 14, background: 'var(--app-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
                 {item.icon}
               </div>
               <div style={{ fontSize: 13, fontWeight: 600, color: colors.primary, marginBottom: 8 }}>Passo {item.step}</div>
@@ -411,7 +449,7 @@ export default function Landing() {
             { icon: <UnorderedListOutlined />, title: 'Checklist de melhorias', desc: 'Pontos para fortalecer seu perfil e atrair marcas.' },
           ].map((item, i) => (
             <div key={i} style={{ ...cardStyle, padding: 20, display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.primary, flexShrink: 0 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--app-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.primary, flexShrink: 0 }}>
                 {item.icon}
               </div>
               <div>
@@ -435,7 +473,7 @@ export default function Landing() {
         }}
       >
         <div style={{ ...cardStyle, padding: 32, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 24 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 14, background: '#EEF2FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div style={{ width: 56, height: 56, borderRadius: 14, background: 'var(--app-primary-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <SafetyOutlined style={{ fontSize: 28, color: colors.primary }} />
           </div>
           <div style={{ flex: '1 1 300px' }}>
@@ -507,7 +545,7 @@ export default function Landing() {
             Enviar código por DM
           </button>
         </div>
-        {inputError ? <p style={{ textAlign: 'center', fontSize: 13, color: '#dc2626', marginTop: 8 }}>{inputError}</p> : null}
+        {inputError ? <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--app-error)', marginTop: 8 }}>{inputError}</p> : null}
         <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--app-text-tertiary)', marginTop: 12 }}>
           Sem spam. Sem custo. Só insights.
         </p>
@@ -541,10 +579,10 @@ export default function Landing() {
           .landing-steps-grid { grid-template-columns: 1fr !important; }
           .landing-report-grid { grid-template-columns: 1fr !important; }
         }
-        header nav button { background: none; border: none; cursor: pointer; font-size: 14px; color: #374151; }
-        header nav button:hover { color: #111827; }
+        header nav button { background: none; border: none; cursor: pointer; font-size: 14px; color: var(--app-text-secondary); }
+        header nav button:hover { color: var(--app-text); }
         .landing-btn-primary:hover { filter: brightness(0.92); }
-        .landing-btn-primary:focus-visible { outline: 2px solid #6D5EF6; outline-offset: 2px; }
+        .landing-btn-primary:focus-visible { outline: 2px solid var(--app-primary); outline-offset: 2px; }
       `}</style>
     </div>
   )

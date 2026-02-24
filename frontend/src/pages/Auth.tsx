@@ -73,34 +73,34 @@ function RejectionFullScreen({
         }}
       >
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <ExclamationCircleOutlined style={{ fontSize: 44, color: '#ca8a04' }} />
+          <ExclamationCircleOutlined style={{ fontSize: 44, color: 'var(--app-warning-accent)' }} />
           <h1
             style={{
               fontSize: 18,
               fontWeight: 700,
-              color: '#1e293b',
+              color: 'var(--app-text)',
               margin: '12px 0 4px',
               letterSpacing: '-0.02em',
             }}
           >
             Perfil não elegível
           </h1>
-          <p style={{ fontSize: 13, color: '#475569', margin: 0 }}>
+          <p style={{ fontSize: 13, color: 'var(--app-text-secondary)', margin: 0 }}>
             @{result.handle} não atende aos critérios do programa.
           </p>
         </div>
 
         <div
           style={{
-            background: '#fef2f2',
-            border: '1px solid #fecaca',
+            background: 'var(--app-alert-danger-bg)',
+            border: '1px solid var(--app-alert-danger-border)',
             borderRadius: 10,
             padding: '12px 14px',
             marginBottom: 16,
           }}
         >
-          <strong style={{ color: '#b91c1c', fontSize: 12 }}>Motivo:</strong>{' '}
-          <span style={{ color: '#334155', fontSize: 12 }}>{reasonText}</span>
+          <strong style={{ color: 'var(--app-danger-accent)', fontSize: 12 }}>Motivo:</strong>{' '}
+          <span style={{ color: 'var(--app-text-secondary)', fontSize: 12 }}>{reasonText}</span>
           {result.rejectionReason === 'nao_segue_perfil' && result.followProfileUrl && (
             <div style={{ marginTop: 10 }}>
               <a
@@ -111,7 +111,7 @@ function RejectionFullScreen({
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 6,
-                  color: '#7c3aed',
+                  color: 'var(--app-primary)',
                   fontWeight: 600,
                   fontSize: 12,
                   textDecoration: 'none',
@@ -122,7 +122,7 @@ function RejectionFullScreen({
             </div>
           )}
           {result.diagnostic && result.diagnostic.minRequired != null && (
-            <div style={{ marginTop: 8, fontSize: 12, color: '#475569' }}>
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--app-text-secondary)' }}>
               Mínimo exigido: {result.diagnostic.minRequired.toLocaleString('pt-BR')}
             </div>
           )}
@@ -132,15 +132,15 @@ function RejectionFullScreen({
           size="small"
           style={{
             marginBottom: 20,
-            background: '#fff',
-            border: '1px solid #e2e8f0',
+            background: 'var(--app-card-bg)',
+            border: '1px solid var(--app-border)',
             borderRadius: 10,
           }}
           items={[
             {
               key: 'regras',
               label: (
-                <span style={{ color: '#1e293b', fontWeight: 600, fontSize: 13 }}>
+                <span style={{ color: 'var(--app-text)', fontWeight: 600, fontSize: 13 }}>
                   Regras de elegibilidade do programa
                 </span>
               ),
@@ -152,17 +152,17 @@ function RejectionFullScreen({
                       paddingLeft: 18,
                       lineHeight: 1.6,
                       fontSize: 12,
-                      color: '#334155',
+                      color: 'var(--app-text-secondary)',
                     }}
                   >
-                    <li>É obrigatório <strong style={{ color: '#0f172a' }}>seguir o perfil oficial do programa</strong> no Instagram para receber o código de ativação por mensagem direta (2FA).</li>
-                    <li>O perfil precisa ser <strong style={{ color: '#0f172a' }}>público</strong> (não aceitamos perfis privados).</li>
-                    <li>O perfil deve ser de <strong style={{ color: '#0f172a' }}>pessoa ou criador</strong> (não aceitamos contas de empresa ou estabelecimentos como bares, restaurantes, lojas).</li>
-                    <li><strong style={{ color: '#0f172a' }}>Conta pessoal</strong>: é exigido o dobro do mínimo de seguidores configurado no programa.</li>
-                    <li><strong style={{ color: '#0f172a' }}>Conta criador</strong>: é exigido o mínimo de seguidores configurado.</li>
+                    <li>É obrigatório <strong style={{ color: 'var(--app-text)' }}>seguir o perfil oficial do programa</strong> no Instagram para receber o código de ativação por mensagem direta (2FA).</li>
+                    <li>O perfil precisa ser <strong style={{ color: 'var(--app-text)' }}>público</strong> (não aceitamos perfis privados).</li>
+                    <li>O perfil deve ser de <strong style={{ color: 'var(--app-text)' }}>pessoa ou criador</strong> (não aceitamos contas de empresa ou estabelecimentos como bares, restaurantes, lojas).</li>
+                    <li><strong style={{ color: 'var(--app-text)' }}>Conta pessoal</strong>: é exigido o dobro do mínimo de seguidores configurado no programa.</li>
+                    <li><strong style={{ color: 'var(--app-text)' }}>Conta criador</strong>: é exigido o mínimo de seguidores configurado.</li>
                     <li>Se o tipo de conta não for identificado, é exigido o triplo do mínimo de seguidores.</li>
-                    <li>O perfil não pode ser classificado como <strong style={{ color: '#0f172a' }}>estabelecimento comercial</strong> (categoria, nome ou tipo de conta indicando negócio).</li>
-                    <li>Quando há regra de curtidas, é necessário ter <strong style={{ color: '#0f172a' }}>pelo menos um post</strong> com o número mínimo de curtidas exigido.</li>
+                    <li>O perfil não pode ser classificado como <strong style={{ color: 'var(--app-text)' }}>estabelecimento comercial</strong> (categoria, nome ou tipo de conta indicando negócio).</li>
+                    <li>Quando há regra de curtidas, é necessário ter <strong style={{ color: 'var(--app-text)' }}>pelo menos um post</strong> com o número mínimo de curtidas exigido.</li>
                   </ul>
                 </div>
               ),
@@ -181,7 +181,7 @@ function RejectionFullScreen({
           borderRadius: 10,
           fontWeight: 600,
           fontSize: 14,
-          background: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)',
+          background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-chart-bar-top) 100%)',
           border: 'none',
         }}
       >
@@ -217,7 +217,7 @@ function InstallationLoader() {
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
-        background: 'linear-gradient(145deg, #0d0d12 0%, #1a1a2e 50%, #0f0f1a 100%)',
+        background: 'linear-gradient(145deg, var(--app-dark-bg) 0%, var(--app-dark-bg-mid) 50%, var(--app-bg) 100%)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -237,14 +237,14 @@ function InstallationLoader() {
           style={{
             fontSize: 48,
             marginBottom: 24,
-            filter: 'drop-shadow(0 0 12px rgba(114, 46, 209, 0.5))',
+            filter: 'var(--app-primary-glow)',
           }}
         >
-          <RocketOutlined style={{ color: '#a78bfa' }} />
+          <RocketOutlined style={{ color: 'var(--app-chart-bar-top)' }} />
         </div>
         <h2
           style={{
-            color: '#e2e8f0',
+            color: 'var(--app-on-dark)',
             fontSize: 18,
             fontWeight: 600,
             marginBottom: 32,
@@ -255,7 +255,7 @@ function InstallationLoader() {
         </h2>
         <p
           style={{
-            color: '#94a3b8',
+            color: 'var(--app-on-dark-muted)',
             fontSize: 15,
             minHeight: 24,
             marginBottom: 28,
@@ -267,7 +267,7 @@ function InstallationLoader() {
         <div
           style={{
             height: 6,
-            background: 'rgba(255,255,255,0.08)',
+            background: 'var(--app-primary-muted)',
             borderRadius: 3,
             overflow: 'hidden',
             marginBottom: 8,
@@ -277,13 +277,13 @@ function InstallationLoader() {
             style={{
               height: '100%',
               width: `${progress}%`,
-              background: 'linear-gradient(90deg, #7c3aed, #a78bfa)',
+              background: 'linear-gradient(90deg, var(--app-primary), var(--app-chart-bar-top))',
               borderRadius: 3,
               transition: 'width 0.35s ease',
             }}
           />
         </div>
-        <p style={{ color: '#64748b', fontSize: 12 }}>
+        <p style={{ color: 'var(--app-on-dark-subtle)', fontSize: 12 }}>
           {Math.round(progress)}%
         </p>
       </div>
@@ -411,10 +411,10 @@ export default function Auth() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: '0 8px 24px rgba(109, 94, 246, 0.35)',
+                  boxShadow: 'var(--app-shadow-cta)',
                 }}
               >
-                <RocketOutlined style={{ fontSize: 28, color: '#fff' }} />
+                <RocketOutlined style={{ fontSize: 28, color: 'var(--brand-white)' }} />
               </div>
               <h1
                 style={{
@@ -459,8 +459,8 @@ export default function Auth() {
             styles={{ body: { paddingTop: step === 'nickname' ? 8 : 24 } }}
           >
             {user?.profile_handle && step === 'nickname' && (
-              <div style={{ marginBottom: 16, padding: 12, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12 }}>
-                <p style={{ margin: 0, color: '#166534' }}>
+              <div style={{ marginBottom: 16, padding: 12, background: 'var(--app-alert-success-bg)', border: '1px solid var(--app-alert-success-border)', borderRadius: 12 }}>
+                <p style={{ margin: 0, color: 'var(--app-alert-success-text)' }}>
                   Você já validou o perfil <strong>@{user.profile_handle}</strong>.
                 </p>
                 <div style={{ marginTop: 8 }}>
@@ -509,7 +509,7 @@ export default function Auth() {
 
             {step === 'code' && (
               <>
-                <div style={{ marginBottom: 16, padding: 14, background: 'rgba(47, 128, 237, 0.08)', border: '1px solid rgba(47, 128, 237, 0.3)', borderRadius: 12 }}>
+                <div style={{ marginBottom: 16, padding: 14, background: 'var(--app-info-bg)', border: '1px solid var(--app-info-border)', borderRadius: 12 }}>
                   <p style={{ margin: 0, color: 'var(--app-accent)', fontSize: 14 }}>
                     Enviamos um código de 6 dígitos por <strong>mensagem no Instagram</strong> para <strong>@{nickname}</strong>. Confira o Direct e digite abaixo.
                   </p>

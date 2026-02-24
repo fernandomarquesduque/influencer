@@ -1,22 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Layout as AntLayout, Button, Drawer, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { CaretDownFilled, MenuOutlined, UserOutlined } from '@ant-design/icons'
+import { CaretDownFilled, MenuOutlined, UserOutlined, BgColorsOutlined } from '@ant-design/icons'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
+import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import { Grid } from 'antd'
 
 const { Content } = AntLayout
 const { useBreakpoint } = Grid
 
-/* Barra estilo Facebook: azul sólido, texto branco */
-const FB_HEADER_BG = '#1877f2'
-const FB_HEADER_TEXT = '#fff'
-
+/* Header usa paleta central (index.css): --app-header-bg, --app-header-text */
 const navLinkStyle: React.CSSProperties = {
-  color: FB_HEADER_TEXT,
+  color: 'var(--app-header-text)',
   fontSize: 15,
   padding: '8px 14px',
   textDecoration: 'none',
@@ -27,7 +25,7 @@ const navLinkStyle: React.CSSProperties = {
 const navLinkActiveStyle: React.CSSProperties = {
   ...navLinkStyle,
   opacity: 1,
-  background: 'rgba(255,255,255,0.15)',
+  background: 'var(--app-overlay-white-12)',
 }
 
 const drawerLinkStyle: React.CSSProperties = {
@@ -47,6 +45,8 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout, isAdm } = useAuth()
+  const { theme, setTheme } = useTheme()
+  const currentThemeLabel = THEME_OPTIONS.find((o) => o.value === theme)?.label ?? 'Tema'
   const screens = useBreakpoint()
   const isMobile = !screens.md
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -104,11 +104,11 @@ export default function Layout() {
         <>
           <div
             style={{
-              background: FB_HEADER_BG,
+              background: 'var(--app-header-bg)',
               position: 'sticky',
               top: 0,
               zIndex: 100,
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+              boxShadow: 'var(--app-shadow-md)',
             }}
           >
             <header
@@ -130,7 +130,7 @@ export default function Layout() {
                   alignItems: 'center',
                   gap: 10,
                   textDecoration: 'none',
-                  color: FB_HEADER_TEXT,
+                  color: 'var(--app-header-text)',
                   minWidth: 0,
                 }}
               >
@@ -149,7 +149,7 @@ export default function Layout() {
               {isMobile ? (
                 <Button
                   type="text"
-                  icon={<MenuOutlined style={{ fontSize: 22, color: FB_HEADER_TEXT }} />}
+                  icon={<MenuOutlined style={{ fontSize: 22, color: 'var(--app-header-text)' }} />}
                   onClick={() => setMobileMenuOpen(true)}
                   style={{ flexShrink: 0 }}
                   aria-label="Abrir menu"
@@ -180,6 +180,36 @@ export default function Layout() {
                     )}
                   </nav>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Dropdown
+                      menu={{
+                        items: THEME_OPTIONS.map((opt) => ({
+                          key: opt.value,
+                          label: opt.label,
+                          onClick: () => setTheme(opt.value),
+                        })),
+                      }}
+                      trigger={['click']}
+                      placement="bottomRight"
+                    >
+                      <Button
+                        type="text"
+                        icon={<BgColorsOutlined />}
+                        style={{
+                          color: 'var(--app-header-text)',
+                          height: 36,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          borderRadius: 8,
+                          padding: '0 10px',
+                        }}
+                        title="Tema"
+                        aria-label="Escolher tema"
+                      >
+                        <span style={{ fontSize: 14, fontWeight: 500 }}>{currentThemeLabel}</span>
+                        <CaretDownFilled style={{ fontSize: 12, opacity: 0.9 }} />
+                      </Button>
+                    </Dropdown>
                     {user ? (
                       <Dropdown
                         menu={{
@@ -223,11 +253,11 @@ export default function Layout() {
                                 marginBottom: 2,
                               }}
                             >
-                              <span style={{ fontSize: 14, fontWeight: 600, color: FB_HEADER_TEXT, whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
+                              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--app-header-text)', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
                                 {headerProfileName ?? user.username}
                               </span>
                               {myHandle && (
-                                <span style={{ fontSize: 12, color: FB_HEADER_TEXT, opacity: 0.9 }}>
+                                <span style={{ fontSize: 12, color: 'var(--app-header-text)', opacity: 0.9 }}>
                                   @{myHandle}
                                 </span>
                               )}
@@ -241,8 +271,8 @@ export default function Layout() {
                               width: 36,
                               height: 36,
                               borderRadius: '50%',
-                              background: headerProfilePic ? 'transparent' : 'rgba(255,255,255,0.2)',
-                              color: FB_HEADER_TEXT,
+                              background: headerProfilePic ? 'transparent' : 'var(--app-overlay-white-08)',
+                              color: 'var(--app-header-text)',
                               overflow: 'hidden',
                               flexShrink: 0,
                             }}
@@ -258,7 +288,7 @@ export default function Layout() {
                               <UserOutlined style={{ fontSize: 18 }} />
                             )}
                           </span>
-                          <CaretDownFilled style={{ fontSize: 14, color: FB_HEADER_TEXT, opacity: 0.95, marginLeft: -6, marginBottom: -2 }} />
+                          <CaretDownFilled style={{ fontSize: 14, color: 'var(--app-header-text)', opacity: 0.95, marginLeft: -6, marginBottom: -2 }} />
                         </button>
                       </Dropdown>
                     ) : (
@@ -270,7 +300,7 @@ export default function Layout() {
                           to="/app/create"
                           style={{
                             ...navLinkStyle,
-                            background: 'rgba(255,255,255,0.2)',
+                            background: 'var(--app-overlay-white-08)',
                             padding: '8px 18px',
                             fontWeight: 600,
                           }}
@@ -292,6 +322,30 @@ export default function Layout() {
             styles={{ body: { paddingTop: 8 } }}
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Tema</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {THEME_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => { setTheme(opt.value); setMobileMenuOpen(false) }}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: 8,
+                        border: theme === opt.value ? '2px solid var(--app-primary)' : '1px solid var(--app-border)',
+                        background: theme === opt.value ? 'var(--app-primary-muted)' : 'var(--app-card-bg)',
+                        color: 'var(--app-text)',
+                        fontSize: 13,
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {user && (
                 <>
                   {(user.scope === 'influencer' || isAdm) && (
@@ -331,7 +385,7 @@ export default function Layout() {
                   style={{
                     ...drawerLinkStyle,
                     background: 'linear-gradient(135deg, var(--app-primary), var(--app-accent))',
-                    color: '#fff',
+                    color: 'var(--brand-white)',
                     padding: '12px 16px',
                     borderRadius: 12,
                     fontWeight: 600,

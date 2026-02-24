@@ -2,7 +2,21 @@ import { createContext, useContext, useState, useMemo, useEffect, type ReactNode
 
 const STORAGE_KEY = 'influencer-theme'
 
-export type ThemeMode = 'light' | 'dark'
+export type ThemeMode = 'light' | 'dark' | 'sepia' | 'ocean' | 'contrast'
+
+export const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
+  { value: 'light', label: 'Claro' },
+  { value: 'dark', label: 'Escuro' },
+  { value: 'sepia', label: 'Sépia' },
+  { value: 'ocean', label: 'Oceano' },
+  { value: 'contrast', label: 'Alto contraste' },
+]
+
+const VALID_THEMES: ThemeMode[] = ['light', 'dark', 'sepia', 'ocean', 'contrast']
+
+function isValidTheme(v: string): v is ThemeMode {
+  return VALID_THEMES.includes(v as ThemeMode)
+}
 
 interface ThemeContextValue {
   theme: ThemeMode
@@ -15,7 +29,7 @@ const ThemeContext = createContext<ThemeContextValue | null>(null)
 function readStored(): ThemeMode {
   try {
     const v = localStorage.getItem(STORAGE_KEY)
-    if (v === 'dark' || v === 'light') {
+    if (v && isValidTheme(v)) {
       if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', v)
       return v
     }
@@ -40,7 +54,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   )
 
   const toggleTheme = useMemo(
-    () => () => setThemeState((prev) => (prev === 'light' ? 'dark' : 'light')),
+    () => () => setThemeState((prev) => {
+      const i = VALID_THEMES.indexOf(prev)
+      return VALID_THEMES[(i + 1) % VALID_THEMES.length]
+    }),
     []
   )
 

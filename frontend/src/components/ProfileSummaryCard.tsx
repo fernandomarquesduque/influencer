@@ -52,9 +52,9 @@ function formatShortNum(n: number | undefined | null): string {
 
 /** Cor do engajamento: >70% verde, >40% amarelo, >0% rosa. */
 function engagementColor(rate: number): string {
-  if (rate > 70) return '#52c41a'   // verde
-  if (rate > 40) return '#faad14'   // amarelo
-  return '#eb2f96'                  // rosa
+  if (rate > 70) return 'var(--app-rate-high)'
+  if (rate > 40) return 'var(--app-rate-mid)'
+  return 'var(--app-rate-low)'
 }
 
 interface ProfileSummaryCardProps {
@@ -148,7 +148,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               {isVerified && (
                 <Tooltip title="Verificado">
-                  <CheckCircleOutlined style={{ color: '#3897f0', fontSize: 16 }} />
+                  <CheckCircleOutlined style={{ color: 'var(--app-primary)', fontSize: 16 }} />
                 </Tooltip>
               )}
               {item.activation?.pricing && (() => {
@@ -183,27 +183,27 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
         >
           {item.activation.whatsapp?.trim() && (
             <Tooltip title="WhatsApp">
-              <MessageOutlined style={{ color: '#25D366', fontSize: 18 }} />
+              <MessageOutlined style={{ color: 'var(--app-icon-whatsapp)', fontSize: 18 }} />
             </Tooltip>
           )}
           {item.activation.tiktok?.trim() && (
             <Tooltip title="TikTok">
-              <VideoCameraOutlined style={{ color: '#000000', fontSize: 18 }} />
+              <VideoCameraOutlined style={{ color: 'var(--app-icon-instagram)', fontSize: 18 }} />
             </Tooltip>
           )}
           {item.activation.facebook?.trim() && (
             <Tooltip title="Facebook">
-              <FacebookOutlined style={{ color: '#1877F2', fontSize: 18 }} />
+              <FacebookOutlined style={{ color: 'var(--app-icon-facebook)', fontSize: 18 }} />
             </Tooltip>
           )}
           {item.activation.linkedin?.trim() && (
             <Tooltip title="LinkedIn">
-              <LinkedinOutlined style={{ color: '#0A66C2', fontSize: 18 }} />
+              <LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)', fontSize: 18 }} />
             </Tooltip>
           )}
           {item.activation.twitter?.trim() && (
             <Tooltip title="X / Twitter">
-              <TwitterOutlined style={{ color: '#1DA1F2', fontSize: 18 }} />
+              <TwitterOutlined style={{ color: 'var(--app-icon-twitter)', fontSize: 18 }} />
             </Tooltip>
           )}
         </div>
@@ -222,8 +222,8 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                   width: avatarSize,
                   height: avatarSize,
                   borderRadius: '50%',
-                  border: '3px solid #f0f0f0',
-                  boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+                  border: '3px solid var(--app-placeholder-bg)',
+                  boxShadow: 'var(--app-shadow-xl)',
                   objectFit: 'cover',
                   visibility: imageLoading || imageError ? 'hidden' : 'visible',
                   position: imageLoading ? 'absolute' : 'relative',
@@ -247,9 +247,9 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                     width: avatarSize,
                     height: avatarSize,
                     borderRadius: '50%',
-                    background: '#f5f5f5',
-                    border: '3px solid #f0f0f0',
-                    boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+                    background: 'var(--app-placeholder-bg)',
+                    border: '3px solid var(--app-placeholder-bg)',
+                    boxShadow: 'var(--app-shadow-xl)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -267,8 +267,8 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                     position: 'absolute',
                     inset: 0,
                     zIndex: 1,
-                    border: '3px solid #f0f0f0',
-                    boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+                    border: '3px solid var(--app-placeholder-bg)',
+                    boxShadow: 'var(--app-shadow-xl)',
                   }}
                 />
               )}
@@ -278,8 +278,8 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
               size={avatarSize}
               icon={<UserOutlined />}
               style={{
-                border: '3px solid #f0f0f0',
-                boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+                border: '3px solid var(--app-placeholder-bg)',
+                boxShadow: 'var(--app-shadow-xl)',
               }}
             />
           )}
@@ -291,7 +291,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
               ellipsis
               style={{
                 fontSize: variant === 'detail' ? 17 : 15,
-                color: '#262626',
+                color: 'var(--app-text)',
                 maxWidth: '100%',
               }}
             >
@@ -299,7 +299,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
             </Text>
             {item.activation && (
               <Tooltip title="Ativado na plataforma">
-                <SafetyOutlined style={{ color: '#52c41a', fontSize: 14, flexShrink: 0 }} />
+                <SafetyOutlined style={{ color: 'var(--app-icon-success)', fontSize: 14, flexShrink: 0 }} />
               </Tooltip>
             )}
             {variant !== 'list' && item.activation?.pricing && (() => {
@@ -322,7 +322,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                 gap: 4,
                 marginTop: 4,
                 fontSize: 12,
-                color: '#8e8e8e',
+                color: 'var(--app-text-tertiary)',
               }}
             >
               <EnvironmentOutlined style={{ fontSize: 12 }} />
@@ -381,7 +381,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
           marginTop: 'auto',
           flexShrink: 0,
           paddingTop: 12,
-          borderTop: '1px solid #f0f0f0',
+          borderTop: '1px solid var(--app-border)',
         }}
       >
         {showMetrics ? (
@@ -394,15 +394,15 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                 gap: variant === 'list' ? 8 : 24,
                 padding: '10px 0',
                 marginBottom: 12,
-                borderBottom: '1px solid #f0f0f0',
+                borderBottom: '1px solid var(--app-border)',
               }}
             >
               <Tooltip title="Seguidores">
                 <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }}>
-                  <div style={{ fontSize: variant === 'list' ? 14 : 16, fontWeight: 700, color: '#262626' }}>
+                  <div style={{ fontSize: variant === 'list' ? 14 : 16, fontWeight: 700, color: 'var(--app-text)' }}>
                     {formatShortNum(item.followers_count)}
                   </div>
-                  <div style={{ fontSize: 10, color: '#8e8e8e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>seguidores</div>
+                  <div style={{ fontSize: 10, color: 'var(--app-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>seguidores</div>
                 </div>
               </Tooltip>
               <Tooltip title="Engajamento (likes + comentários / seguidores)">
@@ -410,15 +410,15 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                   <div style={{ fontSize: variant === 'list' ? 14 : 16, fontWeight: 700, color: engagementColor(eng.engagement_rate) }}>
                     {eng.engagement_rate.toFixed(1)}%
                   </div>
-                  <div style={{ fontSize: 10, color: '#8e8e8e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>engajamento</div>
+                  <div style={{ fontSize: 10, color: 'var(--app-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>engajamento</div>
                 </div>
               </Tooltip>
               <Tooltip title="Posts analisados">
                 <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }}>
-                  <div style={{ fontSize: variant === 'list' ? 14 : 16, fontWeight: 700, color: '#262626' }}>
+                  <div style={{ fontSize: variant === 'list' ? 14 : 16, fontWeight: 700, color: 'var(--app-text)' }}>
                     {eng.posts_count}
                   </div>
-                  <div style={{ fontSize: 10, color: '#8e8e8e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>posts</div>
+                  <div style={{ fontSize: 10, color: 'var(--app-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>posts</div>
                 </div>
               </Tooltip>
             </div>
@@ -434,13 +434,13 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
               }}
             >
               <Space size={6}>
-                <HeartOutlined style={{ color: '#eb2f96', fontSize: 14 }} />
+                <HeartOutlined style={{ color: 'var(--app-icon-heart)', fontSize: 14 }} />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {formatShortNum(eng.total_likes)} curtidas
                 </Text>
               </Space>
               <Space size={6}>
-                <CommentOutlined style={{ color: '#1890ff', fontSize: 14 }} />
+                <CommentOutlined style={{ color: 'var(--app-icon-comment)', fontSize: 14 }} />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {formatShortNum(eng.total_comments)} comentários
                 </Text>
@@ -466,7 +466,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
     minWidth: 0,
     borderRadius: 12,
     overflow: 'hidden',
-    boxShadow: '0 1px 3px rgba(0,0,0,.06)',
+    boxShadow: 'var(--app-shadow-lg)',
   }
 
   if (variant === 'list' && onClick) {

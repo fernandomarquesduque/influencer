@@ -1,43 +1,40 @@
 /**
- * Design system local do relatório — paleta premium, leve (Notion + Stripe + Linear).
- * Uso: cores, radius, sombras, tipografia, espaçamento.
+ * Design system do relatório — cores e tokens vêm da folha central (index.css).
+ * Todas as cores usam var(--app-*) para uma única fonte de verdade.
  */
 export const reportTokens = {
   colors: {
-    pageBg: '#f2f6f2',
-    pageBgBlob: 'rgba(99, 102, 241, 0.04)',
-    cardBg: '#ffffff',
-    cardBgSoft: '#fafbfc',
-    cardBgHighlight: 'rgba(99, 102, 241, 0.04)',
-    border: 'rgba(0,0,0,0.06)',
-    borderLight: 'rgba(0,0,0,0.04)',
-    text: '#1e293b',
-    textSecondary: '#64748b',
-    textMuted: '#94a3b8',
-    primary: '#6366f1',
-    primaryHover: '#4f46e5',
-    primaryDark: '#4f46e5',
-    primaryMuted: 'rgba(99, 102, 241, 0.12)',
-    success: '#10b981',
-    successBg: 'rgba(16, 185, 129, 0.08)',
-    successBorder: 'rgba(16, 185, 129, 0.35)',
-    warning: '#f59e0b',
-    warningBg: 'rgba(245, 158, 11, 0.08)',
-    warningBorder: 'rgba(245, 158, 11, 0.35)',
-    danger: '#ef4444',
-    /** Premium / valor (acento dourado suave) */
-    gold: '#d4a853',
-    goldLight: 'rgba(212, 168, 83, 0.14)',
-    goldBorder: 'rgba(212, 168, 83, 0.35)',
-    /** Hero */
-    heroGradient: 'linear-gradient(135deg, #eef2ff 0%, #f5f3ff 40%, #fefce8 100%)',
-    heroBlob: 'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.12), transparent)',
-    /** Glass */
-    glassBg: 'rgba(255,255,255,0.72)',
-    glassBorder: 'rgba(255,255,255,0.9)',
-    /** Legacy (aliases) */
-    cardBgStrategic: '#f0f4ff',
-    cardBgAnalytical: '#f8fafc',
+    pageBg: 'var(--app-page-bg)',
+    pageBgBlob: 'var(--app-bg-blob1)',
+    cardBg: 'var(--app-card-bg)',
+    cardBgSoft: 'var(--app-card-bg-soft)',
+    cardBgHighlight: 'var(--app-primary-muted)',
+    border: 'var(--app-border)',
+    borderLight: 'var(--app-border-light)',
+    progressTrail: 'var(--app-progress-trail)',
+    text: 'var(--app-text)',
+    textSecondary: 'var(--app-text-secondary)',
+    textMuted: 'var(--app-text-tertiary)',
+    primary: 'var(--app-primary)',
+    primaryHover: 'var(--app-primary-dark)',
+    primaryDark: 'var(--app-primary-dark)',
+    primaryMuted: 'var(--app-primary-muted)',
+    success: 'var(--app-success)',
+    successBg: 'var(--app-success-bg)',
+    successBorder: 'var(--app-success-border)',
+    warning: 'var(--app-warning)',
+    warningBg: 'var(--app-warning-bg)',
+    warningBorder: 'var(--app-warning-border)',
+    danger: 'var(--app-error)',
+    gold: 'var(--app-gold)',
+    goldLight: 'var(--app-gold-light)',
+    goldBorder: 'var(--app-gold-border)',
+    heroGradient: 'var(--app-hero-gradient)',
+    heroBlob: 'radial-gradient(ellipse 80% 50% at 50% -20%, var(--app-primary-muted), transparent)',
+    glassBg: 'var(--app-glass-bg)',
+    glassBorder: 'var(--app-glass-border)',
+    cardBgStrategic: 'var(--app-primary-muted)',
+    cardBgAnalytical: 'var(--app-card-bg-soft)',
   },
   radius: {
     sm: 8,
@@ -49,16 +46,16 @@ export const reportTokens = {
   /** Legacy: número único para borderRadius (equivale a radius.lg) */
   radiusLegacy: 16,
   shadow: {
-    sm: '0 1px 2px rgba(0,0,0,0.04)',
-    md: '0 4px 12px rgba(0,0,0,0.05)',
-    lg: '0 10px 30px rgba(0,0,0,0.06)',
-    xl: '0 20px 40px rgba(0,0,0,0.08)',
-    glow: '0 0 0 1px rgba(99, 102, 241, 0.1)',
+    sm: 'var(--app-shadow-sm)',
+    md: 'var(--app-shadow-md)',
+    lg: 'var(--app-shadow-lg)',
+    xl: 'var(--app-shadow-xl)',
+    glow: 'var(--app-shadow-glow)',
   },
   /** Legacy: string única */
-  shadowLegacy: '0 10px 30px rgba(0,0,0,.06)',
+  shadowLegacy: 'var(--app-shadow-lg)',
   /** Legacy: sombra forte para cards */
-  shadowStrong: '0 10px 30px rgba(0,0,0,0.08)',
+  shadowStrong: 'var(--app-shadow-xl)',
   /** Legacy: número para radius grande (equivale a radius.xl) */
   radiusLarge: 24,
   spacing: {

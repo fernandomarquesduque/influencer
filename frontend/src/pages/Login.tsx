@@ -41,11 +41,11 @@ function Login() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(135deg, #f5f7ff 0%, #ffffff 55%, #f7f7fb 100%)',
+        background: 'var(--app-bg)',
         backgroundImage: `
-          linear-gradient(135deg, #f5f7ff 0%, #ffffff 55%, #f7f7fb 100%),
-          radial-gradient(circle at 20% 80%, rgba(109, 94, 246, 0.04) 0%, transparent 50%),
-          radial-gradient(circle at 80% 20%, rgba(47, 128, 237, 0.04) 0%, transparent 50%)
+          var(--app-hero-gradient),
+          radial-gradient(circle at 20% 80%, var(--app-bg-blob1) 0%, transparent 50%),
+          radial-gradient(circle at 80% 20%, var(--app-bg-blob2) 0%, transparent 50%)
         `,
         padding: 24,
         boxSizing: 'border-box',
@@ -56,7 +56,7 @@ function Login() {
           variant="borderless"
           style={{
             borderRadius: 18,
-            boxShadow: '0 10px 30px rgba(0,0,0,0.08)',
+            boxShadow: 'var(--app-shadow-xl)',
             overflow: 'hidden',
           }}
           styles={{

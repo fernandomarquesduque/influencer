@@ -14,7 +14,7 @@ function ThemedConfig() {
       locale={ptBR}
       theme={{
         token: {
-          colorPrimary: '#6D5EF6',
+          colorPrimary: '#68278f',
           borderRadius: 14,
           fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         },

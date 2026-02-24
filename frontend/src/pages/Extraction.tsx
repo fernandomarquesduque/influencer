@@ -133,7 +133,7 @@ export default function Extraction() {
               <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>Hashtag</Text>
               <Input
                 placeholder="Ex.: viagem"
-                prefix={<TagOutlined style={{ color: 'rgba(0,0,0,.25)' }} />}
+                prefix={<TagOutlined style={{ color: 'var(--app-input-placeholder)' }} />}
                 value={tag}
                 onChange={(e) => setTag(e.target.value)}
                 onPressEnter={handleStart}

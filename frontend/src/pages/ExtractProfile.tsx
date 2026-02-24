@@ -52,7 +52,7 @@ export default function ExtractProfile() {
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Input
             placeholder="https://www.instagram.com/rafaellacassol/ ou rafaellacassol"
-            prefix={<LinkOutlined style={{ color: 'rgba(0,0,0,.25)' }} />}
+            prefix={<LinkOutlined style={{ color: 'var(--app-input-placeholder)' }} />}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -79,9 +79,9 @@ export default function ExtractProfile() {
           title={
             <Space>
               {result.success ? (
-                <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                <CheckCircleOutlined style={{ color: 'var(--app-icon-success)' }} />
               ) : (
-                <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                <CloseCircleOutlined style={{ color: 'var(--app-error)' }} />
               )}
               {result.success ? 'Perfil extraído e salvo' : 'Perfil não foi salvo'}
             </Space>

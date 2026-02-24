@@ -105,7 +105,7 @@ export function ReportHero({
   }, [profilePic])
 
   const progressGradient = scoreValue != null
-    ? (scoreValue >= 70 ? `linear-gradient(90deg, ${c.success} 0%, #34d399 100%)` : scoreValue >= 40 ? `linear-gradient(90deg, ${c.primary} 0%, #818cf8 100%)` : `linear-gradient(90deg, ${c.warning} 0%, #fbbf24 100%)`)
+    ? (scoreValue >= 70 ? `linear-gradient(90deg, ${c.success} 0%, var(--app-success-accent) 100%)` : scoreValue >= 40 ? `linear-gradient(90deg, ${c.primary} 0%, var(--app-primary-dark) 100%)` : `linear-gradient(90deg, ${c.warning} 0%, var(--app-warning-accent) 100%)`)
     : undefined
   const hasRightBadge = tierLabelProp != null && (percentil != null || scoreSelo)
   return (
@@ -134,7 +134,7 @@ export function ReportHero({
                     width: avatarSize,
                     height: avatarSize,
                     borderRadius: '50%',
-                    border: '3px solid #fff',
+                    border: '3px solid var(--brand-white)',
                     boxShadow: sh.md,
                     objectFit: 'cover',
                     visibility: imageLoading || imageError ? 'hidden' : 'visible',
@@ -155,8 +155,8 @@ export function ReportHero({
                       width: avatarSize,
                       height: avatarSize,
                       borderRadius: '50%',
-                      background: '#f0f0f0',
-                      border: '3px solid #fff',
+                      background: 'var(--app-placeholder-bg)',
+                      border: '3px solid var(--brand-white)',
                       boxShadow: sh.md,
                       display: 'flex',
                       alignItems: 'center',
@@ -176,7 +176,7 @@ export function ReportHero({
                       position: 'absolute',
                       inset: 0,
                       zIndex: 1,
-                      border: '3px solid #fff',
+                      border: '3px solid var(--brand-white)',
                       boxShadow: sh.md,
                     }}
                   />
@@ -187,7 +187,7 @@ export function ReportHero({
                 size={avatarSize}
                 icon={<UserOutlined />}
                 alt={name || atHandle || 'Foto do perfil'}
-                style={{ border: '3px solid #fff', boxShadow: sh.md }}
+                style={{ border: '3px solid var(--brand-white)', boxShadow: sh.md }}
               />
             )}
           </div>
@@ -202,15 +202,15 @@ export function ReportHero({
                   <div style={{ flexShrink: 0 }}>
                     <Tag
                       style={{
-                        background: `linear-gradient(135deg, ${c.goldLight} 0%, rgba(212, 168, 83, 0.25) 100%)`,
-                        color: '#92400e',
+                        background: `linear-gradient(135deg, ${c.goldLight} 0%, var(--app-gold-border) 100%)`,
+                        color: 'var(--app-text)',
                         border: `1px solid ${c.goldBorder}`,
                         borderRadius: r.full,
                         padding: isMobile ? '2px 10px' : '4px 12px',
                         fontWeight: 700,
                         fontSize: isMobile ? 11 : 12,
                         margin: 0,
-                        boxShadow: '0 2px 8px rgba(212, 168, 83, 0.2)',
+                        boxShadow: 'var(--app-gold-shadow)',
                       }}
                     >
                       ⭐ {tierLabelProp}
@@ -236,7 +236,7 @@ export function ReportHero({
             )}
             <p style={{ ...typ.body, color: c.textSecondary, margin: 0, marginBottom: s.sm, fontSize: isMobile ? 13 : undefined }}>{headline}</p>
             {!hasRightBadge && badgeLabel != null && (
-              <Tag style={{ background: c.primary, color: '#fff', border: 'none', borderRadius: r.full, padding: isMobile ? '2px 10px' : '4px 12px', marginBottom: s.sm, fontSize: typ.caption.fontSize }}>{badgeLabel}</Tag>
+              <Tag style={{ background: c.primary, color: 'var(--brand-white)', border: 'none', borderRadius: r.full, padding: isMobile ? '2px 10px' : '4px 12px', marginBottom: s.sm, fontSize: typ.caption.fontSize }}>{badgeLabel}</Tag>
             )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.sm : s.lg, marginBottom: secondaryMetrics ? s.xs : scoreValue != null ? s.sm : s.md, justifyContent: isMobile ? 'center' : undefined }}>
               {highlights.map(({ label, value }) => {
@@ -259,8 +259,8 @@ export function ReportHero({
                     percent={scoreValue}
                     showInfo={false}
                     strokeColor={progressGradient}
-                    trailColor={c.borderLight}
-                    strokeWidth={isMobile ? 8 : 10}
+                    trailColor={c.progressTrail}
+                    size={isMobile ? 8 : 10}
                     style={{ flex: 1, marginBottom: 0 }}
                   />
                   <span style={{ ...typ.caption, fontWeight: 700, color: c.text, flexShrink: 0 }}>{scoreValue}/100</span>
@@ -273,7 +273,7 @@ export function ReportHero({
                 type="primary"
                 size={isMobile ? 'small' : 'middle'}
                 onClick={onCta}
-                style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#fff', fontWeight: 600 }}
+                style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: 'var(--brand-white)', fontWeight: 600 }}
               >
                 {ctaLabel}
               </Button>
@@ -339,10 +339,10 @@ export function ScoreOverview({
   const maxBar = Math.max(1, ...postsPerWeekData)
   const scoreColor = score >= 70 ? c.success : score >= 40 ? c.primary : c.warning
   const progressGradient = score >= 70
-    ? `linear-gradient(90deg, ${c.success} 0%, #34d399 100%)`
+    ? `linear-gradient(90deg, ${c.success} 0%, var(--app-success-accent) 100%)`
     : score >= 40
-      ? `linear-gradient(90deg, ${c.primary} 0%, #818cf8 100%)`
-      : `linear-gradient(90deg, ${c.warning} 0%, #fbbf24 100%)`
+      ? `linear-gradient(90deg, ${c.primary} 0%, var(--app-primary-dark) 100%)`
+      : `linear-gradient(90deg, ${c.warning} 0%, var(--app-warning-accent) 100%)`
   const pillColors = [c.primaryMuted, c.goldLight, c.successBg]
 
   const compact = embedded
@@ -368,7 +368,7 @@ export function ScoreOverview({
               }}
               aria-hidden
             >
-              <span style={{ fontSize: 28, fontWeight: 800, color: '#fff' }}>{score}</span>
+              <span style={{ fontSize: 28, fontWeight: 800, color: 'var(--brand-white)' }}>{score}</span>
             </div>
             <div>
               <div style={{ ...typ.overline, color: c.textMuted, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Seu score</div>
@@ -377,14 +377,14 @@ export function ScoreOverview({
           </div>
           <Tag
             style={{
-              background: `linear-gradient(135deg, ${c.goldLight} 0%, rgba(212, 168, 83, 0.25) 100%)`,
-              color: '#92400e',
+              background: `linear-gradient(135deg, ${c.goldLight} 0%, var(--app-gold-border) 100%)`,
+              color: 'var(--app-text)',
               border: `1px solid ${c.goldBorder}`,
               borderRadius: r.full,
               padding: '8px 16px',
               fontWeight: 700,
               fontSize: 13,
-              boxShadow: '0 2px 8px rgba(212, 168, 83, 0.2)',
+              boxShadow: 'var(--app-gold-shadow)',
             }}
           >
             ⭐ {tierLabel}
@@ -397,8 +397,8 @@ export function ScoreOverview({
             percent={score}
             showInfo={false}
             strokeColor={progressGradient}
-            trailColor={c.borderLight}
-            strokeWidth={12}
+            trailColor={c.progressTrail}
+            size={12}
             style={{ marginBottom: 0 }}
           />
         </div>
@@ -407,8 +407,8 @@ export function ScoreOverview({
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: s.sm, marginBottom: compact ? s.sm : s.md }}>
           <Tag
             style={{
-              background: `linear-gradient(135deg, ${c.goldLight} 0%, rgba(212, 168, 83, 0.25) 100%)`,
-              color: '#92400e',
+              background: `linear-gradient(135deg, ${c.goldLight} 0%, var(--app-gold-border) 100%)`,
+              color: 'var(--app-text)',
               border: `1px solid ${c.goldBorder}`,
               borderRadius: r.full,
               padding: '4px 12px',
@@ -471,7 +471,7 @@ export function ScoreOverview({
         <div
           style={{
             padding: compact ? s.md : s.lg,
-            background: embedded ? 'rgba(255,255,255,0.4)' : 'linear-gradient(180deg, rgba(99, 102, 241, 0.06) 0%, rgba(99, 102, 241, 0.02) 100%)',
+            background: embedded ? 'var(--app-glass-bg)' : 'var(--app-primary-muted)',
             borderRadius: r.lg,
             border: embedded ? 'none' : `1px solid ${c.primaryMuted}`,
             width: '100%',
@@ -489,9 +489,9 @@ export function ScoreOverview({
                   flex: 1,
                   minWidth: 0,
                   height: Math.max(6, (n / maxBar) * (compact ? 26 : 34)),
-                  background: `linear-gradient(180deg, ${c.primary} 0%, #818cf8 100%)`,
+                  background: 'var(--app-chart-bar-gradient)',
                   borderRadius: 6,
-                  boxShadow: '0 2px 6px rgba(99, 102, 241, 0.25)',
+                  boxShadow: 'var(--app-chart-bar-shadow)',
                 }}
                 title={`${n} posts`}
               />
@@ -555,7 +555,7 @@ export function ScoreOverview({
         boxShadow: sh.xl,
         padding: 0,
         overflow: 'hidden',
-        background: 'linear-gradient(145deg, #ffffff 0%, #f8fafc 50%, #eef2ff 100%)',
+        background: 'var(--app-hero-gradient)',
         borderLeft: `4px solid ${scoreColor}`,
       }}
       aria-label="Resumo do score"
@@ -659,8 +659,8 @@ export function ProofCarousel({
             <div style={{ position: 'relative', aspectRatio: '1', background: c.borderLight }}>
               {(isTop || geraConversa) && (
                 <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {isTop && <Tag style={{ margin: 0, background: c.primary, color: '#fff', border: 'none', fontSize: 10 }}>#1</Tag>}
-                  {geraConversa && <Tag style={{ margin: 0, background: c.success, color: '#fff', border: 'none', fontSize: 10 }}>Gera conversa</Tag>}
+                  {isTop && <Tag style={{ margin: 0, background: c.primary, color: 'var(--brand-white)', border: 'none', fontSize: 10 }}>#1</Tag>}
+                  {geraConversa && <Tag style={{ margin: 0, background: c.success, color: 'var(--brand-white)', border: 'none', fontSize: 10 }}>Gera conversa</Tag>}
                 </div>
               )}
               {imgUrl && !failed ? (
@@ -673,7 +673,7 @@ export function ProofCarousel({
                 style={{
                   position: 'absolute',
                   inset: 0,
-                  background: 'linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%)',
+                  background: 'linear-gradient(to top, var(--app-overlay) 0%, transparent 50%)',
                   opacity: isHovered ? 1 : 0,
                   transition: 'opacity 0.2s ease',
                   pointerEvents: 'none',
@@ -683,7 +683,7 @@ export function ProofCarousel({
             </div>
             <div style={{ padding: s.sm }}>
               <Tooltip title={METRIC_TOOLTIPS.interacoesPost} placement="top">
-                <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, cursor: 'help', display: 'inline-block' }}>{formatShortNum(interactions)} interações</div>
+                <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, cursor: 'help', display: 'inline-block' }}>{formatShortNum(interactions)} interações&nbsp;</div>
               </Tooltip>
               <Tooltip title={METRIC_TOOLTIPS.erPost} placement="top">
                 <div style={{ ...typ.caption, color: c.textMuted, cursor: 'help', display: 'inline-block' }}>ER {erPost.toFixed(1)}%</div>
@@ -697,11 +697,11 @@ export function ProofCarousel({
   )
 }
 
-// Tons suaves e elegantes para cada tema
+// Tons por tema — folha central (index.css)
 const THEME_MAP = {
-  success: { bg: '#f8fdfb', border: 'rgba(16, 185, 129, 0.12)', accent: '#059669', iconBg: 'rgba(16, 185, 129, 0.06)' },
-  warning: { bg: '#fefdf9', border: 'rgba(180, 83, 9, 0.12)', accent: '#b45309', iconBg: 'rgba(180, 83, 9, 0.06)' },
-  danger: { bg: '#fefaf9', border: 'rgba(185, 28, 28, 0.1)', accent: '#b91c1c', iconBg: 'rgba(185, 28, 28, 0.06)' },
+  success: { bg: 'var(--app-success-bg)', border: 'var(--app-success-border)', accent: 'var(--app-success-accent)', iconBg: 'var(--app-success-icon-bg)' },
+  warning: { bg: 'var(--app-warning-bg)', border: 'var(--app-warning-border)', accent: 'var(--app-warning-accent)', iconBg: 'var(--app-warning-icon-bg)' },
+  danger: { bg: 'var(--app-danger-bg)', border: 'var(--app-danger-border)', accent: 'var(--app-danger-accent)', iconBg: 'var(--app-danger-icon-bg)' },
 } as const
 
 // ——— AudienceQualityCard ———
@@ -742,7 +742,7 @@ export function ConsistencyMiniChart({ data, bestDay, bestHour }: { data: number
       <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 8 }}>Posts por semana (últimas 8)</div>
       <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', height: 36, width: '100%' }}>
         {data.map((n, i) => (
-          <div key={i} style={{ flex: 1, minWidth: 0, height: Math.max(6, (n / max) * 30), background: c.primary, borderRadius: 4, opacity: 0.85 }} />
+          <div key={i} style={{ flex: 1, minWidth: 0, height: Math.max(6, (n / max) * 30), background: 'var(--app-chart-bar-gradient)', borderRadius: 4, boxShadow: 'var(--app-chart-bar-shadow)' }} />
         ))}
       </div>
       <div style={{ ...typ.caption, color: c.textSecondary, marginTop: 8 }}>Melhor: {bestDay} às {bestHour}h</div>
@@ -758,23 +758,23 @@ export function PricingHighlight({ min, max, porque, onCta, hideCta, tooltip, st
       className="report-card pricing-highlight"
       style={{
         borderRadius: r.lg,
-        border: `1px solid rgba(180, 83, 9, 0.1)`,
+        border: `1px solid var(--app-warning-border)`,
         boxShadow: sh.sm,
         padding: s.lg,
-        background: '#fefdf9',
+        background: 'var(--app-warning-bg)',
         minHeight: '100%',
         ...styleProp,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: 8 }}>
-        <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(180, 83, 9, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <DollarOutlined style={{ fontSize: 16, color: '#b45309' }} />
+        <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--app-warning-icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <DollarOutlined style={{ fontSize: 16, color: 'var(--app-warning-accent)' }} />
         </div>
         {tooltip ? <Tooltip title={tooltip} placement="top">{titleEl}</Tooltip> : titleEl}
       </div>
       <div style={{ fontSize: 26, fontWeight: 700, color: c.text, marginBottom: 4 }}>R$ {min} – R$ {max}</div>
       <p style={{ ...typ.bodySmall, color: c.textSecondary, margin: 0, marginBottom: hideCta ? 0 : s.lg, lineHeight: 1.5 }}>{porque}</p>
-      {!hideCta && <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#fff' }} onClick={onCta}>Gerar Media Kit Profissional</Button>}
+      {!hideCta && <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: 'var(--brand-white)' }} onClick={onCta}>Gerar Media Kit Profissional</Button>}
     </div>
   )
 }
@@ -829,9 +829,9 @@ export function StickyCTA({
 }) {
   if (!visible) return null
   return (
-    <div className="report-sticky-cta" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: s.md, background: c.glassBg, backdropFilter: 'blur(12px)', borderTop: `1px solid ${c.borderLight}`, zIndex: 100, boxShadow: '0 -4px 20px rgba(0,0,0,0.06)' }}>
+    <div className="report-sticky-cta" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: s.md, background: c.glassBg, backdropFilter: 'blur(12px)', borderTop: `1px solid ${c.borderLight}`, zIndex: 100, boxShadow: 'var(--app-shadow-top)' }}>
       <div style={{ width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: s.sm }}>
-        <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: '#fff', height: 48 }} onClick={onPrimary}>{primaryLabel}</Button>
+        <Button type="primary" size="large" block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: 'var(--brand-white)', height: 48 }} onClick={onPrimary}>{primaryLabel}</Button>
         <div style={{ ...typ.caption, color: c.textMuted, textAlign: 'center' }}>{primarySubtext}</div>
         {secondaryLabel && onSecondary ? <Button type="default" size="middle" block style={{ borderRadius: r.md }} onClick={onSecondary}>{secondaryLabel}</Button> : null}
       </div>

@@ -36,8 +36,8 @@ export function ActivationCtaPanel({
         maxWidth: '100%',
         boxSizing: 'border-box',
         borderRadius: r,
-        border: '1px solid rgba(16, 185, 129, 0.5)',
-        background: '#1e293b',
+        border: '1px solid var(--app-success-border)',
+        background: 'var(--app-surface-dark)',
         boxShadow: sh,
         overflow: 'hidden',
         padding: isMobile ? s.lg : s.xl,
@@ -52,22 +52,22 @@ export function ActivationCtaPanel({
                   width: 40,
                   height: 40,
                   borderRadius: 10,
-                  background: 'rgba(16, 185, 129, 0.2)',
-                  border: '1px solid rgba(16, 185, 129, 0.5)',
+                  background: 'var(--app-success-bg)',
+                  border: '1px solid var(--app-success-border)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
                 }}
               >
-                <RocketOutlined style={{ fontSize: 20, color: '#34d399' }} />
+                <RocketOutlined style={{ fontSize: 20, color: 'var(--app-success)' }} />
               </div>
               <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
                 <Text
                   strong
                   style={{
                     fontSize: isMobile ? typ.h2.fontSize : typ.h1.fontSize,
-                    color: '#f8fafc',
+                    color: 'var(--app-on-dark)',
                     letterSpacing: '-0.02em',
                     lineHeight: 1.3,
                     display: 'block',
@@ -80,7 +80,7 @@ export function ActivationCtaPanel({
                 <Text
                   style={{
                     fontSize: typ.body.fontSize,
-                    color: '#cbd5e1',
+                    color: 'var(--app-on-dark-muted)',
                     lineHeight: 1.5,
                     display: 'block',
                     marginTop: 6,
@@ -101,12 +101,12 @@ export function ActivationCtaPanel({
               icon={<RocketOutlined />}
               onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
               className="btn-activate-green"
-              style={{ borderRadius: t.radius.md, color: '#fff' }}
+              style={{ borderRadius: t.radius.md, color: 'var(--brand-white)' }}
             >
               Ativar e ficar elegível
             </Button>
           </div>
-          <Text style={{ fontSize: typ.caption.fontSize, color: '#94a3b8', lineHeight: 1.5, display: 'block', marginTop: s.md, maxWidth: isMobile ? '100%' : 420, wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+          <Text style={{ fontSize: typ.caption.fontSize, color: 'var(--app-on-dark-subtle)', lineHeight: 1.5, display: 'block', marginTop: s.md, maxWidth: isMobile ? '100%' : 420, wordWrap: 'break-word', overflowWrap: 'break-word' }}>
             A ativação não garante contratação — mas te coloca elegível para ser encontrado por parceiros.
           </Text>
         </Col>
@@ -117,7 +117,7 @@ export function ActivationCtaPanel({
               style={{
                 fontSize: typ.overline.fontSize,
                 fontWeight: 600,
-                color: '#94a3b8',
+                color: 'var(--app-on-dark-subtle)',
                 letterSpacing: '0.04em',
                 textTransform: 'uppercase',
                 display: 'block',
@@ -136,15 +136,15 @@ export function ActivationCtaPanel({
                     gap: s.sm,
                     padding: s.sm,
                     borderRadius: t.radius.sm,
-                    background: 'rgba(255, 255, 255, 0.08)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    background: 'var(--app-overlay-white-08)',
+                    border: '1px solid var(--app-overlay-white-12)',
                     minWidth: 0,
                   }}
                 >
-                  <Icon style={{ fontSize: 16, color: '#34d399', flexShrink: 0 }} />
+                  <Icon style={{ fontSize: 16, color: 'var(--app-success)', flexShrink: 0 }} />
                   <div style={{ minWidth: 0, flex: 1, wordWrap: 'break-word', overflowWrap: 'break-word' }}>
-                    <Text strong style={{ fontSize: typ.body.fontSize, color: '#f8fafc' }}>{title}</Text>
-                    <Text style={{ fontSize: typ.bodySmall.fontSize, color: '#cbd5e1', display: 'block' }}>{desc}</Text>
+                    <Text strong style={{ fontSize: typ.body.fontSize, color: 'var(--app-on-dark)' }}>{title}</Text>
+                    <Text style={{ fontSize: typ.bodySmall.fontSize, color: 'var(--app-on-dark-muted)', display: 'block' }}>{desc}</Text>
                   </div>
                 </div>
               ))}

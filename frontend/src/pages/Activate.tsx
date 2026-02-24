@@ -323,7 +323,7 @@ export default function Activate() {
 
         <Card
           style={{
-            boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+            boxShadow: 'var(--app-shadow-lg)',
             borderRadius: 12,
             overflow: 'hidden',
           }}
@@ -346,7 +346,7 @@ export default function Activate() {
                     height: 72,
                     borderRadius: '50%',
                     objectFit: 'cover',
-                    border: '3px solid #f0f0f0',
+                    border: '3px solid var(--app-placeholder-bg)',
                     visibility: profilePicLoading ? 'hidden' : 'visible',
                     position: profilePicLoading ? 'absolute' : 'relative',
                   }}
@@ -359,8 +359,8 @@ export default function Activate() {
                       width: 72,
                       height: 72,
                       borderRadius: '50%',
-                      background: '#f0f0f0',
-                      border: '3px solid #f0f0f0',
+                      background: 'var(--app-placeholder-bg)',
+                      border: '3px solid var(--app-placeholder-bg)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -377,13 +377,13 @@ export default function Activate() {
                   width: 72,
                   height: 72,
                   borderRadius: '50%',
-                  background: '#f0f0f0',
+                  background: 'var(--app-placeholder-bg)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <UserOutlined style={{ fontSize: 32, color: '#bfbfbf' }} />
+                <UserOutlined style={{ fontSize: 32, color: 'var(--app-text-tertiary)' }} />
               </div>
             )}
             <div style={{ flex: 1 }}>
@@ -620,14 +620,14 @@ export default function Activate() {
                         alignItems: 'flex-start',
                         gap: 16,
                         padding: '12px 0',
-                        borderBottom: '1px solid #f0f0f0',
+                        borderBottom: '1px solid var(--app-border)',
                       }}
                     >
                       <div style={{ flex: '1 1 200px', minWidth: 0 }}>
                         <div style={{ fontWeight: 500, marginBottom: 2 }}>
                           {PRICING_FIELD_LABELS[key as PricingFieldKey]}
                         </div>
-                        <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+                        <div style={{ fontSize: 12, color: 'var(--app-text-tertiary)' }}>
                           {PRICING_FIELD_HELP[key as PricingFieldKey]}
                         </div>
                       </div>
@@ -720,7 +720,7 @@ export default function Activate() {
               padding: 0,
               cursor: 'pointer',
               fontSize: 12,
-              color: '#8c8c8c',
+              color: 'var(--app-text-tertiary)',
               textDecoration: 'none',
             }}
           >

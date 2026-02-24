@@ -336,7 +336,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const loading = profileLoading || postsLoading
   if (loading && !profile && posts.length === 0) {
     return (
-      <div style={{ background: (t.colors as { pageBg?: string }).pageBg ?? '#f8fafc', minHeight: '100vh', paddingBottom: 80 }}>
+      <div style={{ background: (t.colors as { pageBg?: string }).pageBg ?? 'var(--app-page-bg)', minHeight: '100vh', paddingBottom: 80 }}>
         <ReportSkeleton />
       </div>
     )
@@ -415,7 +415,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
 
       {isRedacted && (
         <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
-          <div style={{ marginBottom: s.lg, padding: s.sm, background: '#fff2e8', border: '1px solid #ffbb96', borderRadius: r }}>
+          <div style={{ marginBottom: s.lg, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
             {user ? (
               <Text>Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.</Text>
             ) : (
@@ -430,7 +430,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
 
       {isLimitedView && !isRedacted && (
         <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
-          <div style={{ marginBottom: s.md, padding: s.sm, background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: r }}>
+          <div style={{ marginBottom: s.md, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
             <Text>Você está vendo uma prévia limitada. <Link to="/premium">Seja assinante</Link> para ver métricas completas e filtros avançados.</Text>
           </div>
         </div>
@@ -556,11 +556,11 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               <Space wrap size={[6, 6]}>{activation.content_type.map((ct) => <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>)}</Space>
                             </Descriptions.Item>
                           )}
-                          {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: '#25D366' }} />{activation.whatsapp}</Space></Descriptions.Item>}
+                          {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
                           {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
-                          {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: '#1877F2' }} />{activation.facebook}</Space></Descriptions.Item>}
-                          {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: '#0A66C2' }} />{activation.linkedin}</Space></Descriptions.Item>}
-                          {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: '#1DA1F2' }} />{activation.twitter}</Space></Descriptions.Item>}
+                          {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
+                          {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
+                          {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
                           {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
                           {activation.description?.trim() && <Descriptions.Item label="Descrição">{activation.description}</Descriptions.Item>}
                           {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
@@ -624,11 +624,11 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                         <Space wrap size={[6, 6]}>{activation.content_type.map((ct) => <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>)}</Space>
                       </Descriptions.Item>
                     )}
-                    {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: '#25D366' }} />{activation.whatsapp}</Space></Descriptions.Item>}
+                    {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
                     {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
-                    {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: '#1877F2' }} />{activation.facebook}</Space></Descriptions.Item>}
-                    {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: '#0A66C2' }} />{activation.linkedin}</Space></Descriptions.Item>}
-                    {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: '#1DA1F2' }} />{activation.twitter}</Space></Descriptions.Item>}
+                    {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
+                    {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
+                    {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
                     {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
                     {activation.description?.trim() && <Descriptions.Item label="Descrição">{activation.description}</Descriptions.Item>}
                     {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
@@ -683,10 +683,10 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             <Row gutter={rowGutter} align="stretch" style={{ marginBottom: gap }}>
               {hasResumo && (
                 <Col xs={24} md={sideBySide ? 12 : 24} style={sideBySide ? { display: 'flex' } : undefined}>
-                  <Card size="small" className="report-card report-card--hover" style={{ ...cardStyle, flex: 1, minHeight: sideBySide ? '100%' : undefined, background: '#fafbfc', border: `1px solid ${c.borderLight}` }}>
+                  <Card size="small" className="report-card report-card--hover" style={{ ...cardStyle, flex: 1, minHeight: sideBySide ? '100%' : undefined, background: c.cardBgSoft, border: `1px solid ${c.borderLight}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: s.md }}>
-                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(99, 102, 241, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <FileTextOutlined style={{ fontSize: 16, color: '#6366f1' }} />
+                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: c.primaryMuted, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <FileTextOutlined style={{ fontSize: 16, color: c.primary }} />
                       </div>
                       <div style={{ ...typH3, color: c.text, margin: 0 }}>Resumo Executivo</div>
                     </div>
@@ -703,13 +703,13 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               )}
               {hasGrowth && (
                 <Col xs={24} md={sideBySide ? 12 : 24} style={sideBySide ? { display: 'flex' } : undefined}>
-                  <ReportSection variant="analytical" title={<div style={{ display: 'flex', alignItems: 'center', gap: s.sm }}><div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(16, 185, 129, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><RiseOutlined style={{ fontSize: 16, color: '#059669' }} /></div>Potencial de Crescimento</div>} style={sideBySide ? { flex: 1, minHeight: '100%', background: '#fafbfc', border: `1px solid ${c.borderLight}` } : { background: '#fafbfc', border: `1px solid ${c.borderLight}` }}>
+                  <ReportSection variant="analytical" title={<div style={{ display: 'flex', alignItems: 'center', gap: s.sm }}><div style={{ width: 34, height: 34, borderRadius: '50%', background: c.successBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><RiseOutlined style={{ fontSize: 16, color: c.success }} /></div>Potencial de Crescimento</div>} style={sideBySide ? { flex: 1, minHeight: '100%', background: c.cardBgSoft, border: `1px solid ${c.borderLight}` } : { background: c.cardBgSoft, border: `1px solid ${c.borderLight}` }}>
                     <Text style={{ ...typ.bodySmall, color: c.text, display: 'block', marginBottom: s.sm }}>
                       Se você aumentar sua frequência de postagem mantendo o mesmo engajamento, seu perfil pode dobrar em 6 a 9 meses.
                     </Text>
                     <Space size={s.xs} wrap>
                       {(reportInsights?.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas] : activation?.content_type?.length ? activation.content_type.slice(0, 3).map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct) : ['Esportes', 'Família', 'Lifestyle']).map((label) => (
-                        <Tag key={label} style={{ borderRadius: r, background: 'rgba(0,0,0,0.04)', border: 'none', color: c.text }}>{label}</Tag>
+                        <Tag key={label} style={{ borderRadius: r, background: 'var(--app-border-light)', border: 'none', color: c.text }}>{label}</Tag>
                       ))}
                     </Space>
                   </ReportSection>
@@ -725,26 +725,26 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             {reportInsights && posts.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.md, alignItems: 'stretch', justifyContent: 'center', marginBottom: s.xl }}>
                 <Tooltip title={METRIC_TOOLTIPS.totalCurtidas} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                    <HeartOutlined style={{ fontSize: 20, color: '#eb2f96' }} />
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: 'var(--app-shadow-lg)' }}>
+                    <HeartOutlined style={{ fontSize: 20, color: 'var(--app-icon-heart)' }} />
                     <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{formatShortNum(engagement.total_likes)}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>curtidas</span></span>
                   </div>
                 </Tooltip>
                 <Tooltip title={METRIC_TOOLTIPS.totalComentarios} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                    <CommentOutlined style={{ fontSize: 20, color: '#1890ff' }} />
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: 'var(--app-shadow-lg)' }}>
+                    <CommentOutlined style={{ fontSize: 20, color: 'var(--app-icon-comment)' }} />
                     <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{formatShortNum(engagement.total_comments)}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>comentários</span></span>
                   </div>
                 </Tooltip>
                 <Tooltip title={METRIC_TOOLTIPS.mediaLikesPost} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: 'var(--app-shadow-lg)' }}>
                     <RiseOutlined style={{ fontSize: 20, color: c.primary }} />
                     <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.avg_likes.toLocaleString('pt-BR')}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>média likes/post</span></span>
                   </div>
                 </Tooltip>
                 <Tooltip title={METRIC_TOOLTIPS.totalPosts} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                    <FileImageOutlined style={{ fontSize: 20, color: '#52c41a' }} />
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: 'var(--app-shadow-lg)' }}>
+                    <FileImageOutlined style={{ fontSize: 20, color: 'var(--app-icon-image)' }} />
                     <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.posts_count}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>posts</span></span>
                   </div>
                 </Tooltip>
@@ -801,9 +801,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                             flex: 1,
                             minWidth: 0,
                             height: Math.max(8, (n / maxBar) * 34),
-                            background: 'linear-gradient(180deg, #6366f1 0%, #818cf8 100%)',
+                            background: 'var(--app-chart-bar-gradient)',
                             borderRadius: 6,
-                            boxShadow: '0 2px 6px rgba(99, 102, 241, 0.25)',
+                            boxShadow: 'var(--app-chart-bar-shadow)',
                           }}
                           title={`${n} posts`}
                         />
@@ -895,7 +895,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               <Button
                 type="primary"
                 size="large"
-                style={{ borderRadius: radiusLarge, paddingLeft: s.xl, paddingRight: s.xl, height: 52, background: gold, borderColor: gold, color: '#fff', marginBottom: s.sm }}
+                style={{ borderRadius: radiusLarge, paddingLeft: s.xl, paddingRight: s.xl, height: 52, background: gold, borderColor: gold, color: 'var(--brand-white)', marginBottom: s.sm }}
                 onClick={goToMediaKitOrLogin}
               >
                 {mediaKitCtaLabel}
@@ -927,13 +927,13 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                     return (
                       <a key={post.key} href={link} target="_blank" rel="noopener noreferrer" style={{ aspectRatio: '1', position: 'relative', display: 'block', overflow: 'hidden', background: c.border }}>
                         {imgUrl ? (failedPostImages.has(post.key) ? (
-                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileImageOutlined style={{ fontSize: 40, color: '#bbb' }} /></div>
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileImageOutlined style={{ fontSize: 40, color: 'var(--app-text-tertiary)' }} /></div>
                         ) : (
                           <Image alt="" src={proxyImageUrl(imgUrl)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} preview={false} onError={() => { setFailedPostImages((prev) => new Set(prev).add(post.key)); if (!refreshQueuedRef.current && handle) { refreshQueuedRef.current = true; queueRefreshProfile(handle).catch(() => { }); startRefreshPolling.current(handle) } }} />
                         )) : (
-                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileImageOutlined style={{ fontSize: 40, color: '#bbb' }} /></div>
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileImageOutlined style={{ fontSize: 40, color: 'var(--app-text-tertiary)' }} /></div>
                         )}
-                        <div className="post-hover-overlay" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.35)', opacity: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, color: '#fff', fontWeight: 600, transition: 'opacity 0.2s' }}>
+                        <div className="post-hover-overlay" style={{ position: 'absolute', inset: 0, background: 'var(--app-overlay-light)', opacity: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, color: 'var(--brand-white)', fontWeight: 600, transition: 'opacity 0.2s' }}>
                           <span><HeartOutlined style={{ marginRight: 6 }} />{formatShortNum(likes)}</span>
                           <span><CommentOutlined style={{ marginRight: 6 }} />{formatShortNum(comments)}</span>
                           {views != null && <span><EyeOutlined style={{ marginRight: 6 }} />{formatShortNum(Number(views))}</span>}
@@ -965,7 +965,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         }
         .report-card--hover:hover {
           transform: translateY(-2px);
-          box-shadow: 0 10px 30px rgba(0,0,0,0.1) !important;
+          box-shadow: var(--app-shadow-xl) !important;
         }
 
         .report-proof-thumb {
@@ -973,7 +973,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         }
         .report-proof-thumb:hover {
           transform: translateY(-2px) scale(1.02);
-          box-shadow: 0 12px 36px rgba(0,0,0,0.12);
+          box-shadow: var(--app-shadow-lg);
         }
 
         .ant-tabs-nav::before { border-bottom: none !important; }
