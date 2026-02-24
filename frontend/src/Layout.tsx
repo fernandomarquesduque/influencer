@@ -7,6 +7,7 @@ import { Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
+import Logo from './components/Logo'
 import { Grid } from 'antd'
 
 const { Content } = AntLayout
@@ -134,15 +135,12 @@ export default function Layout() {
                   minWidth: 0,
                 }}
               >
-                <img
-                  src="/images/logo.svg"
-                  alt="Relatório de Influencer"
+                <Logo
+                  height={36}
                   style={{
-                    height: 36,
-                    width: 'auto',
                     flexShrink: 0,
-                    display: 'block',
                   }}
+                  alt="Relatório de Influencer"
                 />
 
               </Link>

@@ -19,6 +19,7 @@ import {
   CaretDownFilled,
 } from '@ant-design/icons'
 import { useTheme, THEME_OPTIONS, type ThemeMode } from '../contexts/ThemeContext'
+import Logo from '../components/Logo'
 
 /* Paleta central (index.css): --brand-primary, --brand-accent, --app-* */
 const colors = {
@@ -127,12 +128,7 @@ export default function Landing() {
         }}
       >
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--app-text)' }}>
-          <img
-            src="/images/logo.svg"
-            alt="Busca Influencer - Filtrar e Encontrar os Melhores"
-            style={{ height: 36, width: 'auto', display: 'block' }}
-          />
-
+          <Logo height={36} alt="Busca Influencer - Filtrar e Encontrar os Melhores" />
         </Link>
         <nav style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <Dropdown

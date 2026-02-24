@@ -3,6 +3,7 @@ import { App, Form, Input, Button, Card, Typography, Space, Divider } from 'antd
 import { useNavigate, useLocation } from 'react-router-dom'
 import { UserOutlined, LockOutlined, LoginOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
+import Logo from '../components/Logo'
 
 const { Title, Text } = Typography
 
@@ -65,11 +66,7 @@ function Login() {
         >
           {/* Header */}
           <Space direction="vertical" size={16} style={{ width: '100%', marginBottom: 24 }} align="center">
-            <img
-              src="/images/logo.svg"
-              alt="Relatório de Influencer"
-              style={{ height: 48, width: 'auto', display: 'block' }}
-            />
+            <Logo height={48} alt="Relatório de Influencer" />
             <Space direction="vertical" size={4} align="center" style={{ width: '100%' }}>
               <Title level={3} style={{ margin: 0, fontWeight: 600 }}>
                 Bem-vindo de volta
