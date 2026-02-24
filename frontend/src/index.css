@@ -134,6 +134,16 @@ body {
   outline-offset: 2px;
 }
 
+/* Scroll ao focar: deixa espaço para o teclado e o botão de ação */
+input,
+textarea,
+select,
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select-selector {
+  scroll-margin: 60px 0 140px 0;
+}
+
 /* Inputs: borda e focus */
 .ant-input:focus,
 .ant-input-focused,

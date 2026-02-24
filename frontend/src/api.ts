@@ -93,6 +93,7 @@ export interface ProfileListItem {
 }
 
 export type ProfilesSort =
+  | 'relevance_desc'
   | 'engagement_desc'
   | 'engagement_asc'
   | 'followers_desc'

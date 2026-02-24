@@ -59,6 +59,7 @@ export default function ExtractProfile() {
             disabled={loading}
             size="large"
             style={{ maxWidth: 480 }}
+            autoFocus
           />
           <Button
             type="primary"

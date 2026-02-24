@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Form, Input, Button, Card, message, Collapse } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
-import { requestVerificationCode, verifyProfile, type ExtractProfileResult } from '../api'
+import { requestCodeWithExtract, verifyProfile, type ExtractProfileResult } from '../api'
 import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
@@ -292,7 +292,7 @@ function InstallationLoader() {
 }
 
 export default function Auth() {
-  const { user, refreshUser, loginWithToken } = useAuth()
+  const { user, refreshUser, loginWithToken, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -320,7 +320,7 @@ export default function Auth() {
     setLoading(true)
     setShowInstallLoader(true)
     try {
-      const data = await requestVerificationCode(n)
+      const data = await requestCodeWithExtract(n)
       if (data.rejectionReason === 'nao_segue_perfil') {
         setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
         return
@@ -371,6 +371,13 @@ export default function Auth() {
     setNickname('')
     setRejectionInfo(null)
     form.resetFields()
+    // Limpa URL e state para savedNickname não repopular o formulário com o @ anterior
+    navigate('/app/create', { replace: true, state: {} })
+  }
+
+  const validateAnotherProfile = () => {
+    logout()
+    startOver()
   }
 
   return (
@@ -460,14 +467,14 @@ export default function Auth() {
                   <Button type="primary" size="small" onClick={() => navigate(`/activate/${user.profile_handle}`)}>
                     Continuar
                   </Button>
-                  <Button type="link" size="small" onClick={startOver} style={{ marginLeft: 8 }}>
+                  <Button type="link" size="small" onClick={validateAnotherProfile} style={{ marginLeft: 8 }}>
                     Validar outro perfil
                   </Button>
                 </div>
               </div>
             )}
 
-            {step === 'nickname' && (
+            {!user?.profile_handle && step === 'nickname' && (
               <>
                 <p style={{ color: 'var(--app-text-secondary)', marginBottom: 20, fontSize: 14, lineHeight: 1.5 }}>
                   Digite seu <strong>@ do Instagram</strong>. Enviamos um código de ativação por <strong>mensagem direta</strong> no Instagram.
@@ -480,6 +487,7 @@ export default function Auth() {
                       size="large"
                       autoComplete="username"
                       style={{ borderRadius: 10 }}
+                      autoFocus
                     />
                   </Form.Item>
                   <Form.Item style={{ marginBottom: 0 }}>
@@ -522,6 +530,7 @@ export default function Auth() {
                       maxLength={6}
                       autoComplete="one-time-code"
                       style={{ letterSpacing: 8, textAlign: 'center', fontSize: 18, borderRadius: 10 }}
+                      autoFocus
                     />
                   </Form.Item>
                   <Form.Item>

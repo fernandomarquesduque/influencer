@@ -375,6 +375,7 @@ function ProjectNew() {
                 placeholder="Ex.: Campanha de lançamento produto X"
                 value={form.title}
                 onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                autoFocus
               />
             </div>
             <div>

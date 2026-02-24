@@ -166,7 +166,6 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const handle = overrideHandle ?? paramHandle
   const navigate = useNavigate()
   const { user, isPublic, canEditProfile, isAdm, loading: authLoading } = useAuth()
-  debugger;
 
   const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
   const canEdit = handle ? canEditProfile(handle) : false

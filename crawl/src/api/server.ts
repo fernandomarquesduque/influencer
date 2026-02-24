@@ -110,6 +110,19 @@ function getApiExtractClient(): InstagramClient {
   return apiExtractClient;
 }
 
+/** Client dedicado ao cadastro (/app/create). Extração roda imediatamente sem depender da apiExtractQueue. */
+let priorityExtractClient: InstagramClient | null = null;
+function getPriorityExtractClient(): InstagramClient {
+  if (!priorityExtractClient) {
+    const config = buildConfigFromEnv();
+    priorityExtractClient = new InstagramClient({
+      headless: config.headless,
+      authStatePath: resolveAuthStatePath(config.authStatePath),
+    });
+  }
+  return priorityExtractClient;
+}
+
 function isBlockSignal(result: ExtractSingleProfileResult): boolean {
   const err = (result.error ?? '').toLowerCase();
   return (
@@ -134,8 +147,20 @@ function isSessionExpiredError(msg: string): boolean {
   );
 }
 
-/** Executa uma extração (um perfil). Usado pelo extract-profile e pela fila de refresh. forRefresh=true pula todas as validações de qualificação. fromExtractProfileApi=true usa delay curto (2s em vez de 8–20s). Se a sessão estiver expirada e houver INSTAGRAM_USER/PASSWORD no .env, tenta login automático e reextrai uma vez. */
-async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = false, fromExtractProfileApi = false): Promise<ExtractSingleProfileResult> {
+/** Opções extras para runOneExtract. client: usar este em vez do client da fila. skipCount: não incrementar apiExtractProfileCount (ex.: extração prioritária de cadastro). */
+interface RunOneExtractOptions {
+  client?: InstagramClient;
+  skipCount?: boolean;
+}
+
+/** Executa uma extração (um perfil). Usado pelo extract-profile e pela fila de refresh. forRefresh=true pula todas as validações de qualificação. fromExtractProfileApi=true usa delay curto (2s em vez de 8–20s). Se a sessão estiver expirada e houver INSTAGRAM_USER/PASSWORD no .env, tenta login automático e reextrai uma vez. Com options.client a extração usa esse client (ex.: cadastro imediato sem fila). */
+async function runOneExtract(
+  handle: string,
+  forRefresh = false,
+  didAutoLogin = false,
+  fromExtractProfileApi = false,
+  options?: RunOneExtractOptions
+): Promise<ExtractSingleProfileResult> {
   try {
     const now = Date.now();
     if (now < apiExtractBlockedUntil) {
@@ -149,11 +174,11 @@ async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = 
     const cooldownEvery = Math.max(0, parseInt(process.env.COOLDOWN_EVERY ?? '10', 10) || 10);
     const cooldownMinMs = Math.max(0, parseInt(process.env.COOLDOWN_MIN_MS ?? '60000', 10) || 60000);
     const cooldownMaxMs = Math.max(cooldownMinMs, parseInt(process.env.COOLDOWN_MAX_MS ?? '180000', 10) || 180000);
-    if (cooldownEvery > 0 && apiExtractProfileCount > 0 && apiExtractProfileCount % cooldownEvery === 0) {
+    if (!options?.skipCount && cooldownEvery > 0 && apiExtractProfileCount > 0 && apiExtractProfileCount % cooldownEvery === 0) {
       const cooldownMs = cooldownMinMs + Math.floor(Math.random() * (cooldownMaxMs - cooldownMinMs + 1));
       await new Promise((r) => setTimeout(r, cooldownMs));
     }
-    const client = getApiExtractClient();
+    const client = options?.client ?? getApiExtractClient();
     await client.init();
     const page = await client.newPage();
     const config = buildConfigFromEnv();
@@ -185,7 +210,7 @@ async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = 
       }
       return result;
     }
-    apiExtractProfileCount++;
+    if (!options?.skipCount) apiExtractProfileCount++;
     return result;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -198,9 +223,11 @@ async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = 
       process.env.INSTAGRAM_PASSWORD
     ) {
       console.log('[API] Sessão expirada detectada; executando login automático...');
-      if (apiExtractClient) {
-        await apiExtractClient.close().catch(() => { });
-        apiExtractClient = null;
+      const clientToClose = options?.client ? priorityExtractClient : apiExtractClient;
+      if (clientToClose) {
+        await clientToClose.close().catch(() => { });
+        if (options?.client) priorityExtractClient = null;
+        else apiExtractClient = null;
       }
       const config = buildConfigFromEnv();
       const authPath = resolveAuthStatePath(config.authStatePath);
@@ -215,7 +242,7 @@ async function runOneExtract(handle: string, forRefresh = false, didAutoLogin = 
         await loginClient.close();
         if (ok) {
           console.log('[API] Login automático OK; reextraindo perfil...');
-          return runOneExtract(handle, forRefresh, true);
+          return runOneExtract(handle, forRefresh, true, fromExtractProfileApi, options);
         }
       } catch (loginErr) {
         console.error('[API] Login automático falhou:', loginErr instanceof Error ? loginErr.message : loginErr);
@@ -389,11 +416,12 @@ app.patch('/api/auth/me/password', (req: RequestWithAuth, res: Response) => {
   res.status(200).json({ ok: true });
 });
 
-/** Executa o fluxo de envio de código (client init, verificação segue, sendDM). Compartilhado por request-code e request-code-with-extract. */
+/** Executa o fluxo de envio de código (client init, verificação segue, sendDM). Compartilhado por request-code e request-code-with-extract. Com client opcional usa esse (ex.: mesmo browser do cadastro prioritário). */
 async function performRequestCodeFlow(
   nickname: string,
   code: string,
-  _userId: number | null
+  _userId: number | null,
+  flowOptions?: { client?: InstagramClient }
 ): Promise<{ sent: boolean; error?: string; followProfileUrl?: string; nao_segue_perfil?: boolean }> {
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[request-code] ${logTimestamp()} +${Date.now() - t0}ms ${msg}`);
@@ -409,7 +437,7 @@ async function performRequestCodeFlow(
   const maxAttempts = 3;
   const delayMs = 2000;
   try {
-    const client = getApiExtractClient();
+    const client = flowOptions?.client ?? getApiExtractClient();
     try {
       await client.init();
       logStep('Browser pronto (reutilizado).');
@@ -423,13 +451,12 @@ async function performRequestCodeFlow(
             ? (stored.result as { followsOfficialProfile?: boolean }).followsOfficialProfile
             : undefined;
 
+        // Só confiamos no cache quando diz que segue (true). Quando false ou ausente, reabrimos o perfil e verificamos:
+        // a API às vezes não envia friendship_status ou envia incorreto, e o usuário pode estar seguindo.
         if (followsFromExtract === true) {
           logStep('Usando cache (segue perfil), pulando abertura de perfil.');
-        } else if (followsFromExtract === false) {
-          logStep('Cache: não segue perfil, retornando erro.');
-          return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
         } else {
-          logStep('Sem cache: abrindo perfil para verificar se segue...');
+          logStep(followsFromExtract === false ? 'Cache disse não seguir; reabrindo perfil para confirmar...' : 'Sem cache: abrindo perfil para verificar se segue...');
           const page = await client.newPage();
           try {
             const config = buildConfigFromEnv();
@@ -522,7 +549,7 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
   }
 });
 
-/** Extract + request-code em sequência (sem frontend entre as etapas). Para testes e uso direto. */
+/** Extract + request-code em sequência (sem frontend entre as etapas). Cadastro: extração roda imediatamente no client prioritário, sem depender da apiExtractQueue. */
 app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), async (req: RequestWithAuth, res: Response) => {
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[request-code-with-extract] ${logTimestamp()} +${Date.now() - t0}ms ${msg}`);
@@ -537,7 +564,7 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
       res.status(400).json({ error: 'Informe o nickname do Instagram' });
       return;
     }
-    logStep(`Iniciando extract + send para @${nickname}`);
+    logStep(`Cadastro: extração imediata (fora da fila) + envio de código para @${nickname}`);
 
     const authStatePath = resolveAuthStatePath(process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json');
     if (!existsSync(authStatePath)) {
@@ -547,40 +574,32 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
 
     const handle = nickname.replace(/^@/, '');
     extractProfileResults.set(handle, { status: 'pending' });
-    apiExtractQueue = apiExtractQueue
-      .then(() => requestCodeFlushPromise)
-      .then(() => runExtractAndStore(handle))
-      .catch((err) => {
-        console.error('[API] extract-profile erro:', err instanceof Error ? err.stack : err);
-        extractProfileResults.set(handle, { status: 'error', error: err instanceof Error ? err.message : String(err) });
-      });
-
-    const pollMs = 200;
-    const maxWaitMs = 120000;
-    const startWait = Date.now();
-    while (Date.now() - startWait < maxWaitMs) {
-      await new Promise((r) => setTimeout(r, pollMs));
+    const priorityClient = getPriorityExtractClient();
+    try {
+      await runExtractAndStore(handle, { client: priorityClient, skipCount: true });
+    } catch (err) {
+      console.error('[API] request-code-with-extract extract erro:', err instanceof Error ? err.stack : err);
       const stored = extractProfileResults.get(handle);
-      if (stored?.status === 'done') {
-        logStep(`Extract pronto em ${Date.now() - t0}ms, enviando código...`);
-        break;
-      }
       if (stored?.status === 'error') {
         res.status(400).json({ error: stored.error ?? 'Erro na extração' });
         return;
       }
+      extractProfileResults.set(handle, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Erro na extração' });
+      return;
     }
     const stored = extractProfileResults.get(handle);
     if (stored?.status !== 'done') {
-      res.status(504).json({ error: 'Extração demorou demais.' });
+      res.status(400).json({ error: stored?.status === 'error' ? (stored as { error: string }).error : 'Erro na extração' });
       return;
     }
+    logStep(`Extract pronto em ${Date.now() - t0}ms, enviando código...`);
 
     const userId = req.user ? Number(req.user.sub) : null;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
 
-    const flowPromise = performRequestCodeFlow(nickname, code, userId);
+    const flowPromise = performRequestCodeFlow(nickname, code, userId, { client: priorityClient });
     requestCodeFlushPromise = requestCodeFlushPromise.then(async () => {
       await flowPromise;
     });
@@ -1493,12 +1512,12 @@ app.post('/api/crawl/stop', requireScopes('adm'), (_req: Request, res: Response)
   res.json({ ok: true, message: 'Parada solicitada. O crawl encerrará após o perfil atual.' });
 });
 
-/** Executa extração e grava resultado em extractProfileResults (para polling). Usa delay curto e modo rápido. */
-async function runExtractAndStore(handle: string): Promise<void> {
+/** Executa extração e grava resultado em extractProfileResults (para polling). Usa delay curto e modo rápido. Com options.client roda com esse client (cadastro imediato, sem fila). */
+async function runExtractAndStore(handle: string, runOptions?: RunOneExtractOptions): Promise<void> {
   const t0 = Date.now();
   try {
     console.log(`[runExtractAndStore] @${handle} runOneExtract iniciando...`);
-    const result = await runOneExtract(handle, true, false, true);
+    const result = await runOneExtract(handle, true, false, true, runOptions);
     console.log(`[runExtractAndStore] @${handle} runOneExtract retornou em ${Date.now() - t0}ms, gravando resultado...`);
     if (isBlockSignal(result)) {
       extractProfileResults.set(handle, {

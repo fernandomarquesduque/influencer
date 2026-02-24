@@ -192,7 +192,7 @@ export default function AdminUsers() {
             label="Usuário"
             rules={[{ required: true, message: 'Usuário é obrigatório' }]}
           >
-            <Input placeholder="@handle ou nome de usuário" />
+            <Input placeholder="@handle ou nome de usuário" autoFocus />
           </Form.Item>
           {!editing && (
             <Form.Item name="password" label="Senha" rules={[{ required: true, message: 'Obrigatório para novo usuário' }]}>

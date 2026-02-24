@@ -49,6 +49,7 @@ const PRICING_FILTER_LABELS: Record<(typeof PRICING_FILTER_KEYS)[number], string
 }
 
 const SORT_OPTIONS: { value: ProfilesSort; label: string }[] = [
+  { value: 'relevance_desc', label: 'Mais relevante' },
   { value: 'engagement_desc', label: 'Maior engajamento %' },
   { value: 'engagement_asc', label: 'Menor engajamento %' },
   { value: 'avg_likes_desc', label: 'Mais likes/post' },
@@ -77,14 +78,16 @@ export default function InfluencerList() {
   const [total, setTotal] = useState(0)
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
   const [searchInput, setSearchInput] = useState(qFromUrl)
+  const defaultSort = qFromUrl.trim() ? 'relevance_desc' : 'engagement_desc'
   const [query, setQuery] = useState<ProfilesSearchQuery>({
     q: qFromUrl || undefined,
     limit: PAGE_SIZE,
     offset: 0,
-    sort: 'engagement_desc',
+    sort: defaultSort as ProfilesSort,
   })
   const [limitReachedCode, setLimitReachedCode] = useState<string | null>(null)
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false)
+  const filterDrawerRef = useRef<HTMLDivElement>(null)
   const scrollToRestoreRef = useRef<number | null>(null)
   const screens = useBreakpoint()
   const showFiltersSidebar = screens.lg
@@ -224,7 +227,7 @@ export default function InfluencerList() {
       setData([])
       setTotal(0)
       setFacets(null)
-      setQuery({ limit: PAGE_SIZE, offset: 0, sort: 'engagement_desc' })
+      setQuery({ limit: PAGE_SIZE, offset: 0, sort: 'engagement_desc' as ProfilesSort })
       return
     }
     const cached = getCache()
@@ -238,11 +241,11 @@ export default function InfluencerList() {
       return
     }
     setSearchInput(qFromUrl)
-    const base = { q: qFromUrl || undefined, offset: 0, limit: PAGE_SIZE }
+    const base = { q: qFromUrl || undefined, offset: 0, limit: PAGE_SIZE, sort: 'relevance_desc' as ProfilesSort }
     setQuery((prev) => (isLimitedView ? { ...base } : { ...prev, ...base }))
     const controller = new AbortController()
     load(
-      isLimitedView ? { q: qFromUrl.trim() || undefined, offset: 0 } : { q: qFromUrl.trim() || undefined, offset: 0 },
+      isLimitedView ? { q: qFromUrl.trim() || undefined, offset: 0, sort: 'relevance_desc' } : { q: qFromUrl.trim() || undefined, offset: 0, sort: 'relevance_desc' },
       controller.signal
     )
     return () => controller.abort()
@@ -870,10 +873,16 @@ export default function InfluencerList() {
           placement="right"
           open={filterDrawerOpen}
           onClose={() => setFilterDrawerOpen(false)}
+          afterOpenChange={(open) => {
+            if (open && filterDrawerRef.current) {
+              const focusable = filterDrawerRef.current.querySelector<HTMLElement>('input, .ant-select-selector, [role="combobox"]')
+              if (focusable && typeof focusable.focus === 'function') focusable.focus()
+            }
+          }}
           width={Math.min(320, typeof window !== 'undefined' ? window.innerWidth - 24 : 320)}
           styles={{ body: { paddingTop: 8 } }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div ref={filterDrawerRef} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
               <Typography.Title level={5} style={{ marginBottom: 8, marginTop: 0 }}>
                 <FilterOutlined /> {total === 0 ? 'Nenhum perfil encontrado' : `${total} perfil(is) encontrado(s)`}

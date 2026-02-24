@@ -134,18 +134,17 @@ export default function Layout() {
                   minWidth: 0,
                 }}
               >
-                <div
+                <img
+                  src="/images/logo.svg"
+                  alt="Relatório de Influencer"
                   style={{
-                    width: 36,
                     height: 36,
+                    width: 'auto',
                     flexShrink: 0,
-                    borderRadius: 8,
-                    background: 'rgba(255,255,255,0.25)',
+                    display: 'block',
                   }}
                 />
-                <span style={{ fontWeight: 700, fontSize: isMobile ? 14 : 18, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  Relatório de Influencer
-                </span>
+
               </Link>
               {isMobile ? (
                 <Button

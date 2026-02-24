@@ -53,6 +53,7 @@ export default function AuthPassword() {
               placeholder="Mínimo 6 caracteres"
               size="large"
               autoComplete="new-password"
+              autoFocus
             />
           </Form.Item>
           <Form.Item

@@ -119,15 +119,12 @@ export default function Landing() {
         }}
       >
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--app-text)' }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: `linear-gradient(135deg, ${colors.primary}, ${colors.accent})`,
-            }}
+          <img
+            src="/images/logo.svg"
+            alt="Busca Influencer - Filtrar e Encontrar os Melhores"
+            style={{ height: 36, width: 'auto', display: 'block' }}
           />
-          <span style={{ fontWeight: 600, fontSize: 16 }}>Relatório de Influencer</span>
+
         </Link>
         <nav style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 

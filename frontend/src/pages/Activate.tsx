@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card,
@@ -103,6 +103,9 @@ export default function Activate() {
   const [draftSaving, setDraftSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [step, setStep] = useState(0)
+  const firstFieldStep0Ref = useRef<HTMLDivElement>(null)
+  const firstFieldStep1Ref = useRef<HTMLDivElement>(null)
+  const firstFieldStep2Ref = useRef<HTMLDivElement>(null)
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
   const [profilePicError, setProfilePicError] = useState(false)
@@ -165,6 +168,14 @@ export default function Activate() {
       cancelled = true
     }
   }, [handle, form, canEditProfile, navigate, authLoading])
+
+  useEffect(() => {
+    const refs = [firstFieldStep0Ref, firstFieldStep1Ref, firstFieldStep2Ref]
+    const el = refs[step]?.current
+    if (!el) return
+    const focusable = el.querySelector<HTMLElement>('input:not([type="hidden"]), textarea, .ant-select-selector, [role="combobox"]')
+    if (focusable && typeof focusable.focus === 'function') focusable.focus()
+  }, [step])
 
   const buildPayload = (values: Record<string, unknown>) => {
     const pricing = values.pricing as Record<string, number | string> | undefined
@@ -299,8 +310,8 @@ export default function Activate() {
   ]
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f6f8', padding: '24px 16px' }}>
-      <div style={{ maxWidth: 640, margin: '0 auto' }}>
+    <div style={{ minHeight: '100vh' }}>
+      <div style={{ margin: '0 auto' }}>
         <Button
           type="link"
           icon={<ArrowLeftOutlined />}
@@ -407,7 +418,7 @@ export default function Activate() {
             scrollToFirstError
           >
             {/* Passo 1: Essencial */}
-            <div style={{ display: step === 0 ? 'block' : 'none' }}>
+            <div ref={firstFieldStep0Ref} style={{ display: step === 0 ? 'block' : 'none' }}>
               <>
                 <Form.Item
                   name="gender"
@@ -486,7 +497,7 @@ export default function Activate() {
             </div>
 
             {/* Passo 2: Redes & Contato */}
-            <div style={{ display: step === 1 ? 'block' : 'none' }}>
+            <div ref={firstFieldStep1Ref} style={{ display: step === 1 ? 'block' : 'none' }}>
               <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
                 Adicione redes e contato para marcas entrarem em contato. WhatsApp é obrigatório.
               </Text>
@@ -568,7 +579,7 @@ export default function Activate() {
             </div>
 
             {/* Passo 3: Conteúdo & Valores */}
-            <div style={{ display: step === 2 ? 'block' : 'none' }}>
+            <div ref={firstFieldStep2Ref} style={{ display: step === 2 ? 'block' : 'none' }}>
               <>
                 <Form.Item
                   name="content_type"

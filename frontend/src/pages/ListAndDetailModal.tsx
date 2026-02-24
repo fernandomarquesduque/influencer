@@ -1,4 +1,4 @@
-import { useParams, useLocation, Link } from 'react-router-dom'
+import { useParams, useLocation } from 'react-router-dom'
 import InfluencerList from './InfluencerList'
 import InfluencerDetail from './InfluencerDetail'
 
@@ -17,9 +17,7 @@ export default function ListAndDetailModal() {
   if (handle) {
     return (
       <>
-        <div style={{ marginBottom: 16 }}>
-          <Link to="/app">← Voltar à lista</Link>
-        </div>
+
         <InfluencerDetail overrideHandle={handle} />
       </>
     )

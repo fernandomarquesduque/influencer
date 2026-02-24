@@ -8,18 +8,18 @@ import { Button, Result, Spin, Typography } from 'antd'
 import { CheckCircleFilled, LoadingOutlined } from '@ant-design/icons'
 import { pdf } from '@react-pdf/renderer'
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, authHeaders } from '../api'
-import { useAuth } from '../contexts/AuthContext'
 import type { PostItem } from '../api'
 import { buildReportInsights, REPORT_POSTS_LIMIT } from '../utils/reportInsights'
 import type { ProfileItem, ProfileActivation, PostsResponse } from '../api'
 import { MediaKitDocument } from './MediaKitDocument'
 import { reportTokens as t } from './reportTokens'
+import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
 
 const { Text } = Typography
 const s = t.spacing
 const c = t.colors
 
-type Status = 'loading_data' | 'generating' | 'saving' | 'done' | 'error'
+type Status = 'loading_data' | 'generating' | 'saving' | 'done' | 'error' | 'not_activated'
 
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -101,19 +101,20 @@ function setCachedMediaKit(handle: string, entry: Omit<MediaKitCacheEntry, 'cach
 export default function MediaKit() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
-  const { user } = useAuth()
   const [status, setStatus] = useState<Status>('loading_data')
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState('Carregando perfil...')
   const [savedPath, setSavedPath] = useState<string | null>(null)
   const [validated, setValidated] = useState(false)
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const abortRef = useRef(false)
   const effectRunIdRef = useRef(0)
 
-  const hNorm = handle?.replace(/^@/, '').toLowerCase() ?? ''
-  const userHandleNorm = user?.profile_handle?.replace(/^@/, '').toLowerCase() ?? ''
-  const isInfluencerOwnProfile = user?.scope === 'influencer' && handle && user.profile_handle && hNorm === userHandleNorm
-  const mustCompleteCadastro = isInfluencerOwnProfile && user?.profile_activated === false
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   const runInBackground = useCallback(async (effectRunId?: number) => {
     if (!handle) {
@@ -126,7 +127,13 @@ export default function MediaKit() {
 
     try {
       const cached = getCachedMediaKit(h)
+      const hasWhatsapp = (act: ProfileActivation | null) => !!(act?.whatsapp && String(act.whatsapp).trim())
       if (cached) {
+        if (!hasWhatsapp(cached.activation)) {
+          mediaKitCache.delete(h.toLowerCase())
+          setStatus('not_activated')
+          return
+        }
         setStatus('generating')
         setProgress('Gerando PDF (dados em cache)...')
         if (abortRef.current) return
@@ -187,6 +194,11 @@ export default function MediaKit() {
 
       const posts = postsRes.items ?? []
       const activation = (activationRes && typeof activationRes === 'object' ? activationRes : {}) as ProfileActivation
+
+      if (!hasWhatsapp(activation)) {
+        setStatus('not_activated')
+        return
+      }
 
       setProgress('Calculando insights...')
       const reportInsights = profile && posts.length > 0 ? buildReportInsights(profile, posts) : null
@@ -357,30 +369,20 @@ export default function MediaKit() {
   }, [handle])
 
   useEffect(() => {
-    if (mustCompleteCadastro) return
     effectRunIdRef.current += 1
     runInBackground(effectRunIdRef.current)
     return () => {
       abortRef.current = true
     }
-  }, [runInBackground, mustCompleteCadastro])
+  }, [runInBackground])
 
-  if (mustCompleteCadastro && handle) {
+  if (status === 'not_activated' && handle) {
     return (
-      <div style={{ padding: s.xl, maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
-        <Result
-          status="info"
-          title="Finalize seu cadastro"
-          subTitle="Para baixar o Media Kit, complete o cadastro do seu perfil (dados, preços e ativação) na página de ativação."
-          extra={[
-            <Button key="back" onClick={() => navigate(-1)}>
-              Voltar
-            </Button>,
-            <Button key="activate" type="primary" onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}>
-              Ir para cadastro
-            </Button>,
-          ]}
-        />
+      <div style={{ padding: s.xl, maxWidth: 640, margin: '0 auto', textAlign: 'left' }}>
+        <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={s.lg} />
+        <div style={{ textAlign: 'center', marginTop: s.lg }}>
+          <Button onClick={() => navigate(-1)}>Voltar</Button>
+        </div>
       </div>
     )
   }

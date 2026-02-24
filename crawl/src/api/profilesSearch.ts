@@ -416,7 +416,7 @@ export interface ProfilesSearchQuery {
   pricingImageRights?: number[];
   pricingContentDelivery?: number[];
   pricingLaunch?: number[];
-  /** Ordenação: engagement_desc | engagement_asc | followers_desc | followers_asc | avg_likes_desc | avg_likes_asc | total_likes_desc | total_likes_asc */
+  /** Ordenação: relevance_desc | engagement_desc | engagement_asc | followers_desc | followers_asc | avg_likes_desc | avg_likes_asc | total_likes_desc | total_likes_asc */
   sort?: string;
   limit?: number;
   offset?: number;
@@ -669,10 +669,30 @@ export async function searchProfiles(
     items.push(item);
   }
 
-  type SortKey = 'engagement_desc' | 'engagement_asc' | 'followers_desc' | 'followers_asc' | 'avg_likes_desc' | 'avg_likes_asc' | 'total_likes_desc' | 'total_likes_asc';
+  /** Timestamp (ms) da data de atualização do perfil (_collected_at ISO) para ordenação. */
+  const getCollectedAtMs = (item: ProfileListItem): number => {
+    const v = (item as Record<string, unknown>)._collected_at;
+    if (v == null) return 0;
+    if (typeof v === 'string') {
+      const t = new Date(v).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    }
+    return 0;
+  };
+
+  type SortKey = 'relevance_desc' | 'engagement_desc' | 'engagement_asc' | 'followers_desc' | 'followers_asc' | 'avg_likes_desc' | 'avg_likes_asc' | 'total_likes_desc' | 'total_likes_asc';
   const order = sort as SortKey;
 
   const sortByOrder = (a: ProfileListItem, b: ProfileListItem): number => {
+    if (order === 'relevance_desc') {
+      if (q) {
+        const relA = a.search_relevance ?? 0;
+        const relB = b.search_relevance ?? 0;
+        if (relB !== relA) return relB - relA;
+        return getCollectedAtMs(b) - getCollectedAtMs(a);
+      }
+      return getCollectedAtMs(b) - getCollectedAtMs(a);
+    }
     if (order === 'engagement_desc') return b.engagement.engagement_rate - a.engagement.engagement_rate;
     if (order === 'engagement_asc') return a.engagement.engagement_rate - b.engagement.engagement_rate;
     if (order === 'followers_desc') return b.followers_count - a.followers_count;
@@ -750,10 +770,12 @@ export async function searchProfiles(
 
   items = filteredItems;
 
-  if (q) {
+  if (order === 'relevance_desc') {
+    items.sort(sortByOrder);
+  } else if (q) {
     items.sort((a, b) => {
-      const relA = (a.search_relevance ?? 0);
-      const relB = (b.search_relevance ?? 0);
+      const relA = a.search_relevance ?? 0;
+      const relB = b.search_relevance ?? 0;
       if (relB !== relA) return relB - relA;
       return sortByOrder(a, b);
     });

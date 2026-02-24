@@ -1,10 +1,17 @@
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Card, Alert, Button } from 'antd'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function AuthRejected() {
+  const { logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const reason = (location.state as { reason?: string })?.reason || 'Perfil não elegível.'
+
+  const validateAnotherProfile = () => {
+    logout()
+    navigate('/app/create', { replace: true, state: {} })
+  }
 
   return (
     <div style={{ maxWidth: 420, margin: '0 auto' }}>
@@ -14,7 +21,7 @@ export default function AuthRejected() {
           <Button type="primary" onClick={() => navigate('/app')}>
             Ir para a lista
           </Button>
-          <Button onClick={() => navigate('/app/create')}>Validar outro perfil</Button>
+          <Button onClick={validateAnotherProfile}>Validar outro perfil</Button>
         </div>
       </Card>
     </div>

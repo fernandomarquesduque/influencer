@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { App, Form, Input, Button, Card, Typography, Space, Divider, Avatar } from 'antd'
+import { App, Form, Input, Button, Card, Typography, Space, Divider } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { UserOutlined, LockOutlined, LoginOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
@@ -65,10 +65,10 @@ function Login() {
         >
           {/* Header */}
           <Space direction="vertical" size={16} style={{ width: '100%', marginBottom: 24 }} align="center">
-            <Avatar
-              size={56}
-              icon={<UserOutlined />}
-              style={{ backgroundColor: 'var(--app-primary, #6D5EF6)' }}
+            <img
+              src="/images/logo.svg"
+              alt="Relatório de Influencer"
+              style={{ height: 48, width: 'auto', display: 'block' }}
             />
             <Space direction="vertical" size={4} align="center" style={{ width: '100%' }}>
               <Title level={3} style={{ margin: 0, fontWeight: 600 }}>

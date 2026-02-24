@@ -1,8 +1,35 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { ListCacheProvider } from './contexts/ListCacheContext'
 import { RequireAuth } from './components/RequireAuth'
 import Layout from './Layout'
+
+/** Ao focar em input/textarea/select, reposiciona o scroll para o campo não ficar atrás do teclado e o botão de ação continuar visível. (Desativado na Landing.) */
+function FocusScrollHandler() {
+  const location = useLocation()
+  useEffect(() => {
+    const onFocus = (e: FocusEvent) => {
+      if (location.pathname === '/') return
+      const el = e.target as HTMLElement
+      const isField =
+        el.matches('input, textarea, select, [contenteditable="true"]') ||
+        el.closest('.ant-input-affix-wrapper, .ant-select-selector')
+      if (!isField) return
+      const target = (el.closest('input, textarea, select') || el) as HTMLElement
+      const scroll = () => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
+      }
+      setTimeout(scroll, 150)
+      if ('visualViewport' in window) {
+        setTimeout(scroll, 450)
+      }
+    }
+    document.addEventListener('focusin', onFocus)
+    return () => document.removeEventListener('focusin', onFocus)
+  }, [location.pathname])
+  return null
+}
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import Premium from './pages/Premium'
@@ -31,6 +58,7 @@ function RedirectValidarToCreate() {
 export default function App() {
   return (
     <AuthProvider>
+      <FocusScrollHandler />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/premium" element={<Premium />} />
