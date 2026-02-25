@@ -54,7 +54,7 @@ const typo = {
 const radius = 14
 
 // Header/Footer reservados (pra não sobrepor conteúdo)
-const headerHeight = 78
+const headerHeight = 52
 const footerHeight = 48
 
 // -------------------- Utils
@@ -390,7 +390,7 @@ function PageHeader({
           justifyContent: 'space-between',
           alignItems: 'center',
           paddingHorizontal: pagePadding,
-          paddingVertical: 12,
+          paddingVertical: 8,
           backgroundColor: pal.pageBg,
         }}
       >
@@ -895,11 +895,11 @@ function PostDetailPage({
       <View style={styles.pageContent}>
         <SectionTitle first>Destaques do conteúdo</SectionTitle>
 
-        <Text style={{ fontSize: typo.small, color: pal.textSecondary, marginBottom: s.md, lineHeight: 1.45 }}>
+        <Text style={{ fontSize: typo.small, color: pal.textSecondary, marginBottom: s.sm, lineHeight: 1.35 }}>
           Posts com melhor performance — formato, mensagem e gatilhos que mais geram resultado.
         </Text>
 
-        {topPosts.slice(0, 3).map((item, idx) => {
+        {topPosts.slice(0, 4).map((item, idx) => {
           const p = item.post as any
           const dataUrl = resolvePostImage(p, idx, postImageDataUrls, postImageDataUrlsOrdered)
 
@@ -909,39 +909,39 @@ function PostDetailPage({
           const caption = (item.post as any)?.content?.caption_text ?? ''
 
           return (
-            <Card key={idx} noPadding style={{ marginBottom: s.lg }}>
+            <Card key={idx} noPadding style={{ marginBottom: idx < 3 ? s.md : 0 }}>
               <View style={{ flexDirection: 'row' }}>
-                <View style={{ width: 230 }}>
+                <View style={{ width: 215 }}>
                   {dataUrl ? (
-                    <Image src={dataUrl} style={{ width: '100%', height: 170, objectFit: 'cover' as const }} />
+                    <Image src={dataUrl} style={{ width: '100%', height: 145, objectFit: 'cover' as const }} />
                   ) : (
-                    <View style={{ width: '100%', height: 170, backgroundColor: pal.borderLight, alignItems: 'center', justifyContent: 'center' }}>
+                    <View style={{ width: '100%', height: 145, backgroundColor: pal.borderLight, alignItems: 'center', justifyContent: 'center' }}>
                       <Text style={{ fontSize: typo.caption, color: pal.textMuted }}>Imagem indisponível</Text>
                     </View>
                   )}
                 </View>
 
-                <View style={{ flex: 1, padding: 14 }}>
+                <View style={{ flex: 1, padding: 10 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Text style={{ fontSize: 9, color: pal.textMuted }}>DESTAQUE #{idx + 1}</Text>
                     <Pill tone="gold">ER {Number(item.erPost || 0).toFixed(1)}%</Pill>
                   </View>
 
-                  <View style={{ marginTop: 10, backgroundColor: pal.brandSoft, padding: 10, borderRadius: 10 }}>
+                  <View style={{ marginTop: 8, backgroundColor: pal.brandSoft, padding: 8, borderRadius: 8 }}>
                     <Text style={{ fontSize: 9, color: pal.brandDark, fontWeight: 'bold' }}>O que funcionou</Text>
-                    <Text style={{ fontSize: 10, color: pal.text, marginTop: 4, lineHeight: 1.45 }}>
+                    <Text style={{ fontSize: 10, color: pal.text, marginTop: 4, lineHeight: 1.4 }}>
                       {sanitizeText(item.oQueFuncionou || 'Mensagem clara + formato consistente + boa retenção.')}
                     </Text>
                   </View>
 
-                  <Text style={{ fontSize: 9, color: pal.textSecondary, marginTop: 10 }}>
+                  <Text style={{ fontSize: 9, color: pal.textSecondary, marginTop: 8 }}>
                     Curtidas {formatShortNum(likes)} - Coment. {formatShortNum(comments)}
                     {views != null ? ` - Views ${formatShortNum(Number(views))}` : ''}
                   </Text>
 
                   {caption ? (
-                    <Text style={{ fontSize: typo.caption, color: pal.textMuted, marginTop: 6, lineHeight: 1.45 }}>
-                      {truncate(String(caption), 140)}
+                    <Text style={{ fontSize: typo.caption, color: pal.textMuted, marginTop: 6, lineHeight: 1.4 }}>
+                      {truncate(String(caption), 120)}
                     </Text>
                   ) : null}
                 </View>

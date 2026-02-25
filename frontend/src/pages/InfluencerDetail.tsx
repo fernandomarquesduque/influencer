@@ -752,9 +752,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             )}
             <Row gutter={[s.lg, s.lg]}>
               <Col xs={24}>
-                <div style={{ ...typH3, color: c.textSecondary, marginBottom: s.sm }}>Top 3 por interações (últimos {REPORT_POSTS_LIMIT} posts)</div>
+                <div style={{ ...typH3, color: c.textSecondary, marginBottom: s.sm }}>Top 4 por interações (últimos {REPORT_POSTS_LIMIT} posts)</div>
                 <ProofCarousel
-                  items={reportInsights!.topPosts.byInteractions.slice(0, 3).map(({ post, interactions, erPost, oQueFuncionou }, idx) => ({
+                  items={reportInsights!.topPosts.byInteractions.slice(0, 4).map(({ post, interactions, erPost, oQueFuncionou }, idx) => ({
                     post,
                     interactions,
                     erPost,

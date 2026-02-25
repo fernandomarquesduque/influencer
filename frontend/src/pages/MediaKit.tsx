@@ -238,9 +238,9 @@ export default function MediaKit() {
         }
         return urls
       }
-      // Só os 3 posts usados no PDF: capa (post 0) + 3 destaques
+      // Só os 4 posts usados no PDF: capa (post 0) + 4 destaques
       const topPostsForImages = (reportInsights?.topPosts?.byInteractions ?? [])
-        .slice(0, 3)
+        .slice(0, 4)
         .map((t) => t.post)
       const postImageDataUrls: Record<string, string> = {}
 
@@ -281,7 +281,7 @@ export default function MediaKit() {
       const loadOne = (post: PostItem | undefined) =>
         post && !getPostImageByKeys(post, postImageDataUrls) ? tryLoadPostImage(post) : Promise.resolve(false)
       await Promise.race([
-        Promise.all(topPostsForImages.slice(0, 3).map((post) => loadOne(post))),
+        Promise.all(topPostsForImages.slice(0, 4).map((post) => loadOne(post))),
         new Promise<void>((resolve) => setTimeout(resolve, POST_IMAGES_PHASE_MAX_MS)),
       ])
 
@@ -307,7 +307,7 @@ export default function MediaKit() {
         }
         return ''
       }
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         postImageDataUrlsOrdered.push(getPostImageByKeys(topPostsForImages[i], postImageDataUrls))
       }
 

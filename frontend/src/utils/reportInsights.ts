@@ -238,7 +238,7 @@ export function getTopPosts(
     }
   })
 
-  const byInteractions = [...withMeta].sort((a, b) => b.interactions - a.interactions).slice(0, 3)
+  const byInteractions = [...withMeta].sort((a, b) => b.interactions - a.interactions).slice(0, 4)
   const byConversation = [...withMeta].filter((a) => a.interactions >= 5).sort((a, b) => b.conversationRatio - a.conversationRatio).slice(0, 3)
   const byViews = [...withMeta].filter((a) => (a.post.metrics?.view_count ?? 0) > 0).sort((a, b) => toNum(b.post.metrics?.view_count) - toNum(a.post.metrics?.view_count)).slice(0, 3)
 
