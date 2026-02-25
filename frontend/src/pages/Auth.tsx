@@ -181,7 +181,7 @@ function RejectionFullScreen({
           borderRadius: 10,
           fontWeight: 600,
           fontSize: 14,
-          background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-chart-bar-top) 100%)',
+          background: 'var(--app-primary)',
           border: 'none',
         }}
       >
@@ -277,7 +277,7 @@ function InstallationLoader() {
             style={{
               height: '100%',
               width: `${progress}%`,
-              background: 'linear-gradient(90deg, var(--app-primary), var(--app-chart-bar-top))',
+              background: 'var(--app-primary)',
               borderRadius: 3,
               transition: 'width 0.35s ease',
             }}
@@ -407,7 +407,7 @@ export default function Auth() {
                   height: 64,
                   margin: '0 auto 16px',
                   borderRadius: 16,
-                  background: 'linear-gradient(135deg, var(--app-primary), var(--app-accent))',
+                  background: 'var(--app-primary)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',

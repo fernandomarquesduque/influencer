@@ -1,44 +1,19 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Button, Dropdown } from 'antd'
-import type { MenuProps } from 'antd'
 import {
   CheckCircleOutlined,
-  FileTextOutlined,
   SafetyOutlined,
+  FileTextOutlined,
   SearchOutlined,
-  MessageOutlined,
-  DownloadOutlined,
+  RocketOutlined,
   LineChartOutlined,
-  TeamOutlined,
+  HeartOutlined,
   RiseOutlined,
-  BulbOutlined,
   DollarOutlined,
+  TeamOutlined,
   UnorderedListOutlined,
-  BgColorsOutlined,
-  CaretDownFilled,
 } from '@ant-design/icons'
-import { useTheme, THEME_OPTIONS, type ThemeMode } from '../contexts/ThemeContext'
 import Logo from '../components/Logo'
-
-/* Paleta central (index.css): --brand-primary, --brand-accent, --app-* */
-const colors = {
-  primary: 'var(--app-primary)',
-  accent: 'var(--app-accent)',
-  text: 'var(--app-text)',
-  textSecondary: 'var(--app-text-secondary)',
-  textMuted: 'var(--app-text-tertiary)',
-  border: 'var(--app-border)',
-  success: 'var(--app-success)',
-  white: 'var(--brand-white)',
-}
-
-const cardStyle: React.CSSProperties = {
-  background: 'var(--app-card-bg)',
-  border: '1px solid var(--app-border)',
-  borderRadius: 20,
-  boxShadow: 'var(--app-card-shadow)',
-}
 
 const sectionMaxWidth = 1100
 
@@ -48,13 +23,10 @@ function normalizeHandle(value: string): string {
 
 export default function Landing() {
   const navigate = useNavigate()
-  const { theme, setTheme } = useTheme()
-  const currentThemeLabel = THEME_OPTIONS.find((o: { value: ThemeMode; label: string }) => o.value === theme)?.label ?? 'Tema'
   const [handle, setHandle] = useState('')
   const [finalHandle, setFinalHandle] = useState('')
   const [inputError, setInputError] = useState('')
 
-  /** Leva o usuário para o fluxo de validação com o @ preenchido (se houver). */
   const goToValidate = (nickname: string) => {
     const n = normalizeHandle(nickname)
     setInputError('')
@@ -76,47 +48,41 @@ export default function Landing() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: 'var(--app-bg)',
-        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        position: 'relative',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Blobs de fundo */}
+    <div className="landing-vibrant" style={{ minHeight: '100vh', background: 'var(--lp-bg)', position: 'relative', overflow: 'hidden' }}>
+      {/* Formas orgânicas de fundo (roxo suave) */}
       <div
         style={{
           position: 'fixed',
-          top: -120,
-          right: -120,
-          width: 400,
-          height: 400,
+          top: -100,
+          right: -80,
+          width: 420,
+          height: 420,
           borderRadius: '50%',
-          background: 'var(--app-bg-blob1)',
-          filter: 'blur(80px)',
+          background: 'var(--lp-purple)',
+          opacity: 0.12,
+          filter: 'blur(60px)',
           pointerEvents: 'none',
         }}
       />
       <div
         style={{
           position: 'fixed',
-          bottom: -100,
+          bottom: -120,
           left: -100,
-          width: 350,
-          height: 350,
+          width: 380,
+          height: 380,
           borderRadius: '50%',
-          background: 'var(--app-bg-blob2)',
-          filter: 'blur(80px)',
+          background: 'var(--lp-primary)',
+          opacity: 0.08,
+          filter: 'blur(70px)',
           pointerEvents: 'none',
         }}
       />
 
-      {/* 1) Topbar */}
+      {/* Header */}
       <header
         style={{
-          height: 64,
+          height: 72,
           padding: '0 24px',
           display: 'flex',
           alignItems: 'center',
@@ -125,69 +91,52 @@ export default function Landing() {
           margin: '0 auto',
           position: 'relative',
           zIndex: 10,
+          background: 'var(--lp-bg)',
         }}
       >
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--app-text)' }}>
-          <Logo height={36} alt="Busca Influencer - Filtrar e Encontrar os Melhores" />
+        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--lp-text)' }}>
+          <Logo height={40} alt="Busca Influencer" />
         </Link>
-        <nav style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Dropdown
-            menu={{
-              items: THEME_OPTIONS.map((opt: { value: ThemeMode; label: string }) => ({
-                key: opt.value,
-                label: opt.label,
-                onClick: () => setTheme(opt.value),
-              })) as MenuProps['items'],
+        <nav style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <Link
+            to="/login"
+            style={{
+              color: 'var(--lp-text)',
+              fontSize: 15,
+              fontWeight: 500,
+              textDecoration: 'none',
             }}
-            trigger={['click']}
-            placement="bottomRight"
           >
-            <Button
-              type="text"
-              icon={<BgColorsOutlined />}
-              style={{
-                color: 'var(--app-text-secondary)',
-                height: 40,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                borderRadius: 10,
-                padding: '0 12px',
-                fontWeight: 500,
-              }}
-              title="Tema"
-              aria-label="Escolher tema"
-            >
-              <span style={{ fontSize: 14 }}>{currentThemeLabel}</span>
-              <CaretDownFilled style={{ fontSize: 12, opacity: 0.8 }} />
-            </Button>
-          </Dropdown>
-          <Link to="/login" style={navLinkStyle}>Entrar</Link>
+            Entrar
+          </Link>
           <Link
             to="/app/create"
             style={{
-              ...navLinkStyle,
-              background: `linear-gradient(135deg, ${colors.primary}, ${colors.accent})`,
-              color: colors.white,
+              background: 'var(--lp-primary)',
+              color: '#fff',
               padding: '10px 20px',
               borderRadius: 12,
               fontWeight: 600,
+              fontSize: 15,
+              textDecoration: 'none',
+              fontFamily: 'Montserrat, sans-serif',
             }}
           >
-            Criar conta
+            Criar
           </Link>
         </nav>
       </header>
 
-      {/* 2) Hero */}
+      {/* Hero */}
       <section
+        id="hero"
         style={{
           maxWidth: sectionMaxWidth,
           margin: '0 auto',
-          padding: '48px 24px 80px',
+          padding: '56px 24px 80px',
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
-          gap: 48,
+          gap: 56,
           alignItems: 'center',
           position: 'relative',
           zIndex: 1,
@@ -197,397 +146,547 @@ export default function Landing() {
         <div>
           <h1
             style={{
-              fontSize: 'clamp(28px, 4vw, 40px)',
+              fontSize: 'clamp(28px, 3.2vw, 40px)',
               fontWeight: 700,
-              color: 'var(--app-text)',
-              lineHeight: 1.2,
-              margin: '0 0 16px',
+              color: 'var(--lp-text)',
+              lineHeight: 1.25,
+              margin: '0 0 20px',
               letterSpacing: '-0.02em',
+              fontFamily: 'Montserrat, sans-serif',
             }}
           >
-            Análise grátis do seu Instagram em 1 minuto.
+            Quer descobrir seu potencial como influencer?
           </h1>
-          <p style={{ fontSize: 17, color: 'var(--app-text-secondary)', lineHeight: 1.6, margin: '0 0 24px' }}>
-            Valide seu @ por DM e receba um relatório completo com métricas reais, pontos fortes e oportunidades com marcas.
+          <p
+            style={{
+              fontSize: 17,
+              color: 'var(--lp-text)',
+              opacity: 0.85,
+              lineHeight: 1.65,
+              margin: '0 0 28px',
+              fontWeight: 400,
+              fontFamily: 'Montserrat, sans-serif',
+            }}
+          >
+            Entenda seus números e entre na vitrine para marcas. Cadastre-se e apareça para empresas parceiras que buscam influenciadores para campanhas e parcerias — seu próximo job pode estar aqui.
           </p>
-          <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 28px' }}>
+          <a
+            href="#cta-inicial"
+            className="landing-cta-main"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: 56,
+              padding: '0 32px',
+              background: 'var(--lp-primary)',
+              color: '#fff',
+              borderRadius: 12,
+              fontWeight: 700,
+              fontSize: 15,
+              textDecoration: 'none',
+              letterSpacing: '0.02em',
+              fontFamily: 'Montserrat, sans-serif',
+              boxShadow: '0 4px 20px rgba(92, 103, 242, 0.35)',
+            }}
+          >
+            QUERO DESCOBRIR MEU POTENCIAL
+          </a>
+        </div>
+
+        <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div
+            style={{
+              width: 'min(100%, 420px)',
+              aspectRatio: '1',
+              borderRadius: '50%',
+              overflow: 'hidden',
+              background: 'var(--lp-primary)',
+              boxShadow: '0 24px 48px rgba(92, 103, 242, 0.25)',
+            }}
+          >
+            <img
+              src="/images/influencer.png"
+              alt="Influenciadora sorrindo com óculos rosa"
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* Validação e Segurança (Card Central) */}
+      <section
+        id="cta-inicial"
+        style={{
+          maxWidth: 640,
+          margin: '0 auto',
+          padding: '0 24px 72px',
+          position: 'relative',
+          zIndex: 1,
+        }}
+      >
+        <div
+          style={{
+            background: 'var(--lp-bg)',
+            border: '1px solid var(--lp-border)',
+            borderRadius: 20,
+            padding: '32px 28px',
+            boxShadow: '0 4px 24px rgba(0,0,0,0.06)',
+          }}
+        >
+          <div style={{ marginBottom: 20, position: 'relative' }}>
+            <span
+              style={{
+                position: 'absolute',
+                left: 16,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--lp-text)',
+                opacity: 0.6,
+                fontSize: 18,
+                fontWeight: 500,
+                zIndex: 1,
+              }}
+            >
+              @
+            </span>
+            <input
+              type="text"
+              placeholder="seuusuario"
+              value={handle}
+              onChange={(e) => {
+                setHandle(e.target.value.replace(/^@/, '').trim())
+                setInputError('')
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && handleSubmitFirst()}
+              aria-label="Usuário do Instagram"
+              style={{
+                width: '100%',
+                height: 52,
+                padding: '0 16px 0 36px',
+                border: '1px solid var(--lp-border)',
+                borderRadius: 12,
+                fontSize: 16,
+                outline: 'none',
+                boxSizing: 'border-box',
+                fontFamily: 'Montserrat, sans-serif',
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = 'var(--lp-primary)'
+                e.target.style.boxShadow = '0 0 0 2px rgba(92, 103, 242, 0.2)'
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = 'var(--lp-border)'
+                e.target.style.boxShadow = 'none'
+              }}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleSubmitFirst}
+            style={{
+              width: '100%',
+              height: 52,
+              background: 'var(--lp-primary)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 12,
+              fontWeight: 700,
+              fontSize: 15,
+              cursor: 'pointer',
+              fontFamily: 'Montserrat, sans-serif',
+            }}
+          >
+            Analisar perfil grátis
+          </button>
+
+          <ul style={{ listStyle: 'none', padding: 0, margin: '24px 0 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
             {[
-              { icon: <CheckCircleOutlined style={{ color: colors.success, marginRight: 10 }} />, text: '100% gratuito' },
-              { icon: <SafetyOutlined style={{ color: colors.primary, marginRight: 10 }} />, text: 'Sem pedir senha' },
-              { icon: <FileTextOutlined style={{ color: colors.accent, marginRight: 10 }} />, text: 'Relatório em PDF + painel' },
+              { icon: <CheckCircleOutlined style={{ color: 'var(--lp-accent)' }} />, text: 'Gratuito e feito para te ajudar!' },
+              { icon: <SafetyOutlined style={{ color: 'var(--lp-primary)' }} />, text: 'Entre na vitrine e seja encontrado por empresas parceiras que buscam influenciadores' },
+              { icon: <FileTextOutlined style={{ color: 'var(--lp-purple)' }} />, text: 'Relatório cheio de insights + Media Kit em PDF para enviar a marcas' },
             ].map((item, i) => (
-              <li key={i} style={{ display: 'flex', alignItems: 'center', marginBottom: 10, color: 'var(--app-text-secondary)', fontSize: 15 }}>
+              <li
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  color: 'var(--lp-text)',
+                  fontSize: 14,
+                  fontWeight: 500,
+                }}
+              >
                 {item.icon}
                 {item.text}
               </li>
             ))}
           </ul>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
-            <a
-              href="#cta-inicial"
-              className="landing-btn-primary"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                height: 52,
-                padding: '0 28px',
-                background: `linear-gradient(135deg, ${colors.primary}, ${colors.accent})`,
-                color: colors.white,
-                borderRadius: 14,
-                fontWeight: 600,
-                fontSize: 16,
-                textDecoration: 'none',
-                boxShadow: `0 4px 14px ${colors.primary}40`,
-                transition: 'filter 0.2s',
-              }}
-            >
-              Gerar relatório grátis
-            </a>
-            <Link
-              to="/app"
-              style={{
-                color: colors.primary,
-                fontWeight: 500,
-                fontSize: 15,
-                textDecoration: 'none',
-              }}
-            >
-              Ver exemplo do relatório
-            </Link>
-          </div>
         </div>
 
-        {/* Mock dashboard */}
-        <div
-          style={{
-            ...cardStyle,
-            padding: 24,
-            maxWidth: 420,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-            <div
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: '50%',
-                background: 'var(--app-hero-gradient)',
-              }}
-            />
-            <span style={{ fontWeight: 600, color: 'var(--app-text)' }}>@seuusuario</span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
-            {[
-              { label: 'Seguidores', value: '24K', icon: <TeamOutlined style={{ color: colors.primary }} /> },
-              { label: 'Alcance', value: '324K', icon: <LineChartOutlined style={{ color: colors.accent }} /> },
-              { label: 'Engajamento', value: '7,5%', icon: <RiseOutlined style={{ color: colors.success }} /> },
-            ].map((kpi, i) => (
-              <div
-                key={i}
-                style={{
-                  padding: '12px 10px',
-                  background: 'var(--app-bg)',
-                  borderRadius: 12,
-                  textAlign: 'center',
-                }}
-              >
-                <div style={{ fontSize: 11, color: 'var(--app-text-tertiary)', marginBottom: 4 }}>{kpi.label}</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--app-text)' }}>{kpi.value}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ height: 80, marginBottom: 20, display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-            {[40, 65, 45, 70, 55, 80, 60].map((h, i) => (
-              <div
-                key={i}
-                style={{
-                  flex: 1,
-                  height: `${h}%`,
-                  background: `linear-gradient(180deg, ${colors.primary}30, ${colors.primary}60)`,
-                  borderRadius: 6,
-                }}
-              />
-            ))}
-          </div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--app-text-tertiary)', marginBottom: 8 }}>Insights</div>
-          <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13, color: 'var(--app-text-secondary)' }}>
-            <li style={{ marginBottom: 6 }}>• Melhor horário para publicar</li>
-            <li style={{ marginBottom: 6 }}>• Taxa de crescimento</li>
-            <li>• Conteúdos que performam</li>
-          </ul>
-        </div>
-      </section>
+        {inputError ? (
+          <p style={{ textAlign: 'center', fontSize: 14, color: '#dc2626', marginTop: 12 }}>{inputError}</p>
+        ) : null}
 
-      {/* Input + CTA inicial */}
-      <section
-        id="cta-inicial"
-        style={{
-          maxWidth: sectionMaxWidth,
-          margin: '0 auto',
-          padding: '0 24px 64px',
-          position: 'relative',
-          zIndex: 1,
-        }}
-      >
-        <div
+        <p
           style={{
-            ...cardStyle,
-            padding: '24px 28px',
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            gap: 12,
+            textAlign: 'center',
+            fontSize: 15,
+            color: 'var(--lp-text)',
+            opacity: 0.85,
+            marginTop: 20,
+            lineHeight: 1.55,
+            maxWidth: 520,
+            marginLeft: 'auto',
+            marginRight: 'auto',
           }}
         >
-          <div style={{ flex: '1 1 260px', position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--app-text-tertiary)', fontSize: 15, zIndex: 1 }}>@</span>
-            <input
-              type="text"
-              placeholder="seuusuario"
-              value={handle}
-              onChange={(e) => { setHandle(e.target.value.replace(/^@/, '').trim()); setInputError('') }}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmitFirst()}
-              aria-label="Usuário do Instagram"
-              style={{
-                width: '100%',
-                height: 48,
-                padding: '0 14px 0 28px',
-                border: `1px solid ${colors.border}`,
-                borderRadius: 12,
-                fontSize: 15,
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-              onFocus={(e) => { e.target.style.borderColor = colors.primary; e.target.style.boxShadow = `0 0 0 2px ${colors.primary}20` }}
-              onBlur={(e) => { e.target.style.borderColor = colors.border; e.target.style.boxShadow = 'none' }}
-            />
-          </div>
-          <button
-            type="button"
-            className="landing-btn-primary"
-            onClick={handleSubmitFirst}
-            style={{
-              height: 48,
-              padding: '0 24px',
-              background: `linear-gradient(135deg, ${colors.primary}, ${colors.accent})`,
-              color: colors.white,
-              border: 'none',
-              borderRadius: 12,
-              fontWeight: 600,
-              fontSize: 15,
-              cursor: 'pointer',
-              transition: 'filter 0.2s',
-            }}
-          >
-            Analisar perfil grátis
-          </button>
-        </div>
-        {inputError ? <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--app-error)', marginTop: 8 }}>{inputError}</p> : null}
-        <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--app-text-tertiary)', marginTop: 12 }}>
-          Enviaremos um código de ativação por DM. Não pedimos sua senha.
+          Cadastre-se grátis e entre na vitrine. Nossas empresas parceiras buscam influenciadores para campanhas e parcerias — seu perfil pode ser o próximo a ser contratado.
+        </p>
+        <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--lp-text)', opacity: 0.65, marginTop: 12 }}>
+          Processo rápido e seguro.
         </p>
       </section>
 
-      {/* 3) Como funciona */}
+      {/* Como Funciona? */}
       <section
         id="como-funciona"
         style={{
           maxWidth: sectionMaxWidth,
           margin: '0 auto',
-          padding: '48px 24px 64px',
+          padding: '56px 24px 72px',
           position: 'relative',
+          borderRadius: 16,
           zIndex: 1,
+          background: 'var(--lp-bg-soft)',
         }}
       >
-        <h2 style={{ fontSize: 26, fontWeight: 700, color: 'var(--app-text)', marginBottom: 32, textAlign: 'center' }}>
-          Como funciona
+        <h2
+          style={{
+            fontSize: 28,
+            fontWeight: 700,
+            color: 'var(--lp-text)',
+            marginBottom: 40,
+            textAlign: 'center',
+            fontFamily: 'Montserrat, sans-serif',
+          }}
+        >
+          Como funciona?
         </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }} className="landing-steps-grid">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }} className="landing-steps-grid">
           {[
-            { step: 1, icon: <SearchOutlined style={{ fontSize: 24, color: colors.primary }} />, title: 'Digite seu @', text: 'Informe seu usuário do Instagram no campo acima.' },
-            { step: 2, icon: <MessageOutlined style={{ fontSize: 24, color: colors.primary }} />, title: 'Receba um código por DM', text: 'Enviamos um código de validação na sua DM do Instagram.' },
-            { step: 3, icon: <DownloadOutlined style={{ fontSize: 24, color: colors.primary }} />, title: 'Baixe seu relatório e veja o painel', text: 'Acesse o relatório em PDF e o painel online.' },
-          ].map((item) => (
-            <div key={item.step} style={{ ...cardStyle, padding: 28, textAlign: 'center' }}>
-              <div style={{ width: 48, height: 48, borderRadius: 14, background: 'var(--app-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+            {
+              icon: <SearchOutlined style={{ fontSize: 28, color: 'var(--lp-primary)' }} />,
+              title: 'Informe seu @',
+              text: 'Basta colocar seu usuário do Instagram. Sem formulários longos ou complicações.',
+            },
+            {
+              icon: <FileTextOutlined style={{ fontSize: 28, color: 'var(--lp-accent)' }} />,
+              title: 'Media Kit',
+              text: 'Gere um Media Kit profissional em PDF com seus dados, métricas e melhores posts. Pronto para enviar a marcas e oportunidades.',
+            },
+            {
+              icon: <RocketOutlined style={{ fontSize: 28, color: 'var(--lp-purple)' }} />,
+              title: 'Receba Insights',
+              text: 'Seu relatório completo e painel online ficam prontos em segundos. Além disso, você gera um Media Kit profissional em PDF para enviar a marcas e oportunidades.',
+            },
+          ].map((item, i) => (
+            <div
+              key={i}
+              style={{
+                background: 'var(--lp-bg)',
+                border: '1px solid var(--lp-border)',
+                borderRadius: 16,
+                padding: 28,
+                textAlign: 'center',
+                boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
+              }}
+            >
+              <div
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 14,
+                  background: 'var(--lp-bg-soft)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 16px',
+                }}
+              >
                 {item.icon}
               </div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: colors.primary, marginBottom: 8 }}>Passo {item.step}</div>
-              <h3 style={{ fontSize: 17, fontWeight: 600, color: 'var(--app-text)', margin: '0 0 8px' }}>{item.title}</h3>
-              <p style={{ fontSize: 14, color: 'var(--app-text-secondary)', lineHeight: 1.5, margin: 0 }}>{item.text}</p>
+              <h3
+                style={{
+                  fontSize: 18,
+                  fontWeight: 700,
+                  color: 'var(--lp-text)',
+                  margin: '0 0 10px',
+                  fontFamily: 'Montserrat, sans-serif',
+                }}
+              >
+                {item.title}
+              </h3>
+              <p style={{ fontSize: 15, color: 'var(--lp-text)', opacity: 0.85, lineHeight: 1.55, margin: 0 }}>
+                {item.text}
+              </p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* 4) O que vem no relatório */}
+      {/* O que você vai descobrir */}
       <section
         id="o-que-vem"
         style={{
           maxWidth: sectionMaxWidth,
           margin: '0 auto',
-          padding: '48px 24px 64px',
+          padding: '56px 24px 72px',
           position: 'relative',
           zIndex: 1,
         }}
       >
-        <h2 style={{ fontSize: 26, fontWeight: 700, color: 'var(--app-text)', marginBottom: 32, textAlign: 'center' }}>
-          O que vem no relatório
+        <h2
+          style={{
+            fontSize: 28,
+            fontWeight: 700,
+            color: 'var(--lp-text)',
+            marginBottom: 40,
+            textAlign: 'center',
+            fontFamily: 'Montserrat, sans-serif',
+          }}
+        >
+          O que você vai descobrir no relatório
         </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }} className="landing-report-grid">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }} className="landing-report-grid">
           {[
-            { icon: <LineChartOutlined />, title: 'Crescimento e tendência', desc: 'Evolução de seguidores e alcance ao longo do tempo.' },
-            { icon: <RiseOutlined />, title: 'Taxa de engajamento real', desc: 'Cálculo com base em likes e comentários dos seus posts.' },
-            { icon: <TeamOutlined />, title: 'Perfil do público', desc: 'Idade, cidade e interesses do seu público (quando disponível).' },
-            { icon: <BulbOutlined />, title: 'Conteúdos que mais rendem', desc: 'Quais formatos e temas geram mais interação.' },
-            { icon: <DollarOutlined />, title: 'Preço estimado para publi', desc: 'Faixa de valor sugerida para parcerias com marcas.' },
-            { icon: <UnorderedListOutlined />, title: 'Checklist de melhorias', desc: 'Pontos para fortalecer seu perfil e atrair marcas.' },
+            {
+              icon: <LineChartOutlined style={{ fontSize: 22, color: 'var(--lp-primary)' }} />,
+              title: 'Crescimento real',
+              desc: 'Entenda como sua audiência está evoluindo e quais tendências o seu perfil está seguindo.',
+            },
+            {
+              icon: <HeartOutlined style={{ fontSize: 22, color: 'var(--lp-accent)' }} />,
+              title: 'Conteúdos que dão match',
+              desc: 'Saiba exatamente quais formatos e temas fazem seus seguidores comentarem e compartilharem mais.',
+            },
+            {
+              icon: <RiseOutlined style={{ fontSize: 22, color: 'var(--lp-purple)' }} />,
+              title: 'Taxa de engajamento',
+              desc: 'Nada de métricas de vaidade! Calculamos sua interação real para mostrar o quanto seu público é fiel.',
+            },
+            {
+              icon: <DollarOutlined style={{ fontSize: 22, color: 'var(--lp-primary)' }} />,
+              title: 'Valor sugerido para Publis',
+              desc: 'Chega de dúvida na hora de cobrar! Receba uma estimativa de preço para suas parcerias com marcas.',
+            },
+            {
+              icon: <TeamOutlined style={{ fontSize: 22, color: 'var(--lp-accent)' }} />,
+              title: 'Quem te acompanha',
+              desc: 'Descubra a idade, cidade e os principais interesses de quem te segue para criar posts ainda mais certeiros.',
+            },
+            {
+              icon: <UnorderedListOutlined style={{ fontSize: 22, color: 'var(--lp-purple)' }} />,
+              title: 'Guia de melhorias',
+              desc: 'Um checklist prático com pontos que você pode ajustar para deixar seu perfil irresistível para novos patrocinadores.',
+            },
           ].map((item, i) => (
-            <div key={i} style={{ ...cardStyle, padding: 20, display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--app-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.primary, flexShrink: 0 }}>
+            <div
+              key={i}
+              style={{
+                background: 'var(--lp-bg)',
+                border: '1px solid var(--lp-border)',
+                borderRadius: 16,
+                padding: 24,
+                display: 'flex',
+                gap: 16,
+                alignItems: 'flex-start',
+                boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
+              }}
+            >
+              <div
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 12,
+                  background: 'var(--lp-bg-soft)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
                 {item.icon}
               </div>
               <div>
-                <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--app-text)', margin: '0 0 4px' }}>{item.title}</h3>
-                <p style={{ fontSize: 13, color: 'var(--app-text-secondary)', lineHeight: 1.5, margin: 0 }}>{item.desc}</p>
+                <h3
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 700,
+                    color: 'var(--lp-text)',
+                    margin: '0 0 6px',
+                    fontFamily: 'Montserrat, sans-serif',
+                  }}
+                >
+                  {item.title}
+                </h3>
+                <p style={{ fontSize: 14, color: 'var(--lp-text)', opacity: 0.85, lineHeight: 1.55, margin: 0 }}>
+                  {item.desc}
+                </p>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* 5) Confiança / Privacidade */}
+      {/* CTA final (segundo input) */}
       <section
-        id="privacidade"
         style={{
-          maxWidth: sectionMaxWidth,
           margin: '0 auto',
           padding: '48px 24px 64px',
           position: 'relative',
           zIndex: 1,
+          background: 'var(--lp-bg-soft)',
         }}
       >
-        <div style={{ ...cardStyle, padding: 32, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 24 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 14, background: 'var(--app-primary-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <SafetyOutlined style={{ fontSize: 28, color: colors.primary }} />
-          </div>
-          <div style={{ flex: '1 1 300px' }}>
-            <h3 style={{ fontSize: 18, fontWeight: 600, color: 'var(--app-text)', margin: '0 0 12px' }}>Seguro e transparente</h3>
-            <ul style={{ margin: 0, padding: 0, listStyle: 'none', color: 'var(--app-text-secondary)', fontSize: 15, lineHeight: 1.8 }}>
-              <li>• Não pedimos senha do Instagram</li>
-              <li>• Validação via código por DM</li>
-              <li>• Você pode remover seus dados quando quiser</li>
-            </ul>
-            <a href="#politica" style={{ fontSize: 14, color: colors.primary, fontWeight: 500, marginTop: 12, display: 'inline-block' }}>
-              Ler política de privacidade
-            </a>
-          </div>
-        </div>
-      </section>
-
-      {/* 6) CTA final */}
-      <section
-        style={{
+        <div style={{
           maxWidth: 560,
           margin: '0 auto',
-          padding: '48px 24px 80px',
-          position: 'relative',
-          zIndex: 1,
-        }}
-      >
-        <h2 style={{ fontSize: 26, fontWeight: 700, color: 'var(--app-text)', marginBottom: 24, textAlign: 'center' }}>
-          Quer seu relatório agora?
-        </h2>
-        <div style={{ ...cardStyle, padding: 28 }}>
-          <div style={{ marginBottom: 12, position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--app-text-tertiary)', fontSize: 15 }}>@</span>
-            <input
-              type="text"
-              placeholder="seuusuario"
-              value={finalHandle}
-              onChange={(e) => { setFinalHandle(e.target.value.replace(/^@/, '').trim()); setInputError('') }}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmitFinal()}
-              aria-label="Usuário do Instagram"
-              style={{
-                width: '100%',
-                height: 48,
-                padding: '0 14px 0 32px',
-                border: `1px solid ${colors.border}`,
-                borderRadius: 12,
-                fontSize: 15,
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-            />
-          </div>
-          <button
-            type="button"
-            className="landing-btn-primary"
-            onClick={handleSubmitFinal}
+        }}>
+          <h2
             style={{
-              width: '100%',
-              height: 52,
-              background: `linear-gradient(135deg, ${colors.primary}, ${colors.accent})`,
-              color: colors.white,
-              border: 'none',
-              borderRadius: 14,
-              fontWeight: 600,
-              fontSize: 16,
-              cursor: 'pointer',
-              transition: 'filter 0.2s',
+              fontSize: 26,
+              fontWeight: 700,
+              color: 'var(--lp-text)',
+              marginBottom: 28,
+              textAlign: 'center',
+              fontFamily: 'Montserrat, sans-serif',
             }}
           >
-            Enviar código por DM
-          </button>
+            Quer seu relatório agora?
+          </h2>
+          <div
+            style={{
+              background: 'var(--lp-bg)',
+              border: '1px solid var(--lp-border)',
+              borderRadius: 20,
+              padding: 28,
+              boxShadow: '0 4px 24px rgba(0,0,0,0.06)',
+            }}
+          >
+            <div style={{ marginBottom: 16, position: 'relative' }}>
+              <span
+                style={{
+                  position: 'absolute',
+                  left: 16,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--lp-text)',
+                  opacity: 0.6,
+                  fontSize: 18,
+                  zIndex: 1,
+                }}
+              >
+                @
+              </span>
+              <input
+                type="text"
+                placeholder="seuusuario"
+                value={finalHandle}
+                onChange={(e) => {
+                  setFinalHandle(e.target.value.replace(/^@/, '').trim())
+                  setInputError('')
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && handleSubmitFinal()}
+                aria-label="Usuário do Instagram"
+                style={{
+                  width: '100%',
+                  height: 52,
+                  padding: '0 16px 0 36px',
+                  border: '1px solid var(--lp-border)',
+                  borderRadius: 12,
+                  fontSize: 16,
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                  fontFamily: 'Montserrat, sans-serif',
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleSubmitFinal}
+              style={{
+                width: '100%',
+                height: 52,
+                background: 'var(--lp-primary)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 12,
+                fontWeight: 700,
+                fontSize: 15,
+                cursor: 'pointer',
+                fontFamily: 'Montserrat, sans-serif',
+              }}
+            >
+              Analisar perfil
+            </button>
+          </div>
+          {inputError ? (
+            <p style={{ textAlign: 'center', fontSize: 14, color: '#dc2626', marginTop: 12 }}>{inputError}</p>
+          ) : null}
+          <p style={{ textAlign: 'center', fontSize: 14, color: 'var(--lp-text)', opacity: 0.7, marginTop: 16 }}>
+            Sem spam. Sem custo. Só insights.
+          </p>
         </div>
-        {inputError ? <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--app-error)', marginTop: 8 }}>{inputError}</p> : null}
-        <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--app-text-tertiary)', marginTop: 12 }}>
-          Sem spam. Sem custo. Só insights.
-        </p>
       </section>
 
-      {/* 7) Footer */}
+      {/* Footer */}
       <footer
         style={{
-          borderTop: `1px solid ${colors.border}`,
-          padding: '24px 24px 32px',
-          maxWidth: sectionMaxWidth,
+          borderTop: '1px solid var(--lp-border)',
+          padding: '28px 24px 32px',
           margin: '0 auto',
           position: 'relative',
           zIndex: 1,
+          background: 'var(--lp-bg)',
         }}
       >
-        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 24, marginBottom: 16 }}>
-          <a href="#termos" style={{ fontSize: 13, color: 'var(--app-text-secondary)', textDecoration: 'none' }}>Termos</a>
-          <a href="#privacidade" style={{ fontSize: 13, color: 'var(--app-text-secondary)', textDecoration: 'none' }}>Privacidade</a>
-          <a href="#contato" style={{ fontSize: 13, color: 'var(--app-text-secondary)', textDecoration: 'none' }}>Contato</a>
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 28, marginBottom: 20 }}>
+          <a
+            href="#termos"
+            style={{ fontSize: 14, color: 'var(--lp-text)', opacity: 0.8, textDecoration: 'none', fontWeight: 500 }}
+          >
+            Termos
+          </a>
+          <a
+            href="#privacidade"
+            style={{ fontSize: 14, color: 'var(--lp-text)', opacity: 0.8, textDecoration: 'none', fontWeight: 500 }}
+          >
+            Privacidade
+          </a>
+          <a
+            href="#contato"
+            style={{ fontSize: 14, color: 'var(--lp-text)', opacity: 0.8, textDecoration: 'none', fontWeight: 500 }}
+          >
+            Contato
+          </a>
         </div>
-        <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--app-text-tertiary)', margin: 0 }}>
-          © {new Date().getFullYear()} Relatório de Influencer. Todos os direitos reservados.
+        <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--lp-text)', opacity: 0.65, margin: 0 }}>
+          © 2026 Relatório de Influencer. Todos os direitos reservados.
         </p>
       </footer>
 
       <style>{`
         .landing-hero-grid { }
         @media (max-width: 900px) {
-          .landing-hero-grid { grid-template-columns: 1fr; }
+          .landing-hero-grid { grid-template-columns: 1fr; text-align: center; }
+          .landing-hero-grid .landing-cta-main { margin: 0 auto; }
           .landing-steps-grid { grid-template-columns: 1fr !important; }
           .landing-report-grid { grid-template-columns: 1fr !important; }
         }
-        header nav button { background: none; border: none; cursor: pointer; font-size: 14px; color: var(--app-text-secondary); }
-        header nav button:hover { color: var(--app-text); }
-        .landing-btn-primary:hover { filter: brightness(0.92); }
-        .landing-btn-primary:focus-visible { outline: 2px solid var(--app-primary); outline-offset: 2px; }
+        .landing-cta-main:hover { filter: brightness(1.05); opacity: 0.95; }
+        .landing-cta-main:focus-visible { outline: 2px solid var(--lp-primary); outline-offset: 2px; }
       `}</style>
     </div>
   )
-}
-
-const navLinkStyle: React.CSSProperties = {
-  color: 'var(--app-text-secondary)',
-  fontSize: 14,
-  padding: '8px 12px',
-  textDecoration: 'none',
-  fontWeight: 500,
 }

@@ -14,6 +14,7 @@ import type { ProfileItem, ProfileActivation, PostsResponse } from '../api'
 import { MediaKitDocument } from './MediaKitDocument'
 import { reportTokens as t } from './reportTokens'
 import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
+import { useTheme } from '../contexts/ThemeContext'
 
 const { Text } = Typography
 const s = t.spacing
@@ -101,6 +102,9 @@ function setCachedMediaKit(handle: string, entry: Omit<MediaKitCacheEntry, 'cach
 export default function MediaKit() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
+  const { theme } = useTheme()
+  const themeRef = useRef(theme)
+  themeRef.current = theme
   const [status, setStatus] = useState<Status>('loading_data')
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState('Carregando perfil...')
@@ -137,6 +141,7 @@ export default function MediaKit() {
         setStatus('generating')
         setProgress('Gerando PDF (dados em cache)...')
         if (abortRef.current) return
+        const currentTheme = themeRef.current
         const doc = (
           <MediaKitDocument
             profile={cached.profile}
@@ -146,6 +151,7 @@ export default function MediaKit() {
             profilePicDataUrl={cached.profilePicDataUrl}
             postImageDataUrls={cached.postImageDataUrls}
             postImageDataUrlsOrdered={cached.postImageDataUrlsOrdered}
+            theme={currentTheme}
           />
         )
         const blob = await pdf(doc).toBlob()
@@ -320,6 +326,7 @@ export default function MediaKit() {
       setStatus('generating')
       setProgress('Gerando PDF...')
 
+      const currentTheme = themeRef.current
       const doc = (
         <MediaKitDocument
           profile={profile}
@@ -329,6 +336,7 @@ export default function MediaKit() {
           profilePicDataUrl={profilePicDataUrl}
           postImageDataUrls={postImageDataUrls}
           postImageDataUrlsOrdered={postImageDataUrlsOrdered}
+          theme={currentTheme}
         />
       )
 

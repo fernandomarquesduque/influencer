@@ -84,17 +84,17 @@ body {
   min-width: 0;
 }
 
-/* Botão primary com gradiente (paleta do PDF) */
+/* Botão primary: cor sólida no padrão da Landing (sem gradiente) */
 .ant-btn-primary {
-  background: linear-gradient(135deg, var(--app-primary), var(--app-accent)) !important;
+  background: var(--app-primary) !important;
   border: none !important;
   color: var(--brand-white) !important;
-  box-shadow: 0 2px 8px rgba(104, 39, 143, 0.25);
+  box-shadow: var(--app-shadow-sm);
 }
 
 .ant-btn-primary:hover {
   filter: brightness(0.95);
-  box-shadow: 0 4px 12px rgba(104, 39, 143, 0.35);
+  box-shadow: var(--app-shadow-md);
 }
 
 .ant-btn-primary:focus-visible {
@@ -135,6 +135,34 @@ select,
 
 .ant-card-bordered {
   background: var(--app-card-bg) !important;
+}
+
+/* Painel de filtros: contraste no tema escuro (bordas e fundo dos controles) */
+.app-filters-aside .ant-select-selector,
+.app-filters-aside .ant-input,
+.app-filters-aside .ant-input-affix-wrapper {
+  background-color: var(--app-card-bg) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+.app-filters-aside .ant-select-selection-placeholder,
+.app-filters-aside .ant-select-selection-search input,
+.app-filters-aside .ant-input::placeholder {
+  color: var(--app-text-tertiary) !important;
+}
+.app-filters-aside .ant-collapse {
+  background: transparent !important;
+  border-color: var(--app-border) !important;
+}
+.app-filters-aside .ant-collapse-item {
+  border-color: var(--app-border) !important;
+}
+.app-filters-aside .ant-collapse-header,
+.app-filters-aside .ant-collapse-content {
+  color: var(--app-text) !important;
+}
+.app-filters-aside .ant-typography {
+  color: inherit;
 }
 
 /* Páginas sem Layout (Login, Premium) */

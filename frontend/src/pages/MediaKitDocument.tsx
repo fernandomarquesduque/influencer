@@ -2,7 +2,9 @@
  * Media Kit PDF — design premium, estilo Apple + agência.
  * Capa editorial (hero), layout estável em React-PDF (sem % quebrando),
  * header/footer fixos, tratamento de dados faltantes e resolução robusta de imagens.
+ * Cores de marca (brand/gold) seguem o tema selecionado na aplicação.
  */
+import { createContext, useContext, useMemo } from 'react'
 import {
   Document,
   Page,
@@ -21,6 +23,7 @@ import {
   PRICING_FIELD_LABELS,
   type PricingFieldKey,
 } from '../constants/pricingBuckets'
+import { getPdfPaletteFromTheme, type PdfPalette as PdfPaletteType, type ThemeMode } from '../utils/getPdfPaletteFromCss'
 
 type ReportInsights = ReturnType<typeof buildReportInsights>
 
@@ -28,26 +31,15 @@ type ReportInsights = ReturnType<typeof buildReportInsights>
 const s = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 }
 const pagePadding = 32
 
-// -------------------- Paleta premium (branco + 1 cor)
-const c = {
-  ink: '#0b1220',
-  text: '#111827',
-  textSecondary: '#6b7280',
-  textMuted: '#9ca3af',
+/** Re-export do tipo para quem importa de MediaKitDocument */
+export type { ThemeMode }
 
-  brand: '#3b5bfd',
-  brandDark: '#2447ff',
-  brandSoft: '#eef2ff',
-
-  gold: '#b78a1b',
-  goldSoft: '#fff7e6',
-
-  border: '#e5e7eb',
-  borderLight: '#f1f5f9',
-
-  pageBg: '#ffffff',
-  cardBg: '#ffffff',
-  cardAlt: '#f8fafc',
+/** Contexto de cores do PDF — valores vêm somente de theme.css (getPdfPaletteFromTheme) */
+const PdfPaletteContext = createContext<PdfPaletteType | null>(null)
+function usePdfPalette(): PdfPaletteType {
+  const pal = useContext(PdfPaletteContext)
+  if (!pal) throw new Error('usePdfPalette must be used inside MediaKitDocument')
+  return pal
 }
 
 const typo = {
@@ -225,7 +217,7 @@ const styles = StyleSheet.create({
     padding: 0,
     fontSize: typo.body,
     fontFamily: 'Helvetica',
-    backgroundColor: c.pageBg,
+    backgroundColor: 'transparent',
   },
   pageContent: {
     paddingLeft: pagePadding,
@@ -243,6 +235,7 @@ function SectionTitle({
   children: React.ReactNode
   first?: boolean
 }) {
+  const pal = usePdfPalette()
   return (
     <View style={{ marginTop: first ? 0 : s.xl, marginBottom: s.md }}>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -250,16 +243,16 @@ function SectionTitle({
           style={{
             width: 6,
             height: 18,
-            backgroundColor: c.brand,
+            backgroundColor: pal.brand,
             borderRadius: 3,
             marginRight: s.sm,
           }}
         />
-        <Text style={{ fontSize: typo.h2, fontWeight: 'bold', color: c.text }}>
+        <Text style={{ fontSize: typo.h2, fontWeight: 'bold', color: pal.text }}>
           {children}
         </Text>
       </View>
-      <View style={{ height: 1, backgroundColor: c.borderLight, marginTop: s.sm }} />
+      <View style={{ height: 1, backgroundColor: pal.borderLight, marginTop: s.sm }} />
     </View>
   )
 }
@@ -271,8 +264,9 @@ function Pill({
   children: React.ReactNode
   tone?: 'brand' | 'gold' | 'neutral'
 }) {
-  const bg = tone === 'gold' ? c.goldSoft : tone === 'neutral' ? c.cardAlt : c.brandSoft
-  const fg = tone === 'gold' ? c.gold : tone === 'neutral' ? c.textSecondary : c.brandDark
+  const pal = usePdfPalette()
+  const bg = tone === 'gold' ? pal.goldSoft : tone === 'neutral' ? pal.cardAlt : pal.brandSoft
+  const fg = tone === 'gold' ? pal.gold : tone === 'neutral' ? pal.textSecondary : pal.brandDark
   return (
     <Text
       style={{
@@ -301,64 +295,74 @@ function Card({
   style?: object
   noPadding?: boolean
 }) {
+  const pal = usePdfPalette()
+  const borderWidth = 1
+  const innerRadius = Math.max(0, radius - 2)
   return (
     <View
       style={{
-        backgroundColor: c.cardBg,
         borderRadius: radius,
-        borderWidth: 1,
-        borderColor: c.border,
-        overflow: 'hidden',
+        backgroundColor: pal.border,
         ...style,
       }}
     >
-      {title ? (
-        <View
-          style={{
-            paddingVertical: 10,
-            paddingHorizontal: 14,
-            backgroundColor: c.cardAlt,
-            borderBottomWidth: 1,
-            borderBottomColor: c.border,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: typo.caption,
-              fontWeight: 'bold',
-              color: c.textSecondary,
-              letterSpacing: 0.4,
-            }}
-          >
-            {sanitizeText(title).toUpperCase()}
-          </Text>
+      <View
+        style={{
+          margin: borderWidth,
+          borderRadius: innerRadius,
+          backgroundColor: pal.cardBg,
+          overflow: 'hidden',
+        }}
+      >
+        {title ? (
           <View
             style={{
-              height: 2,
-              width: 36,
-              backgroundColor: c.brand,
-              marginTop: 8,
-              borderRadius: 2,
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              backgroundColor: pal.cardAlt,
+              borderBottomWidth: 1,
+              borderBottomColor: pal.border,
             }}
-          />
-        </View>
-      ) : null}
-      <View style={{ padding: noPadding ? 0 : 14 }}>{children}</View>
+          >
+            <Text
+              style={{
+                fontSize: typo.caption,
+                fontWeight: 'bold',
+                color: pal.textSecondary,
+                letterSpacing: 0.4,
+              }}
+            >
+              {sanitizeText(title).toUpperCase()}
+            </Text>
+            <View
+              style={{
+                height: 2,
+                width: 36,
+                backgroundColor: pal.brand,
+                marginTop: 8,
+                borderRadius: 2,
+              }}
+            />
+          </View>
+        ) : null}
+        <View style={{ padding: noPadding ? 0 : 14 }}>{children}</View>
+      </View>
     </View>
   )
 }
 
 function MetricRow({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  const pal = usePdfPalette()
   return (
     <View style={{ marginBottom: s.sm }}>
-      <Text style={{ fontSize: typo.caption, color: c.textMuted, marginBottom: 2 }}>
+      <Text style={{ fontSize: typo.caption, color: pal.textMuted, marginBottom: 2 }}>
         {sanitizeText(label)}
       </Text>
-      <Text style={{ fontSize: typo.h3, fontWeight: 'bold', color: c.text }}>
+      <Text style={{ fontSize: typo.h3, fontWeight: 'bold', color: pal.text }}>
         {sanitizeText(value)}
       </Text>
       {sub ? (
-        <Text style={{ fontSize: typo.caption, color: c.textSecondary, marginTop: 2 }}>
+        <Text style={{ fontSize: typo.caption, color: pal.textSecondary, marginTop: 2 }}>
           {sanitizeText(sub)}
         </Text>
       ) : null}
@@ -376,9 +380,10 @@ function PageHeader({
   fullName?: string
   tierLabel: string
 }) {
+  const pal = usePdfPalette()
   return (
     <View fixed>
-      <View style={{ height: 3, backgroundColor: c.brand }} />
+      <View style={{ height: 3, backgroundColor: pal.brand }} />
       <View
         style={{
           flexDirection: 'row',
@@ -386,37 +391,38 @@ function PageHeader({
           alignItems: 'center',
           paddingHorizontal: pagePadding,
           paddingVertical: 12,
-          backgroundColor: c.pageBg,
+          backgroundColor: pal.pageBg,
         }}
       >
         <View>
-          <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: c.text }}>
+          <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: pal.text }}>
             @{handle}
           </Text>
           {fullName ? (
-            <Text style={{ fontSize: typo.caption, color: c.textSecondary }}>
+            <Text style={{ fontSize: typo.caption, color: pal.textSecondary }}>
               {truncate(fullName, 38)}
             </Text>
           ) : null}
         </View>
 
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={{ fontSize: typo.caption, fontWeight: 'bold', color: c.brand }}>
+          <Text style={{ fontSize: typo.caption, fontWeight: 'bold', color: pal.brand }}>
             {sanitizeText(tierLabel)}
           </Text>
-          <Text style={{ fontSize: typo.caption, color: c.textMuted }}>Media Kit</Text>
+          <Text style={{ fontSize: typo.caption, color: pal.textMuted }}>Media Kit</Text>
         </View>
       </View>
-      <View style={{ height: 1, backgroundColor: c.border, marginHorizontal: pagePadding }} />
+      <View style={{ height: 1, backgroundColor: pal.border, marginHorizontal: pagePadding }} />
     </View>
   )
 }
 
 function PageFooter({ dateStr }: { dateStr: string }) {
+  const pal = usePdfPalette()
   return (
     <View fixed style={{ position: 'absolute', left: pagePadding, right: pagePadding, bottom: 16 }}>
-      <View style={{ height: 1, backgroundColor: c.borderLight, marginBottom: 6 }} />
-      <Text style={{ fontSize: typo.caption, color: c.textMuted, textAlign: 'center' }}>
+      <View style={{ height: 1, backgroundColor: pal.borderLight, marginBottom: 6 }} />
+      <Text style={{ fontSize: typo.caption, color: pal.textMuted, textAlign: 'center' }}>
         Media Kit profissional - Gerado em {dateStr}
       </Text>
     </View>
@@ -447,6 +453,7 @@ function CoverPage({
   profilePicDataUrl?: string | null
   dateStr: string
 }) {
+  const pal = usePdfPalette()
   const displayName = sanitizeText(fullName || handle || 'Influencer')
   const topLabel = percentil > 0 ? `Top ${percentil}%` : 'Top —'
   const safeHandle = sanitizeText(handle).replace(/^@/, '')
@@ -457,28 +464,23 @@ function CoverPage({
     { label: 'Posts/sem', value: (postsPerWeek || 0).toFixed(1) },
   ]
 
-  // Cores estilo Instagram (gradiente simplificado no topo)
-  const igPurple = '#833AB4'
-  const igPink = '#E1306C'
-  const igOrange = '#F77737'
-
   return (
-    <Page size="A4" style={styles.page}>
-      {/* Fundo branco estilo feed */}
-      <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#ffffff' }} />
+    <Page size="A4" style={[styles.page, { backgroundColor: pal.pageBg }]}>
+      {/* Fundo da página conforme tema */}
+      <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: pal.pageBg }} />
 
-      {/* Barra gradiente Instagram (faixas) */}
+      {/* Barra gradiente (cores do tema) */}
       <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 6, flexDirection: 'row' }}>
-        <View style={{ flex: 1, backgroundColor: igPurple }} />
-        <View style={{ flex: 1, backgroundColor: igPink }} />
-        <View style={{ flex: 1, backgroundColor: igOrange }} />
+        <View style={{ flex: 1, backgroundColor: pal.brand }} />
+        <View style={{ flex: 1, backgroundColor: pal.gold }} />
+        <View style={{ flex: 1, backgroundColor: pal.brandDark }} />
       </View>
 
       <View style={{ padding: pagePadding, paddingTop: 52 }}>
         {/* Cabeçalho tipo app: logo + data */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
-          <Text style={{ fontSize: 18, fontWeight: 'bold', color: c.ink }}>Media Kit</Text>
-          <Text style={{ fontSize: 9, color: c.textMuted }}>{dateStr}</Text>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: pal.ink }}>Media Kit</Text>
+          <Text style={{ fontSize: 9, color: pal.textMuted }}>{dateStr}</Text>
         </View>
 
         {/* Perfil estilo Instagram: foto central + nome e handle */}
@@ -491,12 +493,12 @@ function CoverPage({
                   height: 100,
                   borderRadius: 50,
                   padding: 4,
-                  backgroundColor: igPurple,
+                  backgroundColor: pal.brand,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <View style={{ width: 92, height: 92, borderRadius: 46, overflow: 'hidden', backgroundColor: '#fff' }}>
+                <View style={{ width: 92, height: 92, borderRadius: 46, overflow: 'hidden', backgroundColor: pal.cardBg }}>
                   <Image src={profilePicDataUrl} style={{ width: 92, height: 92, borderRadius: 46 }} />
                 </View>
               </View>
@@ -507,59 +509,59 @@ function CoverPage({
                 width: 100,
                 height: 100,
                 borderRadius: 50,
-                backgroundColor: '#efefef',
+                backgroundColor: pal.cardAlt,
                 alignItems: 'center',
                 justifyContent: 'center',
                 marginBottom: 14,
               }}
             >
-              <Text style={{ fontSize: 32, fontWeight: 'bold', color: c.textSecondary }}>
+              <Text style={{ fontSize: 32, fontWeight: 'bold', color: pal.textSecondary }}>
                 {getInitials(displayName, handle)}
               </Text>
             </View>
           )}
-          <Text style={{ fontSize: 22, fontWeight: 'bold', color: c.ink }}>{truncate(displayName, 26)}</Text>
-          <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 4 }}>@{safeHandle}</Text>
+          <Text style={{ fontSize: 22, fontWeight: 'bold', color: pal.ink }}>{truncate(displayName, 26)}</Text>
+          <Text style={{ fontSize: 12, color: pal.textSecondary, marginTop: 4 }}>@{safeHandle}</Text>
           {/* Selos em linha, estilo badges */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 12 }}>
-            <View style={{ backgroundColor: '#f0f0f0', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, marginRight: 6, marginBottom: 4 }}>
-              <Text style={{ fontSize: 8, color: c.text, fontWeight: 'bold' }}>{sanitizeText(tierLabel)}</Text>
+            <View style={{ backgroundColor: pal.cardAlt, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, marginRight: 6, marginBottom: 4 }}>
+              <Text style={{ fontSize: 8, color: pal.text, fontWeight: 'bold' }}>{sanitizeText(tierLabel)}</Text>
             </View>
-            <View style={{ backgroundColor: '#f0f0f0', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, marginRight: 6, marginBottom: 4 }}>
-              <Text style={{ fontSize: 8, color: c.text, fontWeight: 'bold' }}>{sanitizeText(scoreSelo)}</Text>
+            <View style={{ backgroundColor: pal.cardAlt, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, marginRight: 6, marginBottom: 4 }}>
+              <Text style={{ fontSize: 8, color: pal.text, fontWeight: 'bold' }}>{sanitizeText(scoreSelo)}</Text>
             </View>
             {percentil > 0 && (
-              <View style={{ backgroundColor: '#fff0e6', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, marginBottom: 4 }}>
-                <Text style={{ fontSize: 8, color: c.gold, fontWeight: 'bold' }}>{topLabel}</Text>
+              <View style={{ backgroundColor: pal.goldSoft, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, marginBottom: 4 }}>
+                <Text style={{ fontSize: 8, color: pal.gold, fontWeight: 'bold' }}>{topLabel}</Text>
               </View>
             )}
           </View>
         </View>
 
         {/* Linha separadora — fica logo abaixo dos badges */}
-        <View style={{ height: 1, backgroundColor: '#efefef', marginTop: 16 }} />
+        <View style={{ height: 1, backgroundColor: pal.borderLight, marginTop: 16 }} />
 
         {/* Métricas no estilo Instagram: número em cima, label embaixo */}
         <View style={{ flexDirection: 'row', paddingTop: 18 }}>
           {metrics.map((k) => (
             <View key={k.label} style={{ flex: 1, alignItems: 'center' }}>
-              <Text style={{ fontSize: 20, fontWeight: 'bold', color: c.ink }}>{k.value}</Text>
-              <Text style={{ fontSize: 9, color: c.textMuted, marginTop: 2 }}>{k.label}</Text>
+              <Text style={{ fontSize: 20, fontWeight: 'bold', color: pal.ink }}>{k.value}</Text>
+              <Text style={{ fontSize: 9, color: pal.textMuted, marginTop: 2 }}>{k.label}</Text>
             </View>
           ))}
         </View>
 
         {/* Bio curta estilo Instagram */}
         <View style={{ marginTop: 22 }}>
-          <Text style={{ fontSize: 11, color: c.text, lineHeight: 1.5, textAlign: 'center', paddingHorizontal: 20 }}>
+          <Text style={{ fontSize: 11, color: pal.text, lineHeight: 1.5, textAlign: 'center', paddingHorizontal: 20 }}>
             Conteúdo autêntico · Comunidade engajada · Pronto para parcerias com marcas
           </Text>
         </View>
 
         {/* Rodapé no fluxo: fica sempre abaixo do texto, com espaço fixo */}
         <View style={{ marginTop: 48 }}>
-          <View style={{ height: 1, backgroundColor: '#efefef', marginBottom: 10 }} />
-          <Text style={{ fontSize: 8, color: c.textMuted, textAlign: 'center' }}>
+          <View style={{ height: 1, backgroundColor: pal.borderLight, marginBottom: 10 }} />
+          <Text style={{ fontSize: 8, color: pal.textMuted, textAlign: 'center' }}>
             Documento confidencial · Propostas e parcerias
           </Text>
         </View>
@@ -587,14 +589,15 @@ function OverviewPage({
   header: React.ReactNode
   footer: React.ReactNode
 }) {
+  const pal = usePdfPalette()
   return (
-    <Page size="A4" style={styles.page}>
+    <Page size="A4" style={[styles.page, { backgroundColor: pal.pageBg }]}>
       {header}
       <View style={styles.pageContent}>
         <SectionTitle first>Sobre o perfil</SectionTitle>
 
         <Card>
-          <Text style={{ fontSize: typo.body, color: c.text, lineHeight: 1.55 }}>
+          <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.55 }}>
             {sanitizeText(bio?.trim() || 'Conteúdo autêntico com alto potencial de parcerias para marcas.')}
           </Text>
 
@@ -623,12 +626,12 @@ function OverviewPage({
 
         <Card title="Score do perfil" style={{ marginTop: s.lg }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ flex: 1, height: 8, backgroundColor: c.borderLight, borderRadius: 4, overflow: 'hidden', marginRight: s.md }}>
-              <View style={{ width: `${Math.min(100, Math.max(0, score || 0))}%`, height: '100%', backgroundColor: c.brand }} />
+            <View style={{ flex: 1, height: 8, backgroundColor: pal.borderLight, borderRadius: 4, overflow: 'hidden', marginRight: s.md }}>
+              <View style={{ width: `${Math.min(100, Math.max(0, score || 0))}%`, height: '100%', backgroundColor: pal.brand }} />
             </View>
             <Pill tone="gold">{Math.round(score || 0)}/100</Pill>
           </View>
-          <Text style={{ fontSize: typo.caption, color: c.textSecondary, marginTop: 8 }}>{sanitizeText(scoreSelo)}</Text>
+          <Text style={{ fontSize: typo.caption, color: pal.textSecondary, marginTop: 8 }}>{sanitizeText(scoreSelo)}</Text>
         </Card>
 
         <SectionTitle>Meus diferenciais</SectionTitle>
@@ -636,14 +639,14 @@ function OverviewPage({
         <View style={{ flexDirection: 'row' }}>
           <View style={{ flex: 1, marginRight: s.lg }}>
             <Card title="Ponto forte">
-              <Text style={{ fontSize: typo.body, color: c.text, lineHeight: 1.55 }}>
+              <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.55 }}>
                 {sanitizeText(diagnostico.fazBem || 'Criatividade + consistência com alto potencial de conversão.')}
               </Text>
             </Card>
           </View>
           <View style={{ width: 230 }}>
             <Card title="Compromisso">
-              <Text style={{ fontSize: typo.body, color: c.text, lineHeight: 1.55 }}>
+              <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.55 }}>
                 Conteúdo autêntico e entregas alinhadas a objetivos: awareness, tráfego e conversão.
               </Text>
             </Card>
@@ -671,12 +674,13 @@ function ValuePage({
   header: React.ReactNode
   footer: React.ReactNode
 }) {
+  const pal = usePdfPalette()
   const min = Math.max(0, valorEstimado?.min ?? 0)
   const max = Math.max(min, valorEstimado?.max ?? 0)
   const porque = sanitizeText(valorEstimado?.porque || '')
 
   return (
-    <Page size="A4" style={styles.page}>
+    <Page size="A4" style={[styles.page, { backgroundColor: pal.pageBg }]}>
       {header}
       <View style={styles.pageContent}>
         <SectionTitle first>Valor e audiência</SectionTitle>
@@ -684,15 +688,15 @@ function ValuePage({
         <View style={{ flexDirection: 'row', marginBottom: s.lg }}>
           <View style={{ flex: 1, marginRight: s.lg }}>
             <Card title="Valor por post (estimado)">
-              <Text style={{ fontSize: 18, fontWeight: 'bold', color: c.text }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: pal.text }}>
                 R$ {min.toLocaleString('pt-BR')} - R$ {max.toLocaleString('pt-BR')}
               </Text>
               {porque ? (
-                <Text style={{ fontSize: typo.caption, color: c.textSecondary, marginTop: 8, lineHeight: 1.45 }}>
+                <Text style={{ fontSize: typo.caption, color: pal.textSecondary, marginTop: 8, lineHeight: 1.45 }}>
                   {porque}
                 </Text>
               ) : (
-                <Text style={{ fontSize: typo.caption, color: c.textSecondary, marginTop: 8 }}>
+                <Text style={{ fontSize: typo.caption, color: pal.textSecondary, marginTop: 8 }}>
                   Estimativa baseada em engajamento, frequência e posicionamento.
                 </Text>
               )}
@@ -701,10 +705,10 @@ function ValuePage({
 
           <View style={{ width: 230 }}>
             <Card title="Qualidade da audiência">
-              <Text style={{ fontSize: 12, fontWeight: 'bold', color: c.text }}>
+              <Text style={{ fontSize: 12, fontWeight: 'bold', color: pal.text }}>
                 {sanitizeText(getLabelAudienciaPositivo(conversation.label))}
               </Text>
-              <Text style={{ fontSize: typo.caption, color: c.textSecondary, marginTop: 8 }}>
+              <Text style={{ fontSize: typo.caption, color: pal.textSecondary, marginTop: 8 }}>
                 {Math.max(0, conversation.rate || 0)}% taxa de conversa
               </Text>
             </Card>
@@ -726,8 +730,8 @@ function ValuePage({
                       marginRight: i % 2 === 0 ? s.lg : 0,
                     }}
                   >
-                    <Text style={{ color: c.brand, marginRight: s.xs, fontWeight: 'bold' }}>+</Text>
-                    <Text style={{ fontSize: typo.body, color: c.text, lineHeight: 1.45 }}>
+                    <Text style={{ color: pal.brand, marginRight: s.xs, fontWeight: 'bold' }}>+</Text>
+                    <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.45 }}>
                       {sanitizeText(bullet)}
                     </Text>
                   </View>
@@ -741,7 +745,7 @@ function ValuePage({
           <>
             <SectionTitle>Áreas de atuação</SectionTitle>
             <Card>
-              <Text style={{ fontSize: typo.small, color: c.textSecondary, marginBottom: s.md }}>
+              <Text style={{ fontSize: typo.small, color: pal.textSecondary, marginBottom: s.md }}>
                 Conteúdo consistente com engajamento comprovado — ideal para campanhas segmentadas.
               </Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -774,10 +778,11 @@ function ContactAndPricingPage({
   header: React.ReactNode
   footer: React.ReactNode
 }) {
+  const pal = usePdfPalette()
   const hasPricing = pricingRows.length > 0
 
   return (
-    <Page size="A4" style={styles.page}>
+    <Page size="A4" style={[styles.page, { backgroundColor: pal.pageBg }]}>
       {header}
       <View style={styles.pageContent}>
         <SectionTitle first>Contato e preços</SectionTitle>
@@ -794,22 +799,22 @@ function ContactAndPricingPage({
                       justifyContent: 'space-between',
                       paddingVertical: 10,
                       borderTopWidth: i === 0 ? 0 : 1,
-                      borderTopColor: c.borderLight,
+                      borderTopColor: pal.borderLight,
                     }}
                   >
-                    <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
+                    <Text style={{ fontSize: typo.body, color: pal.textSecondary }}>
                       {sanitizeText(row.label)}
                     </Text>
-                    <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: c.text }}>
+                    <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: pal.text }}>
                       {sanitizeText(row.value)}
                     </Text>
                   </View>
                 ))}
                 {costTier ? (
                   <View style={{ marginTop: 10 }}>
-                    <Text style={{ fontSize: typo.caption, color: c.textMuted }}>
+                    <Text style={{ fontSize: typo.caption, color: pal.textMuted }}>
                       Custo médio:{' '}
-                      <Text style={{ fontWeight: 'bold', color: c.textSecondary }}>
+                      <Text style={{ fontWeight: 'bold', color: pal.textSecondary }}>
                         {costTier.symbol} {costTier.label}
                       </Text>
                     </Text>
@@ -818,7 +823,7 @@ function ContactAndPricingPage({
               </Card>
             ) : (
               <Card title="Tabela de valores">
-                <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
+                <Text style={{ fontSize: typo.body, color: pal.textSecondary }}>
                   Valores sob consulta — envio tabela completa conforme formato e período da campanha.
                 </Text>
               </Card>
@@ -828,34 +833,34 @@ function ContactAndPricingPage({
           <View style={{ width: 230 }}>
             <Card title="Contato">
               {(activation?.city || activation?.state) ? (
-                <Text style={{ fontSize: typo.body, color: c.text, marginBottom: 8 }}>
+                <Text style={{ fontSize: typo.body, color: pal.text, marginBottom: 8 }}>
                   {sanitizeText([activation.city, activation.state].filter(Boolean).join(', '))}
                 </Text>
               ) : (
-                <Text style={{ fontSize: typo.body, color: c.text, marginBottom: 8 }}>
+                <Text style={{ fontSize: typo.body, color: pal.text, marginBottom: 8 }}>
                   Disponível para campanhas
                 </Text>
               )}
 
               {activation?.whatsapp ? (
                 <>
-                  <Text style={{ fontSize: typo.caption, color: c.textMuted }}>WhatsApp</Text>
-                  <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: c.text }}>
+                  <Text style={{ fontSize: typo.caption, color: pal.textMuted }}>WhatsApp</Text>
+                  <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: pal.text }}>
                     {sanitizeText(String(activation.whatsapp))}
                   </Text>
                 </>
               ) : (
-                <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
+                <Text style={{ fontSize: typo.body, color: pal.textSecondary }}>
                   WhatsApp não informado
                 </Text>
               )}
 
               {activation?.content_type?.length ? (
                 <View style={{ marginTop: 12 }}>
-                  <Text style={{ fontSize: typo.caption, color: c.textMuted, marginBottom: 6 }}>
+                  <Text style={{ fontSize: typo.caption, color: pal.textMuted, marginBottom: 6 }}>
                     Entrega
                   </Text>
-                  <Text style={{ fontSize: typo.body, color: c.textSecondary, lineHeight: 1.45 }}>
+                  <Text style={{ fontSize: typo.body, color: pal.textSecondary, lineHeight: 1.45 }}>
                     {activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}
                   </Text>
                 </View>
@@ -883,13 +888,14 @@ function PostDetailPage({
   header: React.ReactNode
   footer: React.ReactNode
 }) {
+  const pal = usePdfPalette()
   return (
-    <Page size="A4" style={styles.page}>
+    <Page size="A4" style={[styles.page, { backgroundColor: pal.pageBg }]}>
       {header}
       <View style={styles.pageContent}>
         <SectionTitle first>Destaques do conteúdo</SectionTitle>
 
-        <Text style={{ fontSize: typo.small, color: c.textSecondary, marginBottom: s.md, lineHeight: 1.45 }}>
+        <Text style={{ fontSize: typo.small, color: pal.textSecondary, marginBottom: s.md, lineHeight: 1.45 }}>
           Posts com melhor performance — formato, mensagem e gatilhos que mais geram resultado.
         </Text>
 
@@ -909,32 +915,32 @@ function PostDetailPage({
                   {dataUrl ? (
                     <Image src={dataUrl} style={{ width: '100%', height: 170, objectFit: 'cover' as const }} />
                   ) : (
-                    <View style={{ width: '100%', height: 170, backgroundColor: c.borderLight, alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ fontSize: typo.caption, color: c.textMuted }}>Imagem indisponível</Text>
+                    <View style={{ width: '100%', height: 170, backgroundColor: pal.borderLight, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontSize: typo.caption, color: pal.textMuted }}>Imagem indisponível</Text>
                     </View>
                   )}
                 </View>
 
                 <View style={{ flex: 1, padding: 14 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 9, color: c.textMuted }}>DESTAQUE #{idx + 1}</Text>
+                    <Text style={{ fontSize: 9, color: pal.textMuted }}>DESTAQUE #{idx + 1}</Text>
                     <Pill tone="gold">ER {Number(item.erPost || 0).toFixed(1)}%</Pill>
                   </View>
 
-                  <View style={{ marginTop: 10, backgroundColor: c.brandSoft, padding: 10, borderRadius: 10 }}>
-                    <Text style={{ fontSize: 9, color: c.brandDark, fontWeight: 'bold' }}>O que funcionou</Text>
-                    <Text style={{ fontSize: 10, color: c.text, marginTop: 4, lineHeight: 1.45 }}>
+                  <View style={{ marginTop: 10, backgroundColor: pal.brandSoft, padding: 10, borderRadius: 10 }}>
+                    <Text style={{ fontSize: 9, color: pal.brandDark, fontWeight: 'bold' }}>O que funcionou</Text>
+                    <Text style={{ fontSize: 10, color: pal.text, marginTop: 4, lineHeight: 1.45 }}>
                       {sanitizeText(item.oQueFuncionou || 'Mensagem clara + formato consistente + boa retenção.')}
                     </Text>
                   </View>
 
-                  <Text style={{ fontSize: 9, color: c.textSecondary, marginTop: 10 }}>
+                  <Text style={{ fontSize: 9, color: pal.textSecondary, marginTop: 10 }}>
                     Curtidas {formatShortNum(likes)} - Coment. {formatShortNum(comments)}
                     {views != null ? ` - Views ${formatShortNum(Number(views))}` : ''}
                   </Text>
 
                   {caption ? (
-                    <Text style={{ fontSize: typo.caption, color: c.textMuted, marginTop: 6, lineHeight: 1.45 }}>
+                    <Text style={{ fontSize: typo.caption, color: pal.textMuted, marginTop: 6, lineHeight: 1.45 }}>
                       {truncate(String(caption), 140)}
                     </Text>
                   ) : null}
@@ -973,10 +979,11 @@ function ConsistencyPage({
   header: React.ReactNode
   footer: React.ReactNode
 }) {
+  const pal = usePdfPalette()
   const hasWeekData = weekData.some((n) => (n || 0) > 0)
 
   return (
-    <Page size="A4" style={styles.page}>
+    <Page size="A4" style={[styles.page, { backgroundColor: pal.pageBg }]}>
       {header}
       <View style={styles.pageContent}>
         {hasWeekData ? (
@@ -993,15 +1000,15 @@ function ConsistencyPage({
                         style={{
                           flex: 1,
                           height: Math.max(10, ((n || 0) / Math.max(1, maxBar)) * 40),
-                          backgroundColor: c.brand,
+                          backgroundColor: pal.brand,
                           borderRadius: 4,
                           marginRight: i < weekData.length - 1 ? 4 : 0,
                         }}
                       />
                     ))}
                   </View>
-                  <View style={{ height: 1, backgroundColor: c.borderLight, marginTop: 10 }} />
-                  <Text style={{ fontSize: typo.caption, color: c.textSecondary, marginTop: 8 }}>
+                  <View style={{ height: 1, backgroundColor: pal.borderLight, marginTop: 10 }} />
+                  <Text style={{ fontSize: typo.caption, color: pal.textSecondary, marginTop: 8 }}>
                     Melhor horário: {sanitizeText(bestDay)} às {bestHour}h
                   </Text>
                 </Card>
@@ -1009,7 +1016,7 @@ function ConsistencyPage({
 
               <View style={{ width: 230 }}>
                 <Card title="Recomendação">
-                  <Text style={{ fontSize: typo.body, color: c.text, lineHeight: 1.55 }}>
+                  <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.55 }}>
                     Publicar próximo do pico melhora alcance e salva custo de mídia em campanhas.
                   </Text>
                   <View style={{ marginTop: 12 }}>
@@ -1023,7 +1030,7 @@ function ConsistencyPage({
           <>
             <SectionTitle first>Consistência</SectionTitle>
             <Card>
-              <Text style={{ fontSize: typo.body, color: c.textSecondary }}>
+              <Text style={{ fontSize: typo.body, color: pal.textSecondary }}>
                 Sem dados suficientes para consistência nas últimas semanas.
               </Text>
             </Card>
@@ -1038,7 +1045,7 @@ function ConsistencyPage({
                 {hashtagRows.slice(0, 14).map(({ tag, count, avgEr }) => (
                   <View key={tag} style={{ flexDirection: 'row', alignItems: 'center', marginRight: s.sm, marginBottom: s.xs }}>
                     <Pill tone="neutral">#{sanitizeText(tag)}</Pill>
-                    <Text style={{ fontSize: typo.caption, color: c.textMuted, marginLeft: s.xs }}>
+                    <Text style={{ fontSize: typo.caption, color: pal.textMuted, marginLeft: s.xs }}>
                       {count}x{avgEr != null ? ` - ${avgEr.toFixed(0)}%` : ''}
                     </Text>
                   </View>
@@ -1050,34 +1057,34 @@ function ConsistencyPage({
 
         <SectionTitle>Vamos trabalhar juntos</SectionTitle>
         <Card title="Contato rápido">
-          <Text style={{ fontSize: typo.body, color: c.text, lineHeight: 1.55, marginBottom: s.md }}>
+          <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.55, marginBottom: s.md }}>
             Comunidade ativa, conteúdo consistente e alto potencial de conversão. Disponível para publis, reels, stories e campanhas integradas.
           </Text>
 
-          <Text style={{ fontSize: typo.h3, fontWeight: 'bold', color: c.text }}>
+          <Text style={{ fontSize: typo.h3, fontWeight: 'bold', color: pal.text }}>
             {truncate(fullName || `@${handle}`, 42)}
           </Text>
-          <Text style={{ fontSize: typo.small, color: c.textSecondary }}>
+          <Text style={{ fontSize: typo.small, color: pal.textSecondary }}>
             @{sanitizeText(handle).replace(/^@/, '')}
           </Text>
 
           {activation?.whatsapp ? (
             <View style={{ marginTop: 12 }}>
-              <Text style={{ fontSize: typo.caption, color: c.textMuted }}>WhatsApp</Text>
-              <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: c.text }}>
+              <Text style={{ fontSize: typo.caption, color: pal.textMuted }}>WhatsApp</Text>
+              <Text style={{ fontSize: typo.body, fontWeight: 'bold', color: pal.text }}>
                 {sanitizeText(String(activation.whatsapp))}
               </Text>
             </View>
           ) : null}
 
           {(activation?.city || activation?.state) ? (
-            <Text style={{ fontSize: typo.small, color: c.textSecondary, marginTop: 8 }}>
+            <Text style={{ fontSize: typo.small, color: pal.textSecondary, marginTop: 8 }}>
               {sanitizeText([activation.city, activation.state].filter(Boolean).join(', '))}
             </Text>
           ) : null}
 
           {activation?.content_type?.length ? (
-            <Text style={{ fontSize: typo.caption, color: c.textMuted, marginTop: 10 }}>
+            <Text style={{ fontSize: typo.caption, color: pal.textMuted, marginTop: 10 }}>
               Entrega: {activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}
             </Text>
           ) : null}
@@ -1098,6 +1105,8 @@ export interface MediaKitData {
   profilePicDataUrl?: string | null
   postImageDataUrls?: Record<string, string>
   postImageDataUrlsOrdered?: string[]
+  /** Tema selecionado na aplicação — cor do PDF segue a paleta do tema */
+  theme?: ThemeMode
 }
 
 export function MediaKitDocument({
@@ -1108,7 +1117,12 @@ export function MediaKitDocument({
   profilePicDataUrl,
   postImageDataUrls = {},
   postImageDataUrlsOrdered,
+  theme,
 }: MediaKitData) {
+  const palette = useMemo(
+    () => getPdfPaletteFromTheme(theme ?? 'light'),
+    [theme]
+  )
   const userData = profile?.data?.user as Record<string, unknown> | undefined
   const displayHandle = (profile?.handle ?? profile?.username ?? (profile as any)?.key ?? '') as string
   const handle = sanitizeText(displayHandle).replace(/^@/, '')
@@ -1217,6 +1231,7 @@ export function MediaKitDocument({
   }
 
   return (
+    <PdfPaletteContext.Provider value={palette}>
     <Document>
       <CoverPage
         fullName={fullName}
@@ -1282,5 +1297,6 @@ export function MediaKitDocument({
         footer={footer}
       />
     </Document>
+    </PdfPaletteContext.Provider>
   )
 }

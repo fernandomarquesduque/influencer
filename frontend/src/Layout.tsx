@@ -1,19 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Layout as AntLayout, Button, Drawer, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { CaretDownFilled, MenuOutlined, UserOutlined, BgColorsOutlined } from '@ant-design/icons'
+import { CaretDownFilled, MenuOutlined, UserOutlined } from '@ant-design/icons'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import Logo from './components/Logo'
+import ThemeFooterButton from './components/ThemeFooterButton'
 import { Grid } from 'antd'
 
 const { Content } = AntLayout
 const { useBreakpoint } = Grid
 
-/* Header usa paleta central (index.css): --app-header-bg, --app-header-text */
+/* Header usa mesmo padrão da Landing: --app-header-bg = fundo da página, --app-header-text = texto */
 const navLinkStyle: React.CSSProperties = {
   color: 'var(--app-header-text)',
   fontSize: 15,
@@ -26,7 +27,8 @@ const navLinkStyle: React.CSSProperties = {
 const navLinkActiveStyle: React.CSSProperties = {
   ...navLinkStyle,
   opacity: 1,
-  background: 'var(--app-overlay-white-12)',
+  background: 'var(--app-primary-muted)',
+  color: 'var(--app-primary)',
 }
 
 const drawerLinkStyle: React.CSSProperties = {
@@ -47,7 +49,6 @@ export default function Layout() {
   const navigate = useNavigate()
   const { user, logout, isAdm } = useAuth()
   const { theme, setTheme } = useTheme()
-  const currentThemeLabel = THEME_OPTIONS.find((o) => o.value === theme)?.label ?? 'Tema'
   const screens = useBreakpoint()
   const isMobile = !screens.md
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -106,10 +107,11 @@ export default function Layout() {
           <div
             style={{
               background: 'var(--app-header-bg)',
+              borderBottom: '1px solid var(--app-header-border)',
               position: 'sticky',
               top: 0,
               zIndex: 100,
-              boxShadow: 'var(--app-shadow-md)',
+              boxShadow: 'var(--app-shadow-sm)',
             }}
           >
             <header
@@ -136,7 +138,9 @@ export default function Layout() {
                 }}
               >
                 <Logo
+                  size="small"
                   height={36}
+                  variant="default"
                   style={{
                     flexShrink: 0,
                   }}
@@ -154,7 +158,7 @@ export default function Layout() {
                 />
               ) : (
                 <>
-                  <nav style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <nav style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4 }}>
                     {user && (
                       <>
 
@@ -177,118 +181,90 @@ export default function Layout() {
                       </>
                     )}
                   </nav>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Dropdown
-                      menu={{
-                        items: THEME_OPTIONS.map((opt) => ({
-                          key: opt.value,
-                          label: opt.label,
-                          onClick: () => setTheme(opt.value),
-                        })),
-                      }}
-                      trigger={['click']}
-                      placement="bottomRight"
-                    >
-                      <Button
-                        type="text"
-                        icon={<BgColorsOutlined />}
-                        style={{
-                          color: 'var(--app-header-text)',
-                          height: 36,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          borderRadius: 8,
-                          padding: '0 10px',
-                        }}
-                        title="Tema"
-                        aria-label="Escolher tema"
-                      >
-                        <span style={{ fontSize: 14, fontWeight: 500 }}>{currentThemeLabel}</span>
-                        <CaretDownFilled style={{ fontSize: 12, opacity: 0.9 }} />
-                      </Button>
-                    </Dropdown>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
                     {user ? (
-                      <Dropdown
-                        menu={{
-                          items: [
-                            ...(myProfilePath
-                              ? [{ key: 'profile', label: 'Meu perfil', onClick: () => navigate(myProfilePath) }]
-                              : []),
-                            ...(isAdm || user?.scope === 'influencer'
-                              ? [{ key: 'projects', label: 'Projetos', onClick: () => navigate('/app/projects') }]
-                              : []),
-                            { key: 'logout', label: 'Sair', onClick: () => logout() },
-                          ] as MenuProps['items'],
-                        }}
-                        trigger={['click']}
-                        placement="bottomRight"
-                      >
-                        <button
-                          type="button"
-                          style={{
-                            display: 'flex',
-                            alignItems: 'flex-end',
-                            gap: 8,
-                            height: 36,
-                            padding: 0,
-                            border: 'none',
-                            background: 'transparent',
-                            cursor: 'pointer',
-                            flexShrink: 0,
+                      <>
+                        <Dropdown
+                          menu={{
+                            items: [
+                              ...(myProfilePath
+                                ? [{ key: 'profile', label: 'Meu perfil', onClick: () => navigate(myProfilePath) }]
+                                : []),
+                              ...(isAdm || user?.scope === 'influencer'
+                                ? [{ key: 'projects', label: 'Projetos', onClick: () => navigate('/app/projects') }]
+                                : []),
+                              { key: 'logout', label: 'Sair', onClick: () => logout() },
+                            ] as MenuProps['items'],
                           }}
-                          title="Conta"
-                          aria-label="Abrir menu da conta"
+                          trigger={['click']}
+                          placement="bottomRight"
                         >
-                          {!isMobile && (
-                            <div
-                              style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'flex-end',
-                                justifyContent: 'center',
-                                lineHeight: 1.2,
-                                marginBottom: 2,
-                              }}
-                            >
-                              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--app-header-text)', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
-                                {headerProfileName ?? user.username}
-                              </span>
-                              {myHandle && (
-                                <span style={{ fontSize: 12, color: 'var(--app-header-text)', opacity: 0.9 }}>
-                                  @{myHandle}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          <span
+                          <button
+                            type="button"
                             style={{
                               display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              width: 36,
+                              alignItems: 'flex-end',
+                              gap: 8,
                               height: 36,
-                              borderRadius: '50%',
-                              background: headerProfilePic ? 'transparent' : 'var(--app-overlay-white-08)',
-                              color: 'var(--app-header-text)',
-                              overflow: 'hidden',
+                              padding: 0,
+                              border: 'none',
+                              background: 'transparent',
+                              cursor: 'pointer',
                               flexShrink: 0,
                             }}
+                            title="Conta"
+                            aria-label="Abrir menu da conta"
                           >
-                            {headerProfilePic ? (
-                              <img
-                                src={headerProfilePic}
-                                alt=""
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                onError={() => setHeaderProfilePic(null)}
-                              />
-                            ) : (
-                              <UserOutlined style={{ fontSize: 18 }} />
+                            {!isMobile && (
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'flex-end',
+                                  justifyContent: 'center',
+                                  lineHeight: 1.2,
+                                  marginBottom: 2,
+                                }}
+                              >
+                                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--app-header-text)', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
+                                  {headerProfileName ?? user.username}
+                                </span>
+                                {myHandle && (
+                                  <span style={{ fontSize: 12, color: 'var(--app-header-text)', opacity: 0.9 }}>
+                                    @{myHandle}
+                                  </span>
+                                )}
+                              </div>
                             )}
-                          </span>
-                          <CaretDownFilled style={{ fontSize: 14, color: 'var(--app-header-text)', opacity: 0.95, marginLeft: -6, marginBottom: -2 }} />
-                        </button>
-                      </Dropdown>
+                            <span
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: 36,
+                                height: 36,
+                                borderRadius: '50%',
+                                background: headerProfilePic ? 'transparent' : 'var(--app-placeholder-bg)',
+                                color: 'var(--app-header-text)',
+                                overflow: 'hidden',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {headerProfilePic ? (
+                                <img
+                                  src={headerProfilePic}
+                                  alt=""
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                  onError={() => setHeaderProfilePic(null)}
+                                />
+                              ) : (
+                                <UserOutlined style={{ fontSize: 18 }} />
+                              )}
+                            </span>
+                            <CaretDownFilled style={{ fontSize: 14, color: 'var(--app-header-text)', opacity: 0.95, marginLeft: -6, marginBottom: -2 }} />
+                          </button>
+                        </Dropdown>
+                      </>
                     ) : (
                       <>
                         <Link to="/login" style={isActive('/login') ? navLinkActiveStyle : navLinkStyle}>
@@ -298,12 +274,13 @@ export default function Layout() {
                           to="/app/create"
                           style={{
                             ...navLinkStyle,
-                            background: 'var(--app-overlay-white-08)',
+                            background: 'var(--app-primary)',
+                            color: 'var(--brand-white)',
                             padding: '8px 18px',
                             fontWeight: 600,
                           }}
                         >
-                          Criar conta
+                          Criar
                         </Link>
                       </>
                     )}
@@ -382,7 +359,7 @@ export default function Layout() {
                   to="/app/create"
                   style={{
                     ...drawerLinkStyle,
-                    background: 'linear-gradient(135deg, var(--app-primary), var(--app-accent))',
+                    background: 'var(--app-primary)',
                     color: 'var(--brand-white)',
                     padding: '12px 16px',
                     borderRadius: 12,
@@ -405,6 +382,8 @@ export default function Layout() {
           <Outlet />
         </div>
       </Content>
+
+      <ThemeFooterButton />
     </AntLayout>
   )
 }

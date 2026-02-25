@@ -1,21 +1,57 @@
 import type { CSSProperties } from 'react'
 
+/** Conteúdo do balão (ícone small): balão + estrela */
+const LogoIconOnly = () => (
+  <>
+    <path className="logo-primary" d="M201.03-231.87c15.69,0.9,28.14,13.35,28.86,28.86v7.94c-0.72,15.34-13.17,27.78-28.5,27.78h-22.73c-4.15,4.87-8.66,9.2-13.89,12.81l-3.43,1.98c-1.8,0-2.17-1.08-1.62-2.88c1.26-3.97,1.08-8.12-0.36-11.91l-0.54-1.62c-11-3.61-18.94-14.07-19.12-26.16v-8.12c0-15.33,12.63-27.78,28.86-28.68h32.83H201.03z" />
+    <polygon className="logo-accent" points="184.79,-221.4 189.87,-205.74 206.3,-205.74 193.01,-196.06 198.08,-180.41 184.79,-190.08 171.5,-180.41 176.58,-196.06 163.29,-205.74 179.72,-205.74" />
+  </>
+)
+
 /**
  * Logo da marca. Cores vêm das variáveis de tema (--app-primary e --app-accent)
  * para mudar automaticamente com o tema (light, dark, sepia, ocean, contrast).
+ * Use variant="light" em fundos escuros (ex.: header) para versão em branco com bom contraste.
+ * Use size="small" para só o balão (ícone); size="large" para o logo completo.
  */
 export default function Logo({
   height = 36,
   style,
   className,
   alt = 'Busca Influencer - Filtrar e Encontrar os Melhores',
+  variant = 'default',
+  size = 'large',
   ...rest
 }: {
   height?: number
   style?: CSSProperties
   className?: string
   alt?: string
+  /** 'light' = versão clara para fundos escuros (header, hero escuro) */
+  variant?: 'default' | 'light'
+  /** 'small' = só o balão (ícone); 'large' = logo completo com texto */
+  size?: 'small' | 'large'
 } & React.SVGAttributes<SVGSVGElement>) {
+  if (size === 'small') {
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="138 -220 99 58"
+        xmlSpace="preserve"
+        role="img"
+        aria-label={alt}
+        style={{ height, width: height, maxWidth: '100%', display: 'block', ...style }}
+        className={[className, variant === 'light' ? 'logo--on-dark' : ''].filter(Boolean).join(' ') || undefined}
+        {...rest}
+      >
+        <style>
+          {`.logo-primary{fill:var(--app-primary)} .logo-accent{fill:var(--app-accent)}`}
+        </style>
+        <LogoIconOnly />
+      </svg>
+    )
+  }
+
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -24,7 +60,7 @@ export default function Logo({
       role="img"
       aria-label={alt}
       style={{ height, maxWidth: '100%', width: 'auto', display: 'block', ...style }}
-      className={className}
+      className={[className, variant === 'light' ? 'logo--on-dark' : ''].filter(Boolean).join(' ') || undefined}
       {...rest}
     >
       <style>

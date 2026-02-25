@@ -435,7 +435,7 @@ export default function InfluencerList() {
   return (
     <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', width: '100%' }}>
       {showFilters && showFiltersSidebar && (
-        <aside style={asideStyle}>
+        <aside className="app-filters-aside" style={asideStyle}>
           <div
             style={{
               position: 'sticky',
