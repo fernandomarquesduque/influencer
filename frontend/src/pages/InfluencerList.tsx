@@ -23,8 +23,9 @@ import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
 import { useAuth } from '../contexts/AuthContext'
 import { useListCache } from '../contexts/ListCacheContext'
+import Logo from '../components/Logo'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 const PRICING_FILTER_KEYS = [
   'pricingPostUnique',
@@ -389,9 +390,8 @@ export default function InfluencerList() {
           padding: 24,
         }}
       >
-        <Title level={1} style={{ marginBottom: 32, fontWeight: 300, color: 'var(--app-text)' }}>
-          Buscar influenciadores
-        </Title>
+        <div style={{ marginBottom: 32 }}> <Logo /></div>
+
         <Space.Compact size="large" style={{ width: '100%', maxWidth: 584 }}>
           <Input
             placeholder="Nome, @handle, categoria..."

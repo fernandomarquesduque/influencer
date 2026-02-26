@@ -116,48 +116,68 @@ export default function Layout() {
           >
             <header
               style={{
-                height: 56,
-                padding: isMobile ? '0 12px' : '0 24px',
+                height: isMobile ? 64 : 56,
+                padding: isMobile ? '0 56px 0 12px' : '0 24px',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
+                justifyContent: isMobile ? 'flex-start' : 'space-between',
+                position: isMobile ? 'relative' : undefined,
                 maxWidth: 1200,
                 margin: '0 auto',
                 width: '100%',
               }}
             >
-              <Link
-                to="/"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  textDecoration: 'none',
-                  color: 'var(--app-header-text)',
-                  minWidth: 0,
-                }}
-              >
-                <Logo
-                  size="small"
-                  height={36}
-                  variant="default"
-                  style={{
-                    flexShrink: 0,
-                  }}
-                  alt="Relatório de Influencer"
-                />
-
-              </Link>
               {isMobile ? (
-                <Button
-                  type="text"
-                  icon={<MenuOutlined style={{ fontSize: 22, color: 'var(--app-header-text)' }} />}
-                  onClick={() => setMobileMenuOpen(true)}
-                  style={{ flexShrink: 0 }}
-                  aria-label="Abrir menu"
-                />
+                <>
+                  <Link
+                    to="/"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      textDecoration: 'none',
+                      color: 'var(--app-header-text)',
+                      minWidth: 0,
+                      maxWidth: 250,
+                    }}
+                  >
+                    <Logo
+                      size="large"
+                      height={40}
+                      variant="default"
+                      style={{ flexShrink: 0, maxWidth: '100%' }}
+                      alt="Relatório de Influencer"
+                    />
+                  </Link>
+                  <Button
+                    type="text"
+                    icon={<MenuOutlined style={{ fontSize: 22, color: 'var(--app-header-text)' }} />}
+                    onClick={() => setMobileMenuOpen(true)}
+                    style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', flexShrink: 0, zIndex: 1 }}
+                    aria-label="Abrir menu"
+                  />
+                </>
               ) : (
                 <>
+                  <Link
+                    to="/"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      textDecoration: 'none',
+                      color: 'var(--app-header-text)',
+                      minWidth: 0,
+                    }}
+                  >
+                    <Logo
+                      size="small"
+                      height={36}
+                      variant="default"
+                      style={{ flexShrink: 0 }}
+                      alt="Relatório de Influencer"
+                    />
+                  </Link>
                   <nav style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4 }}>
                     {user && (
                       <>

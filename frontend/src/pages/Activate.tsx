@@ -41,8 +41,11 @@ import {
   PRICE_BUCKETS,
   PRICING_FIELD_KEYS,
   PRICING_FIELD_LABELS,
+  PRICING_FIELD_DESCRIPTIONS,
+  getSuggestedPricingFromFollowers,
   type PricingFieldKey,
 } from '../constants/pricingBuckets'
+import type { ProfileItem } from '../api'
 import { useAuth } from '../contexts/AuthContext'
 
 const { Title, Text } = Typography
@@ -57,18 +60,14 @@ const GENDER_OPTIONS = [
 
 const PRICE_OPTIONS = PRICE_BUCKETS.map((b) => ({ value: b.value, label: b.label }))
 
-/** Faixa intermediária para "Preencher com padrão". */
-const DEFAULT_PRICE_BUCKET = 1000
+/** Faixa inicial baixa para "Preencher com padrão" (acessível a nano/micro). */
+const DEFAULT_PRICE_BUCKET = 50
 
-const PRICING_FIELD_HELP: Record<PricingFieldKey, string> = {
-  post_unique: 'Post único no feed (publipost)',
-  stories: 'Stories (24h)',
-  package_monthly: 'Pacote mensal recorrente',
-  commission: 'Comissão / afiliado',
-  permuta: 'Permuta (produto/serviço)',
-  image_rights: 'Uso de imagem (direitos de uso)',
-  content_delivery: 'Entrega de conteúdo (sem postar)',
-  launch: 'Lançamento / campanha',
+function getFollowersFromProfile(profile: ProfileItem | null): number {
+  if (!profile) return 0
+  if (typeof profile.followers_count === 'number' && profile.followers_count >= 0) return profile.followers_count
+  const userData = profile?.data?.user as { follower_count?: number } | undefined
+  return typeof userData?.follower_count === 'number' ? userData.follower_count : 0
 }
 
 function normalizeUrl(value: string | undefined): string {
@@ -100,7 +99,6 @@ export default function Activate() {
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [draftSaving, setDraftSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [step, setStep] = useState(0)
   const firstFieldStep0Ref = useRef<HTMLDivElement>(null)
@@ -110,6 +108,7 @@ export default function Activate() {
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
   const [profilePicError, setProfilePicError] = useState(false)
   const [profilePicLoading, setProfilePicLoading] = useState(false)
+  const [followersCount, setFollowersCount] = useState<number>(0)
 
   useEffect(() => {
     if (!handle) return
@@ -127,6 +126,7 @@ export default function Activate() {
       if (cancelled) return
       if (profile) {
         setProfileName((profile.full_name as string) || (profile.username as string) || handle)
+        setFollowersCount(getFollowersFromProfile(profile))
         const pic = getProfilePicUrl(profile)
         const picUrl = pic ? proxyImageUrl(pic) : undefined
         setProfilePic(picUrl)
@@ -141,6 +141,16 @@ export default function Activate() {
             const n = Number(v)
             if (Number.isFinite(n)) pricingForm[k] = n
           }
+        }
+      }
+      // Se não tem preços salvos, sugere faixas com base nos seguidores do perfil (valores começam baixos).
+      const hasAnyPricing = Object.keys(pricingForm).some((k) => pricingForm[k] != null)
+      if (!hasAnyPricing && profile) {
+        const followers = getFollowersFromProfile(profile)
+        const suggested = getSuggestedPricingFromFollowers(followers)
+        for (const k of PRICING_FIELD_KEYS) {
+          const v = suggested[k as PricingFieldKey]
+          if (v !== undefined) pricingForm[k] = v
         }
       }
       form.setFieldsValue({
@@ -249,29 +259,23 @@ export default function Activate() {
     }
   }
 
-  const onSaveDraft = async () => {
-    if (!handle) return
-    try {
-      const values = await form.validateFields().catch(() => form.getFieldsValue())
-      setDraftSaving(true)
-      await saveProfileActivation(handle, buildPayload(values as Record<string, unknown>))
-      await refreshUser()
-      message.success('Rascunho salvo.')
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : 'Falha ao salvar rascunho.')
-    } finally {
-      setDraftSaving(false)
-    }
-  }
-
   const fillPricingDefault = () => {
     const current = form.getFieldValue('pricing') || {}
     const next = { ...current }
-    for (const key of PRICING_FIELD_KEYS) {
-      next[key] = DEFAULT_PRICE_BUCKET
+    if (followersCount > 0) {
+      const suggested = getSuggestedPricingFromFollowers(followersCount)
+      for (const key of PRICING_FIELD_KEYS) {
+        const v = suggested[key as PricingFieldKey]
+        if (v !== undefined) next[key] = v
+      }
+      message.info('Valores sugeridos aplicados com base no seu perfil. Você pode alterar qualquer valor.')
+    } else {
+      for (const key of PRICING_FIELD_KEYS) {
+        next[key] = DEFAULT_PRICE_BUCKET
+      }
+      message.info('Faixas preenchidas com o padrão (R$ 50 – R$ 100). Você pode alterar qualquer valor.')
     }
     form.setFieldsValue({ pricing: next })
-    message.info('Faixas preenchidas com o padrão (R$ 1.000 – R$ 2.500).')
   }
 
   const clearPricing = () => {
@@ -597,18 +601,18 @@ export default function Activate() {
                     maxTagCount="responsive"
                   />
                 </Form.Item>
-                <div>
-                  Valores e formatos
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Quanto você cobra (ou aceita) por tipo de parceria?
                 </div>
                 <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-                  Faixa de preço por formato (apenas para categorização). Você pode pular ou preencher em lote.
+                  Escolha a faixa de valor para cada formato. As faixas ajudam marcas a te encontrar. Se você ainda não definiu valores, use as sugestões abaixo (baseadas no seu perfil) ou o botão para um valor inicial — você pode alterar quando quiser.
                 </Text>
                 <Space style={{ marginBottom: 16 }}>
                   <Button size="small" onClick={fillPricingDefault}>
-                    Preencher com padrão
+                    Usar valor sugerido
                   </Button>
                   <Button size="small" onClick={clearPricing}>
-                    Limpar
+                    Limpar tudo
                   </Button>
                 </Space>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -628,13 +632,13 @@ export default function Activate() {
                           {PRICING_FIELD_LABELS[key as PricingFieldKey]}
                         </div>
                         <div style={{ fontSize: 12, color: 'var(--app-text-tertiary)' }}>
-                          {PRICING_FIELD_HELP[key as PricingFieldKey]}
+                          {PRICING_FIELD_DESCRIPTIONS[key as PricingFieldKey]}
                         </div>
                       </div>
                       <div style={{ flex: '0 0 220px' }}>
                         <Form.Item name={['pricing', key]} noStyle>
                           <Select
-                            placeholder="Faixa"
+                            placeholder="Escolher faixa"
                             allowClear
                             options={PRICE_OPTIONS}
                             style={{ width: '100%' }}
@@ -661,20 +665,15 @@ export default function Activate() {
                 </Button>
               )}
               {step === 2 && (
-                <>
-                  <Button loading={draftSaving} onClick={onSaveDraft}>
-                    Salvar rascunho
-                  </Button>
-                  <Button
-                    type="primary"
-                    htmlType="submit"
-                    icon={<CheckCircleOutlined />}
-                    loading={saving}
-                    size="large"
-                  >
-                    Ativar cadastro
-                  </Button>
-                </>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  icon={<CheckCircleOutlined />}
+                  loading={saving}
+                  size="large"
+                >
+                  Ativar cadastro
+                </Button>
               )}
             </Space>
           </Form>

@@ -12,8 +12,10 @@ import {
   DollarOutlined,
   TeamOutlined,
   UnorderedListOutlined,
+  StarFilled,
 } from '@ant-design/icons'
 import Logo from '../components/Logo'
+import ThemeFooterButton from '../components/ThemeFooterButton'
 
 const sectionMaxWidth = 1100
 
@@ -81,6 +83,7 @@ export default function Landing() {
 
       {/* Header */}
       <header
+        className="landing-header"
         style={{
           height: 72,
           padding: '0 24px',
@@ -91,13 +94,12 @@ export default function Landing() {
           margin: '0 auto',
           position: 'relative',
           zIndex: 10,
-          background: 'var(--lp-bg)',
         }}
       >
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--lp-text)' }}>
+        <Link to="/" className="landing-header-logo" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--lp-text)' }}>
           <Logo height={40} alt="Busca Influencer" />
         </Link>
-        <nav style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <nav className="landing-header-nav" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <Link
             to="/login"
             style={{
@@ -161,54 +163,57 @@ export default function Landing() {
             style={{
               fontSize: 17,
               color: 'var(--lp-text)',
-              opacity: 0.85,
               lineHeight: 1.65,
-              margin: '0 0 28px',
+              margin: '0 0 16px',
               fontWeight: 400,
               fontFamily: 'Montserrat, sans-serif',
             }}
           >
-            Entenda seus números e entre na vitrine para marcas. Cadastre-se e apareça para empresas parceiras que buscam influenciadores para campanhas e parcerias — seu próximo job pode estar aqui.
+            Às vezes, o que falta para você decolar é entender o que os números dizem. <strong>Em 1 minuto, a gente te mostra seus pontos fortes</strong> e o que as marcas estão buscando no seu perfil.
           </p>
-          <a
-            href="#cta-inicial"
-            className="landing-cta-main"
+          <h2
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: 56,
-              padding: '0 32px',
-              background: 'var(--lp-primary)',
-              color: '#fff',
-              borderRadius: 12,
-              fontWeight: 700,
-              fontSize: 15,
-              textDecoration: 'none',
-              letterSpacing: '0.02em',
+              fontSize: 'clamp(20px, 2.2vw, 26px)',
+              fontWeight: 600,
+              color: 'var(--lp-hero-text)',
+              margin: '0 0 20px',
               fontFamily: 'Montserrat, sans-serif',
-              boxShadow: '0 4px 20px rgba(92, 103, 242, 0.35)',
             }}
           >
-            QUERO DESCOBRIR MEU POTENCIAL
-          </a>
+            Gratuito e feito para te ajudar!
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <StarFilled style={{ color: '#e8ba00', fontSize: 18 }} />
+              <span style={{ fontSize: 15, color: 'var(--lp-text)', fontFamily: 'Montserrat, sans-serif' }}>
+                <strong>100% seguro, não pedimos sua senha no processo</strong>
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <StarFilled style={{ color: '#e8ba00', fontSize: 18 }} />
+              <span style={{ fontSize: 15, color: 'var(--lp-text)', fontFamily: 'Montserrat, sans-serif' }}>
+                <strong>Relatório fácil de ler e cheio de insights</strong>
+              </span>
+            </div>
+          </div>
         </div>
 
-        <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <div
+          style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+          className="landing-hero-image-container"
+        >
           <div
+            className="landing-hero-image-box"
             style={{
               width: 'min(100%, 420px)',
-              aspectRatio: '1',
-              borderRadius: '50%',
               overflow: 'hidden',
-              background: 'var(--lp-primary)',
-              boxShadow: '0 24px 48px rgba(92, 103, 242, 0.25)',
+              borderRadius: 12,
             }}
           >
             <img
               src="/images/influencer.png"
               alt="Influenciadora sorrindo com óculos rosa"
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              style={{ width: '100%', height: 'auto', display: 'block', verticalAlign: 'middle' }}
             />
           </div>
         </div>
@@ -227,7 +232,7 @@ export default function Landing() {
       >
         <div
           style={{
-            background: 'var(--lp-bg)',
+            background: 'var(--app-chart-bar-top)',
             border: '1px solid var(--lp-border)',
             borderRadius: 20,
             padding: '32px 28px',
@@ -302,9 +307,9 @@ export default function Landing() {
 
           <ul style={{ listStyle: 'none', padding: 0, margin: '24px 0 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
             {[
-              { icon: <CheckCircleOutlined style={{ color: 'var(--lp-accent)' }} />, text: 'Gratuito e feito para te ajudar!' },
-              { icon: <SafetyOutlined style={{ color: 'var(--lp-primary)' }} />, text: 'Entre na vitrine e seja encontrado por empresas parceiras que buscam influenciadores' },
-              { icon: <FileTextOutlined style={{ color: 'var(--lp-purple)' }} />, text: 'Relatório cheio de insights + Media Kit em PDF para enviar a marcas' },
+              { icon: <CheckCircleOutlined style={{ color: 'var(--brand-white)' }} />, text: 'Gratuito e feito para te ajudar!' },
+              { icon: <SafetyOutlined style={{ color: 'var(--brand-white)' }} />, text: 'Entre na vitrine e seja encontrado por empresas parceiras que buscam influenciadores' },
+              { icon: <FileTextOutlined style={{ color: 'var(--brand-white)' }} />, text: 'Relatório cheio de insights + Media Kit em PDF para enviar a marcas' },
             ].map((item, i) => (
               <li
                 key={i}
@@ -312,7 +317,7 @@ export default function Landing() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 10,
-                  color: 'var(--lp-text)',
+                  color: 'var(--brand-white)',
                   fontSize: 14,
                   fontWeight: 500,
                 }}
@@ -678,15 +683,30 @@ export default function Landing() {
 
       <style>{`
         .landing-hero-grid { }
+        @media (max-width: 768px) {
+          .landing-header {
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: auto;
+            padding: 16px 24px;
+            gap: 14px;
+          }
+          .landing-header-logo { justify-content: center; }
+          .landing-header-nav { justify-content: center; }
+        }
         @media (max-width: 900px) {
-          .landing-hero-grid { grid-template-columns: 1fr; text-align: center; }
+          .landing-hero-grid { grid-template-columns: 1fr !important; text-align: center; }
           .landing-hero-grid .landing-cta-main { margin: 0 auto; }
+          .landing-hero-image-container { margin-top: 24px; }
+          .landing-hero-image-box { width: 100% !important; max-width: none !important; }
           .landing-steps-grid { grid-template-columns: 1fr !important; }
           .landing-report-grid { grid-template-columns: 1fr !important; }
         }
         .landing-cta-main:hover { filter: brightness(1.05); opacity: 0.95; }
         .landing-cta-main:focus-visible { outline: 2px solid var(--lp-primary); outline-offset: 2px; }
       `}</style>
+      <ThemeFooterButton />
     </div>
   )
 }
