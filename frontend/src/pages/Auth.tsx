@@ -729,8 +729,8 @@ export default function Auth() {
             {step === 'code' && (
               <>
                 <div style={{ marginBottom: 16, padding: 14, background: 'var(--app-info-bg)', border: '1px solid var(--app-info-border)', borderRadius: 12 }}>
-                  <p style={{ margin: 0, color: 'var(--app-accent)', fontSize: 14 }}>
-                    Enviamos um código de 6 dígitos por <strong>mensagem no Instagram</strong> para <strong>@{nickname}</strong>. Confira o Direct e digite abaixo.
+                  <p style={{ margin: 0, color: 'var(--app-info-text)', fontSize: 14 }}>
+                    Enviamos um código de 6 dígitos por <strong style={{ color: 'var(--app-info-text-accent)' }}>mensagem no Instagram</strong> para <strong style={{ color: 'var(--app-info-text-accent)' }}>@{nickname}</strong>. Confira o Direct e digite abaixo.
                   </p>
                 </div>
                 <Form form={form} name="verify" onFinish={onVerify} layout="vertical" requiredMark={false}>

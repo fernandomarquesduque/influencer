@@ -109,8 +109,10 @@
   --app-alert-success-bg: var(--app-success-bg);
   --app-alert-success-border: var(--app-success-border);
   --app-alert-success-text: #166534;
-  --app-info-bg: var(--app-primary-muted);
-  --app-info-border: var(--app-primary);
+  --app-info-bg: #f8fafc;
+  --app-info-border: #e2e8f0;
+  --app-info-text: var(--app-text);
+  --app-info-text-accent: var(--app-primary);
 
   /* === Ícones (reuso de primary/success) === */
   --app-icon-success: var(--app-success);
@@ -214,6 +216,10 @@
   --app-logo-on-dark-primary: #ffffff;
   --app-logo-on-dark-accent: #00f5d4;
   --app-alert-success-text: #5eead4;
+  --app-info-bg: rgba(0, 180, 216, 0.1);
+  --app-info-border: rgba(0, 180, 216, 0.25);
+  --app-info-text: var(--app-text);
+  --app-info-text-accent: var(--app-primary);
 
   /* Painel de filtros: fundo e borda no tema escuro para contraste */
   --aside-bg: var(--app-card-bg);

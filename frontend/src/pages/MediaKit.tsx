@@ -596,11 +596,7 @@ export default function MediaKit() {
               <Button
                 size="large"
                 type="primary"
-                onClick={() => {
-                  setSavedPath(null)
-                  setValidated(false)
-                  setStatus('ready')
-                }}
+                onClick={() => handleDownload()}
                 style={{
                   borderRadius: 12,
                   paddingLeft: 24,
