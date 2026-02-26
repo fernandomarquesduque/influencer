@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import { InstagramClient } from './index.js';
 import { randomDelay } from '../utils/delay.js';
 import { logTimestamp } from '../utils/logTimestamp.js';
+import { isHandleMyFollower } from './getMyFollowers.js';
 
 const INSTAGRAM_ORIGIN = 'https://www.instagram.com';
 const DIRECT_NEW_URL = `${INSTAGRAM_ORIGIN}/direct/new/`;
@@ -57,20 +58,35 @@ async function dismissModals(page: Page, maxAttempts = 3): Promise<void> {
  * Requer sessão logada (auth state em data/instagram-auth.json).
  * @param client InstagramClient já com auth state carregado
  * @param handle Nickname do Instagram (sem @)
- * @param message Texto da mensagem a enviar
+ * @param message Texto da mensagem a enviar (pode ser vazio se imagePath for informado)
+ * @param imagePath Caminho opcional para arquivo de imagem a anexar
  */
 export async function sendDirectMessage(
   client: InstagramClient,
   handle: string,
-  message: string
+  message: string,
+  imagePath?: string
 ): Promise<{ ok: boolean; error?: string }> {
   const cleanHandle = handle.replace(/^@/, '').trim().toLowerCase();
-  if (!cleanHandle || !message.trim()) {
-    return { ok: false, error: 'Handle e mensagem são obrigatórios' };
+  if (!cleanHandle) {
+    return { ok: false, error: 'Handle é obrigatório' };
   }
+  if (!message.trim() && !imagePath) {
+    return { ok: false, error: 'Informe a mensagem ou anexe uma imagem' };
+  }
+  const textToSend = message.trim() || ' ';
 
   const t0 = Date.now();
   logStep(t0, `Iniciando para @${cleanHandle}`);
+  const myUsername = (process.env.INSTAGRAM_PERFIL ?? process.env.INSTAGRAM_USER ?? '').toString().trim();
+  if (!myUsername) {
+    return { ok: false, error: 'Configure INSTAGRAM_PERFIL ou INSTAGRAM_USER para verificar lista de seguidores.' };
+  }
+  const followCheck = await isHandleMyFollower(client, myUsername, cleanHandle, (msg) => logStep(t0, msg));
+  if (!followCheck.isFollower) {
+    return { ok: false, error: followCheck.error ?? 'Perfil não está na sua lista de seguidores; mensagem iria para spam.' };
+  }
+  logStep(t0, 'Verificação OK (perfil está na lista de seguidores). Abrindo Direct...');
   const page = await client.newPage();
   try {
     log(`abrindo ${DIRECT_NEW_URL}`);
@@ -201,6 +217,25 @@ export async function sendDirectMessage(
     }
     await dismissModals(page);
     await randomDelay(120, 250);
+
+    // Anexar imagem se fornecida (input file no composer do Direct)
+    if (imagePath) {
+      logStep(t0, 'Anexando imagem...');
+      try {
+        const fileInput = page.locator('input[type="file"]').first();
+        await fileInput.waitFor({ state: 'attached', timeout: 5000 }).catch(() => null);
+        if ((await fileInput.count()) > 0) {
+          await fileInput.setInputFiles(imagePath);
+          logStep(t0, 'Imagem anexada.');
+          await randomDelay(500, 1000);
+        } else {
+          logStep(t0, 'Input file não encontrado; enviando só o texto.');
+        }
+      } catch (e) {
+        logStep(t0, `Anexo de imagem falhou (continuando sem): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     logStep(t0, 'Procurando campo de mensagem...');
 
     const messageInputSelectors = [
@@ -267,10 +302,12 @@ export async function sendDirectMessage(
         const tFill = Date.now();
         await messageInput.click();
         await randomDelay(30, 80);
-        try {
-          await messageInput.fill(message);
-        } catch {
-          await messageInput.pressSequentially(message, { delay: 15 });
+        if (textToSend.trim()) {
+          try {
+            await messageInput.fill(textToSend);
+          } catch {
+            await messageInput.pressSequentially(textToSend, { delay: 15 });
+          }
         }
         logStep(t0, `Mensagem preenchida em ${Date.now() - tFill}ms`);
         await randomDelay(40, 100);

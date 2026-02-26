@@ -198,6 +198,11 @@ export default function Layout() {
                             Usuários
                           </Link>
                         )}
+                        {(isAdm || user?.scope === 'assinante') && (
+                          <Link to="/app/bulk-message" style={isActive('/app/bulk-message') ? navLinkActiveStyle : navLinkStyle}>
+                            Disparo em massa
+                          </Link>
+                        )}
                       </>
                     )}
                   </nav>
@@ -361,6 +366,11 @@ export default function Layout() {
                   {isAdm && (
                     <Link to="/admin/users" style={{ ...drawerLinkStyle, ...(isActive('/admin') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
                       Usuários
+                    </Link>
+                  )}
+                  {(isAdm || user?.scope === 'assinante') && (
+                    <Link to="/app/bulk-message" style={{ ...drawerLinkStyle, ...(isActive('/app/bulk-message') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                      Disparo em massa
                     </Link>
                   )}
                 </>

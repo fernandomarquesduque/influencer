@@ -380,6 +380,143 @@ export async function setMyPassword(password: string): Promise<void> {
   if (!res.ok) throw new Error('Falha ao definir senha')
 }
 
+/** Envia mensagem Direct do Instagram para um influenciador. Requer login com scope adm ou assinante. imageBase64 opcional (data URL ou base64). */
+export async function sendDirectMessageToInfluencer(handle: string, message: string, imageBase64?: string): Promise<{ ok: boolean }> {
+  const body: { handle: string; message: string; imageBase64?: string } = {
+    handle: handle.replace(/^@/, '').trim(),
+    message: message.trim(),
+  }
+  if (imageBase64) body.imageBase64 = imageBase64
+  const res = await fetch(`${API_BASE}/direct/send-message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({})) as { ok?: boolean; error?: string }
+  if (res.status === 401) throw new Error('Faça login para enviar mensagem.')
+  if (res.status === 403) throw new Error('Sem permissão para enviar mensagem Direct.')
+  if (res.status === 400 || res.status === 503) throw new Error(data.error || 'Não foi possível enviar a mensagem.')
+  if (!res.ok) throw new Error(data.error || 'Falha ao enviar mensagem.')
+  return { ok: data.ok ?? true }
+}
+
+/** Templates de mensagem para disparo em massa */
+export interface MessageTemplate {
+  id: number
+  hash: string
+  body: string
+  created_at: string
+}
+
+export async function fetchDirectTemplates(): Promise<{ items: MessageTemplate[] }> {
+  const res = await fetch(`${API_BASE}/direct/templates`, { headers: authHeaders() })
+  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
+  if (!res.ok) throw new Error('Falha ao carregar templates.')
+  return res.json()
+}
+
+export async function createDirectTemplate(hash: string, body: string): Promise<{ id: number; hash: string; body: string }> {
+  const res = await fetch(`${API_BASE}/direct/templates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ hash: hash.trim(), body: body.trim() }),
+  })
+  const data = await res.json().catch(() => ({})) as { error?: string; id?: number; hash?: string; body?: string }
+  if (res.status === 400) throw new Error(data.error || 'Dados inválidos')
+  if (!res.ok) throw new Error(data.error || 'Falha ao criar template.')
+  return { id: data.id!, hash: data.hash!, body: data.body! }
+}
+
+export async function updateDirectTemplate(id: number, body: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/direct/templates/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ body: body.trim() }),
+  })
+  const data = await res.json().catch(() => ({})) as { error?: string }
+  if (res.status === 400 || res.status === 404) throw new Error(data.error || 'Template não encontrado')
+  if (!res.ok) throw new Error(data.error || 'Falha ao atualizar template.')
+}
+
+/** Fila de disparo: quem recebeu o quê e quando */
+export interface DirectQueueItem {
+  id: number
+  profile_handle: string
+  message_hash: string
+  status: string
+  sent_at: string | null
+  error: string | null
+  created_at: string
+}
+
+/** Handles que já receberam a mensagem com esse hash (para filtro incluir/excluir). */
+export async function fetchDirectHandlesByHash(messageHash: string): Promise<{ handles: string[] }> {
+  const params = new URLSearchParams({ message_hash: messageHash.trim() })
+  const res = await fetch(`${API_BASE}/direct/queue/handles-by-hash?${params}`, { headers: authHeaders() })
+  if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error('Sem permissão ou hash inválido.')
+  if (!res.ok) throw new Error('Falha ao carregar handles por hash.')
+  return res.json()
+}
+
+export async function fetchDirectQueue(opts?: { status?: string; limit?: number; offset?: number }): Promise<{ total: number; items: DirectQueueItem[] }> {
+  const params = new URLSearchParams()
+  if (opts?.status) params.set('status', opts.status)
+  if (opts?.limit != null) params.set('limit', String(opts.limit))
+  if (opts?.offset != null) params.set('offset', String(opts.offset))
+  const res = await fetch(`${API_BASE}/direct/queue?${params}`, { headers: authHeaders() })
+  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
+  if (!res.ok) throw new Error('Falha ao carregar fila.')
+  return res.json()
+}
+
+export async function addToDirectQueue(items: { profile_handle: string; message_hash: string }[] | string[], messageHash?: string): Promise<{ added: number }> {
+  const body = Array.isArray(items) && items.length > 0 && typeof items[0] === 'object'
+    ? { items }
+    : { handles: items, message_hash: messageHash }
+  const res = await fetch(`${API_BASE}/direct/queue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({})) as { added?: number; error?: string }
+  if (res.status === 400) throw new Error(data.error || 'Dados inválidos')
+  if (!res.ok) throw new Error(data.error || 'Falha ao adicionar à fila.')
+  return { added: data.added ?? 0 }
+}
+
+export async function deleteDirectQueue(): Promise<{ deleted: number }> {
+  const res = await fetch(`${API_BASE}/direct/queue`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  const data = await res.json().catch(() => ({})) as { deleted?: number; error?: string }
+  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
+  if (!res.ok) throw new Error(data.error || 'Falha ao deletar fila.')
+  return { deleted: data.deleted ?? 0 }
+}
+
+export async function deleteDirectQueueItem(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/direct/queue/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  const data = await res.json().catch(() => ({})) as { error?: string }
+  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
+  if (res.status === 404) throw new Error('Item não encontrado.')
+  if (!res.ok) throw new Error(data.error || 'Falha ao remover item.')
+}
+
+export async function processNextDirectQueueItem(): Promise<{ processed: boolean; handle?: string; ok?: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/direct/queue/process-next`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({}),
+  })
+  const data = await res.json().catch(() => ({})) as { processed?: boolean; handle?: string; ok?: boolean; error?: string }
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao processar fila.')
+  return data
+}
+
 export async function fetchPosts(profileHandle: string, limit = 50, offset = 0): Promise<PostsResponse> {
   const h = profileHandle.replace(/^@/, '')
   const res = await fetch(`${API_BASE}/posts?profile=${encodeURIComponent(h)}&limit=${limit}&offset=${offset}`, {

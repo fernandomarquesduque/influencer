@@ -43,6 +43,8 @@ import Auth from './pages/Auth'
 import AuthPassword from './pages/AuthPassword'
 import AuthRejected from './pages/AuthRejected'
 import MediaKit from './pages/MediaKit'
+import SendMessage from './pages/SendMessage'
+import BulkMessage from './pages/BulkMessage'
 
 function RedirectInfluencerToApp() {
   const { handle } = useParams<{ handle: string }>()
@@ -69,6 +71,8 @@ export default function App() {
           <Route index element={<ListAndDetailModal />} />
           <Route path="influencer/:handle" element={<ListAndDetailModal />} />
           <Route path="influencer/:handle/media-kit" element={<RequireAuth requireLogin><MediaKit /></RequireAuth>} />
+          <Route path="influencer/:handle/send-message" element={<RequireAuth requireLogin><SendMessage /></RequireAuth>} />
+          <Route path="bulk-message" element={<RequireAuth requireLogin><BulkMessage /></RequireAuth>} />
           <Route path="projects" element={<Projects />} />
           <Route path="projects/new" element={<Projects />} />
           <Route path="projects/:id" element={<Projects />} />

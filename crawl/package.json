@@ -12,6 +12,7 @@
     "login": "tsx src/cli/login.ts",
     "list-db": "tsx src/cli/list-db.ts",
     "check-db": "tsx src/cli/check-db.ts",
+    "follow-my-followers": "tsx src/cli/follow-my-followers.ts",
     "api": "tsx src/api/server.ts",
     "create-admin": "tsx src/scripts/create-admin.ts",
     "create-admin:server": "node dist/scripts/create-admin.js",

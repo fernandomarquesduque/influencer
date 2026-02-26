@@ -12,6 +12,7 @@ import {
   FileImageOutlined,
   DollarOutlined,
   CommentOutlined,
+  MessageOutlined,
 } from '@ant-design/icons'
 import { reportTokens as t } from './reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
@@ -61,6 +62,8 @@ export interface ReportHeroProps {
   scoreTooltip?: string
   /** Botão para admin forçar re-extração prioritária do perfil no Instagram */
   onUpdateInstagram?: () => void
+  /** Botão para enviar mensagem Direct ao influenciador (assinante/adm) */
+  onSendMessage?: () => void
 }
 
 const AVATAR_SIZE = 160
@@ -86,6 +89,7 @@ export function ReportHero({
   score: scoreValue,
   scoreTooltip,
   onUpdateInstagram,
+  onSendMessage,
 }: ReportHeroProps) {
   const atHandle = handleProp ? `@${handleProp.replace(/^@/, '')}` : ''
   const avatarSize = isMobile ? AVATAR_SIZE_MOBILE : AVATAR_SIZE
@@ -277,6 +281,18 @@ export function ReportHero({
               >
                 {ctaLabel}
               </Button>
+              {onSendMessage && (
+                <Button
+                  type="default"
+                  size={isMobile ? 'small' : 'middle'}
+                  icon={<MessageOutlined />}
+                  onClick={onSendMessage}
+                  style={{ borderRadius: r.md }}
+                  aria-label="Enviar mensagem"
+                >
+                  Enviar mensagem
+                </Button>
+              )}
               {onUpdateInstagram && (
                 <Tooltip title="Força re-extração do perfil no Instagram (prioritária, só admin)">
                   <Button

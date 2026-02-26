@@ -456,6 +456,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               { label: 'Posts/sem', value: reportInsights?.consistency?.postsPerWeekByWeek?.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
             ]}
             onBack={() => navigate(-1)}
+            onSendMessage={user && (isAdm || user.scope === 'assinante') && handle ? () => navigate(`/app/influencer/${encodeURIComponent(handle)}/send-message`) : undefined}
             onUpdateInstagram={isAdm && handle ? async () => {
               const r = await queueRefreshProfile(handle, { priority: true })
               if (r.queued) message.success(r.message)
@@ -955,6 +956,8 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         primaryLabel={mediaKitCtaLabel}
         primarySubtext="Pronto em 30s · PDF bonito · Envie para marcas"
         onPrimary={goToMediaKitOrLogin}
+        secondaryLabel={user && (isAdm || user.scope === 'assinante') && handle ? 'Enviar mensagem' : undefined}
+        onSecondary={user && (isAdm || user.scope === 'assinante') && handle ? () => navigate(`/app/influencer/${encodeURIComponent(handle!)}/send-message`) : undefined}
       />
 
       <style>{`

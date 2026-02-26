@@ -130,6 +130,22 @@ export class SqliteSync {
         activated_at TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS message_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        hash TEXT NOT NULL UNIQUE,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS direct_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_handle TEXT NOT NULL,
+        message_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        sent_at TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_direct_queue_status ON direct_queue(status);
     `);
     this.migrateActivationColumns();
   }
@@ -343,9 +359,118 @@ export class SqliteSync {
     return !!row;
   }
 
+  // ——— Direct em massa: templates e fila ———
+  listMessageTemplates(): { id: number; hash: string; body: string; created_at: string }[] {
+    return this.db.prepare(
+      'SELECT id, hash, body, created_at FROM message_templates ORDER BY created_at DESC'
+    ).all() as { id: number; hash: string; body: string; created_at: string }[];
+  }
+
+  getMessageTemplateByHash(hash: string): { id: number; hash: string; body: string } | null {
+    const row = this.db.prepare('SELECT id, hash, body FROM message_templates WHERE hash = ?').get(hash.trim()) as { id: number; hash: string; body: string } | undefined;
+    return row ?? null;
+  }
+
+  createMessageTemplate(hash: string, body: string): number {
+    const now = new Date().toISOString();
+    const info = this.db.prepare(
+      'INSERT INTO message_templates (hash, body, created_at) VALUES (?, ?, ?)'
+    ).run(hash.trim(), body.trim(), now);
+    return info.lastInsertRowid as number;
+  }
+
+  updateMessageTemplate(id: number, body: string): boolean {
+    const info = this.db.prepare('UPDATE message_templates SET body = ? WHERE id = ?').run(body.trim(), id);
+    return info.changes > 0;
+  }
+
+  /** True se este perfil já recebeu a mensagem com esse hash (status = sent). Não adicionar de novo. */
+  hasAlreadyReceivedMessage(profileHandle: string, messageHash: string): boolean {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    const row = this.db.prepare(
+      'SELECT 1 FROM direct_queue WHERE profile_handle = ? AND message_hash = ? AND status = ? LIMIT 1'
+    ).get(handle, messageHash.trim(), 'sent');
+    return !!row;
+  }
+
+  addToDirectQueue(profileHandle: string, messageHash: string): number {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    if (this.hasAlreadyReceivedMessage(handle, messageHash.trim())) return 0;
+    const now = new Date().toISOString();
+    const info = this.db.prepare(
+      'INSERT INTO direct_queue (profile_handle, message_hash, status, created_at) VALUES (?, ?, ?, ?)'
+    ).run(handle, messageHash.trim(), 'pending', now);
+    return info.lastInsertRowid as number;
+  }
+
+  getDirectQueueItemById(id: number): { id: number; profile_handle: string; message_hash: string; status: string } | null {
+    const row = this.db.prepare(
+      'SELECT id, profile_handle, message_hash, status FROM direct_queue WHERE id = ?'
+    ).get(id) as { id: number; profile_handle: string; message_hash: string; status: string } | undefined;
+    return row ?? null;
+  }
+
+  getNextPendingDirectQueueItem(): { id: number; profile_handle: string; message_hash: string } | null {
+    const row = this.db.prepare(
+      'SELECT id, profile_handle, message_hash FROM direct_queue WHERE status = ? ORDER BY id ASC LIMIT 1'
+    ).get('pending') as { id: number; profile_handle: string; message_hash: string } | undefined;
+    return row ?? null;
+  }
+
+  updateDirectQueueItem(id: number, status: 'sent' | 'failed', error?: string): void {
+    const sent_at = new Date().toISOString();
+    this.db.prepare(
+      'UPDATE direct_queue SET status = ?, sent_at = ?, error = ? WHERE id = ?'
+    ).run(status, sent_at, error ?? null, id);
+  }
+
+  /** Handles que já receberam a mensagem com o hash (status = sent). Para filtro incluir/excluir no disparo. */
+  getHandlesByMessageHash(messageHash: string): string[] {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT profile_handle FROM direct_queue WHERE message_hash = ? AND status = ? ORDER BY profile_handle'
+    ).all(messageHash.trim(), 'sent') as { profile_handle: string }[];
+    return rows.map((r) => r.profile_handle);
+  }
+
+  listDirectQueue(opts?: { status?: string; limit?: number; offset?: number }): { total: number; items: DirectQueueRow[] } {
+    const status = opts?.status?.trim();
+    const limit = Math.min(Math.max(1, opts?.limit ?? 200), 500);
+    const offset = Math.max(0, opts?.offset ?? 0);
+    const where = status ? 'WHERE status = ?' : '';
+    const params = status ? [status] : [];
+    const countRow = this.db.prepare(`SELECT COUNT(*) as c FROM direct_queue ${where}`).get(...params) as { c: number };
+    const total = countRow?.c ?? 0;
+    const items = this.db.prepare(
+      `SELECT id, profile_handle, message_hash, status, sent_at, error, created_at FROM direct_queue ${where} ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 ELSE 2 END, id ASC LIMIT ? OFFSET ?`
+    ).all(...params, limit, offset) as DirectQueueRow[];
+    return { total, items };
+  }
+
+  /** Remove todos os itens da fila de disparo. Retorna quantidade removida. */
+  deleteAllDirectQueue(): number {
+    const info = this.db.prepare('DELETE FROM direct_queue').run();
+    return info.changes;
+  }
+
+  /** Remove um item da fila por id. Retorna true se removeu. */
+  deleteDirectQueueItem(id: number): boolean {
+    const info = this.db.prepare('DELETE FROM direct_queue WHERE id = ?').run(id);
+    return info.changes > 0;
+  }
+
   close(): void {
     this.db.close();
   }
+}
+
+export interface DirectQueueRow {
+  id: number;
+  profile_handle: string;
+  message_hash: string;
+  status: string;
+  sent_at: string | null;
+  error: string | null;
+  created_at: string;
 }
 
 export interface ProjectRow {

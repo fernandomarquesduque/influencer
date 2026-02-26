@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response } from 'express';
@@ -31,7 +32,8 @@ import { loginWithCredentials } from '../instagramClient/login.js';
 import { profileExtractDelay, profileExtractDelayForApi } from '../utils/delay.js';
 import { logTimestamp } from '../utils/logTimestamp.js';
 import { get429BackoffMs, record429 } from '../utils/rateLimit429.js';
-import { sendVerificationCode } from '../instagramClient/sendDirectMessage.js';
+import { sendVerificationCode, sendDirectMessage } from '../instagramClient/sendDirectMessage.js';
+import { followUser, followUserFromCurrentPage } from '../instagramClient/followUser.js';
 import { extractProfile } from '../profileExtractor/index.js';
 import { isFollowingViewerFromEntity } from '../utils/entityAccess.js';
 import { AuthDb } from '../auth/authDb.js';
@@ -477,11 +479,36 @@ async function performRequestCodeFlow(
               return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
             }
             logStep('Perfil OK.');
+            // Seguir de volta: influenciador nos segue → seguimos ele antes de enviar o código
+            const followBackEnabled = process.env.FOLLOW_BACK_ENABLED !== 'false';
+            if (followBackEnabled) {
+              const followResult = await followUserFromCurrentPage(page);
+              if (!followResult.ok) logStep(`Follow-back falhou (não bloqueia envio): ${followResult.error ?? 'erro'}`);
+              else if (followResult.alreadyFollowing) logStep('Follow-back: já estávamos seguindo.');
+              else logStep('Follow-back: seguimos o influenciador.');
+            }
           } finally {
             // Fechar página em background para não travar o fluxo (page.close() pode demorar)
-            void page.close().then(() => { /* página fechada */ }).catch(() => {});
+            void page.close().then(() => { /* página fechada */ }).catch(() => { });
             logStep('Página em fechamento (background).');
           }
+        }
+      }
+
+      // Quando usamos cache (segue perfil) e follow-back está ativo: abrir perfil só para seguir de volta
+      const followBackEnabled = process.env.FOLLOW_BACK_ENABLED !== 'false';
+      if (followBackEnabled && requiredProfile && requiredProfile.length > 0) {
+        const followsFromExtract = (() => {
+          const stored = extractProfileResults.get(nickname.trim().toLowerCase());
+          return stored?.status === 'done' && stored.result && 'followsOfficialProfile' in stored.result
+            ? (stored.result as { followsOfficialProfile?: boolean }).followsOfficialProfile
+            : undefined;
+        })();
+        if (followsFromExtract === true) {
+          const followResult = await followUser(client, nickname);
+          if (!followResult.ok) logStep(`Follow-back (cache) falhou (não bloqueia envio): ${followResult.error ?? 'erro'}`);
+          else if (followResult.alreadyFollowing) logStep('Follow-back (cache): já estávamos seguindo.');
+          else logStep('Follow-back (cache): seguimos o influenciador.');
         }
       }
 
@@ -543,6 +570,222 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
     }
     const isDev = process.env.NODE_ENV === 'development';
     res.status(200).json(isDev ? { sent: true, code } : { sent: true });
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    res.status(500).json({ error: errMsg });
+  }
+});
+
+/** Envia mensagem Direct do Instagram para um influenciador (handle). Requer scope adm ou assinante. Body: handle, message (opcional se imageBase64), imageBase64 (opcional, data URL ou base64). */
+app.post('/api/direct/send-message', requireScopes('adm', 'assinante'), async (req: RequestWithAuth, res: Response) => {
+  let tempImagePath: string | null = null;
+  try {
+    const handle = (req.body?.handle ?? req.body?.nickname ?? '').toString().trim().replace(/^@/, '').toLowerCase();
+    const message = (req.body?.message ?? '').toString().trim();
+    const imageBase64 = (req.body?.imageBase64 ?? req.body?.image) as string | undefined;
+    if (!handle) {
+      res.status(400).json({ error: 'Informe o handle do influenciador.' });
+      return;
+    }
+    if (!message && !imageBase64) {
+      res.status(400).json({ error: 'Informe o texto da mensagem ou anexe uma imagem.' });
+      return;
+    }
+    if (imageBase64) {
+      const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      const buf = Buffer.from(base64Data, 'base64');
+      if (buf.length > 10 * 1024 * 1024) {
+        res.status(400).json({ error: 'Imagem muito grande. Máximo 10 MB.' });
+        return;
+      }
+      tempImagePath = path.join(os.tmpdir(), `dm-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`);
+      writeFileSync(tempImagePath, buf);
+    }
+    const client = getApiExtractClient();
+    await client.init();
+    const result = await sendDirectMessage(client, handle, message || ' ', tempImagePath ?? undefined);
+    if (!result.ok) {
+      res.status(503).json({ error: result.error ?? 'Falha ao enviar mensagem no Instagram.' });
+      return;
+    }
+    res.status(200).json({ ok: true, message: 'Mensagem enviada.' });
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    res.status(500).json({ error: errMsg });
+  } finally {
+    if (tempImagePath && existsSync(tempImagePath)) {
+      try { unlinkSync(tempImagePath); } catch { /* ignore */ }
+    }
+  }
+});
+
+/** Lista templates de mensagem para disparo em massa. */
+app.get('/api/direct/templates', requireScopes('adm', 'assinante'), (_req: RequestWithAuth, res: Response) => {
+  try {
+    const items = sqlite.listMessageTemplates();
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Cria template de mensagem (hash único + corpo). */
+app.post('/api/direct/templates', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  try {
+    const hash = (req.body?.hash ?? '').toString().trim();
+    const body = (req.body?.body ?? req.body?.message ?? '').toString().trim();
+    if (!hash || !body) {
+      res.status(400).json({ error: 'Informe hash e body (texto) do template.' });
+      return;
+    }
+    const id = sqlite.createMessageTemplate(hash, body);
+    res.status(201).json({ id, hash, body });
+  } catch (e) {
+    const err = e instanceof Error ? e.message : String(e);
+    if (err.includes('UNIQUE')) res.status(400).json({ error: 'Já existe um template com esse hash.' });
+    else res.status(500).json({ error: err });
+  }
+});
+
+/** Atualiza o texto (body) de um template por id. */
+app.put('/api/direct/templates/:id', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'ID inválido.' });
+      return;
+    }
+    const body = (req.body?.body ?? req.body?.message ?? '').toString().trim();
+    if (!body) {
+      res.status(400).json({ error: 'Informe body (texto) do template.' });
+      return;
+    }
+    const updated = sqlite.updateMessageTemplate(id, body);
+    if (!updated) res.status(404).json({ error: 'Template não encontrado.' });
+    else res.json({ id, body });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Handles que já receberam a mensagem com o hash (para filtro incluir/excluir no disparo). */
+app.get('/api/direct/queue/handles-by-hash', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  try {
+    const messageHash = (req.query?.message_hash ?? req.query?.hash ?? '').toString().trim();
+    if (!messageHash) {
+      res.status(400).json({ error: 'Informe message_hash (ou hash) na query.' });
+      return;
+    }
+    const handles = sqlite.getHandlesByMessageHash(messageHash);
+    res.json({ handles });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Lista fila de disparo (quem recebeu o quê e quando). */
+app.get('/api/direct/queue', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  try {
+    const status = (req.query?.status as string)?.trim();
+    const limit = Math.min(500, Math.max(1, parseInt(String(req.query?.limit ?? 200), 10) || 200));
+    const offset = Math.max(0, parseInt(String(req.query?.offset ?? 0), 10) || 0);
+    const { total, items } = sqlite.listDirectQueue({ status: status || undefined, limit, offset });
+    res.json({ total, items });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Deleta toda a fila de disparo. */
+app.delete('/api/direct/queue', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  try {
+    const deleted = sqlite.deleteAllDirectQueue();
+    res.json({ deleted });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Deleta um item da fila por id. */
+app.delete('/api/direct/queue/:id', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'ID inválido.' });
+      return;
+    }
+    const removed = sqlite.deleteDirectQueueItem(id);
+    if (!removed) res.status(404).json({ error: 'Item não encontrado.' });
+    else res.json({ deleted: 1 });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Adiciona itens à fila de disparo (handle + hash do template). */
+app.post('/api/direct/queue', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  try {
+    const items = req.body?.items ?? req.body?.handles;
+    if (!Array.isArray(items)) {
+      res.status(400).json({ error: 'Envie items: [{ profile_handle, message_hash }, ...] ou handles com message_hash no body.' });
+      return;
+    }
+    const messageHash = (req.body?.message_hash ?? '').toString().trim();
+    let added = 0;
+    for (const it of items) {
+      const handle = (typeof it === 'string' ? it : it?.profile_handle ?? it?.handle ?? '').toString().trim();
+      const hash = (typeof it === 'object' && it && 'message_hash' in it ? (it as { message_hash?: string }).message_hash : messageHash).toString().trim();
+      if (handle && hash) {
+        try {
+          const id = sqlite.addToDirectQueue(handle, hash);
+          if (id > 0) added++;
+        } catch (_) { /* skip erro */ }
+      }
+    }
+    res.status(201).json({ added });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+const WELCOME_QUEUE_HASH = 'bemvindo';
+const WELCOME_DEFAULT_BODY = 'Olá! Bem-vindo à plataforma. Seu cadastro foi ativado.';
+
+/** Processa um item da fila por id (para envio imediato ex.: bem-vindo na primeira ativação). */
+async function processDirectQueueItemById(id: number): Promise<{ ok: boolean; error?: string }> {
+  const item = sqlite.getDirectQueueItemById(id);
+  if (!item || item.status !== 'pending') return { ok: false, error: 'Item não encontrado ou já processado' };
+  const template = sqlite.getMessageTemplateByHash(item.message_hash);
+  if (!template) {
+    sqlite.updateDirectQueueItem(id, 'failed', `Template "${item.message_hash}" não encontrado`);
+    return { ok: false, error: 'Template não encontrado' };
+  }
+  const client = getApiExtractClient();
+  await client.init();
+  const result = await sendDirectMessage(client, item.profile_handle, template.body);
+  sqlite.updateDirectQueueItem(id, result.ok ? 'sent' : 'failed', result.error ?? undefined);
+  return { ok: result.ok ?? false, error: result.error };
+}
+
+/** Processa o próximo item pendente da fila: envia 1 DM e atualiza status. Retorna { processed, handle, ok, error }. */
+app.post('/api/direct/queue/process-next', requireScopes('adm', 'assinante'), async (req: RequestWithAuth, res: Response) => {
+  try {
+    const next = sqlite.getNextPendingDirectQueueItem();
+    if (!next) {
+      res.json({ processed: false });
+      return;
+    }
+    const template = sqlite.getMessageTemplateByHash(next.message_hash);
+    if (!template) {
+      sqlite.updateDirectQueueItem(next.id, 'failed', `Template "${next.message_hash}" não encontrado`);
+      res.json({ processed: true, handle: next.profile_handle, ok: false, error: 'Template não encontrado' });
+      return;
+    }
+    const client = getApiExtractClient();
+    await client.init();
+    const result = await sendDirectMessage(client, next.profile_handle, template.body);
+    sqlite.updateDirectQueueItem(next.id, result.ok ? 'sent' : 'failed', result.error ?? undefined);
+    res.json({ processed: true, handle: next.profile_handle, ok: result.ok ?? false, error: result.error });
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     res.status(500).json({ error: errMsg });
@@ -1276,6 +1519,9 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
       res.status(403).json({ error: 'Sem permissão para editar este perfil', code: 'FORBIDDEN' });
       return;
     }
+    const existing = sqlite.getActivation(handle);
+    const isFirstActivation = !existing || !existing.activated_at;
+
     const body = req.body as Record<string, unknown>;
     const pricing = body.pricing;
     const pricingObj =
@@ -1306,6 +1552,23 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
       content_type: contentTypeArr?.length ? contentTypeArr : undefined,
     });
     const data = sqlite.getActivation(handle);
+
+    //if (isFirstActivation) {
+    if (!sqlite.getMessageTemplateByHash(WELCOME_QUEUE_HASH)) {
+      try {
+        sqlite.createMessageTemplate(WELCOME_QUEUE_HASH, WELCOME_DEFAULT_BODY);
+      } catch (_) {
+        /* já existe */
+      }
+    }
+    try {
+      const queueId = sqlite.addToDirectQueue(handle, WELCOME_QUEUE_HASH);
+      await processDirectQueueItemById(queueId);
+    } catch (e) {
+      console.error('[activation] Envio de bem-vindo na fila:', e instanceof Error ? e.message : String(e));
+    }
+    //}
+
     res.json(data ?? {});
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -1378,9 +1641,9 @@ app.get('/api/projects', rateLimitDataApi, async (req: RequestWithAuth, res: Res
     const profileHandle = req.user?.profile_handle ?? authDb.getById(Number(req.user?.sub ?? 0))?.profile_handle ?? undefined;
     const items = profileHandle
       ? result.items.map((p) => ({
-          ...p,
-          has_applied: sqlite.hasApplied(p.id, profileHandle),
-        }))
+        ...p,
+        has_applied: sqlite.hasApplied(p.id, profileHandle),
+      }))
       : result.items;
     res.json({ total: result.total, items });
   } catch (e) {
