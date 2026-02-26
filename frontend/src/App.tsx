@@ -5,7 +5,7 @@ import { ListCacheProvider } from './contexts/ListCacheContext'
 import { RequireAuth } from './components/RequireAuth'
 import Layout from './Layout'
 
-/** Ao focar em input/textarea/select, reposiciona o scroll para o campo não ficar atrás do teclado e o botão de ação continuar visível. (Desativado na Landing.) */
+/** Ao focar em input/textarea/select, reposiciona o scroll para o campo não ficar atrás do teclado e o botão de ação continuar visível. (Desativado na Home.) */
 function FocusScrollHandler() {
   const location = useLocation()
   useEffect(() => {
@@ -30,7 +30,7 @@ function FocusScrollHandler() {
   }, [location.pathname])
   return null
 }
-import Landing from './pages/Landing'
+import Home from './pages/Home'
 import Login from './pages/Login'
 import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
@@ -62,8 +62,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/premium" element={<Premium />} />
-        {/* Landing (home) */}
-        <Route path="/" element={<Landing />} />
+        {/* Home: apresentação do projeto */}
+        <Route path="/" element={<Home />} />
         {/* Lista, detalhe e auth: acesso público */}
         <Route path="/app" element={<ListCacheProvider><Layout /></ListCacheProvider>}>
           <Route index element={<ListAndDetailModal />} />

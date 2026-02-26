@@ -529,3 +529,19 @@
 .landing-vibrant .logo-accent {
   fill: var(--lp-accent);
 }
+
+/* Tela de sucesso do Media Kit — entrada suave */
+@keyframes mediaKitSuccessIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.media-kit-success-card {
+  animation: mediaKitSuccessIn 0.4s ease-out;
+}

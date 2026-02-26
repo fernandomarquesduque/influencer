@@ -15,12 +15,24 @@ import { MediaKitDocument } from './MediaKitDocument'
 import { reportTokens as t } from './reportTokens'
 import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
 import { useTheme } from '../contexts/ThemeContext'
+import type { ThemeMode } from '../contexts/ThemeContext'
 
 const { Text } = Typography
+
+/** Cores para as bolinhas do seletor de tema (uma por tema, fixas) */
+const THEME_SWATCH_COLORS: Record<ThemeMode, string> = {
+  light: '#68278f',
+  dark: '#00b4d8',
+  sepia: '#8b4513',
+  ocean: '#0077b6',
+  contrast: '#000000',
+}
+
+const THEME_ORDER: ThemeMode[] = ['light', 'dark', 'sepia', 'ocean', 'contrast']
 const s = t.spacing
 const c = t.colors
 
-type Status = 'loading_data' | 'generating' | 'saving' | 'done' | 'error' | 'not_activated'
+type Status = 'loading_data' | 'ready' | 'generating' | 'saving' | 'done' | 'error' | 'not_activated'
 
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -102,7 +114,7 @@ function setCachedMediaKit(handle: string, entry: Omit<MediaKitCacheEntry, 'cach
 export default function MediaKit() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
-  const { theme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const themeRef = useRef(theme)
   themeRef.current = theme
   const [status, setStatus] = useState<Status>('loading_data')
@@ -112,7 +124,6 @@ export default function MediaKit() {
   const [validated, setValidated] = useState(false)
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const abortRef = useRef(false)
-  const effectRunIdRef = useRef(0)
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768)
@@ -120,7 +131,7 @@ export default function MediaKit() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const runInBackground = useCallback(async (effectRunId?: number) => {
+  const runInBackground = useCallback(async () => {
     if (!handle) {
       setError('Handle do perfil não informado.')
       setStatus('error')
@@ -138,46 +149,7 @@ export default function MediaKit() {
           setStatus('not_activated')
           return
         }
-        setStatus('generating')
-        setProgress('Gerando PDF (dados em cache)...')
-        if (abortRef.current) return
-        const currentTheme = themeRef.current
-        const doc = (
-          <MediaKitDocument
-            profile={cached.profile}
-            posts={cached.posts}
-            activation={cached.activation}
-            reportInsights={cached.reportInsights}
-            profilePicDataUrl={cached.profilePicDataUrl}
-            postImageDataUrls={cached.postImageDataUrls}
-            postImageDataUrlsOrdered={cached.postImageDataUrlsOrdered}
-            theme={currentTheme}
-          />
-        )
-        const blob = await pdf(doc).toBlob()
-        if (abortRef.current) return
-        if (!blob || blob.size < MIN_PDF_SIZE) {
-          mediaKitCache.delete(h.toLowerCase())
-          setError('O PDF gerado está vazio ou inválido.')
-          setStatus('error')
-          return
-        }
-        if (typeof effectRunId === 'number' && effectRunId !== effectRunIdRef.current) return
-        setStatus('saving')
-        setProgress('Salvando arquivo...')
-        const filename = `MediaKit_${h}.pdf`
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = filename
-        a.style.display = 'none'
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-        setSavedPath(filename)
-        setValidated(blob.size >= MIN_PDF_SIZE)
-        setStatus('done')
+        setStatus('ready')
         return
       }
 
@@ -323,38 +295,54 @@ export default function MediaKit() {
         postImageDataUrlsOrdered: [...postImageDataUrlsOrdered],
       })
 
-      setStatus('generating')
-      setProgress('Gerando PDF...')
+      setStatus('ready')
+    } catch (e) {
+      if (abortRef.current) return
+      setError(e instanceof Error ? e.message : 'Erro ao gerar Media Kit.')
+      setStatus('error')
+    }
+  }, [handle])
 
-      const currentTheme = themeRef.current
+  useEffect(() => {
+    runInBackground()
+    return () => {
+      abortRef.current = true
+    }
+  }, [runInBackground])
+
+  const handleDownload = useCallback(async () => {
+    if (!handle) return
+    const h = handle.replace(/^@/, '')
+    const cached = getCachedMediaKit(h)
+    if (!cached) {
+      setError('Dados não disponíveis. Tente novamente.')
+      setStatus('error')
+      return
+    }
+    setStatus('generating')
+    setProgress('Gerando PDF...')
+    try {
+      const themeToUse = themeRef.current
       const doc = (
         <MediaKitDocument
-          profile={profile}
-          posts={posts}
-          activation={Object.keys(activation).length ? activation : null}
-          reportInsights={reportInsights}
-          profilePicDataUrl={profilePicDataUrl}
-          postImageDataUrls={postImageDataUrls}
-          postImageDataUrlsOrdered={postImageDataUrlsOrdered}
-          theme={currentTheme}
+          profile={cached.profile}
+          posts={cached.posts}
+          activation={cached.activation}
+          reportInsights={cached.reportInsights}
+          profilePicDataUrl={cached.profilePicDataUrl}
+          postImageDataUrls={cached.postImageDataUrls}
+          postImageDataUrlsOrdered={cached.postImageDataUrlsOrdered}
+          theme={themeToUse}
         />
       )
-
       const blob = await pdf(doc).toBlob()
-      if (abortRef.current) return
-
       if (!blob || blob.size < MIN_PDF_SIZE) {
         setError('O PDF gerado está vazio ou inválido.')
         setStatus('error')
         return
       }
-
-      // Em Strict Mode o efeito roda 2x: só a última execução dispara o download (1 arquivo só)
-      if (typeof effectRunId === 'number' && effectRunId !== effectRunIdRef.current) return
-
       setStatus('saving')
       setProgress('Salvando arquivo...')
-
       const filename = `MediaKit_${h}.pdf`
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -365,24 +353,14 @@ export default function MediaKit() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-
       setSavedPath(filename)
       setValidated(blob.size >= MIN_PDF_SIZE)
       setStatus('done')
     } catch (e) {
-      if (abortRef.current) return
       setError(e instanceof Error ? e.message : 'Erro ao gerar Media Kit.')
       setStatus('error')
     }
   }, [handle])
-
-  useEffect(() => {
-    effectRunIdRef.current += 1
-    runInBackground(effectRunIdRef.current)
-    return () => {
-      abortRef.current = true
-    }
-  }, [runInBackground])
 
   if (status === 'not_activated' && handle) {
     return (
@@ -395,49 +373,261 @@ export default function MediaKit() {
     )
   }
 
-  if (status === 'done') {
+  if (status === 'ready') {
+    const displayHandle = handle ? `@${handle.replace(/^@/, '')}` : ''
     return (
-      <div style={{ padding: s.xl, maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
-        <Result
-          status="success"
-          icon={<CheckCircleFilled style={{ color: c.success }} />}
-          title="Media Kit gerado com sucesso"
-          subTitle={
-            <>
-              <Text style={{ display: 'block', marginBottom: s.sm }}>
-                O arquivo <strong>{savedPath}</strong> foi salvo no seu computador.
-              </Text>
-              {validated && (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  PDF validado (tamanho correto e aberto no navegador).
-                </Text>
-              )}
-            </>
-          }
-          extra={[
-            <Button key="back"
-              style={{ marginBottom: 10 }}
-              onClick={() => navigate(-1)}>
-              Voltar
-            </Button>,
-            handle && (
+      <div
+        className="media-kit-success"
+        style={{
+          padding: s.xl,
+          maxWidth: 520,
+          margin: '0 auto',
+          minHeight: '60vh',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+        }}
+      >
+        <div
+          className="media-kit-success-card"
+          style={{
+            background: 'var(--app-card-bg)',
+            borderRadius: 24,
+            boxShadow: 'var(--app-shadow-lg)',
+            padding: s.xl + 8,
+            border: '1px solid var(--app-border-light)',
+            textAlign: 'center',
+          }}
+        >
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: 'var(--app-text)',
+              marginBottom: s.sm,
+              lineHeight: 1.3,
+            }}
+          >
+            {displayHandle ? (
+              <>Seu Media Kit está pronto, {displayHandle}</>
+            ) : (
+              'Escolha uma cor e baixe seu Media Kit'
+            )}
+          </h1>
+          <p
+            style={{
+              fontSize: 15,
+              color: 'var(--app-text-secondary)',
+              marginBottom: s.lg,
+              lineHeight: 1.5,
+            }}
+          >
+            A cor já vem selecionada. Clique em Baixar quando quiser.
+          </p>
+
+          <div style={{ marginBottom: s.lg, display: 'flex', justifyContent: 'center', gap: 12 }}>
+            {THEME_ORDER.map((themeId) => {
+              const isSelected = theme === themeId
+              const swatchColor = THEME_SWATCH_COLORS[themeId]
+              return (
+                <button
+                  key={themeId}
+                  type="button"
+                  title={`Tema ${themeId}`}
+                  aria-label={`Tema: ${themeId}`}
+                  onClick={() => setTheme(themeId)}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: '50%',
+                    border: isSelected ? '3px solid var(--app-accent)' : '1px solid var(--app-border-light)',
+                    background: swatchColor,
+                    cursor: 'pointer',
+                    padding: 0,
+                    boxShadow: isSelected ? 'var(--app-shadow-md)' : 'var(--app-shadow-sm)',
+                  }}
+                />
+              )
+            })}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: s.lg }}>
+            <Button
+              size="large"
+              type="primary"
+              onClick={() => handleDownload()}
+              style={{
+                borderRadius: 12,
+                paddingLeft: 24,
+                paddingRight: 24,
+                background: 'var(--app-primary)',
+                borderColor: 'var(--app-primary)',
+              }}
+            >
+              Baixar Media Kit
+            </Button>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 8,
+              fontSize: 13,
+              color: 'var(--app-text-tertiary)',
+              cursor: 'pointer',
+            }}
+          >
+            Voltar
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (status === 'done') {
+    const displayHandle = handle ? `@${handle.replace(/^@/, '')}` : ''
+    return (
+      <div
+        className="media-kit-success"
+        style={{
+          padding: s.xl,
+          maxWidth: 520,
+          margin: '0 auto',
+          minHeight: '60vh',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+        }}
+      >
+        <div
+          className="media-kit-success-card"
+          style={{
+            background: 'var(--app-card-bg)',
+            borderRadius: 24,
+            boxShadow: 'var(--app-shadow-lg)',
+            padding: s.xl + 8,
+            border: '1px solid var(--app-border-light)',
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: 72,
+              height: 72,
+              margin: '0 auto',
+              borderRadius: '50%',
+              background: 'var(--app-success-bg)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: s.lg,
+            }}
+          >
+            <CheckCircleFilled style={{ fontSize: 36, color: 'var(--app-success)' }} />
+          </div>
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: 'var(--app-text)',
+              marginBottom: s.sm,
+              lineHeight: 1.3,
+            }}
+          >
+            {displayHandle ? (
+              <>Pronto, {displayHandle}! Seu Media Kit saiu do forno.</>
+            ) : (
+              'Seu Media Kit está pronto!'
+            )}
+          </h1>
+          <p
+            style={{
+              fontSize: 15,
+              color: 'var(--app-text-secondary)',
+              marginBottom: s.md,
+              lineHeight: 1.5,
+            }}
+          >
+            O arquivo <strong style={{ color: 'var(--app-text)' }}>{savedPath}</strong> foi salvo no seu computador.
+            Pode abrir e mandar para as marcas.
+          </p>
+          {validated && (
+            <p
+              style={{
+                fontSize: 12,
+                color: 'var(--app-text-tertiary)',
+                marginBottom: s.lg,
+              }}
+            >
+              PDF validado (tamanho correto e pronto para usar).
+            </p>
+          )}
+
+          <div style={{ marginBottom: s.lg, display: 'flex', justifyContent: 'center', gap: 12 }}>
+            {THEME_ORDER.map((themeId) => {
+              const isSelected = theme === themeId
+              const swatchColor = THEME_SWATCH_COLORS[themeId]
+              return (
+                <button
+                  key={themeId}
+                  type="button"
+                  title={`Tema ${themeId}`}
+                  aria-label={`Tema: ${themeId}`}
+                  onClick={() => setTheme(themeId)}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: '50%',
+                    border: isSelected ? '3px solid var(--app-accent)' : '1px solid var(--app-border-light)',
+                    background: swatchColor,
+                    cursor: 'pointer',
+                    padding: 0,
+                    boxShadow: isSelected ? 'var(--app-shadow-md)' : 'var(--app-shadow-sm)',
+                  }}
+                />
+              )
+            })}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: s.lg }}>
+            {handle && (
               <Button
-                key="again"
+                size="large"
                 type="primary"
-                style={{ marginBottom: 10 }}
                 onClick={() => {
-                  setStatus('loading_data')
-                  setError(null)
                   setSavedPath(null)
                   setValidated(false)
-                  runInBackground()
+                  setStatus('ready')
+                }}
+                style={{
+                  borderRadius: 12,
+                  paddingLeft: 24,
+                  paddingRight: 24,
+                  background: 'var(--app-primary)',
+                  borderColor: 'var(--app-primary)',
                 }}
               >
-                Gerar novamente
+                Baixar de novo
               </Button>
-            ),
-          ].filter(Boolean)}
-        />
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 8,
+              fontSize: 13,
+              color: 'var(--app-text-tertiary)',
+              cursor: 'pointer',
+            }}
+          >
+            Voltar
+          </button>
+        </div>
       </div>
     )
   }

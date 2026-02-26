@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Busca Influencer – Descubra seu potencial como influencer | Relatório grátis e Media Kit</title>
+  <meta name="description" content="Descubra seu potencial como influencer em 1 minuto. Relatório grátis com seus pontos fortes, métricas e Media Kit em PDF. 100% seguro, sem senha. Entre na vitrine e seja encontrado por marcas.">
+  <meta name="keywords" content="influencer, relatório influencer, media kit, análise perfil Instagram, métricas influencer, vitrine influencer">
+  <meta name="robots" content="index, follow">
+  <!-- Ajuste canonical e og:url ao publicar no domínio final -->
+  <link rel="canonical" href="https://buscainfluencer.com.br/landing/">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="pt_BR">
+  <meta property="og:title" content="Busca Influencer – Descubra seu potencial como influencer">
+  <meta property="og:description" content="Relatório grátis em 1 minuto. Seus pontos fortes, métricas e Media Kit em PDF. 100% seguro. Entre na vitrine para marcas.">
+  <meta property="og:url" content="https://buscainfluencer.com.br/landing/">
+  <meta property="og:site_name" content="Busca Influencer">
+  <meta property="og:image" content="https://buscainfluencer.com.br/images/influencer.png">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Busca Influencer – Descubra seu potencial como influencer">
+  <meta name="twitter:description" content="Relatório grátis em 1 minuto. Media Kit em PDF. 100% seguro. Vitrine para marcas.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --lp-primary: #68278f;
+      --lp-accent: #e8ba00;
+      --lp-purple: #A855F7;
+      --lp-hero-text: #68278f;
+      --lp-text: #1F2937;
+      --lp-bg: #ffffff;
+      --lp-bg-soft: #F9FAFB;
+      --lp-border: #E5E7EB;
+      --chart-bar-top: #5980e4;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--lp-bg);
+      font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--lp-text);
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    .landing-vibrant { min-height: 100vh; position: relative; }
+
+    /* Blobs de fundo */
+    .blob-purple {
+      position: fixed;
+      top: -100px;
+      right: -80px;
+      width: 420px;
+      height: 420px;
+      border-radius: 50%;
+      background: var(--lp-purple);
+      opacity: 0.12;
+      filter: blur(60px);
+      pointer-events: none;
+    }
+    .blob-primary {
+      position: fixed;
+      bottom: -120px;
+      left: -100px;
+      width: 380px;
+      height: 380px;
+      border-radius: 50%;
+      background: var(--lp-primary);
+      opacity: 0.08;
+      filter: blur(70px);
+      pointer-events: none;
+    }
+
+    /* Header */
+    .landing-header {
+      height: 72px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 10;
+    }
+    .landing-header-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--lp-text);
+    }
+    .landing-header-logo img { height: 40px; width: auto; display: block; }
+    .landing-header-nav {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .landing-header-nav a {
+      color: var(--lp-text);
+      font-size: 15px;
+      font-weight: 500;
+      text-decoration: none;
+    }
+    .btn-create {
+      background: var(--lp-primary);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 15px;
+      text-decoration: none;
+      font-family: Montserrat, sans-serif;
+      display: inline-block;
+    }
+    .landing-header-nav .btn-create,
+    .landing-header-nav .btn-create:hover { color: #fff; }
+    .btn-create:hover { filter: brightness(1.05); color: #fff; }
+
+    /* Hero */
+    .landing-hero {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 56px 24px 80px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 56px;
+      align-items: center;
+      position: relative;
+      z-index: 1;
+    }
+    .landing-hero h1 {
+      font-size: clamp(28px, 3.2vw, 40px);
+      font-weight: 700;
+      color: var(--lp-text);
+      line-height: 1.25;
+      margin: 0 0 20px;
+      letter-spacing: -0.02em;
+      font-family: Montserrat, sans-serif;
+    }
+    .landing-hero .hero-p {
+      font-size: 17px;
+      color: var(--lp-text);
+      line-height: 1.65;
+      margin: 0 0 16px;
+      font-weight: 400;
+    }
+    .landing-hero h2 {
+      font-size: clamp(20px, 2.2vw, 26px);
+      font-weight: 600;
+      color: var(--lp-hero-text);
+      margin: 0 0 20px;
+      font-family: Montserrat, sans-serif;
+    }
+    .hero-list { display: flex; flex-direction: column; gap: 10px; }
+    .hero-list-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 15px;
+      color: var(--lp-text);
+      font-family: Montserrat, sans-serif;
+    }
+    .hero-list-item strong { font-weight: 600; }
+    .star { color: #e8ba00; font-size: 18px; }
+    .hero-image-wrap {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .hero-image-box {
+      width: min(100%, 420px);
+      overflow: hidden;
+      border-radius: 12px;
+    }
+    .hero-image-box img {
+      width: 100%;
+      height: auto;
+      display: block;
+      vertical-align: middle;
+    }
+
+    /* CTA card */
+    .cta-section {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 0 24px 72px;
+      position: relative;
+      z-index: 1;
+    }
+    .cta-card {
+      background: var(--chart-bar-top);
+      border: 1px solid var(--lp-border);
+      border-radius: 20px;
+      padding: 32px 28px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+    }
+    /* Formulário CTA (compartilhado entre .cta-card e .cta-final .card) */
+    .cta-card .input-wrap,
+    .cta-final .card .input-wrap {
+      margin-bottom: 20px;
+      position: relative;
+      display: block;
+    }
+    .cta-card .input-at,
+    .cta-final .card .input-at {
+      position: absolute;
+      left: 16px;
+      top: 0;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      color: var(--lp-text);
+      opacity: 0.6;
+      font-size: 18px;
+      font-weight: 500;
+      z-index: 1;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .cta-card input[type="text"],
+    .cta-final .card input[type="text"] {
+      width: 100%;
+      height: 52px;
+      padding: 0 16px 0 36px;
+      border: 1px solid var(--lp-border);
+      border-radius: 12px;
+      font-size: 16px;
+      outline: none;
+      font-family: Montserrat, sans-serif;
+      background: #fff;
+      box-sizing: border-box;
+      display: block;
+    }
+    .cta-card input:focus,
+    .cta-final .card input:focus {
+      border-color: var(--lp-primary);
+      box-shadow: 0 0 0 2px rgba(92, 103, 242, 0.2);
+    }
+    .cta-card .btn-submit,
+    .cta-final .card .btn-submit {
+      width: 100%;
+      height: 52px;
+      background: var(--lp-primary);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 15px;
+      cursor: pointer;
+      font-family: Montserrat, sans-serif;
+      margin-top: 0;
+      display: block;
+      box-sizing: border-box;
+    }
+    .cta-card .btn-submit:hover,
+    .cta-final .card .btn-submit:hover { filter: brightness(1.05); }
+    .cta-list {
+      list-style: none;
+      padding: 0;
+      margin: 24px 0 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .cta-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .cta-list .icon { flex-shrink: 0; font-size: 16px; }
+    .cta-note {
+      text-align: center;
+      font-size: 15px;
+      color: var(--lp-text);
+      opacity: 0.85;
+      margin-top: 20px;
+      line-height: 1.55;
+      max-width: 520px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .cta-note-small {
+      text-align: center;
+      font-size: 13px;
+      color: var(--lp-text);
+      opacity: 0.65;
+      margin-top: 12px;
+    }
+
+    /* Como funciona */
+    .section-soft {
+      background: var(--lp-bg-soft);
+      border-radius: 16px;
+    }
+    .section {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 56px 24px 72px;
+      position: relative;
+      z-index: 1;
+    }
+    .section h2 {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--lp-text);
+      margin-bottom: 40px;
+      text-align: center;
+      font-family: Montserrat, sans-serif;
+    }
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+    .step-card {
+      background: var(--lp-bg);
+      border: 1px solid var(--lp-border);
+      border-radius: 16px;
+      padding: 28px;
+      text-align: center;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+    }
+    .step-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: var(--lp-bg-soft);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+      font-size: 28px;
+    }
+    .step-card h3 {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--lp-text);
+      margin: 0 0 10px;
+      font-family: Montserrat, sans-serif;
+    }
+    .step-card p {
+      font-size: 15px;
+      color: var(--lp-text);
+      opacity: 0.85;
+      line-height: 1.55;
+      margin: 0;
+    }
+
+    /* O que você descobre */
+    .report-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+    .report-card {
+      background: var(--lp-bg);
+      border: 1px solid var(--lp-border);
+      border-radius: 16px;
+      padding: 24px;
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+    }
+    .report-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: var(--lp-bg-soft);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 22px;
+    }
+    .report-card h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--lp-text);
+      margin: 0 0 6px;
+      font-family: Montserrat, sans-serif;
+    }
+    .report-card p {
+      font-size: 14px;
+      color: var(--lp-text);
+      opacity: 0.85;
+      line-height: 1.55;
+      margin: 0;
+    }
+
+    /* CTA final */
+    .cta-final {
+      padding: 48px 24px 64px;
+      background: var(--lp-bg-soft);
+      position: relative;
+      z-index: 1;
+    }
+    .cta-final-inner { max-width: 560px; margin: 0 auto; }
+    .cta-final h2 {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--lp-text);
+      margin-bottom: 28px;
+      text-align: center;
+      font-family: Montserrat, sans-serif;
+    }
+    .cta-final .card {
+      background: var(--lp-bg);
+      border: 1px solid var(--lp-border);
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+    }
+    .cta-card form,
+    .cta-final .card form {
+      width: 100%;
+      display: block;
+    }
+    .cta-final-note {
+      text-align: center;
+      font-size: 14px;
+      color: var(--lp-text);
+      opacity: 0.7;
+      margin-top: 16px;
+    }
+
+    /* Footer */
+    footer.landing-footer {
+      border-top: 1px solid var(--lp-border);
+      padding: 28px 24px 32px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+      background: var(--lp-bg);
+    }
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 28px;
+      margin-bottom: 20px;
+    }
+    .footer-links a {
+      font-size: 14px;
+      color: var(--lp-text);
+      opacity: 0.8;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .footer-links a:hover { text-decoration: underline; }
+    .footer-copy {
+      text-align: center;
+      font-size: 13px;
+      color: var(--lp-text);
+      opacity: 0.65;
+      margin: 0;
+    }
+
+    /* Responsivo */
+    @media (max-width: 768px) {
+      .landing-header {
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: auto;
+        padding: 16px 24px;
+        gap: 14px;
+      }
+      .landing-header-logo { justify-content: center; }
+      .landing-header-nav { justify-content: center; }
+    }
+    @media (max-width: 900px) {
+      .landing-hero {
+        grid-template-columns: 1fr;
+        text-align: center;
+      }
+      .landing-hero .hero-image-wrap { margin-top: 24px; }
+      .landing-hero .hero-image-box { width: 100%; max-width: none; }
+      .steps-grid { grid-template-columns: 1fr; }
+      .report-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Busca Influencer",
+    "url": "https://buscainfluencer.com.br",
+    "description": "Plataforma para descobrir seu potencial como influencer. Relatório grátis, Media Kit em PDF e vitrine para marcas.",
+    "inLanguage": "pt-BR",
+    "potentialAction": {
+      "@type": "SearchAction",
+      "target": "https://buscainfluencer.com.br/app/create?u={search_term_string}",
+      "query-input": "required name=search_term_string"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="landing-vibrant">
+    <div class="blob-purple" aria-hidden="true"></div>
+    <div class="blob-primary" aria-hidden="true"></div>
+
+    <header class="landing-header" role="banner">
+      <a href="/" class="landing-header-logo" aria-label="Busca Influencer - Início">
+        <img src="/images/logo.svg" alt="Busca Influencer" width="160" height="40">
+      </a>
+      <nav class="landing-header-nav" aria-label="Menu principal">
+        <a href="/login">Entrar</a>
+        <a href="/app/create" class="btn-create">Criar</a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="hero" class="landing-hero" aria-labelledby="hero-title">
+        <div>
+          <h1 id="hero-title">Quer descobrir seu potencial como influencer?</h1>
+          <p class="hero-p">Às vezes, o que falta para você decolar é entender o que os números dizem. <strong>Em 1 minuto, a gente te mostra seus pontos fortes</strong> e o que as marcas estão buscando no seu perfil.</p>
+          <h2>Gratuito e feito para te ajudar!</h2>
+          <div class="hero-list">
+            <div class="hero-list-item">
+              <span class="star" aria-hidden="true">★</span>
+              <span><strong>100% seguro, não pedimos sua senha no processo</strong></span>
+            </div>
+            <div class="hero-list-item">
+              <span class="star" aria-hidden="true">★</span>
+              <span><strong>Relatório fácil de ler e cheio de insights</strong></span>
+            </div>
+          </div>
+        </div>
+        <div class="hero-image-wrap">
+          <div class="hero-image-box">
+            <img src="/images/influencer.png" alt="Influenciadora sorrindo com óculos rosa" width="420" height="auto" loading="eager">
+          </div>
+        </div>
+      </section>
+
+      <section id="cta-inicial" class="cta-section" aria-labelledby="cta-title">
+        <div class="cta-card">
+          <form action="/app/create" method="get" role="search" aria-label="Analisar perfil do Instagram">
+            <input type="hidden" name="u" id="u" value="">
+            <div class="input-wrap">
+              <span class="input-at" aria-hidden="true">@</span>
+              <input type="text" id="nickname" placeholder="seuusuario" autocomplete="username" aria-label="Usuário do Instagram" maxlength="100">
+            </div>
+            <button type="submit" class="btn-submit">Analisar perfil grátis</button>
+          </form>
+          <ul class="cta-list">
+            <li><span class="icon">✓</span> Gratuito e feito para te ajudar!</li>
+            <li><span class="icon">✓</span> Entre na vitrine e seja encontrado por empresas parceiras que buscam influenciadores</li>
+            <li><span class="icon">✓</span> Relatório cheio de insights + Media Kit em PDF para enviar a marcas</li>
+          </ul>
+        </div>
+        <p class="cta-note">Cadastre-se grátis e entre na vitrine. Nossas empresas parceiras buscam influenciadores para campanhas e parcerias — seu perfil pode ser o próximo a ser contratado.</p>
+        <p class="cta-note-small">Processo rápido e seguro.</p>
+      </section>
+
+      <section id="como-funciona" class="section section-soft" aria-labelledby="como-funciona-title">
+        <h2 id="como-funciona-title">Como funciona?</h2>
+        <div class="steps-grid">
+          <div class="step-card">
+            <div class="step-icon" aria-hidden="true">🔍</div>
+            <h3>Informe seu @</h3>
+            <p>Basta colocar seu usuário do Instagram. Sem formulários longos ou complicações.</p>
+          </div>
+          <div class="step-card">
+            <div class="step-icon" aria-hidden="true">📄</div>
+            <h3>Media Kit</h3>
+            <p>Gere um Media Kit profissional em PDF com seus dados, métricas e melhores posts. Pronto para enviar a marcas e oportunidades.</p>
+          </div>
+          <div class="step-card">
+            <div class="step-icon" aria-hidden="true">🚀</div>
+            <h3>Receba Insights</h3>
+            <p>Seu relatório completo e painel online ficam prontos em segundos. Além disso, você gera um Media Kit profissional em PDF para enviar a marcas e oportunidades.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="o-que-vem" class="section" aria-labelledby="o-que-vem-title">
+        <h2 id="o-que-vem-title">O que você vai descobrir no relatório</h2>
+        <div class="report-grid">
+          <div class="report-card">
+            <div class="report-icon" aria-hidden="true">📈</div>
+            <div>
+              <h3>Crescimento real</h3>
+              <p>Entenda como sua audiência está evoluindo e quais tendências o seu perfil está seguindo.</p>
+            </div>
+          </div>
+          <div class="report-card">
+            <div class="report-icon" aria-hidden="true">❤️</div>
+            <div>
+              <h3>Conteúdos que dão match</h3>
+              <p>Saiba exatamente quais formatos e temas fazem seus seguidores comentarem e compartilharem mais.</p>
+            </div>
+          </div>
+          <div class="report-card">
+            <div class="report-icon" aria-hidden="true">📊</div>
+            <div>
+              <h3>Taxa de engajamento</h3>
+              <p>Nada de métricas de vaidade! Calculamos sua interação real para mostrar o quanto seu público é fiel.</p>
+            </div>
+          </div>
+          <div class="report-card">
+            <div class="report-icon" aria-hidden="true">💰</div>
+            <div>
+              <h3>Valor sugerido para Publis</h3>
+              <p>Chega de dúvida na hora de cobrar! Receba uma estimativa de preço para suas parcerias com marcas.</p>
+            </div>
+          </div>
+          <div class="report-card">
+            <div class="report-icon" aria-hidden="true">👥</div>
+            <div>
+              <h3>Quem te acompanha</h3>
+              <p>Descubra a idade, cidade e os principais interesses de quem te segue para criar posts ainda mais certeiros.</p>
+            </div>
+          </div>
+          <div class="report-card">
+            <div class="report-icon" aria-hidden="true">📋</div>
+            <div>
+              <h3>Guia de melhorias</h3>
+              <p>Um checklist prático com pontos que você pode ajustar para deixar seu perfil irresistível para novos patrocinadores.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-final" aria-labelledby="cta-final-title">
+        <div class="cta-final-inner">
+          <h2 id="cta-final-title">Quer seu relatório agora?</h2>
+          <div class="card">
+            <form action="/app/create" method="get" aria-label="Segundo formulário de análise">
+              <input type="hidden" name="u" id="u2" value="">
+              <div class="input-wrap">
+                <span class="input-at" aria-hidden="true">@</span>
+                <input type="text" id="nickname2" placeholder="seuusuario" autocomplete="username" aria-label="Usuário do Instagram" maxlength="100">
+              </div>
+              <button type="submit" class="btn-submit">Analisar perfil</button>
+            </form>
+          </div>
+          <p class="cta-final-note">Sem spam. Sem custo. Só insights.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="landing-footer" role="contentinfo">
+      <div class="footer-links">
+        <a href="/#termos">Termos</a>
+        <a href="/#privacidade">Privacidade</a>
+        <a href="/#contato">Contato</a>
+      </div>
+      <p class="footer-copy">© 2026 Relatório de Influencer. Todos os direitos reservados.</p>
+    </footer>
+  </div>
+
+  <script>
+    (function() {
+      var form1 = document.querySelector('#cta-inicial form');
+      var form2 = document.querySelector('.cta-final form');
+      var input1 = document.getElementById('nickname');
+      var input2 = document.getElementById('nickname2');
+      var hidden1 = document.getElementById('u');
+      var hidden2 = document.getElementById('u2');
+
+      function normalize(val) {
+        return (val || '').replace(/^@/, '').trim().toLowerCase();
+      }
+
+      if (form1 && input1 && hidden1) {
+        form1.addEventListener('submit', function(e) {
+          var v = normalize(input1.value);
+          if (v) hidden1.value = v;
+          if (!v) {
+            e.preventDefault();
+            input1.focus();
+            input1.setAttribute('aria-invalid', 'true');
+            return false;
+          }
+          input1.removeAttribute('aria-invalid');
+        });
+      }
+      if (form2 && input2 && hidden2) {
+        form2.addEventListener('submit', function(e) {
+          var v = normalize(input2.value);
+          if (v) hidden2.value = v;
+          if (!v) {
+            e.preventDefault();
+            input2.focus();
+            input2.setAttribute('aria-invalid', 'true');
+            return false;
+          }
+          input2.removeAttribute('aria-invalid');
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

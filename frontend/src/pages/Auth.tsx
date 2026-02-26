@@ -3,10 +3,10 @@ import { Form, Input, Button, Card, message, Collapse } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
 import { requestCodeWithExtract, verifyProfile, type ExtractProfileResult } from '../api'
-import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, ExclamationCircleOutlined, InstagramOutlined, ReloadOutlined } from '@ant-design/icons'
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
-  nao_segue_perfil: 'É necessário seguir o perfil oficial do programa no Instagram para receber o código de ativação por mensagem direta.',
+  nao_segue_perfil: '', // tratado por bloco especial no RejectionFullScreen
   perfil_privado: 'O perfil está privado; é necessário que seja público para participar do programa.',
   estabelecimento_comercial: 'Perfil classificado como estabelecimento comercial (ex.: bar, restaurante, loja).',
   conta_empresa: 'Conta do tipo empresa; aceitamos apenas perfis pessoais ou de criador.',
@@ -28,13 +28,15 @@ const INSTALL_PHRASES = [
 
 const INSTALL_DURATION_MS = 30_000 // barra avança ao longo de ~30 segundos
 
-/** Tela inteira: perfil não elegível + todas as regras + botão Entendi. */
+/** Tela inteira: perfil não elegível + todas as regras + botão Voltar. */
 function RejectionFullScreen({
   result,
   onUnderstood,
+  onRetry,
 }: {
   result: ExtractProfileResult
   onUnderstood: () => void
+  onRetry?: (handle: string) => void
 }) {
   useEffect(() => {
     const prev = document.body.style.overflow
@@ -44,6 +46,10 @@ function RejectionFullScreen({
     }
   }, [])
 
+  const isFollowRequired = result.rejectionReason === 'nao_segue_perfil' && result.followProfileUrl
+  const followProfileHandle = result.followProfileUrl
+    ? (result.followProfileUrl.replace(/\/$/, '').split('/').pop() ?? '')
+    : ''
   const reasonText = result.rejectionReason
     ? (REJECTION_REASON_LABELS[result.rejectionReason] ?? result.rejectionReason)
     : result.error ?? 'Perfil não atende aos critérios do programa.'
@@ -65,6 +71,15 @@ function RejectionFullScreen({
         overflowX: 'hidden',
       }}
     >
+      <style>{`
+        @keyframes auth-follow-pulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(131, 58, 180, 0.4); }
+          50% { transform: scale(1.03); box-shadow: 0 0 0 8px rgba(131, 58, 180, 0); }
+        }
+        .auth-follow-btn-pulse {
+          animation: auth-follow-pulse 1.5s ease-in-out infinite;
+        }
+      `}</style>
       <div
         style={{
           width: '100%',
@@ -72,61 +87,133 @@ function RejectionFullScreen({
           marginBottom: 20,
         }}
       >
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <ExclamationCircleOutlined style={{ fontSize: 44, color: 'var(--app-warning-accent)' }} />
-          <h1
-            style={{
-              fontSize: 18,
-              fontWeight: 700,
-              color: 'var(--app-text)',
-              margin: '12px 0 4px',
-              letterSpacing: '-0.02em',
-            }}
-          >
-            Perfil não elegível
-          </h1>
-          <p style={{ fontSize: 13, color: 'var(--app-text-secondary)', margin: 0 }}>
-            @{result.handle} não atende aos critérios do programa.
-          </p>
-        </div>
-
-        <div
-          style={{
-            background: 'var(--app-alert-danger-bg)',
-            border: '1px solid var(--app-alert-danger-border)',
-            borderRadius: 10,
-            padding: '12px 14px',
-            marginBottom: 16,
-          }}
-        >
-          <strong style={{ color: 'var(--app-danger-accent)', fontSize: 12 }}>Motivo:</strong>{' '}
-          <span style={{ color: 'var(--app-text-secondary)', fontSize: 12 }}>{reasonText}</span>
-          {result.rejectionReason === 'nao_segue_perfil' && result.followProfileUrl && (
-            <div style={{ marginTop: 10 }}>
+        {isFollowRequired ? (
+          <>
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <div
+                style={{
+                  width: 64,
+                  height: 64,
+                  margin: '0 auto 16px',
+                  borderRadius: 16,
+                  background: 'linear-gradient(135deg, var(--app-info-bg) 0%, rgba(104, 39, 143, 0.08) 100%)',
+                  border: '1px solid var(--app-info-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <InstagramOutlined style={{ fontSize: 28, color: 'var(--brand-primary)' }} />
+              </div>
+              <h1
+                style={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: 'var(--app-text)',
+                  margin: '0 0 8px',
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                Quase lá! Só falta um passinho
+              </h1>
+              <p style={{ fontSize: 15, color: 'var(--app-text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                Segue o{' '}
+                <a
+                  href={result.followProfileUrl!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--app-primary)', fontWeight: 600, textDecoration: 'none' }}
+                >
+                  @{followProfileHandle}
+                </a>
+                {' '}no Insta para mandarmos código de acesso na DM.
+              </p>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
               <a
-                href={result.followProfileUrl}
+                href={result.followProfileUrl!}
                 target="_blank"
                 rel="noopener noreferrer"
+                className="auth-follow-btn-pulse"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: 6,
-                  color: 'var(--app-primary)',
-                  fontWeight: 600,
-                  fontSize: 12,
+                  padding: '8px 14px',
+                  borderRadius: 20,
+                  background: 'linear-gradient(135deg, #833AB4 0%, #FD1D1D 50%, #F77737 100%)',
+                  color: '#fff',
+                  fontWeight: 500,
+                  fontSize: 13,
                   textDecoration: 'none',
                 }}
               >
-                Abrir perfil e seguir →
+                <InstagramOutlined style={{ fontSize: 14 }} />
+                Seguir Perfil
               </a>
             </div>
-          )}
-          {result.diagnostic && result.diagnostic.minRequired != null && (
-            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--app-text-secondary)' }}>
-              Mínimo exigido: {result.diagnostic.minRequired.toLocaleString('pt-BR')}
+            <p style={{ fontSize: 13, color: 'var(--app-text-tertiary)', textAlign: 'center', margin: 0, marginBottom: 16 }}>
+              Depois de seguir, volte aqui e tente novamente.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
+              <Button
+                type="primary"
+                size="large"
+                onClick={() => (onRetry ? onRetry(result.handle) : onUnderstood())}
+                style={{
+                  height: 48,
+                  minWidth: 200,
+                  borderRadius: 10,
+                  fontWeight: 600,
+                  fontSize: 15,
+                  background: 'var(--app-primary)',
+                  border: 'none',
+                }}
+              >
+                <ReloadOutlined style={{ marginRight: 8 }} />
+                Já Sigo, Tentar novamente
+              </Button>
             </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <>
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <ExclamationCircleOutlined style={{ fontSize: 44, color: 'var(--app-warning-accent)' }} />
+              <h1
+                style={{
+                  fontSize: 18,
+                  fontWeight: 700,
+                  color: 'var(--app-text)',
+                  margin: '12px 0 4px',
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                Perfil não elegível
+              </h1>
+              <p style={{ fontSize: 13, color: 'var(--app-text-secondary)', margin: 0 }}>
+                @{result.handle} não atende aos critérios do programa.
+              </p>
+            </div>
+            <div
+              style={{
+                background: 'var(--app-alert-danger-bg)',
+                border: '1px solid var(--app-alert-danger-border)',
+                borderRadius: 10,
+                padding: '12px 14px',
+                marginBottom: 16,
+              }}
+            >
+              <strong style={{ color: 'var(--app-danger-accent)', fontSize: 12 }}>Motivo:</strong>{' '}
+              <span style={{ color: 'var(--app-text-secondary)', fontSize: 12 }}>{reasonText}</span>
+              {result.diagnostic && result.diagnostic.minRequired != null && (
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--app-text-secondary)' }}>
+                  Mínimo exigido: {result.diagnostic.minRequired.toLocaleString('pt-BR')}
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         <Collapse
           size="small"
@@ -171,22 +258,25 @@ function RejectionFullScreen({
         />
       </div>
 
-      <Button
-        type="primary"
-        size="large"
-        onClick={onUnderstood}
-        style={{
-          height: 44,
-          minWidth: 140,
-          borderRadius: 10,
-          fontWeight: 600,
-          fontSize: 14,
-          background: 'var(--app-primary)',
-          border: 'none',
-        }}
-      >
-        Entendi
-      </Button>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+        <Button
+          type="default"
+          size="middle"
+          onClick={onUnderstood}
+          style={{
+            height: 40,
+            minWidth: 100,
+            borderRadius: 10,
+            fontWeight: 500,
+            fontSize: 13,
+            color: 'var(--app-text-secondary)',
+            borderColor: 'var(--app-border)',
+            background: 'transparent',
+          }}
+        >
+          Voltar
+        </Button>
+      </div>
     </div>
   )
 }
@@ -213,80 +303,177 @@ function InstallationLoader() {
 
   return (
     <div
+      className="install-loader"
       style={{
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
-        background: 'linear-gradient(145deg, var(--app-dark-bg) 0%, var(--app-dark-bg-mid) 50%, var(--app-bg) 100%)',
+        background: 'linear-gradient(135deg, #f8f4ff 0%, #fff9e6 35%, #f0ebff 70%, #fdf6e8 100%)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: 24,
         fontFamily: "'Segoe UI', system-ui, sans-serif",
+        overflow: 'hidden',
       }}
     >
+      {/* Blobs decorativos de fundo */}
+      <div
+        style={{
+          position: 'absolute',
+          width: 320,
+          height: 320,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(104, 39, 143, 0.12) 0%, transparent 70%)',
+          top: '-10%',
+          left: '-5%',
+          animation: 'install-blob-float 8s ease-in-out infinite',
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          width: 280,
+          height: 280,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(232, 186, 0, 0.15) 0%, transparent 70%)',
+          bottom: '-8%',
+          right: '-5%',
+          animation: 'install-blob-float 10s ease-in-out infinite reverse',
+          animationDelay: '1s',
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          width: 180,
+          height: 180,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(89, 128, 228, 0.12) 0%, transparent 70%)',
+          top: '40%',
+          right: '15%',
+          animation: 'install-blob-float 12s ease-in-out infinite',
+          animationDelay: '2s',
+        }}
+      />
+
       <div
         style={{
           width: '100%',
-          maxWidth: 420,
+          maxWidth: 440,
           textAlign: 'center',
+          position: 'relative',
+          zIndex: 1,
         }}
       >
+        {/* Card com vidro */}
         <div
           style={{
-            fontSize: 48,
-            marginBottom: 24,
-            filter: 'var(--app-primary-glow)',
+            background: 'rgba(255, 255, 255, 0.85)',
+            backdropFilter: 'blur(12px)',
+            borderRadius: 24,
+            padding: '40px 32px 36px',
+            boxShadow: '0 8px 32px rgba(104, 39, 143, 0.08), 0 2px 12px rgba(232, 186, 0, 0.06)',
+            border: '1px solid rgba(255, 255, 255, 0.9)',
           }}
         >
-          <RocketOutlined style={{ color: 'var(--app-chart-bar-top)' }} />
-        </div>
-        <h2
-          style={{
-            color: 'var(--app-on-dark)',
-            fontSize: 18,
-            fontWeight: 600,
-            marginBottom: 32,
-            letterSpacing: '0.02em',
-          }}
-        >
-          Preparando seu cadastro
-        </h2>
-        <p
-          style={{
-            color: 'var(--app-on-dark-muted)',
-            fontSize: 15,
-            minHeight: 24,
-            marginBottom: 28,
-            transition: 'opacity 0.3s ease',
-          }}
-        >
-          {INSTALL_PHRASES[phraseIndex]}
-        </p>
-        <div
-          style={{
-            height: 6,
-            background: 'var(--app-primary-muted)',
-            borderRadius: 3,
-            overflow: 'hidden',
-            marginBottom: 8,
-          }}
-        >
+          {/* Ícone com anel e animação */}
           <div
             style={{
-              height: '100%',
-              width: `${progress}%`,
-              background: 'var(--app-primary)',
-              borderRadius: 3,
-              transition: 'width 0.35s ease',
+              width: 88,
+              height: 88,
+              margin: '0 auto 28px',
+              borderRadius: '50%',
+              background: 'linear-gradient(145deg, #68278f 0%, #8b3db5 50%, #5980e4 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 12px 28px rgba(104, 39, 143, 0.35), 0 0 0 4px rgba(232, 186, 0, 0.2)',
+              animation: 'install-rocket-pulse 2.5s ease-in-out infinite',
             }}
-          />
+          >
+            <RocketOutlined
+              style={{
+                fontSize: 40,
+                color: '#fff',
+                filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))',
+              }}
+            />
+          </div>
+
+          <h2
+            style={{
+              color: '#2d1b4e',
+              fontSize: 22,
+              fontWeight: 700,
+              marginBottom: 12,
+              letterSpacing: '-0.02em',
+            }}
+          >
+            Preparando seu cadastro
+          </h2>
+          <p
+            style={{
+              background: 'linear-gradient(90deg, #68278f, #8b3db5, #e8ba00)',
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              color: 'transparent',
+              fontSize: 15,
+              fontWeight: 500,
+              minHeight: 24,
+              marginBottom: 28,
+              transition: 'opacity 0.4s ease',
+            }}
+          >
+            {INSTALL_PHRASES[phraseIndex]}
+          </p>
+
+          {/* Barra de progresso elegante */}
+          <div
+            style={{
+              height: 10,
+              background: 'linear-gradient(90deg, rgba(104, 39, 143, 0.12), rgba(232, 186, 0, 0.15))',
+              borderRadius: 10,
+              overflow: 'hidden',
+              marginBottom: 12,
+              boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.06)',
+            }}
+          >
+            <div
+              style={{
+                height: '100%',
+                width: `${progress}%`,
+                background: 'linear-gradient(90deg, #68278f 0%, #8b3db5 50%, #e8ba00 100%)',
+                borderRadius: 10,
+                transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: '0 0 12px rgba(104, 39, 143, 0.4)',
+              }}
+            />
+          </div>
+          <p
+            style={{
+              color: '#6b5b7a',
+              fontSize: 13,
+              fontWeight: 600,
+              letterSpacing: '0.05em',
+            }}
+          >
+            {Math.round(progress)}%
+          </p>
         </div>
-        <p style={{ color: 'var(--app-on-dark-subtle)', fontSize: 12 }}>
-          {Math.round(progress)}%
-        </p>
       </div>
+
+      <style>{`
+        @keyframes install-blob-float {
+          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.8; }
+          50% { transform: translate(12px, -12px) scale(1.05); opacity: 1; }
+        }
+        @keyframes install-rocket-pulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 12px 28px rgba(104, 39, 143, 0.35), 0 0 0 4px rgba(232, 186, 0, 0.2); }
+          50% { transform: scale(1.03); box-shadow: 0 14px 32px rgba(104, 39, 143, 0.45), 0 0 0 6px rgba(232, 186, 0, 0.15); }
+        }
+      `}</style>
     </div>
   )
 }
@@ -375,6 +562,38 @@ export default function Auth() {
     navigate('/app/create', { replace: true, state: {} })
   }
 
+  const retryRequestCode = async (handle: string) => {
+    const n = handle.replace(/^@/, '').trim()
+    if (!n) return
+    setRejectionInfo(null)
+    setLoading(true)
+    setShowInstallLoader(true)
+    try {
+      const data = await requestCodeWithExtract(n)
+      if (data.rejectionReason === 'nao_segue_perfil') {
+        setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
+        return
+      }
+      setNickname(n)
+      setStep('code')
+      form.setFieldValue('code', data.code ?? '')
+      if (data.sent) {
+        message.success('Código enviado! Confira sua caixa de entrada do Instagram (direct).')
+      } else if (data.code) {
+        message.warning(data.error ?? 'DM não enviada. Use o código abaixo para testar.')
+      } else if (data.error) {
+        message.warning(data.error)
+      }
+    } catch (e) {
+      const err = e instanceof Error ? e.message : 'Falha ao extrair perfil ou enviar código'
+      message.error(err)
+      setRejectionInfo({ success: false, handle: n, error: err })
+    } finally {
+      setLoading(false)
+      setShowInstallLoader(false)
+    }
+  }
+
   const validateAnotherProfile = () => {
     logout()
     startOver()
@@ -384,7 +603,7 @@ export default function Auth() {
     <>
       {showInstallLoader && <InstallationLoader />}
       {rejectionInfo && (
-        <RejectionFullScreen result={rejectionInfo} onUnderstood={startOver} />
+        <RejectionFullScreen result={rejectionInfo} onUnderstood={startOver} onRetry={retryRequestCode} />
       )}
 
       <div

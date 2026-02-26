@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Form, Input, Button, Card, message } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { setMyPassword } from '../api'
-import { LockOutlined } from '@ant-design/icons'
+import { LockOutlined, MessageOutlined } from '@ant-design/icons'
 
 export default function AuthPassword() {
   const navigate = useNavigate()
@@ -82,6 +82,17 @@ export default function AuthPassword() {
               Continuar
             </Button>
           </Form.Item>
+          <div style={{ textAlign: 'center', marginTop: 16 }}>
+            <Button
+              type="link"
+              size="small"
+              icon={<MessageOutlined />}
+              onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}`, { state: { fromSignup: true }, replace: true })}
+              style={{ color: 'var(--app-text-tertiary)', fontSize: 13 }}
+            >
+              Pular e entrar por DM
+            </Button>
+          </div>
         </Form>
       </Card>
     </div>
