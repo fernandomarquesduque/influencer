@@ -3,8 +3,8 @@
  * Filtro por hash: incluir apenas ou excluir quem já recebeu a mensagem; autocomplete usa busca principal.
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Button, Card, Table, Input, Modal, Typography, Space, message as antMessage, AutoComplete, Tag, Popconfirm } from 'antd'
-import { PlusOutlined, PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { Button, Card, Table, Input, Modal, Typography, Space, message as antMessage, AutoComplete, Select, Tag, Popconfirm } from 'antd'
+import { PlusOutlined, ReloadOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import {
   fetchDirectTemplates,
   createDirectTemplate,
@@ -13,9 +13,12 @@ import {
   addToDirectQueue,
   deleteDirectQueue,
   deleteDirectQueueItem,
-  processNextDirectQueueItem,
   fetchDirectHandlesByHash,
-  fetchProfilesSearch,
+  fetchFollowersSearch,
+  fetchDirectQueueServiceStatus,
+  pauseDirectQueueService,
+  resumeDirectQueueService,
+  updateDirectQueueServiceInterval,
   type MessageTemplate,
   type DirectQueueItem,
 } from '../api'
@@ -23,12 +26,17 @@ import { reportTokens as t } from './reportTokens'
 
 const { TextArea } = Input
 const { Text } = Typography
-const MAIN_SEARCH_LIMIT = 100
+const FOLLOWERS_SEARCH_DEBOUNCE_MS = 550
 const s = t.spacing
 const c = t.colors
 const r = t.radius
 
-const DELAY_BETWEEN_SENDS_MS = 60_000 // 1 min entre cada envio
+const SEND_INTERVAL_OPTIONS = [
+  { value: 1, label: '1 min' },
+  { value: 10, label: '10 min' },
+  { value: 50, label: '50 min' },
+  { value: 100, label: '100 min' },
+]
 
 export default function BulkMessage() {
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
@@ -37,24 +45,34 @@ export default function BulkMessage() {
   const [loadingTemplates, setLoadingTemplates] = useState(true)
   const [loadingQueue, setLoadingQueue] = useState(true)
   const [adding, setAdding] = useState(false)
-  const [dispatching, setDispatching] = useState(false)
   const [selectedHash, setSelectedHash] = useState<string>('')
   const [receivedHandles, setReceivedHandles] = useState<string[]>([])
   const [selectedFromAutocomplete, setSelectedFromAutocomplete] = useState<string[]>([])
   const [mainSearchValue, setMainSearchValue] = useState('')
   const [mainSearchOptions, setMainSearchOptions] = useState<{ value: string; label: string }[]>([])
   const [mainSearchLoading, setMainSearchLoading] = useState(false)
-  const [loadingAdd100, setLoadingAdd100] = useState(false)
   const [loadingDeleteQueue, setLoadingDeleteQueue] = useState(false)
+  const [loadingAddAll, setLoadingAddAll] = useState(false)
+  const [sendIntervalMinutes, setSendIntervalMinutes] = useState(1)
+  const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
+  const [serviceRunning, setServiceRunning] = useState(false)
+  const [servicePaused, setServicePaused] = useState(false)
+  const [loadingServiceToggle, setLoadingServiceToggle] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const mainSearchAbortRef = useRef<AbortController | null>(null)
+  const followersSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mainSearchValueRef = useRef('')
+  const filterExcludeSetRef = useRef<Set<string>>(new Set())
   const [modalTemplate, setModalTemplate] = useState(false)
   const [newHash, setNewHash] = useState('')
   const [newBody, setNewBody] = useState('')
+  const [newRejectHashes, setNewRejectHashes] = useState<string[]>([])
   const [editTemplate, setEditTemplate] = useState<MessageTemplate | null>(null)
   const [editBody, setEditBody] = useState('')
+  const [editRejectHashes, setEditRejectHashes] = useState<string[]>([])
   const [savingEdit, setSavingEdit] = useState(false)
-  const dispatchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [filterExcludeHandles, setFilterExcludeHandles] = useState<string[]>([])
+  const selectedTemplate = useMemo(() => templates.find((t) => t.hash === selectedHash) ?? null, [templates, selectedHash])
 
   const loadTemplates = () => {
     setLoadingTemplates(true)
@@ -80,13 +98,22 @@ export default function BulkMessage() {
     loadQueue()
   }, [])
 
-  // Atualiza a fila automaticamente durante o disparo (lista fica sempre atualizada)
+  // Atualiza fila e status do serviço periodicamente (o worker roda em background)
   const QUEUE_POLL_MS = 8000
   useEffect(() => {
-    if (!dispatching) return
-    const interval = setInterval(loadQueue, QUEUE_POLL_MS)
+    const poll = () => {
+      loadQueue()
+      fetchDirectQueueServiceStatus()
+        .then((s) => {
+          setServiceRunning(s.running)
+          setServicePaused(s.paused)
+        })
+        .catch(() => { })
+    }
+    poll()
+    const interval = setInterval(poll, QUEUE_POLL_MS)
     return () => clearInterval(interval)
-  }, [dispatching])
+  }, [])
 
   // Carrega handles que já receberam o hash (para o botão "100 primeiros que ainda não receberam" e para não duplicar na fila)
   useEffect(() => {
@@ -101,66 +128,88 @@ export default function BulkMessage() {
 
   const receivedSet = useMemo(() => new Set(receivedHandles.map((h) => h.toLowerCase())), [receivedHandles])
 
-  // Autocomplete principal (até 100 perfis por busca): mesma busca principal
+  // Filtro: rejeitar perfis que já receberam hashes do template (reject_hashes)
   useEffect(() => {
-    if (mainSearchValue.trim().length < 2) {
+    const hashes = selectedTemplate?.reject_hashes ?? []
+    if (hashes.length === 0) {
+      setFilterExcludeHandles([])
+      return
+    }
+    Promise.all(hashes.map((h) => fetchDirectHandlesByHash(h.trim()).then((r) => r.handles ?? [])))
+      .then((results) => {
+        const merged = new Set<string>()
+        results.forEach((handles) => handles.forEach((h) => merged.add(h.trim().toLowerCase())))
+        setFilterExcludeHandles(Array.from(merged))
+      })
+      .catch(() => setFilterExcludeHandles([]))
+  }, [selectedTemplate?.reject_hashes])
+
+  const filterExcludeSet = useMemo(() => new Set(filterExcludeHandles.map((h) => h.toLowerCase())), [filterExcludeHandles])
+  // Rejeitados = template selecionado (obrigatório) + hashes do filtro
+  const rejectedSet = useMemo(() => {
+    const s = new Set<string>()
+    receivedHandles.forEach((h) => s.add(h.toLowerCase()))
+    filterExcludeHandles.forEach((h) => s.add(h.toLowerCase()))
+    return s
+  }, [receivedHandles, filterExcludeHandles])
+  const rejectedHandles = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const h of [...receivedHandles, ...filterExcludeHandles]) {
+      const lower = h.trim().toLowerCase()
+      if (!seen.has(lower)) {
+        seen.add(lower)
+        out.push(h)
+      }
+    }
+    return out
+  }, [receivedHandles, filterExcludeHandles])
+  filterExcludeSetRef.current = rejectedSet
+  mainSearchValueRef.current = mainSearchValue
+
+  // Autocomplete: busca entre seus seguidores do Instagram (debounce para não enviar várias requisições)
+  useEffect(() => {
+    if (followersSearchDebounceRef.current) {
+      clearTimeout(followersSearchDebounceRef.current)
+      followersSearchDebounceRef.current = null
+    }
+    const trimmed = mainSearchValue.trim()
+    if (trimmed.length === 0) {
       setMainSearchOptions([])
       return
     }
-    if (mainSearchAbortRef.current) mainSearchAbortRef.current.abort()
-    mainSearchAbortRef.current = new AbortController()
-    setMainSearchLoading(true)
-    fetchProfilesSearch(
-      { q: mainSearchValue.trim(), limit: MAIN_SEARCH_LIMIT },
-      { signal: mainSearchAbortRef.current.signal }
-    )
-      .then((res) => {
-        const opts = (res.items || []).map((p) => {
-          const h = (p.handle ?? p.username ?? '').toString().trim().toLowerCase()
-          return { value: h, label: `@${h}${p.full_name ? ` — ${(p.full_name as string).slice(0, 30)}` : ''}` }
+    const runSearch = () => {
+      if (mainSearchAbortRef.current) mainSearchAbortRef.current.abort()
+      mainSearchAbortRef.current = new AbortController()
+      setMainSearchLoading(true)
+      const searchTerm = trimmed
+      fetchFollowersSearch(searchTerm, { signal: mainSearchAbortRef.current.signal })
+        .then((res) => {
+          if (mainSearchValueRef.current.trim() !== searchTerm) return
+          const exclude = filterExcludeSetRef.current
+          const allUsernames = (res.usernames || []).map((u) => u.trim().toLowerCase()).filter(Boolean)
+          const rejected = exclude.size > 0 ? allUsernames.filter((h) => exclude.has(h)) : []
+          const allowed = exclude.size > 0 ? allUsernames.filter((h) => !exclude.has(h)) : allUsernames
+          if (rejected.length > 0) {
+            antMessage.warning(`${rejected.length} perfil(is) ocultado(s): já receberam algum hash selecionado.`)
+          }
+          const opts = allowed.map((h) => ({ value: h, label: `@${h}` }))
+          setMainSearchOptions(opts)
         })
-        setMainSearchOptions(opts)
-      })
-      .catch((err) => {
-        if (err?.name !== 'AbortError') antMessage.error(err instanceof Error ? err.message : 'Erro na busca')
-        setMainSearchOptions([])
-      })
-      .finally(() => setMainSearchLoading(false))
+        .catch((err) => {
+          if (err?.name === 'AbortError') return
+          if (mainSearchValueRef.current.trim() !== searchTerm) return
+          antMessage.error(err instanceof Error ? err.message : 'Erro na busca de seguidores')
+          setMainSearchOptions([])
+        })
+        .finally(() => setMainSearchLoading(false))
+    }
+    followersSearchDebounceRef.current = setTimeout(runSearch, FOLLOWERS_SEARCH_DEBOUNCE_MS)
+    return () => {
+      if (followersSearchDebounceRef.current) clearTimeout(followersSearchDebounceRef.current)
+    }
   }, [mainSearchValue])
 
-  useEffect(() => {
-    if (!dispatching) return
-    let cancelled = false
-    const runOne = () => {
-      if (cancelled) return
-      processNextDirectQueueItem()
-        .then((result) => {
-          if (cancelled) return
-          if (result.processed) {
-            if (result.ok) antMessage.success(`Enviado para @${result.handle}`)
-            else antMessage.warning(`Falha @${result.handle}: ${result.error ?? 'erro'}`)
-            loadQueue()
-          }
-          if (result.processed) {
-            dispatchTimerRef.current = setTimeout(runOne, DELAY_BETWEEN_SENDS_MS)
-          } else if (result.processed === false) {
-            setDispatching(false)
-            antMessage.info('Fila concluída.')
-          }
-        })
-        .catch((e) => {
-          if (!cancelled) {
-            antMessage.error(e instanceof Error ? e.message : 'Erro ao processar')
-            setDispatching(false)
-          }
-        })
-    }
-    runOne()
-    return () => {
-      cancelled = true
-      if (dispatchTimerRef.current) clearTimeout(dispatchTimerRef.current)
-    }
-  }, [dispatching])
 
   const pendingCount = queue.filter((i) => i.status === 'pending').length
   const sentCount = queue.filter((i) => i.status === 'sent').length
@@ -171,12 +220,17 @@ export default function BulkMessage() {
       antMessage.warning('Preencha o hash e o texto do template.')
       return
     }
-    createDirectTemplate(newHash.trim(), newBody.trim())
+    if (newRejectHashes.length === 0) {
+      antMessage.warning('Selecione ao menos um hash para rejeitar perfis.')
+      return
+    }
+    createDirectTemplate(newHash.trim(), newBody.trim(), newRejectHashes)
       .then(() => {
         antMessage.success('Template criado.')
         setModalTemplate(false)
         setNewHash('')
         setNewBody('')
+        setNewRejectHashes([])
         loadTemplates()
       })
       .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Erro ao criar template'))
@@ -188,22 +242,27 @@ export default function BulkMessage() {
       antMessage.warning('Selecione um template ou crie um primeiro.')
       return
     }
-    const combined = [...new Set(selectedFromAutocomplete.map((h) => h.toLowerCase()))]
-    if (combined.length === 0) {
-      antMessage.warning('Adicione perfis pelo autocomplete ou use o botão "Incluir os 100 primeiros que ainda não receberam".')
+    const tpl = templates.find((t) => t.hash === hash)
+    if (!tpl?.reject_hashes?.length) {
+      antMessage.warning('O template selecionado deve ter ao menos um hash para rejeitar perfis. Edite o template.')
       return
     }
-    // Exclui quem já recebeu esta mensagem para não duplicar na fila
-    let toAdd = combined.filter((h) => !receivedSet.has(h))
-    if (toAdd.length < combined.length && receivedSet.size > 0) {
-      antMessage.info(`${combined.length - toAdd.length} já receberam esta mensagem e foram ignorados.`)
+    const combined = [...new Set(selectedFromAutocomplete.map((h) => h.toLowerCase()))]
+    if (combined.length === 0) {
+      antMessage.warning('Adicione perfis pelo autocomplete.')
+      return
     }
+    // Exclui rejeitados (template selecionado + filtro de hash)
+    let toAdd = combined.filter((h) => !rejectedSet.has(h))
+    const excluded = combined.length - toAdd.length
+    if (excluded > 0) antMessage.info(`${excluded} rejeitado(s) (template ou filtro).`)
     if (toAdd.length === 0) {
       antMessage.warning('Nenhum perfil a adicionar após o filtro.')
       return
     }
+    const scheduledAt = new Date(Date.now() + sendIntervalMinutes * 60 * 1000).toISOString()
     setAdding(true)
-    addToDirectQueue(toAdd, hash)
+    addToDirectQueue(toAdd, hash, scheduledAt)
       .then((r) => {
         antMessage.success(`${r.added} adicionado(s) à fila.`)
         setSelectedFromAutocomplete([])
@@ -217,82 +276,84 @@ export default function BulkMessage() {
     setSelectedFromAutocomplete((prev) => prev.filter((h) => h.toLowerCase() !== handle.toLowerCase()))
   }
 
-  const handleAdd100NotReceived = () => {
-    const hash = selectedHash || templates[0]?.hash
-    if (!hash) {
-      antMessage.warning('Selecione um template primeiro.')
-      return
-    }
-    setLoadingAdd100(true)
-    Promise.all([
-      fetchDirectHandlesByHash(hash),
-      fetchProfilesSearch({ limit: 250 }),
-    ])
-      .then(([byHash, searchRes]) => {
-        const received = new Set((byHash.handles || []).map((h) => h.toLowerCase()))
-        const items = searchRes.items || []
-        const notReceived: string[] = []
-        for (const p of items) {
-          const h = ((p.handle ?? p.username) ?? '').toString().trim().toLowerCase()
-          if (h && !received.has(h)) notReceived.push(h)
-          if (notReceived.length >= MAIN_SEARCH_LIMIT) break
-        }
-        setSelectedFromAutocomplete((prev) => {
-          const seen = new Set(prev.map((x) => x.toLowerCase()))
-          const added = notReceived.filter((h) => {
-            if (seen.has(h)) return false
-            seen.add(h)
-            return true
-          })
-          return [...prev, ...added]
-        })
-        antMessage.success(`${notReceived.length} perfil(is) adicionado(s) à seleção.`)
-      })
-      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Erro ao carregar perfis'))
-      .finally(() => setLoadingAdd100(false))
-  }
-
   return (
     <div style={{ padding: s.lg, maxWidth: 960, margin: '0 auto', background: c.pageBg, minHeight: '100vh' }}>
       <h1 style={{ marginBottom: s.lg, fontSize: 22, fontWeight: 600 }}>Disparo em massa</h1>
 
-      <Card title="Templates (hash único)" loading={loadingTemplates} style={{ marginBottom: s.lg, borderRadius: r.lg }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalTemplate(true)} style={{ marginBottom: s.md }}>
-          Novo template
+      <div style={{ marginBottom: s.lg }}>
+        <Button type="default" onClick={() => setTemplatesModalOpen(true)}>
+          Getenciar Templates
         </Button>
-        <Table
-          dataSource={templates}
-          rowKey="id"
-          size="small"
-          pagination={false}
-          columns={[
-            { title: 'Hash', dataIndex: 'hash', key: 'hash', width: 160, render: (v: string) => <Text code>{v}</Text> },
-            { title: 'Texto', dataIndex: 'body', key: 'body', ellipsis: true, render: (v: string) => (v?.length > 80 ? `${v.slice(0, 80)}…` : v) },
-            { title: 'Criado', dataIndex: 'created_at', key: 'created_at', width: 160, render: (v: string) => (v ? new Date(v).toLocaleString('pt-BR') : '—') },
-            {
-              title: '',
-              key: 'action',
-              width: 56,
-              render: (_: unknown, record: MessageTemplate) => (
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => {
-                    setEditTemplate(record)
-                    setEditBody(record.body)
-                  }}
-                />
-              ),
-            },
-          ]}
-        />
-      </Card>
+      </div>
+
+      <Modal
+        title="Templates (hash único)"
+        open={templatesModalOpen}
+        onCancel={() => setTemplatesModalOpen(false)}
+        footer={null}
+        width={880}
+      >
+        <Card loading={loadingTemplates} style={{ borderRadius: r.lg, marginBottom: 0 }} bodyStyle={{ padding: s.md }}>
+          <div style={{ marginBottom: s.md }}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalTemplate(true)}>
+              Novo template
+            </Button>
+          </div>
+          <Table
+            dataSource={templates}
+            rowKey="id"
+            size="small"
+            pagination={false}
+            columns={[
+              { title: 'Hash', dataIndex: 'hash', key: 'hash', width: 160, render: (v: string) => <Text code>{v}</Text> },
+              { title: 'Texto', dataIndex: 'body', key: 'body', ellipsis: true, render: (v: string) => (v?.length > 80 ? `${v.slice(0, 80)}…` : v) },
+              {
+                title: 'Rejeitar perfis que já receberam (hash) (obrigatório)',
+                dataIndex: 'reject_hashes',
+                key: 'reject_hashes',
+                width: 260,
+                render: (v: string[] | undefined) => (v && v.length > 0 ? v.join(', ') : '—'),
+              },
+              { title: 'Criado', dataIndex: 'created_at', key: 'created_at', width: 160, render: (v: string) => (v ? new Date(v).toLocaleString('pt-BR') : '—') },
+              {
+                title: '',
+                key: 'action',
+                width: 56,
+                render: (_: unknown, record: MessageTemplate) => (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => {
+                      setEditTemplate(record)
+                      setEditBody(record.body)
+                      setEditRejectHashes(record.reject_hashes ?? [])
+                    }}
+                  />
+                ),
+              },
+            ]}
+          />
+        </Card>
+      </Modal>
 
       <Card title="Adicionar à fila" style={{ marginBottom: s.lg, borderRadius: r.lg }}>
         <Space direction="vertical" style={{ width: '100%' }} size="small">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>Início do envio em</Text>
+              <Select
+                value={sendIntervalMinutes}
+                onChange={(val) => {
+                  setSendIntervalMinutes(val)
+                }}
+                options={SEND_INTERVAL_OPTIONS}
+                style={{ width: 120 }}
+              />
+            </span>
+          </div>
           <div>
-            <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>Template</Text>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>Template (obrigatório)</Text>
             <select
               value={selectedHash}
               onChange={(e) => setSelectedHash(e.target.value)}
@@ -303,35 +364,68 @@ export default function BulkMessage() {
                 <option key={t.id} value={t.hash}>{t.hash}</option>
               ))}
             </select>
+            {selectedTemplate && (
+              <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
+                Rejeitar perfis que já receberam: {selectedTemplate.reject_hashes?.join(', ') ?? '—'}
+              </Text>
+            )}
           </div>
-          <Button
-            type="default"
-            onClick={handleAdd100NotReceived}
-            loading={loadingAdd100}
-            disabled={!selectedHash && templates.length === 0}
-          >
-            Incluir os 100 primeiros que ainda não receberam
-          </Button>
           <div>
             <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-              Buscar perfis (até {MAIN_SEARCH_LIMIT} por busca — mesma busca principal)
+              Buscar entre seus seguidores (Instagram) — digite para filtrar
             </Text>
-            <AutoComplete
-              value={mainSearchValue}
-              onChange={(v) => setMainSearchValue(typeof v === 'string' ? v : '')}
-              onSelect={(v) => {
-                const h = (typeof v === 'string' ? v : '').trim().toLowerCase()
-                if (h && !selectedFromAutocomplete.some((x) => x.toLowerCase() === h)) {
-                  setSelectedFromAutocomplete((prev) => [...prev, h])
-                  setMainSearchValue('')
-                }
-              }}
-              options={mainSearchOptions}
-              style={{ width: '100%', maxWidth: 480 }}
-              placeholder="Digite nome ou @user (mín. 2 caracteres)"
-              loading={mainSearchLoading}
-              filterOption={false}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AutoComplete
+                value={mainSearchValue}
+                onChange={(v) => setMainSearchValue(typeof v === 'string' ? v : '')}
+                onSelect={(v) => {
+                  const h = (typeof v === 'string' ? v : '').trim().toLowerCase()
+                  if (!h) return
+                  if (rejectedSet.has(h)) {
+                    antMessage.warning(`@${h} já recebeu o template ou algum hash e foi rejeitado.`)
+                    return
+                  }
+                  if (!selectedFromAutocomplete.some((x) => x.toLowerCase() === h)) {
+                    setSelectedFromAutocomplete((prev) => [...prev, h])
+                    setMainSearchValue('')
+                  }
+                }}
+                options={mainSearchOptions}
+                style={{ flex: 1, maxWidth: 480 }}
+                placeholder="Digite nome ou @user para buscar (mín. 1 caractere)"
+                loading={mainSearchLoading}
+                filterOption={false}
+              />
+              <Button
+                type="link"
+                size="small"
+                loading={loadingAddAll}
+                disabled={!selectedHash || !selectedTemplate?.reject_hashes?.length}
+                onClick={async () => {
+                  setLoadingAddAll(true)
+                  try {
+                    const res = await fetchFollowersSearch('', { scrolls: 6 })
+                    const allUsernames = (res.usernames || []).map((u) => u.trim().toLowerCase()).filter(Boolean)
+                    const seen = new Set(selectedFromAutocomplete.map((x) => x.toLowerCase()))
+                    const toAdd = allUsernames.filter(
+                      (h) => !seen.has(h) && !rejectedSet.has(h)
+                    )
+                    toAdd.forEach((h) => seen.add(h))
+                    setSelectedFromAutocomplete((prev) => [...prev, ...toAdd])
+                    if (toAdd.length > 0) antMessage.success(`${toAdd.length} seguidor(es) adicionado(s).`)
+                    else if (allUsernames.length > 0) antMessage.info('Todos já estão na seleção ou foram rejeitados pelo filtro.')
+                    else antMessage.warning('Nenhum seguidor encontrado.')
+                  } catch (e) {
+                    antMessage.error(e instanceof Error ? e.message : 'Erro ao buscar seguidores')
+                  } finally {
+                    setLoadingAddAll(false)
+                  }
+                }}
+                style={{ flexShrink: 0, padding: '0 4px', fontSize: 12, opacity: 0.85 }}
+              >
+                Adicionar todos
+              </Button>
+            </div>
             {selectedFromAutocomplete.length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
@@ -345,9 +439,21 @@ export default function BulkMessage() {
               </div>
             )}
           </div>
-          <Button type="primary" onClick={handleAddToQueue} loading={adding} disabled={!selectedHash && templates.length === 0}>
+          <Button type="primary" onClick={handleAddToQueue} loading={adding} disabled={!selectedHash || !selectedTemplate?.reject_hashes?.length}>
             Adicionar à fila
           </Button>
+          {selectedHash && rejectedHandles.length > 0 && (
+            <div style={{ marginTop: s.md, paddingTop: s.sm, borderTop: `1px solid ${c.border}` }}>
+              <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                Rejeitados ({selectedTemplate?.reject_hashes?.join(', ') ?? selectedHash}): {rejectedHandles.length} perfil(is)
+              </Text>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {rejectedHandles.map((h) => (
+                  <Tag key={h} style={{ marginBottom: 0 }}>@{h}</Tag>
+                ))}
+              </div>
+            </div>
+          )}
         </Space>
       </Card>
 
@@ -362,13 +468,32 @@ export default function BulkMessage() {
         style={{ marginBottom: s.lg, borderRadius: r.lg }}
       >
         <div style={{ marginBottom: s.md, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          {dispatching ? (
-            <Button icon={<PauseCircleOutlined />} onClick={() => setDispatching(false)}>Parar disparo</Button>
-          ) : (
-            <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => setDispatching(true)} disabled={pendingCount === 0}>
-              Iniciar disparo (1 a 1, ~1 min entre cada)
-            </Button>
-          )}
+          <Tag color={servicePaused ? 'default' : 'green'}>{servicePaused ? 'Serviço pausado' : 'Serviço rodando'}</Tag>
+          <Button
+            loading={loadingServiceToggle}
+            onClick={async () => {
+              setLoadingServiceToggle(true)
+              try {
+                if (servicePaused) {
+                  await resumeDirectQueueService()
+                  setServicePaused(false)
+                  setServiceRunning(true)
+                  antMessage.success('Serviço retomado.')
+                } else {
+                  await pauseDirectQueueService()
+                  setServicePaused(true)
+                  setServiceRunning(false)
+                  antMessage.success('Serviço pausado.')
+                }
+              } catch (e) {
+                antMessage.error(e instanceof Error ? e.message : 'Erro ao alterar serviço')
+              } finally {
+                setLoadingServiceToggle(false)
+              }
+            }}
+          >
+            {servicePaused ? 'Retomar serviço' : 'Pausar serviço'}
+          </Button>
           <Popconfirm
             title="Deletar toda a fila?"
             description="Todos os itens (pendentes, enviados e falhas) serão removidos. Não é possível desfazer."
@@ -388,7 +513,7 @@ export default function BulkMessage() {
             cancelText="Cancelar"
             okButtonProps={{ danger: true }}
           >
-            <Button type="default" danger icon={<DeleteOutlined />} loading={loadingDeleteQueue} disabled={dispatching || queue.length === 0}>
+            <Button type="default" danger icon={<DeleteOutlined />} loading={loadingDeleteQueue} disabled={queue.length === 0}>
               Deletar fila
             </Button>
           </Popconfirm>
@@ -402,6 +527,19 @@ export default function BulkMessage() {
           columns={[
             { title: '@', dataIndex: 'profile_handle', key: 'profile_handle', width: 140, render: (v: string) => `@${v}` },
             { title: 'Template', dataIndex: 'message_hash', key: 'message_hash', width: 140, render: (v: string) => <Text code>{v}</Text> },
+            {
+              title: 'Agendado em',
+              dataIndex: 'created_at',
+              key: 'created_at',
+              width: 180,
+              render: (_v: string, record: DirectQueueItem) => {
+                const v = record.scheduled_at || record.created_at
+                if (!v) return '—'
+                const d = new Date(v)
+                if (Number.isNaN(d.getTime())) return '—'
+                return d.toLocaleString('pt-BR')
+              },
+            },
             { title: 'Status', dataIndex: 'status', key: 'status', width: 90, render: (v: string) => (v === 'sent' ? 'Enviado' : v === 'failed' ? 'Falha' : 'Pendente') },
             { title: 'Enviado em', dataIndex: 'sent_at', key: 'sent_at', width: 160, render: (v: string | null) => (v ? new Date(v).toLocaleString('pt-BR') : '—') },
             { title: 'Erro', dataIndex: 'error', key: 'error', ellipsis: true, render: (v: string | null) => v ?? '—' },
@@ -428,7 +566,7 @@ export default function BulkMessage() {
                   cancelText="Cancelar"
                   okButtonProps={{ danger: true }}
                 >
-                  <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id} disabled={dispatching} />
+                  <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id} />
                 </Popconfirm>
               ),
             },
@@ -439,7 +577,7 @@ export default function BulkMessage() {
       <Modal
         title="Novo template"
         open={modalTemplate}
-        onCancel={() => setModalTemplate(false)}
+        onCancel={() => { setModalTemplate(false); setNewRejectHashes([]); }}
         onOk={handleAddTemplate}
         okText="Criar"
       >
@@ -452,21 +590,45 @@ export default function BulkMessage() {
             <Text type="secondary">Texto da mensagem</Text>
             <TextArea value={newBody} onChange={(e) => setNewBody(e.target.value)} rows={5} placeholder="Olá! Somos a marca X..." style={{ marginTop: 4 }} />
           </div>
+          <div>
+            <Text type="secondary">Rejeitar perfis que já receberam (hash) (obrigatório)</Text>
+            <Select
+              mode="multiple"
+              value={newRejectHashes}
+              onChange={setNewRejectHashes}
+              options={[
+                ...templates.filter((t) => t.hash !== newHash.trim()).map((t) => ({ value: t.hash, label: t.hash })),
+                ...(newHash.trim() ? [{ value: newHash.trim(), label: `${newHash.trim()} (este template)` }] : []),
+              ]}
+              style={{ width: '100%', marginTop: 4 }}
+              placeholder="Selecione templates (ou use o hash deste)"
+              allowClear
+              showSearch
+              filterOption={(input, option) =>
+                (option?.label ?? '').toString().toLowerCase().includes((input || '').toLowerCase())
+              }
+            />
+          </div>
         </Space>
       </Modal>
 
       <Modal
         title={`Editar template: ${editTemplate?.hash ?? ''}`}
         open={!!editTemplate}
-        onCancel={() => { setEditTemplate(null); setEditBody(''); }}
+        onCancel={() => { setEditTemplate(null); setEditBody(''); setEditRejectHashes([]); }}
         onOk={async () => {
           if (!editTemplate) return
+          if (editRejectHashes.length === 0) {
+            antMessage.warning('Selecione ao menos um hash para rejeitar perfis.')
+            return
+          }
           setSavingEdit(true)
           try {
-            await updateDirectTemplate(editTemplate.id, editBody)
+            await updateDirectTemplate(editTemplate.id, { body: editBody, reject_hashes: editRejectHashes })
             antMessage.success('Template atualizado.')
             setEditTemplate(null)
             setEditBody('')
+            setEditRejectHashes([])
             loadTemplates()
           } catch (e) {
             antMessage.error(e instanceof Error ? e.message : 'Erro ao salvar')
@@ -477,10 +639,33 @@ export default function BulkMessage() {
         okText="Salvar"
         confirmLoading={savingEdit}
       >
-        <div>
-          <Text type="secondary">Texto da mensagem (hash não pode ser alterado)</Text>
-          <TextArea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={6} style={{ marginTop: 8, width: '100%' }} />
-        </div>
+        <Space direction="vertical" style={{ width: '100%' }} size="small">
+          <div>
+            <Text type="secondary">Texto da mensagem (hash não pode ser alterado)</Text>
+            <TextArea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={6} style={{ marginTop: 8, width: '100%' }} />
+          </div>
+          <div>
+            <Text type="secondary">Rejeitar perfis que já receberam (hash) (obrigatório)</Text>
+            <Select
+              mode="multiple"
+              value={editRejectHashes}
+              onChange={setEditRejectHashes}
+              options={[
+                ...templates.map((t) => ({
+                  value: t.hash,
+                  label: editTemplate && t.hash === editTemplate.hash ? `${t.hash} (este)` : t.hash,
+                })),
+              ]}
+              style={{ width: '100%', marginTop: 4 }}
+              placeholder="Selecione templates"
+              allowClear
+              showSearch
+              filterOption={(input, option) =>
+                (option?.label ?? '').toString().toLowerCase().includes((input || '').toLowerCase())
+              }
+            />
+          </div>
+        </Space>
       </Modal>
     </div>
   )

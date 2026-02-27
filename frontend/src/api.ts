@@ -405,6 +405,7 @@ export interface MessageTemplate {
   id: number
   hash: string
   body: string
+  reject_hashes?: string[]
   created_at: string
 }
 
@@ -415,23 +416,27 @@ export async function fetchDirectTemplates(): Promise<{ items: MessageTemplate[]
   return res.json()
 }
 
-export async function createDirectTemplate(hash: string, body: string): Promise<{ id: number; hash: string; body: string }> {
+export async function createDirectTemplate(hash: string, body: string, rejectHashes: string[]): Promise<{ id: number; hash: string; body: string; reject_hashes: string[] }> {
   const res = await fetch(`${API_BASE}/direct/templates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ hash: hash.trim(), body: body.trim() }),
+    body: JSON.stringify({ hash: hash.trim(), body: body.trim(), reject_hashes: rejectHashes.filter(Boolean).map((h) => h.trim()) }),
   })
-  const data = await res.json().catch(() => ({})) as { error?: string; id?: number; hash?: string; body?: string }
+  const data = await res.json().catch(() => ({})) as { error?: string; id?: number; hash?: string; body?: string; reject_hashes?: string[] }
   if (res.status === 400) throw new Error(data.error || 'Dados inválidos')
   if (!res.ok) throw new Error(data.error || 'Falha ao criar template.')
-  return { id: data.id!, hash: data.hash!, body: data.body! }
+  return { id: data.id!, hash: data.hash!, body: data.body!, reject_hashes: data.reject_hashes ?? [] }
 }
 
-export async function updateDirectTemplate(id: number, body: string): Promise<void> {
+export async function updateDirectTemplate(id: number, opts: { body?: string; reject_hashes?: string[] }): Promise<void> {
+  const payload: Record<string, unknown> = {}
+  if (opts.body !== undefined) payload.body = opts.body.trim()
+  if (opts.reject_hashes !== undefined) payload.reject_hashes = opts.reject_hashes
+  if (Object.keys(payload).length === 0) return
   const res = await fetch(`${API_BASE}/direct/templates/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ body: body.trim() }),
+    body: JSON.stringify(payload),
   })
   const data = await res.json().catch(() => ({})) as { error?: string }
   if (res.status === 400 || res.status === 404) throw new Error(data.error || 'Template não encontrado')
@@ -447,6 +452,7 @@ export interface DirectQueueItem {
   sent_at: string | null
   error: string | null
   created_at: string
+  scheduled_at: string | null
 }
 
 /** Handles que já receberam a mensagem com esse hash (para filtro incluir/excluir). */
@@ -456,6 +462,25 @@ export async function fetchDirectHandlesByHash(messageHash: string): Promise<{ h
   if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error('Sem permissão ou hash inválido.')
   if (!res.ok) throw new Error('Falha ao carregar handles por hash.')
   return res.json()
+}
+
+/** Busca entre seus seguidores do Instagram (usa o campo de pesquisa do modal). Use com debounce no frontend. q vazio + scrolls = primeiros N visíveis. */
+export async function fetchFollowersSearch(
+  q: string,
+  opts?: { signal?: AbortSignal; scrolls?: number }
+): Promise<{ usernames: string[] }> {
+  const params = new URLSearchParams()
+  if (q.trim()) params.set('q', q.trim())
+  if (opts?.scrolls != null) params.set('scrolls', String(opts.scrolls))
+  const res = await fetch(`${API_BASE}/direct/followers/search?${params}`, {
+    headers: authHeaders(),
+    signal: opts?.signal,
+  })
+  const data = await res.json().catch(() => ({})) as { usernames?: string[]; error?: string }
+  if (res.status === 400 || res.status === 503) throw new Error(data.error || 'Busca indisponível.')
+  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
+  if (!res.ok) throw new Error(data.error || 'Falha na busca de seguidores.')
+  return { usernames: data.usernames ?? [] }
 }
 
 export async function fetchDirectQueue(opts?: { status?: string; limit?: number; offset?: number }): Promise<{ total: number; items: DirectQueueItem[] }> {
@@ -469,10 +494,16 @@ export async function fetchDirectQueue(opts?: { status?: string; limit?: number;
   return res.json()
 }
 
-export async function addToDirectQueue(items: { profile_handle: string; message_hash: string }[] | string[], messageHash?: string): Promise<{ added: number }> {
-  const body = Array.isArray(items) && items.length > 0 && typeof items[0] === 'object'
-    ? { items }
-    : { handles: items, message_hash: messageHash }
+export async function addToDirectQueue(
+  items: { profile_handle: string; message_hash: string }[] | string[],
+  messageHash?: string,
+  scheduledAtIso?: string
+): Promise<{ added: number }> {
+  const base =
+    Array.isArray(items) && items.length > 0 && typeof items[0] === 'object'
+      ? { items }
+      : { handles: items, message_hash: messageHash }
+  const body = scheduledAtIso ? { ...base, scheduled_at: scheduledAtIso } : base
   const res = await fetch(`${API_BASE}/direct/queue`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -506,15 +537,44 @@ export async function deleteDirectQueueItem(id: number): Promise<void> {
   if (!res.ok) throw new Error(data.error || 'Falha ao remover item.')
 }
 
-export async function processNextDirectQueueItem(): Promise<{ processed: boolean; handle?: string; ok?: boolean; error?: string }> {
-  const res = await fetch(`${API_BASE}/direct/queue/process-next`, {
+/** Status do serviço de fila em background. */
+export async function fetchDirectQueueServiceStatus(): Promise<{ running: boolean; paused: boolean; intervalMinutes: number }> {
+  const res = await fetch(`${API_BASE}/direct/queue/service-status`, { headers: authHeaders() })
+  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
+  if (!res.ok) throw new Error('Falha ao carregar status do serviço.')
+  return res.json()
+}
+
+/** Pausa o serviço de fila em background. */
+export async function pauseDirectQueueService(): Promise<void> {
+  const res = await fetch(`${API_BASE}/direct/queue/service-pause`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({}),
   })
-  const data = await res.json().catch(() => ({})) as { processed?: boolean; handle?: string; ok?: boolean; error?: string }
-  if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao processar fila.')
-  return data
+  if (!res.ok) throw new Error('Falha ao pausar serviço.')
+}
+
+/** Retoma o serviço de fila em background. */
+export async function resumeDirectQueueService(): Promise<void> {
+  const res = await fetch(`${API_BASE}/direct/queue/service-resume`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({}),
+  })
+  if (!res.ok) throw new Error('Falha ao retomar serviço.')
+}
+
+/** Altera o intervalo entre envios (1, 10, 50 ou 100 min). */
+export async function updateDirectQueueServiceInterval(minutes: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/direct/queue/service-interval`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ intervalMinutes: minutes }),
+  })
+  const data = await res.json().catch(() => ({})) as { error?: string }
+  if (res.status === 400) throw new Error(data.error || 'Intervalo inválido')
+  if (!res.ok) throw new Error('Falha ao alterar intervalo.')
 }
 
 export async function fetchPosts(profileHandle: string, limit = 50, offset = 0): Promise<PostsResponse> {

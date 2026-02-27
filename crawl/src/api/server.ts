@@ -34,6 +34,8 @@ import { logTimestamp } from '../utils/logTimestamp.js';
 import { get429BackoffMs, record429 } from '../utils/rateLimit429.js';
 import { sendVerificationCode, sendDirectMessage } from '../instagramClient/sendDirectMessage.js';
 import { followUser, followUserFromCurrentPage } from '../instagramClient/followUser.js';
+import { openFollowersModal, searchInFollowersModal } from '../instagramClient/getMyFollowers.js';
+import type { Page } from 'playwright';
 import { extractProfile } from '../profileExtractor/index.js';
 import { isFollowingViewerFromEntity } from '../utils/entityAccess.js';
 import { AuthDb } from '../auth/authDb.js';
@@ -124,6 +126,12 @@ function getPriorityExtractClient(): InstagramClient {
   }
   return priorityExtractClient;
 }
+
+/** Uma única página reutilizada para busca de seguidores (modal já aberto). Evita abrir novo Chrome a cada request. */
+let followersSearchPage: Page | null = null;
+let followersSearchProfile: string | null = null;
+let followersSearchLock: Promise<void> = Promise.resolve();
+let followersSearchRelease: () => void = () => {};
 
 function isBlockSignal(result: ExtractSingleProfileResult): boolean {
   const err = (result.error ?? '').toLowerCase();
@@ -629,17 +637,23 @@ app.get('/api/direct/templates', requireScopes('adm', 'assinante'), (_req: Reque
   }
 });
 
-/** Cria template de mensagem (hash único + corpo). */
+/** Cria template de mensagem (hash único + corpo + reject_hashes obrigatório). */
 app.post('/api/direct/templates', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
   try {
     const hash = (req.body?.hash ?? '').toString().trim();
     const body = (req.body?.body ?? req.body?.message ?? '').toString().trim();
+    const raw = req.body?.reject_hashes;
+    const rejectHashes = Array.isArray(raw) ? raw.map((h: unknown) => String(h ?? '').trim()).filter(Boolean) : [];
     if (!hash || !body) {
       res.status(400).json({ error: 'Informe hash e body (texto) do template.' });
       return;
     }
-    const id = sqlite.createMessageTemplate(hash, body);
-    res.status(201).json({ id, hash, body });
+    if (rejectHashes.length === 0) {
+      res.status(400).json({ error: 'Informe ao menos um hash em reject_hashes (obrigatório).' });
+      return;
+    }
+    const id = sqlite.createMessageTemplate(hash, body, rejectHashes);
+    res.status(201).json({ id, hash, body, reject_hashes: rejectHashes });
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
     if (err.includes('UNIQUE')) res.status(400).json({ error: 'Já existe um template com esse hash.' });
@@ -647,7 +661,7 @@ app.post('/api/direct/templates', requireScopes('adm', 'assinante'), (req: Reque
   }
 });
 
-/** Atualiza o texto (body) de um template por id. */
+/** Atualiza o texto (body) e/ou reject_hashes de um template por id. */
 app.put('/api/direct/templates/:id', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
   try {
     const id = parseInt(String(req.params.id), 10);
@@ -656,15 +670,79 @@ app.put('/api/direct/templates/:id', requireScopes('adm', 'assinante'), (req: Re
       return;
     }
     const body = (req.body?.body ?? req.body?.message ?? '').toString().trim();
-    if (!body) {
-      res.status(400).json({ error: 'Informe body (texto) do template.' });
+    const raw = req.body?.reject_hashes;
+    const rejectHashes = raw === undefined ? undefined : (Array.isArray(raw) ? raw.map((h: unknown) => String(h ?? '').trim()).filter(Boolean) : []);
+    if (!body && rejectHashes === undefined) {
+      res.status(400).json({ error: 'Informe body e/ou reject_hashes.' });
       return;
     }
-    const updated = sqlite.updateMessageTemplate(id, body);
+    if (rejectHashes !== undefined && rejectHashes.length === 0) {
+      res.status(400).json({ error: 'reject_hashes deve ter ao menos um hash.' });
+      return;
+    }
+    const opts: { body?: string; rejectHashes?: string[] } = {};
+    if (body) opts.body = body;
+    if (rejectHashes !== undefined) opts.rejectHashes = rejectHashes;
+    const updated = sqlite.updateMessageTemplate(id, opts);
     if (!updated) res.status(404).json({ error: 'Template não encontrado.' });
-    else res.json({ id, body });
+    else res.json({ id, body: body || undefined, reject_hashes: rejectHashes });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Busca na lista de seguidores do Instagram (usa o campo de pesquisa do modal). Reutiliza uma única aba: só manipula o input em vez de abrir novo Chrome. */
+app.get('/api/direct/followers/search', requireScopes('adm', 'assinante'), async (req: RequestWithAuth, res: Response) => {
+  try {
+    const q = (req.query?.q ?? '').toString().trim().slice(0, 80);
+    const myProfile = (process.env.INSTAGRAM_PERFIL ?? process.env.INSTAGRAM_USER ?? '').toString().trim().replace(/^@/, '');
+    if (!myProfile) {
+      res.status(503).json({ error: 'INSTAGRAM_PERFIL não configurado.' });
+      return;
+    }
+    const client = getApiExtractClient();
+    await client.init();
+    // Para autocomplete (q preenchido) queremos resposta rápida: usar apenas a
+    // primeira "página" do modal. Quando q vazio (botão "Adicionar todos"),
+    // permitimos mais scrolls configuráveis.
+    const maxScrolls = q
+      ? 0
+      : Math.min(8, parseInt(String(req.query?.scrolls ?? 6), 10) || 6);
+
+    const waitForTurn = followersSearchLock;
+    followersSearchLock = new Promise<void>((r) => {
+      followersSearchRelease = r;
+    });
+    await waitForTurn;
+    try {
+      if (followersSearchPage && followersSearchProfile === myProfile && !followersSearchPage.isClosed()) {
+        const result = await searchInFollowersModal(followersSearchPage, q, maxScrolls);
+        if (!result.error) {
+          res.json({ usernames: result.usernames });
+          return;
+        }
+        await followersSearchPage.close().catch(() => {});
+        followersSearchPage = null;
+        followersSearchProfile = null;
+      }
+      const opened = await openFollowersModal(client, myProfile);
+      if (opened.error || !opened.page) {
+        res.status(400).json({ error: opened.error ?? 'Erro ao abrir modal', usernames: [] });
+        return;
+      }
+      followersSearchPage = opened.page;
+      followersSearchProfile = myProfile;
+      const result = await searchInFollowersModal(opened.page, q, maxScrolls);
+      if (result.error) {
+        res.status(400).json({ error: result.error, usernames: [] });
+        return;
+      }
+      res.json({ usernames: result.usernames });
+    } finally {
+      followersSearchRelease();
+    }
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e), usernames: [] });
   }
 });
 
@@ -731,13 +809,22 @@ app.post('/api/direct/queue', requireScopes('adm', 'assinante'), (req: RequestWi
       return;
     }
     const messageHash = (req.body?.message_hash ?? '').toString().trim();
+    const scheduledAtRaw = req.body?.scheduled_at;
+    const scheduledAt =
+      typeof scheduledAtRaw === 'string' && scheduledAtRaw.trim()
+        ? new Date(scheduledAtRaw).toISOString()
+        : null;
     let added = 0;
     for (const it of items) {
       const handle = (typeof it === 'string' ? it : it?.profile_handle ?? it?.handle ?? '').toString().trim();
       const hash = (typeof it === 'object' && it && 'message_hash' in it ? (it as { message_hash?: string }).message_hash : messageHash).toString().trim();
       if (handle && hash) {
         try {
-          const id = sqlite.addToDirectQueue(handle, hash);
+          const id = (sqlite as unknown as { addToDirectQueue: (h: string, m: string, s?: string | null) => number }).addToDirectQueue(
+            handle,
+            hash,
+            scheduledAt ?? undefined
+          );
           if (id > 0) added++;
         } catch (_) { /* skip erro */ }
       }
@@ -766,6 +853,73 @@ async function processDirectQueueItemById(id: number): Promise<{ ok: boolean; er
   sqlite.updateDirectQueueItem(id, result.ok ? 'sent' : 'failed', result.error ?? undefined);
   return { ok: result.ok ?? false, error: result.error };
 }
+
+/** Worker em background: fila de disparo roda no servidor (não depende do frontend).
+ *  Importante: o intervalo é fixo de 1 minuto; o agendamento fino é feito por scheduled_at em cada item.
+ */
+let directQueueWorkerPaused = false;
+const DIRECT_QUEUE_TICK_MS = 60 * 1000;
+let directQueueWorkerTimer: ReturnType<typeof setInterval> | null = null;
+
+async function runDirectQueueWorkerTick(): Promise<void> {
+  if (directQueueWorkerPaused) return;
+  try {
+    const next = sqlite.getNextPendingDirectQueueItem();
+    if (!next) return;
+    const template = sqlite.getMessageTemplateByHash(next.message_hash);
+    if (!template) {
+      sqlite.updateDirectQueueItem(next.id, 'failed', `Template "${next.message_hash}" não encontrado`);
+      return;
+    }
+    const client = getApiExtractClient();
+    await client.init();
+    const result = await sendDirectMessage(client, next.profile_handle, template.body);
+    sqlite.updateDirectQueueItem(next.id, result.ok ? 'sent' : 'failed', result.error ?? undefined);
+    console.log(`[direct-queue] @${next.profile_handle}: ${result.ok ? 'OK' : result.error ?? 'erro'}`);
+  } catch (e) {
+    console.error('[direct-queue] Erro:', e instanceof Error ? e.message : e);
+  }
+}
+
+function startDirectQueueWorker(): void {
+  if (directQueueWorkerTimer) return;
+  directQueueWorkerTimer = setInterval(runDirectQueueWorkerTick, DIRECT_QUEUE_TICK_MS);
+  console.log('[direct-queue] Worker iniciado (intervalo fixo: 1 min)');
+}
+
+function stopDirectQueueWorker(): void {
+  if (directQueueWorkerTimer) {
+    clearInterval(directQueueWorkerTimer);
+    directQueueWorkerTimer = null;
+  }
+}
+
+/** Status do serviço de fila em background. */
+app.get('/api/direct/queue/service-status', requireScopes('adm', 'assinante'), (_req: RequestWithAuth, res: Response) => {
+  res.json({
+    running: !directQueueWorkerPaused && directQueueWorkerTimer != null,
+    paused: directQueueWorkerPaused,
+    intervalMinutes: 1,
+  });
+});
+
+/** Pausa o serviço de fila. */
+app.post('/api/direct/queue/service-pause', requireScopes('adm', 'assinante'), (_req: RequestWithAuth, res: Response) => {
+  directQueueWorkerPaused = true;
+  res.json({ paused: true });
+});
+
+/** Retoma o serviço de fila. */
+app.post('/api/direct/queue/service-resume', requireScopes('adm', 'assinante'), (_req: RequestWithAuth, res: Response) => {
+  directQueueWorkerPaused = false;
+  res.json({ paused: false });
+});
+
+/** Mantido por compatibilidade: não altera mais o intervalo (fixo em 1 min). */
+app.put('/api/direct/queue/service-interval', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  void req; // ignorado
+  res.json({ intervalMinutes: 1 });
+});
 
 /** Processa o próximo item pendente da fila: envia 1 DM e atualiza status. Retorna { processed, handle, ok, error }. */
 app.post('/api/direct/queue/process-next', requireScopes('adm', 'assinante'), async (req: RequestWithAuth, res: Response) => {
@@ -1556,7 +1710,7 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
     //if (isFirstActivation) {
     if (!sqlite.getMessageTemplateByHash(WELCOME_QUEUE_HASH)) {
       try {
-        sqlite.createMessageTemplate(WELCOME_QUEUE_HASH, WELCOME_DEFAULT_BODY);
+        sqlite.createMessageTemplate(WELCOME_QUEUE_HASH, WELCOME_DEFAULT_BODY, [WELCOME_QUEUE_HASH]);
       } catch (_) {
         /* já existe */
       }
@@ -2014,6 +2168,8 @@ app.get('/api-docs', (_req: Request, res: Response) => {
       .init()
       .then(() => console.log('Browser (Chromium) aquecido e pronto para extract-profile.'))
       .catch((err) => console.warn('Warmup do browser falhou (primeiro extract-profile pode demorar):', err instanceof Error ? err.message : err));
+    // Worker de fila de disparo em background (roda sempre que há pendentes)
+    startDirectQueueWorker();
   });
 })().catch((err) => {
   console.error('Falha ao iniciar a API:', err);

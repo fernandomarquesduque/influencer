@@ -143,11 +143,32 @@ export class SqliteSync {
         status TEXT NOT NULL DEFAULT 'pending',
         sent_at TEXT,
         error TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        /** Momento a partir do qual o worker pode enviar (ISO). */
+        scheduled_at TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_direct_queue_status ON direct_queue(status);
     `);
     this.migrateActivationColumns();
+    this.migrateMessageTemplatesRejectHashes();
+    this.migrateDirectQueueColumns();
+  }
+
+  private migrateMessageTemplatesRejectHashes(): void {
+    try {
+      this.db.exec('ALTER TABLE message_templates ADD COLUMN reject_hashes TEXT DEFAULT \'[]\'');
+    } catch (_) {
+      // Coluna já existe
+    }
+  }
+
+  /** Migrações específicas da fila direct_queue (novas colunas). */
+  private migrateDirectQueueColumns(): void {
+    try {
+      this.db.exec('ALTER TABLE direct_queue ADD COLUMN scheduled_at TEXT');
+    } catch (_) {
+      // Coluna já existe
+    }
   }
 
   private migrateActivationColumns(): void {
@@ -360,27 +381,64 @@ export class SqliteSync {
   }
 
   // ——— Direct em massa: templates e fila ———
-  listMessageTemplates(): { id: number; hash: string; body: string; created_at: string }[] {
-    return this.db.prepare(
-      'SELECT id, hash, body, created_at FROM message_templates ORDER BY created_at DESC'
-    ).all() as { id: number; hash: string; body: string; created_at: string }[];
+  listMessageTemplates(): { id: number; hash: string; body: string; reject_hashes: string[]; created_at: string }[] {
+    const rows = this.db.prepare(
+      'SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes, created_at FROM message_templates ORDER BY created_at DESC'
+    ).all() as { id: number; hash: string; body: string; reject_hashes: string; created_at: string }[];
+    return rows.map((r) => {
+      let arr: string[] = [];
+      try {
+        arr = JSON.parse(r.reject_hashes || '[]');
+        if (!Array.isArray(arr)) arr = [];
+      } catch {
+        arr = [];
+      }
+      return { ...r, reject_hashes: arr };
+    });
   }
 
-  getMessageTemplateByHash(hash: string): { id: number; hash: string; body: string } | null {
-    const row = this.db.prepare('SELECT id, hash, body FROM message_templates WHERE hash = ?').get(hash.trim()) as { id: number; hash: string; body: string } | undefined;
-    return row ?? null;
+  getMessageTemplateByHash(hash: string): { id: number; hash: string; body: string; reject_hashes: string[] } | null {
+    const row = this.db.prepare('SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes FROM message_templates WHERE hash = ?').get(hash.trim()) as { id: number; hash: string; body: string; reject_hashes: string } | undefined;
+    if (!row) return null;
+    let arr: string[] = [];
+    try {
+      arr = JSON.parse(row.reject_hashes || '[]');
+      if (!Array.isArray(arr)) arr = [];
+    } catch {
+      arr = [];
+    }
+    return { ...row, reject_hashes: arr };
   }
 
-  createMessageTemplate(hash: string, body: string): number {
+  getMessageTemplateById(id: number): { id: number; hash: string; body: string; reject_hashes: string[] } | null {
+    const row = this.db.prepare('SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes FROM message_templates WHERE id = ?').get(id) as { id: number; hash: string; body: string; reject_hashes: string } | undefined;
+    if (!row) return null;
+    let arr: string[] = [];
+    try {
+      arr = JSON.parse(row.reject_hashes || '[]');
+      if (!Array.isArray(arr)) arr = [];
+    } catch {
+      arr = [];
+    }
+    return { ...row, reject_hashes: arr };
+  }
+
+  createMessageTemplate(hash: string, body: string, rejectHashes: string[] = []): number {
     const now = new Date().toISOString();
+    const rejectJson = JSON.stringify(rejectHashes.filter(Boolean).map((h) => h.trim()).filter(Boolean));
     const info = this.db.prepare(
-      'INSERT INTO message_templates (hash, body, created_at) VALUES (?, ?, ?)'
-    ).run(hash.trim(), body.trim(), now);
+      'INSERT INTO message_templates (hash, body, reject_hashes, created_at) VALUES (?, ?, ?, ?)'
+    ).run(hash.trim(), body.trim(), rejectJson, now);
     return info.lastInsertRowid as number;
   }
 
-  updateMessageTemplate(id: number, body: string): boolean {
-    const info = this.db.prepare('UPDATE message_templates SET body = ? WHERE id = ?').run(body.trim(), id);
+  updateMessageTemplate(id: number, opts: { body?: string; rejectHashes?: string[] }): boolean {
+    const current = this.getMessageTemplateById(id);
+    if (!current) return false;
+    const body = opts.body !== undefined ? opts.body.trim() : current.body;
+    const rejectHashes = opts.rejectHashes !== undefined ? opts.rejectHashes.filter(Boolean).map((h) => h.trim()).filter(Boolean) : current.reject_hashes;
+    const rejectJson = JSON.stringify(rejectHashes);
+    const info = this.db.prepare('UPDATE message_templates SET body = ?, reject_hashes = ? WHERE id = ?').run(body, rejectJson, id);
     return info.changes > 0;
   }
 
@@ -393,27 +451,52 @@ export class SqliteSync {
     return !!row;
   }
 
-  addToDirectQueue(profileHandle: string, messageHash: string): number {
+  /** True se já existe QUALQUER item pendente para este perfil (independente do template). */
+  private hasPendingForHandle(profileHandle: string): boolean {
     const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    const row = this.db.prepare(
+      'SELECT 1 FROM direct_queue WHERE profile_handle = ? AND status = ? LIMIT 1'
+    ).get(handle, 'pending');
+    return !!row;
+  }
+
+  addToDirectQueue(profileHandle: string, messageHash: string, scheduledAt?: string): number {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    // Já recebeu esse hash com sucesso? Não adicionar de novo.
     if (this.hasAlreadyReceivedMessage(handle, messageHash.trim())) return 0;
+    // Já existe item pendente para este perfil (qualquer hash)? Não criar outro agendamento.
+    if (this.hasPendingForHandle(handle)) return 0;
     const now = new Date().toISOString();
+    const scheduled =
+      scheduledAt && typeof scheduledAt === 'string'
+        ? new Date(scheduledAt).toISOString()
+        : null;
     const info = this.db.prepare(
-      'INSERT INTO direct_queue (profile_handle, message_hash, status, created_at) VALUES (?, ?, ?, ?)'
-    ).run(handle, messageHash.trim(), 'pending', now);
+      'INSERT INTO direct_queue (profile_handle, message_hash, status, created_at, scheduled_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(handle, messageHash.trim(), 'pending', now, scheduled);
     return info.lastInsertRowid as number;
   }
 
-  getDirectQueueItemById(id: number): { id: number; profile_handle: string; message_hash: string; status: string } | null {
+  getDirectQueueItemById(id: number): { id: number; profile_handle: string; message_hash: string; status: string; scheduled_at: string | null } | null {
     const row = this.db.prepare(
-      'SELECT id, profile_handle, message_hash, status FROM direct_queue WHERE id = ?'
-    ).get(id) as { id: number; profile_handle: string; message_hash: string; status: string } | undefined;
+      'SELECT id, profile_handle, message_hash, status, scheduled_at FROM direct_queue WHERE id = ?'
+    ).get(id) as { id: number; profile_handle: string; message_hash: string; status: string; scheduled_at: string | null } | undefined;
     return row ?? null;
   }
 
-  getNextPendingDirectQueueItem(): { id: number; profile_handle: string; message_hash: string } | null {
+  getNextPendingDirectQueueItem(): { id: number; profile_handle: string; message_hash: string; scheduled_at: string | null } | null {
+    const nowIso = new Date().toISOString();
     const row = this.db.prepare(
-      'SELECT id, profile_handle, message_hash FROM direct_queue WHERE status = ? ORDER BY id ASC LIMIT 1'
-    ).get('pending') as { id: number; profile_handle: string; message_hash: string } | undefined;
+      `SELECT id, profile_handle, message_hash, scheduled_at
+       FROM direct_queue
+       WHERE status = ?
+         AND (scheduled_at IS NULL OR scheduled_at <= ?)
+       ORDER BY
+         CASE WHEN scheduled_at IS NULL THEN 1 ELSE 0 END,
+         scheduled_at ASC,
+         id ASC
+       LIMIT 1`
+    ).get('pending', nowIso) as { id: number; profile_handle: string; message_hash: string; scheduled_at: string | null } | undefined;
     return row ?? null;
   }
 
@@ -441,7 +524,14 @@ export class SqliteSync {
     const countRow = this.db.prepare(`SELECT COUNT(*) as c FROM direct_queue ${where}`).get(...params) as { c: number };
     const total = countRow?.c ?? 0;
     const items = this.db.prepare(
-      `SELECT id, profile_handle, message_hash, status, sent_at, error, created_at FROM direct_queue ${where} ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 ELSE 2 END, id ASC LIMIT ? OFFSET ?`
+      `SELECT id, profile_handle, message_hash, status, sent_at, error, created_at, scheduled_at
+       FROM direct_queue ${where}
+       ORDER BY
+         CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 ELSE 2 END,
+         CASE WHEN scheduled_at IS NULL THEN 1 ELSE 0 END,
+         scheduled_at ASC,
+         id ASC
+       LIMIT ? OFFSET ?`
     ).all(...params, limit, offset) as DirectQueueRow[];
     return { total, items };
   }
@@ -471,6 +561,7 @@ export interface DirectQueueRow {
   sent_at: string | null;
   error: string | null;
   created_at: string;
+  scheduled_at: string | null;
 }
 
 export interface ProjectRow {

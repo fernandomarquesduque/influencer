@@ -50,6 +50,14 @@ async function dismissModals(page: Page, maxAttempts = 2): Promise<void> {
 
 const INVALID_USERNAMES = new Set(['explore', 'direct', 'reel', 'stories', 'accounts', 'p', 'reels', 'challenge']);
 
+const FOLLOWERS_SEARCH_INPUT_SELECTORS = [
+  'div[role="dialog"] input[placeholder*="Pesquisar"]',
+  'div[role="dialog"] input[placeholder*="Search"]',
+  'div[role="dialog"] input[type="text"]',
+  'div[role="dialog"] input[aria-label*="Pesquisar"]',
+  'div[role="dialog"] input[aria-label*="Search"]',
+];
+
 /**
  * Extrai usernames dos links no modal de seguidores.
  * Aceita href como /username/ ou /username (e ignora query string).
@@ -240,6 +248,133 @@ export async function getMyFollowers(
 
 /** Log callback opcional (ex.: do sendDM) para manter um único prefixo de tempo. */
 export type LogStepFn = (msg: string) => void;
+
+/**
+ * Abre o perfil, clica em "Seguidores" e deixa o modal aberto. Retorna a página para reuso (não fecha).
+ * Use searchInFollowersModal na mesma página para buscar sem abrir novo Chrome.
+ */
+export async function openFollowersModal(
+  client: InstagramClient,
+  myUsername: string
+): Promise<{ page: Page | null; error?: string }> {
+  const myUser = myUsername.replace(/^@/, '').trim().toLowerCase();
+  if (!myUser) return { page: null, error: 'myUsername obrigatório' };
+  if (looksLikeEmail(myUser)) return { page: null, error: 'Use o username do Instagram (não e-mail).' };
+
+  const page = await client.newPage();
+  try {
+    const profileUrl = InstagramClient.profileUrl(myUser);
+    await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await randomDelay(1000, 1800);
+    if (page.url().includes('/accounts/login') || page.url().includes('/challenge/')) {
+      await page.close().catch(() => {});
+      return { page: null, error: 'Sessão expirada. Faça login novamente.' };
+    }
+    await dismissModals(page);
+
+    const followersLink = page.locator('main a[href*="followers"]').first();
+    await followersLink.waitFor({ state: 'visible', timeout: 10000 }).catch(() => null);
+    if ((await followersLink.count()) === 0) {
+      await page.close().catch(() => {});
+      return { page: null, error: 'Link "Seguidores" não encontrado.' };
+    }
+    await followersLink.click({ timeout: 5000 });
+    await randomDelay(1800, 2800);
+
+    const dialog = page.locator('div[role="dialog"]').first();
+    await dialog.waitFor({ state: 'visible', timeout: 12000 }).catch(() => null);
+    if ((await dialog.count()) === 0) {
+      await page.close().catch(() => {});
+      return { page: null, error: 'Modal de seguidores não abriu.' };
+    }
+    return { page };
+  } catch (e) {
+    await page.close().catch(() => {});
+    return { page: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Usa o modal de seguidores já aberto na página: preenche o input de busca e extrai usernames.
+ * Não fecha a página. Se o modal não existir mais, retorna error.
+ */
+export async function searchInFollowersModal(
+  page: Page,
+  query: string,
+  maxScrolls = 2
+): Promise<{ usernames: string[]; error?: string }> {
+  try {
+    if (page.isClosed()) return { usernames: [], error: 'Página fechada.' };
+
+    const dialog = page.locator('div[role="dialog"]').first();
+    await dialog.waitFor({ state: 'visible', timeout: 3000 }).catch(() => null);
+    if ((await dialog.count()) === 0) return { usernames: [], error: 'Modal não está aberto.' };
+
+    const q = query.trim().toLowerCase();
+    let searchInput: ReturnType<Page['locator']> | null = null;
+    for (const sel of FOLLOWERS_SEARCH_INPUT_SELECTORS) {
+      const el = page.locator(sel).first();
+      if ((await el.count()) > 0) {
+        try {
+          await el.waitFor({ state: 'visible', timeout: 2000 });
+          searchInput = el;
+          break;
+        } catch {
+          continue;
+        }
+      }
+    }
+    if (searchInput) {
+      await searchInput.click();
+      await randomDelay(80, 150);
+      await searchInput.fill(q);
+      // Para autocomplete rápido, não precisamos esperar tanto:
+      // o Instagram costuma aplicar o filtro em <500ms.
+      await randomDelay(450, 750);
+    }
+
+    const allUsernames = new Set<string>();
+    for (let s = 0; s <= maxScrolls; s++) {
+      const current = await extractUsernamesFromDialog(page);
+      current.forEach((u) => allUsernames.add(u));
+      if (s < maxScrolls) {
+        // Para busca por nome no modal, pequenos scrolls já revelam
+        // todos os matches relevantes, evitando travar o autocomplete.
+        await scrollFollowersList(page, 260);
+        await randomDelay(160, 320);
+      }
+    }
+    return { usernames: Array.from(allUsernames) };
+  } catch (e) {
+    return { usernames: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Busca na lista de seguidores do Instagram usando o campo de pesquisa do modal.
+ * Abre uma nova página, faz a busca e fecha (para callers que não reutilizam).
+ * Prefira openFollowersModal + searchInFollowersModal no server para reusar a mesma aba.
+ */
+export async function searchMyFollowers(
+  client: InstagramClient,
+  myUsername: string,
+  query: string,
+  maxScrolls = 2
+): Promise<{ usernames: string[]; error?: string }> {
+  const myUser = myUsername.replace(/^@/, '').trim().toLowerCase();
+  const q = query.trim().toLowerCase();
+  if (!myUser) return { usernames: [], error: 'myUsername obrigatório' };
+  if (looksLikeEmail(myUser)) return { usernames: [], error: 'Use o username do Instagram (não e-mail).' };
+
+  const opened = await openFollowersModal(client, myUser);
+  if (opened.error || !opened.page) return { usernames: [], error: opened.error };
+  try {
+    const result = await searchInFollowersModal(opened.page, q, maxScrolls);
+    return result;
+  } finally {
+    await opened.page.close().catch(() => {});
+  }
+}
 
 /**
  * Verifica se o handle está na lista de SEGUIDORES do usuário logado (modal Seguidores).
