@@ -3,7 +3,7 @@ import { Form, Input, Button, Card, message, Collapse } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
 import { requestCodeWithExtract, verifyProfile, type ExtractProfileResult } from '../api'
-import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, ExclamationCircleOutlined, InstagramOutlined, ReloadOutlined } from '@ant-design/icons'
+import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, InstagramOutlined, ReloadOutlined, EditOutlined, ArrowRightOutlined } from '@ant-design/icons'
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
   nao_segue_perfil: '', // tratado por bloco especial no RejectionFullScreen
@@ -28,7 +28,28 @@ const INSTALL_PHRASES = [
 
 const INSTALL_DURATION_MS = 30_000 // barra avança ao longo de ~30 segundos
 
-/** Tela inteira: perfil não elegível + todas as regras + botão Voltar. */
+const ELIGIBILITY_RULES = (
+  <ul
+    style={{
+      margin: 0,
+      paddingLeft: 18,
+      lineHeight: 1.6,
+      fontSize: 12,
+      color: 'var(--app-text-secondary)',
+    }}
+  >
+    <li>É obrigatório <strong style={{ color: 'var(--app-text)' }}>seguir o perfil oficial do programa</strong> no Instagram para receber o código de ativação por mensagem direta (2FA).</li>
+    <li>O perfil precisa ser <strong style={{ color: 'var(--app-text)' }}>público</strong> (não aceitamos perfis privados).</li>
+    <li>O perfil deve ser de <strong style={{ color: 'var(--app-text)' }}>pessoa ou criador</strong> (não aceitamos contas de empresa ou estabelecimentos como bares, restaurantes, lojas).</li>
+    <li><strong style={{ color: 'var(--app-text)' }}>Conta pessoal</strong>: é exigido o dobro do mínimo de seguidores configurado no programa.</li>
+    <li><strong style={{ color: 'var(--app-text)' }}>Conta criador</strong>: é exigido o mínimo de seguidores configurado.</li>
+    <li>Se o tipo de conta não for identificado, é exigido o triplo do mínimo de seguidores.</li>
+    <li>O perfil não pode ser classificado como <strong style={{ color: 'var(--app-text)' }}>estabelecimento comercial</strong> (categoria, nome ou tipo de conta indicando negócio).</li>
+    <li>Quando há regra de curtidas, é necessário ter <strong style={{ color: 'var(--app-text)' }}>pelo menos um post</strong> com o número mínimo de curtidas exigido.</li>
+  </ul>
+)
+
+/** Tela inteira: perfil não elegível + solução (colocar perfil correto) + regras. */
 function RejectionFullScreen({
   result,
   onUnderstood,
@@ -38,6 +59,9 @@ function RejectionFullScreen({
   onUnderstood: () => void
   onRetry?: (handle: string) => void
 }) {
+  const [correctHandle, setCorrectHandle] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
   useEffect(() => {
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -54,13 +78,26 @@ function RejectionFullScreen({
     ? (REJECTION_REASON_LABELS[result.rejectionReason] ?? result.rejectionReason)
     : result.error ?? 'Perfil não atende aos critérios do programa.'
 
+  const isNotFound = String(result.error ?? '').toLowerCase().includes('não encontrado') || String(reasonText).toLowerCase().includes('não encontrado')
+
+  const handleTryCorrectProfile = async () => {
+    const handle = correctHandle.replace(/^@/, '').trim().toLowerCase()
+    if (!handle) return
+    setSubmitting(true)
+    try {
+      onRetry?.(handle)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   return (
     <div
       style={{
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
-        background: 'var(--app-bg)',
+        background: 'linear-gradient(160deg, #f8f4ff 0%, #fff9f0 40%, #f5f0ff 100%)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -71,20 +108,17 @@ function RejectionFullScreen({
         overflowX: 'hidden',
       }}
     >
-      <style>{`
-        @keyframes auth-follow-pulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(131, 58, 180, 0.4); }
-          50% { transform: scale(1.03); box-shadow: 0 0 0 8px rgba(131, 58, 180, 0); }
-        }
-        .auth-follow-btn-pulse {
-          animation: auth-follow-pulse 1.5s ease-in-out infinite;
-        }
-      `}</style>
       <div
         style={{
           width: '100%',
-          maxWidth: 520,
-          marginBottom: 20,
+          maxWidth: 480,
+          background: 'rgba(255, 255, 255, 0.92)',
+          backdropFilter: 'blur(14px)',
+          borderRadius: 24,
+          padding: '32px 28px 28px',
+          boxShadow: '0 20px 50px rgba(104, 39, 143, 0.12), 0 8px 24px rgba(0,0,0,0.06)',
+          border: '1px solid rgba(255, 255, 255, 0.9)',
+          marginBottom: 16,
         }}
       >
         {isFollowRequired ? (
@@ -92,41 +126,28 @@ function RejectionFullScreen({
             <div style={{ textAlign: 'center', marginBottom: 24 }}>
               <div
                 style={{
-                  width: 64,
-                  height: 64,
-                  margin: '0 auto 16px',
-                  borderRadius: 16,
-                  background: 'linear-gradient(135deg, var(--app-info-bg) 0%, rgba(104, 39, 143, 0.08) 100%)',
-                  border: '1px solid var(--app-info-border)',
+                  width: 72,
+                  height: 72,
+                  margin: '0 auto 20px',
+                  borderRadius: 20,
+                  background: 'linear-gradient(135deg, #833AB4 0%, #FD1D1D 50%, #F77737 100%)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
+                  boxShadow: '0 12px 28px rgba(131, 58, 180, 0.35)',
                 }}
               >
-                <InstagramOutlined style={{ fontSize: 28, color: 'var(--brand-primary)' }} />
+                <InstagramOutlined style={{ fontSize: 32, color: '#fff' }} />
               </div>
-              <h1
-                style={{
-                  fontSize: 20,
-                  fontWeight: 700,
-                  color: 'var(--app-text)',
-                  margin: '0 0 8px',
-                  letterSpacing: '-0.02em',
-                }}
-              >
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--app-text)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>
                 Quase lá! Só falta um passinho
               </h1>
               <p style={{ fontSize: 15, color: 'var(--app-text-secondary)', margin: 0, lineHeight: 1.5 }}>
                 Segue o{' '}
-                <a
-                  href={result.followProfileUrl!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: 'var(--app-primary)', fontWeight: 600, textDecoration: 'none' }}
-                >
+                <a href={result.followProfileUrl!} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--app-primary)', fontWeight: 600, textDecoration: 'none' }}>
                   @{followProfileHandle}
                 </a>
-                {' '}no Insta para mandarmos código de acesso na DM.
+                {' '}no Insta para mandarmos o código de acesso na DM.
               </p>
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
@@ -134,149 +155,136 @@ function RejectionFullScreen({
                 href={result.followProfileUrl!}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="auth-follow-btn-pulse"
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
-                  padding: '8px 14px',
-                  borderRadius: 20,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  padding: '12px 20px', borderRadius: 14,
                   background: 'linear-gradient(135deg, #833AB4 0%, #FD1D1D 50%, #F77737 100%)',
-                  color: '#fff',
-                  fontWeight: 500,
-                  fontSize: 13,
-                  textDecoration: 'none',
+                  color: '#fff', fontWeight: 600, fontSize: 14, textDecoration: 'none',
                 }}
               >
-                <InstagramOutlined style={{ fontSize: 14 }} />
+                <InstagramOutlined style={{ fontSize: 16 }} />
                 Seguir Perfil
               </a>
             </div>
-            <p style={{ fontSize: 13, color: 'var(--app-text-tertiary)', textAlign: 'center', margin: 0, marginBottom: 16 }}>
+            <p style={{ fontSize: 13, color: 'var(--app-text-tertiary)', textAlign: 'center', margin: 0, marginBottom: 20 }}>
               Depois de seguir, volte aqui e tente novamente.
             </p>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
-              <Button
-                type="primary"
-                size="large"
-                onClick={() => (onRetry ? onRetry(result.handle) : onUnderstood())}
-                style={{
-                  height: 48,
-                  minWidth: 200,
-                  borderRadius: 10,
-                  fontWeight: 600,
-                  fontSize: 15,
-                  background: 'var(--app-primary)',
-                  border: 'none',
-                }}
-              >
-                <ReloadOutlined style={{ marginRight: 8 }} />
-                Já Sigo, Tentar novamente
-              </Button>
-            </div>
+            <Button
+              type="primary"
+              size="large"
+              onClick={() => (onRetry ? onRetry(result.handle) : onUnderstood())}
+              style={{ height: 48, minWidth: 220, borderRadius: 14, fontWeight: 600, fontSize: 15, background: 'var(--app-primary)', border: 'none', display: 'block', margin: '0 auto' }}
+              icon={<ReloadOutlined />}
+            >
+              Já sigo, tentar novamente
+            </Button>
           </>
         ) : (
           <>
-            <div style={{ textAlign: 'center', marginBottom: 20 }}>
-              <ExclamationCircleOutlined style={{ fontSize: 44, color: 'var(--app-warning-accent)' }} />
-              <h1
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <div
                 style={{
-                  fontSize: 18,
-                  fontWeight: 700,
-                  color: 'var(--app-text)',
-                  margin: '12px 0 4px',
-                  letterSpacing: '-0.02em',
+                  width: 64,
+                  height: 64,
+                  margin: '0 auto 16px',
+                  borderRadius: 20,
+                  background: 'linear-gradient(135deg, rgba(234, 179, 8, 0.15) 0%, rgba(232, 186, 0, 0.08) 100%)',
+                  border: '1px solid rgba(234, 179, 8, 0.35)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
-                Perfil não elegível
+                <EditOutlined style={{ fontSize: 28, color: 'var(--app-warning-accent)' }} />
+              </div>
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--app-text)', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
+                {isNotFound ? `@${result.handle} não encontrado` : 'Esse perfil não deu certo'}
               </h1>
-              <p style={{ fontSize: 13, color: 'var(--app-text-secondary)', margin: 0 }}>
-                @{result.handle} não atende aos critérios do programa.
+              <p style={{ fontSize: 15, color: 'var(--app-text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                {isNotFound
+                  ? 'Verifique se o seu @ do Instagram esta correto e validamos de novamente.'
+                  : `@${result.handle} não atende aos critérios do programa. Coloque outro @ ou o perfil correto para continuar.`}
               </p>
             </div>
+
             <div
               style={{
-                background: 'var(--app-alert-danger-bg)',
-                border: '1px solid var(--app-alert-danger-border)',
-                borderRadius: 10,
-                padding: '12px 14px',
-                marginBottom: 16,
+                background: 'rgba(220, 38, 38, 0.06)',
+                border: '1px solid rgba(220, 38, 38, 0.2)',
+                borderRadius: 12,
+                padding: '12px 16px',
+                marginBottom: 24,
               }}
             >
               <strong style={{ color: 'var(--app-danger-accent)', fontSize: 12 }}>Motivo:</strong>{' '}
-              <span style={{ color: 'var(--app-text-secondary)', fontSize: 12 }}>{reasonText}</span>
+              <span style={{ color: 'var(--app-text-secondary)', fontSize: 13 }}>{reasonText}</span>
               {result.diagnostic && result.diagnostic.minRequired != null && (
-                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--app-text-secondary)' }}>
+                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--app-text-secondary)' }}>
                   Mínimo exigido: {result.diagnostic.minRequired.toLocaleString('pt-BR')}
                 </div>
               )}
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', fontSize: 14, fontWeight: 600, color: 'var(--app-text)', marginBottom: 10 }}>
+                Coloque o @ correto do Instagram
+              </label>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <Input
+                  prefix={<span style={{ color: 'var(--app-text-tertiary)', fontWeight: 500 }}>@</span>}
+                  placeholder="seu_usuario"
+                  value={correctHandle}
+                  onChange={(e) => setCorrectHandle(e.target.value.replace(/^@/, '').trim())}
+                  onPressEnter={handleTryCorrectProfile}
+                  size="large"
+                  style={{ flex: 1, minWidth: 160, borderRadius: 12 }}
+                  autoFocus
+                />
+                <Button
+                  type="primary"
+                  size="large"
+                  loading={submitting}
+                  onClick={handleTryCorrectProfile}
+                  disabled={!correctHandle.replace(/\s/g, '')}
+                  style={{ height: 40, borderRadius: 12, fontWeight: 600, background: 'var(--app-primary)', border: 'none' }}
+                  icon={<ArrowRightOutlined />}
+                >
+                  Validar
+                </Button>
+              </div>
             </div>
           </>
         )}
 
         <Collapse
           size="small"
-          style={{
-            marginBottom: 20,
-            background: 'var(--app-card-bg)',
-            border: '1px solid var(--app-border)',
-            borderRadius: 10,
-          }}
+          style={{ background: 'rgba(104, 39, 143, 0.04)', border: '1px solid var(--app-border)', borderRadius: 14 }}
           items={[
             {
               key: 'regras',
-              label: (
-                <span style={{ color: 'var(--app-text)', fontWeight: 600, fontSize: 13 }}>
-                  Regras de elegibilidade do programa
-                </span>
-              ),
-              children: (
-                <div style={{ paddingTop: 2, paddingBottom: 2 }}>
-                  <ul
-                    style={{
-                      margin: 0,
-                      paddingLeft: 18,
-                      lineHeight: 1.6,
-                      fontSize: 12,
-                      color: 'var(--app-text-secondary)',
-                    }}
-                  >
-                    <li>É obrigatório <strong style={{ color: 'var(--app-text)' }}>seguir o perfil oficial do programa</strong> no Instagram para receber o código de ativação por mensagem direta (2FA).</li>
-                    <li>O perfil precisa ser <strong style={{ color: 'var(--app-text)' }}>público</strong> (não aceitamos perfis privados).</li>
-                    <li>O perfil deve ser de <strong style={{ color: 'var(--app-text)' }}>pessoa ou criador</strong> (não aceitamos contas de empresa ou estabelecimentos como bares, restaurantes, lojas).</li>
-                    <li><strong style={{ color: 'var(--app-text)' }}>Conta pessoal</strong>: é exigido o dobro do mínimo de seguidores configurado no programa.</li>
-                    <li><strong style={{ color: 'var(--app-text)' }}>Conta criador</strong>: é exigido o mínimo de seguidores configurado.</li>
-                    <li>Se o tipo de conta não for identificado, é exigido o triplo do mínimo de seguidores.</li>
-                    <li>O perfil não pode ser classificado como <strong style={{ color: 'var(--app-text)' }}>estabelecimento comercial</strong> (categoria, nome ou tipo de conta indicando negócio).</li>
-                    <li>Quando há regra de curtidas, é necessário ter <strong style={{ color: 'var(--app-text)' }}>pelo menos um post</strong> com o número mínimo de curtidas exigido.</li>
-                  </ul>
-                </div>
-              ),
+              label: <span style={{ color: 'var(--app-text)', fontWeight: 600, fontSize: 13 }}>Regras de elegibilidade do programa</span>,
+              children: <div style={{ paddingTop: 2, paddingBottom: 2 }}>{ELIGIBILITY_RULES}</div>,
             },
           ]}
         />
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-        <Button
-          type="default"
-          size="middle"
-          onClick={onUnderstood}
-          style={{
-            height: 40,
-            minWidth: 100,
-            borderRadius: 10,
-            fontWeight: 500,
-            fontSize: 13,
-            color: 'var(--app-text-secondary)',
-            borderColor: 'var(--app-border)',
-            background: 'transparent',
-          }}
-        >
-          Voltar
-        </Button>
-      </div>
+      <Button
+        type="text"
+        onClick={onUnderstood}
+        style={{
+          height: 40,
+          padding: '0 20px',
+          borderRadius: 12,
+          fontWeight: 500,
+          fontSize: 13,
+          color: 'var(--app-text-tertiary)',
+          border: 'none',
+          background: 'transparent',
+        }}
+      >
+        Voltar ao início
+      </Button>
     </div>
   )
 }

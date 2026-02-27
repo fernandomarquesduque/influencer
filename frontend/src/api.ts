@@ -407,6 +407,8 @@ export interface MessageTemplate {
   body: string
   reject_hashes?: string[]
   created_at: string
+  /** Minutos à frente para agendar o envio (regra do template). */
+  send_delay_minutes?: number
 }
 
 export async function fetchDirectTemplates(): Promise<{ items: MessageTemplate[] }> {
@@ -416,22 +418,28 @@ export async function fetchDirectTemplates(): Promise<{ items: MessageTemplate[]
   return res.json()
 }
 
-export async function createDirectTemplate(hash: string, body: string, rejectHashes: string[]): Promise<{ id: number; hash: string; body: string; reject_hashes: string[] }> {
+export async function createDirectTemplate(hash: string, body: string, rejectHashes: string[], sendDelayMinutes: number = 1): Promise<{ id: number; hash: string; body: string; reject_hashes: string[]; send_delay_minutes: number }> {
   const res = await fetch(`${API_BASE}/direct/templates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ hash: hash.trim(), body: body.trim(), reject_hashes: rejectHashes.filter(Boolean).map((h) => h.trim()) }),
+    body: JSON.stringify({
+      hash: hash.trim(),
+      body: body.trim(),
+      reject_hashes: rejectHashes.filter(Boolean).map((h) => h.trim()),
+      send_delay_minutes: Math.max(1, Math.min(999, Math.floor(sendDelayMinutes))),
+    }),
   })
-  const data = await res.json().catch(() => ({})) as { error?: string; id?: number; hash?: string; body?: string; reject_hashes?: string[] }
+  const data = await res.json().catch(() => ({})) as { error?: string; id?: number; hash?: string; body?: string; reject_hashes?: string[]; send_delay_minutes?: number }
   if (res.status === 400) throw new Error(data.error || 'Dados inválidos')
   if (!res.ok) throw new Error(data.error || 'Falha ao criar template.')
-  return { id: data.id!, hash: data.hash!, body: data.body!, reject_hashes: data.reject_hashes ?? [] }
+  return { id: data.id!, hash: data.hash!, body: data.body!, reject_hashes: data.reject_hashes ?? [], send_delay_minutes: data.send_delay_minutes ?? 1 }
 }
 
-export async function updateDirectTemplate(id: number, opts: { body?: string; reject_hashes?: string[] }): Promise<void> {
+export async function updateDirectTemplate(id: number, opts: { body?: string; reject_hashes?: string[]; send_delay_minutes?: number }): Promise<void> {
   const payload: Record<string, unknown> = {}
   if (opts.body !== undefined) payload.body = opts.body.trim()
   if (opts.reject_hashes !== undefined) payload.reject_hashes = opts.reject_hashes
+  if (opts.send_delay_minutes !== undefined) payload.send_delay_minutes = Math.max(1, Math.min(999, Math.floor(opts.send_delay_minutes)))
   if (Object.keys(payload).length === 0) return
   const res = await fetch(`${API_BASE}/direct/templates/${id}`, {
     method: 'PUT',
@@ -535,6 +543,22 @@ export async function deleteDirectQueueItem(id: number): Promise<void> {
   if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
   if (res.status === 404) throw new Error('Item não encontrado.')
   if (!res.ok) throw new Error(data.error || 'Falha ao remover item.')
+}
+
+/** Atualiza um item da fila (template, data de agendamento e/ou status). */
+export async function updateDirectQueueItem(
+  id: number,
+  payload: { message_hash?: string; scheduled_at?: string | null; status?: 'pending' | 'sent' | 'failed' }
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/direct/queue/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({})) as { error?: string }
+  if (res.status === 400 || res.status === 404) throw new Error(data.error || 'Item não encontrado ou já enviado.')
+  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
+  if (!res.ok) throw new Error(data.error || 'Falha ao atualizar item.')
 }
 
 /** Status do serviço de fila em background. */

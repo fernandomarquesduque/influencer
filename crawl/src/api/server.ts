@@ -78,6 +78,51 @@ const sqlite = new SqliteSync(sqlitePath);
 const db = new CompositeStorage(rocks, sqlite, (storage) => scheduleSearchCacheRewarm(storage));
 const authDb = new AuthDb(sqlitePath);
 
+/** Hash do template usado para convocar perfis aprovados para seleção. */
+const SELECTION_QUEUE_HASH = 'selecao';
+
+/** Enfileira automaticamente uma mensagem de seleção (#selecao) após extração bem-sucedida, respeitando as regras de rejeição do template. */
+function enqueueSelectionMessageIfAllowed(handle: string): void {
+  const cleanHandle = handle.replace(/^@/, '').trim().toLowerCase();
+  if (!cleanHandle) {
+    console.log('[direct-queue] seleção automática: handle vazio, ignorando');
+    return;
+  }
+  try {
+    const template = sqlite.getMessageTemplateByHash(SELECTION_QUEUE_HASH);
+    if (!template) {
+      console.log(`[direct-queue] seleção automática: template "${SELECTION_QUEUE_HASH}" não existe, @${cleanHandle} não enfileirado`);
+      return;
+    }
+    const rejectHashes = Array.isArray(template.reject_hashes) ? template.reject_hashes : [];
+    if (rejectHashes.length === 0) {
+      console.log(`[direct-queue] seleção automática: template "${SELECTION_QUEUE_HASH}" sem reject_hashes, @${cleanHandle} não enfileirado`);
+      return;
+    }
+    for (const h of rejectHashes) {
+      const rejectHash = (h ?? '').trim();
+      if (!rejectHash) continue;
+      if (sqlite.hasAlreadyReceivedMessage(cleanHandle, rejectHash)) {
+        console.log(`[direct-queue] seleção automática: @${cleanHandle} já recebeu hash "${rejectHash}", não enfileirar #selecao`);
+        return;
+      }
+    }
+    const delayMin = Math.max(1, Math.min(999, template.send_delay_minutes ?? 30));
+    const scheduledAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString();
+    const queueId = sqlite.addToDirectQueue(cleanHandle, SELECTION_QUEUE_HASH, scheduledAt);
+    if (queueId > 0) {
+      console.log(`[direct-queue] seleção automática: @${cleanHandle} enfileirado #selecao (id=${queueId}, agendado ${delayMin} min)`);
+    } else {
+      console.log(`[direct-queue] seleção automática: @${cleanHandle} não enfileirado (addToDirectQueue retornou 0, já pendente este hash?)`);
+    }
+  } catch (e) {
+    console.error(
+      '[direct-queue] erro ao enfileirar seleção automática:',
+      e instanceof Error ? e.message : e
+    );
+  }
+}
+
 /** Worker de extração por perfil: 1 client + 1 context quentes, fila com concorrência 1. */
 let apiExtractClient: InstagramClient | null = null;
 let apiExtractQueue: Promise<void> = Promise.resolve();
@@ -131,7 +176,7 @@ function getPriorityExtractClient(): InstagramClient {
 let followersSearchPage: Page | null = null;
 let followersSearchProfile: string | null = null;
 let followersSearchLock: Promise<void> = Promise.resolve();
-let followersSearchRelease: () => void = () => {};
+let followersSearchRelease: () => void = () => { };
 
 function isBlockSignal(result: ExtractSingleProfileResult): boolean {
   const err = (result.error ?? '').toLowerCase();
@@ -219,6 +264,12 @@ async function runOneExtract(
         await client.closeContext();
       }
       return result;
+    }
+    if (result.success && result.saved
+      && !forRefresh
+    ) {
+      console.log(`[runOneExtract] @${result.handle} extração salva, tentando enfileirar #selecao (30 min)`);
+      enqueueSelectionMessageIfAllowed(result.handle);
     }
     if (!options?.skipCount) apiExtractProfileCount++;
     return result;
@@ -637,13 +688,14 @@ app.get('/api/direct/templates', requireScopes('adm', 'assinante'), (_req: Reque
   }
 });
 
-/** Cria template de mensagem (hash único + corpo + reject_hashes obrigatório). */
+/** Cria template de mensagem (hash único + corpo + reject_hashes obrigatório + send_delay_minutes). */
 app.post('/api/direct/templates', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
   try {
     const hash = (req.body?.hash ?? '').toString().trim();
     const body = (req.body?.body ?? req.body?.message ?? '').toString().trim();
     const raw = req.body?.reject_hashes;
     const rejectHashes = Array.isArray(raw) ? raw.map((h: unknown) => String(h ?? '').trim()).filter(Boolean) : [];
+    const sendDelayMinutes = typeof req.body?.send_delay_minutes === 'number' ? req.body.send_delay_minutes : (parseInt(String(req.body?.send_delay_minutes ?? 1), 10) || 1);
     if (!hash || !body) {
       res.status(400).json({ error: 'Informe hash e body (texto) do template.' });
       return;
@@ -652,8 +704,9 @@ app.post('/api/direct/templates', requireScopes('adm', 'assinante'), (req: Reque
       res.status(400).json({ error: 'Informe ao menos um hash em reject_hashes (obrigatório).' });
       return;
     }
-    const id = sqlite.createMessageTemplate(hash, body, rejectHashes);
-    res.status(201).json({ id, hash, body, reject_hashes: rejectHashes });
+    const id = sqlite.createMessageTemplate(hash, body, rejectHashes, sendDelayMinutes);
+    const delay = Math.max(1, Math.min(999, Math.floor(sendDelayMinutes)));
+    res.status(201).json({ id, hash, body, reject_hashes: rejectHashes, send_delay_minutes: delay });
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
     if (err.includes('UNIQUE')) res.status(400).json({ error: 'Já existe um template com esse hash.' });
@@ -661,7 +714,7 @@ app.post('/api/direct/templates', requireScopes('adm', 'assinante'), (req: Reque
   }
 });
 
-/** Atualiza o texto (body) e/ou reject_hashes de um template por id. */
+/** Atualiza o texto (body), reject_hashes e/ou send_delay_minutes de um template por id. */
 app.put('/api/direct/templates/:id', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
   try {
     const id = parseInt(String(req.params.id), 10);
@@ -672,20 +725,23 @@ app.put('/api/direct/templates/:id', requireScopes('adm', 'assinante'), (req: Re
     const body = (req.body?.body ?? req.body?.message ?? '').toString().trim();
     const raw = req.body?.reject_hashes;
     const rejectHashes = raw === undefined ? undefined : (Array.isArray(raw) ? raw.map((h: unknown) => String(h ?? '').trim()).filter(Boolean) : []);
-    if (!body && rejectHashes === undefined) {
-      res.status(400).json({ error: 'Informe body e/ou reject_hashes.' });
+    const sendDelayMinutes = req.body?.send_delay_minutes;
+    const sendDelay = sendDelayMinutes === undefined ? undefined : (typeof sendDelayMinutes === 'number' ? sendDelayMinutes : (parseInt(String(sendDelayMinutes), 10) || 1));
+    if (!body && rejectHashes === undefined && sendDelay === undefined) {
+      res.status(400).json({ error: 'Informe body, reject_hashes e/ou send_delay_minutes.' });
       return;
     }
     if (rejectHashes !== undefined && rejectHashes.length === 0) {
       res.status(400).json({ error: 'reject_hashes deve ter ao menos um hash.' });
       return;
     }
-    const opts: { body?: string; rejectHashes?: string[] } = {};
+    const opts: { body?: string; rejectHashes?: string[]; send_delay_minutes?: number } = {};
     if (body) opts.body = body;
     if (rejectHashes !== undefined) opts.rejectHashes = rejectHashes;
+    if (sendDelay !== undefined) opts.send_delay_minutes = sendDelay;
     const updated = sqlite.updateMessageTemplate(id, opts);
     if (!updated) res.status(404).json({ error: 'Template não encontrado.' });
-    else res.json({ id, body: body || undefined, reject_hashes: rejectHashes });
+    else res.json({ id, body: body || undefined, reject_hashes: rejectHashes, send_delay_minutes: sendDelay });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -721,7 +777,7 @@ app.get('/api/direct/followers/search', requireScopes('adm', 'assinante'), async
           res.json({ usernames: result.usernames });
           return;
         }
-        await followersSearchPage.close().catch(() => {});
+        await followersSearchPage.close().catch(() => { });
         followersSearchPage = null;
         followersSearchProfile = null;
       }
@@ -800,6 +856,49 @@ app.delete('/api/direct/queue/:id', requireScopes('adm', 'assinante'), (req: Req
   }
 });
 
+/** Atualiza um item pendente da fila (template e/ou data de agendamento). */
+app.patch('/api/direct/queue/:id', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'ID inválido.' });
+      return;
+    }
+    const body = req.body ?? {};
+    const messageHash =
+      body.message_hash !== undefined ? String(body.message_hash).trim() : undefined;
+    const scheduledAtRaw = body.scheduled_at;
+    const scheduledAt =
+      scheduledAtRaw !== undefined
+        ? typeof scheduledAtRaw === 'string' && scheduledAtRaw.trim()
+          ? new Date(scheduledAtRaw).toISOString()
+          : null
+        : undefined;
+    const statusBody = body.status;
+    const statusRaw =
+      statusBody !== undefined && typeof statusBody === 'string' && ['pending', 'sent', 'failed'].includes(statusBody.trim())
+        ? statusBody.trim()
+        : undefined;
+    const status = statusRaw as 'pending' | 'sent' | 'failed' | undefined;
+    if (messageHash === undefined && scheduledAt === undefined && status === undefined) {
+      res.status(400).json({ error: 'Envie message_hash, scheduled_at e/ou status para atualizar.' });
+      return;
+    }
+    const updated = sqlite.updatePendingDirectQueueItem(id, {
+      ...(messageHash !== undefined && { message_hash: messageHash }),
+      ...(scheduledAt !== undefined && { scheduled_at: scheduledAt }),
+      ...(status !== undefined && { status }),
+    });
+    if (!updated) {
+      res.status(404).json({ error: 'Item não encontrado ou já foi enviado.' });
+      return;
+    }
+    res.json({ updated: true });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 /** Adiciona itens à fila de disparo (handle + hash do template). */
 app.post('/api/direct/queue', requireScopes('adm', 'assinante'), (req: RequestWithAuth, res: Response) => {
   try {
@@ -838,6 +937,42 @@ app.post('/api/direct/queue', requireScopes('adm', 'assinante'), (req: RequestWi
 const WELCOME_QUEUE_HASH = 'bemvindo';
 const WELCOME_DEFAULT_BODY = 'Olá! Bem-vindo à plataforma. Seu cadastro foi ativado.';
 
+/** Retorna mensagem de erro se o perfil já recebeu algum dos reject_hashes do template; null se pode enviar. */
+function getRejectReasonIfAlreadyReceived(
+  profileHandle: string,
+  template: { reject_hashes?: string[] }
+): string | null {
+  const rejectHashes = Array.isArray(template.reject_hashes) ? template.reject_hashes : [];
+  for (const h of rejectHashes) {
+    const rejectHash = (h ?? '').trim();
+    if (!rejectHash) continue;
+    if (sqlite.hasAlreadyReceivedMessage(profileHandle, rejectHash)) {
+      return `Perfil já recebeu o template "${rejectHash}".`;
+    }
+  }
+  return null;
+}
+
+/** Substitui {firstname} e {nickname} no corpo do template pelos dados do perfil. */
+async function resolveTemplateBody(body: string, profileHandle: string): Promise<string> {
+  const handle = profileHandle.trim().toLowerCase().replace(/^@/, '');
+  let firstname = handle;
+  try {
+    const entity = await db.loadByHandle(handle);
+    if (entity && typeof entity === 'object') {
+      const data = entity.data as { user?: { full_name?: string } } | undefined;
+      const fullName = (typeof data?.user?.full_name === 'string' ? data.user.full_name : (entity as { full_name?: string }).full_name) ?? '';
+      firstname = fullName.trim() ? fullName.trim().split(/\s+/)[0] ?? handle : handle;
+    }
+  } catch {
+    // mantém firstname = handle se não houver perfil
+  }
+  const nickname = profileHandle.trim().replace(/^@/, '') || handle;
+  return body
+    .replace(/\{firstname\}/gi, firstname)
+    .replace(/\{nickname\}/gi, nickname);
+}
+
 /** Processa um item da fila por id (para envio imediato ex.: bem-vindo na primeira ativação). */
 async function processDirectQueueItemById(id: number): Promise<{ ok: boolean; error?: string }> {
   const item = sqlite.getDirectQueueItemById(id);
@@ -847,9 +982,15 @@ async function processDirectQueueItemById(id: number): Promise<{ ok: boolean; er
     sqlite.updateDirectQueueItem(id, 'failed', `Template "${item.message_hash}" não encontrado`);
     return { ok: false, error: 'Template não encontrado' };
   }
+  const rejectReason = getRejectReasonIfAlreadyReceived(item.profile_handle, template);
+  if (rejectReason) {
+    sqlite.updateDirectQueueItem(id, 'failed', rejectReason);
+    return { ok: false, error: rejectReason };
+  }
   const client = getApiExtractClient();
   await client.init();
-  const result = await sendDirectMessage(client, item.profile_handle, template.body);
+  const message = await resolveTemplateBody(template.body, item.profile_handle);
+  const result = await sendDirectMessage(client, item.profile_handle, message);
   sqlite.updateDirectQueueItem(id, result.ok ? 'sent' : 'failed', result.error ?? undefined);
   return { ok: result.ok ?? false, error: result.error };
 }
@@ -871,9 +1012,16 @@ async function runDirectQueueWorkerTick(): Promise<void> {
       sqlite.updateDirectQueueItem(next.id, 'failed', `Template "${next.message_hash}" não encontrado`);
       return;
     }
+    const rejectReason = getRejectReasonIfAlreadyReceived(next.profile_handle, template);
+    if (rejectReason) {
+      sqlite.updateDirectQueueItem(next.id, 'failed', rejectReason);
+      console.log(`[direct-queue] @${next.profile_handle}: rejeitado (${rejectReason})`);
+      return;
+    }
     const client = getApiExtractClient();
     await client.init();
-    const result = await sendDirectMessage(client, next.profile_handle, template.body);
+    const message = await resolveTemplateBody(template.body, next.profile_handle);
+    const result = await sendDirectMessage(client, next.profile_handle, message);
     sqlite.updateDirectQueueItem(next.id, result.ok ? 'sent' : 'failed', result.error ?? undefined);
     console.log(`[direct-queue] @${next.profile_handle}: ${result.ok ? 'OK' : result.error ?? 'erro'}`);
   } catch (e) {
@@ -935,9 +1083,16 @@ app.post('/api/direct/queue/process-next', requireScopes('adm', 'assinante'), as
       res.json({ processed: true, handle: next.profile_handle, ok: false, error: 'Template não encontrado' });
       return;
     }
+    const rejectReason = getRejectReasonIfAlreadyReceived(next.profile_handle, template);
+    if (rejectReason) {
+      sqlite.updateDirectQueueItem(next.id, 'failed', rejectReason);
+      res.json({ processed: true, handle: next.profile_handle, ok: false, error: rejectReason });
+      return;
+    }
     const client = getApiExtractClient();
     await client.init();
-    const result = await sendDirectMessage(client, next.profile_handle, template.body);
+    const message = await resolveTemplateBody(template.body, next.profile_handle);
+    const result = await sendDirectMessage(client, next.profile_handle, message);
     sqlite.updateDirectQueueItem(next.id, result.ok ? 'sent' : 'failed', result.error ?? undefined);
     res.json({ processed: true, handle: next.profile_handle, ok: result.ok ?? false, error: result.error });
   } catch (e) {
@@ -1711,13 +1866,21 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
     if (!sqlite.getMessageTemplateByHash(WELCOME_QUEUE_HASH)) {
       try {
         sqlite.createMessageTemplate(WELCOME_QUEUE_HASH, WELCOME_DEFAULT_BODY, [WELCOME_QUEUE_HASH]);
+        console.log(`[activation] template #${WELCOME_QUEUE_HASH} criado (não existia)`);
       } catch (_) {
         /* já existe */
       }
     }
     try {
-      const queueId = sqlite.addToDirectQueue(handle, WELCOME_QUEUE_HASH);
-      await processDirectQueueItemById(queueId);
+      const template = sqlite.getMessageTemplateByHash(WELCOME_QUEUE_HASH);
+      const delayMin = template ? Math.max(1, Math.min(999, template.send_delay_minutes ?? 1)) : 1;
+      const scheduledAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString();
+      const queueId = sqlite.addToDirectQueue(handle, WELCOME_QUEUE_HASH, scheduledAt);
+      if (queueId > 0) {
+        console.log(`[activation] @${handle} enfileirado #${WELCOME_QUEUE_HASH} (id=${queueId}, agendado ${delayMin} min)`);
+      } else {
+        console.log(`[activation] @${handle} não enfileirado #${WELCOME_QUEUE_HASH} (já recebido ou já pendente este hash)`);
+      }
     } catch (e) {
       console.error('[activation] Envio de bem-vindo na fila:', e instanceof Error ? e.message : String(e));
     }

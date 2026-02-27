@@ -151,12 +151,21 @@ export class SqliteSync {
     `);
     this.migrateActivationColumns();
     this.migrateMessageTemplatesRejectHashes();
+    this.migrateMessageTemplatesSendDelay();
     this.migrateDirectQueueColumns();
   }
 
   private migrateMessageTemplatesRejectHashes(): void {
     try {
       this.db.exec('ALTER TABLE message_templates ADD COLUMN reject_hashes TEXT DEFAULT \'[]\'');
+    } catch (_) {
+      // Coluna já existe
+    }
+  }
+
+  private migrateMessageTemplatesSendDelay(): void {
+    try {
+      this.db.exec('ALTER TABLE message_templates ADD COLUMN send_delay_minutes INTEGER DEFAULT 1');
     } catch (_) {
       // Coluna já existe
     }
@@ -381,10 +390,10 @@ export class SqliteSync {
   }
 
   // ——— Direct em massa: templates e fila ———
-  listMessageTemplates(): { id: number; hash: string; body: string; reject_hashes: string[]; created_at: string }[] {
+  listMessageTemplates(): { id: number; hash: string; body: string; reject_hashes: string[]; created_at: string; send_delay_minutes: number }[] {
     const rows = this.db.prepare(
-      'SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes, created_at FROM message_templates ORDER BY created_at DESC'
-    ).all() as { id: number; hash: string; body: string; reject_hashes: string; created_at: string }[];
+      'SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes, created_at, COALESCE(send_delay_minutes, 1) as send_delay_minutes FROM message_templates ORDER BY created_at DESC'
+    ).all() as { id: number; hash: string; body: string; reject_hashes: string; created_at: string; send_delay_minutes: number }[];
     return rows.map((r) => {
       let arr: string[] = [];
       try {
@@ -393,12 +402,12 @@ export class SqliteSync {
       } catch {
         arr = [];
       }
-      return { ...r, reject_hashes: arr };
+      return { ...r, reject_hashes: arr, send_delay_minutes: r.send_delay_minutes ?? 1 };
     });
   }
 
-  getMessageTemplateByHash(hash: string): { id: number; hash: string; body: string; reject_hashes: string[] } | null {
-    const row = this.db.prepare('SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes FROM message_templates WHERE hash = ?').get(hash.trim()) as { id: number; hash: string; body: string; reject_hashes: string } | undefined;
+  getMessageTemplateByHash(hash: string): { id: number; hash: string; body: string; reject_hashes: string[]; send_delay_minutes: number } | null {
+    const row = this.db.prepare('SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes, COALESCE(send_delay_minutes, 1) as send_delay_minutes FROM message_templates WHERE hash = ?').get(hash.trim()) as { id: number; hash: string; body: string; reject_hashes: string; send_delay_minutes: number } | undefined;
     if (!row) return null;
     let arr: string[] = [];
     try {
@@ -407,11 +416,11 @@ export class SqliteSync {
     } catch {
       arr = [];
     }
-    return { ...row, reject_hashes: arr };
+    return { ...row, reject_hashes: arr, send_delay_minutes: row.send_delay_minutes ?? 1 };
   }
 
-  getMessageTemplateById(id: number): { id: number; hash: string; body: string; reject_hashes: string[] } | null {
-    const row = this.db.prepare('SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes FROM message_templates WHERE id = ?').get(id) as { id: number; hash: string; body: string; reject_hashes: string } | undefined;
+  getMessageTemplateById(id: number): { id: number; hash: string; body: string; reject_hashes: string[]; send_delay_minutes: number } | null {
+    const row = this.db.prepare('SELECT id, hash, body, COALESCE(reject_hashes, \'[]\') as reject_hashes, COALESCE(send_delay_minutes, 1) as send_delay_minutes FROM message_templates WHERE id = ?').get(id) as { id: number; hash: string; body: string; reject_hashes: string; send_delay_minutes: number } | undefined;
     if (!row) return null;
     let arr: string[] = [];
     try {
@@ -420,25 +429,27 @@ export class SqliteSync {
     } catch {
       arr = [];
     }
-    return { ...row, reject_hashes: arr };
+    return { ...row, reject_hashes: arr, send_delay_minutes: row.send_delay_minutes ?? 1 };
   }
 
-  createMessageTemplate(hash: string, body: string, rejectHashes: string[] = []): number {
+  createMessageTemplate(hash: string, body: string, rejectHashes: string[] = [], sendDelayMinutes: number = 1): number {
     const now = new Date().toISOString();
     const rejectJson = JSON.stringify(rejectHashes.filter(Boolean).map((h) => h.trim()).filter(Boolean));
+    const delay = Math.max(1, Math.min(999, Math.floor(sendDelayMinutes)));
     const info = this.db.prepare(
-      'INSERT INTO message_templates (hash, body, reject_hashes, created_at) VALUES (?, ?, ?, ?)'
-    ).run(hash.trim(), body.trim(), rejectJson, now);
+      'INSERT INTO message_templates (hash, body, reject_hashes, created_at, send_delay_minutes) VALUES (?, ?, ?, ?, ?)'
+    ).run(hash.trim(), body.trim(), rejectJson, now, delay);
     return info.lastInsertRowid as number;
   }
 
-  updateMessageTemplate(id: number, opts: { body?: string; rejectHashes?: string[] }): boolean {
+  updateMessageTemplate(id: number, opts: { body?: string; rejectHashes?: string[]; send_delay_minutes?: number }): boolean {
     const current = this.getMessageTemplateById(id);
     if (!current) return false;
     const body = opts.body !== undefined ? opts.body.trim() : current.body;
     const rejectHashes = opts.rejectHashes !== undefined ? opts.rejectHashes.filter(Boolean).map((h) => h.trim()).filter(Boolean) : current.reject_hashes;
     const rejectJson = JSON.stringify(rejectHashes);
-    const info = this.db.prepare('UPDATE message_templates SET body = ?, reject_hashes = ? WHERE id = ?').run(body, rejectJson, id);
+    const delay = opts.send_delay_minutes !== undefined ? Math.max(1, Math.min(999, Math.floor(opts.send_delay_minutes))) : (current.send_delay_minutes ?? 1);
+    const info = this.db.prepare('UPDATE message_templates SET body = ?, reject_hashes = ?, send_delay_minutes = ? WHERE id = ?').run(body, rejectJson, delay, id);
     return info.changes > 0;
   }
 
@@ -460,12 +471,21 @@ export class SqliteSync {
     return !!row;
   }
 
+  /** True se já existe item pendente para este perfil E este hash (evita duplicar o mesmo template). */
+  private hasPendingForHandleAndHash(profileHandle: string, messageHash: string): boolean {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    const row = this.db.prepare(
+      'SELECT 1 FROM direct_queue WHERE profile_handle = ? AND message_hash = ? AND status = ? LIMIT 1'
+    ).get(handle, messageHash.trim(), 'pending');
+    return !!row;
+  }
+
   addToDirectQueue(profileHandle: string, messageHash: string, scheduledAt?: string): number {
     const handle = profileHandle.toLowerCase().replace(/^@/, '');
     // Já recebeu esse hash com sucesso? Não adicionar de novo.
     if (this.hasAlreadyReceivedMessage(handle, messageHash.trim())) return 0;
-    // Já existe item pendente para este perfil (qualquer hash)? Não criar outro agendamento.
-    if (this.hasPendingForHandle(handle)) return 0;
+    // Já existe item pendente para este perfil com ESTE hash? Não duplicar.
+    if (this.hasPendingForHandleAndHash(handle, messageHash.trim())) return 0;
     const now = new Date().toISOString();
     const scheduled =
       scheduledAt && typeof scheduledAt === 'string'
@@ -505,6 +525,52 @@ export class SqliteSync {
     this.db.prepare(
       'UPDATE direct_queue SET status = ?, sent_at = ?, error = ? WHERE id = ?'
     ).run(status, sent_at, error ?? null, id);
+  }
+
+  /** Atualiza um item da fila (message_hash, scheduled_at e/ou status). Se status for enviado, permite editar qualquer item; senão apenas pendentes. Retorna true se atualizou. */
+  updatePendingDirectQueueItem(
+    id: number,
+    opts: { message_hash?: string; scheduled_at?: string | null; status?: 'pending' | 'sent' | 'failed' }
+  ): boolean {
+    const item = this.getDirectQueueItemById(id);
+    if (!item) return false;
+    const onlyPending = opts.status === undefined;
+    if (onlyPending && item.status !== 'pending') return false;
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    if (opts.message_hash !== undefined && opts.message_hash.trim()) {
+      updates.push('message_hash = ?');
+      values.push(opts.message_hash.trim());
+    }
+    if (opts.scheduled_at !== undefined) {
+      updates.push('scheduled_at = ?');
+      values.push(
+        opts.scheduled_at && opts.scheduled_at.trim()
+          ? new Date(opts.scheduled_at.trim()).toISOString()
+          : null
+      );
+    }
+    if (opts.status !== undefined) {
+      updates.push('status = ?');
+      values.push(opts.status);
+      if (opts.status === 'pending') {
+        updates.push('sent_at = ?', 'error = ?');
+        values.push(null, null);
+      } else if (opts.status === 'sent') {
+        updates.push('sent_at = COALESCE(sent_at, ?)', 'error = ?');
+        values.push(new Date().toISOString(), null);
+      } else if (opts.status === 'failed') {
+        updates.push('sent_at = COALESCE(sent_at, ?)');
+        values.push(new Date().toISOString());
+      }
+    }
+    if (updates.length === 0) return true;
+    values.push(id);
+    const whereClause = onlyPending ? ' WHERE id = ? AND status = \'pending\'' : ' WHERE id = ?';
+    this.db.prepare(
+      `UPDATE direct_queue SET ${updates.join(', ')}${whereClause}`
+    ).run(...values);
+    return true;
   }
 
   /** Handles que já receberam a mensagem com o hash (status = sent). Para filtro incluir/excluir no disparo. */

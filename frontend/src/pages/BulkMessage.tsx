@@ -13,12 +13,12 @@ import {
   addToDirectQueue,
   deleteDirectQueue,
   deleteDirectQueueItem,
+  updateDirectQueueItem,
   fetchDirectHandlesByHash,
   fetchFollowersSearch,
   fetchDirectQueueServiceStatus,
   pauseDirectQueueService,
   resumeDirectQueueService,
-  updateDirectQueueServiceInterval,
   type MessageTemplate,
   type DirectQueueItem,
 } from '../api'
@@ -32,16 +32,28 @@ const c = t.colors
 const r = t.radius
 
 const SEND_INTERVAL_OPTIONS = [
+  { value: 0, label: '0 min' },
   { value: 1, label: '1 min' },
   { value: 10, label: '10 min' },
+  { value: 30, label: '30 min' },
   { value: 50, label: '50 min' },
   { value: 100, label: '100 min' },
 ]
 
+/** Formata Date para value do input datetime-local (horário local, não UTC). */
+function toLocalDatetimeInputValue(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const h = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+  return `${y}-${m}-${d}T${h}:${min}`
+}
+
 export default function BulkMessage() {
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [queue, setQueue] = useState<DirectQueueItem[]>([])
-  const [total, setTotal] = useState(0)
+  const [, setTotal] = useState(0)
   const [loadingTemplates, setLoadingTemplates] = useState(true)
   const [loadingQueue, setLoadingQueue] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -53,12 +65,16 @@ export default function BulkMessage() {
   const [mainSearchLoading, setMainSearchLoading] = useState(false)
   const [loadingDeleteQueue, setLoadingDeleteQueue] = useState(false)
   const [loadingAddAll, setLoadingAddAll] = useState(false)
-  const [sendIntervalMinutes, setSendIntervalMinutes] = useState(1)
   const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
-  const [serviceRunning, setServiceRunning] = useState(false)
+  const [, setServiceRunning] = useState(false)
   const [servicePaused, setServicePaused] = useState(false)
   const [loadingServiceToggle, setLoadingServiceToggle] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [editQueueItem, setEditQueueItem] = useState<DirectQueueItem | null>(null)
+  const [editQueueHash, setEditQueueHash] = useState('')
+  const [editQueueScheduledAt, setEditQueueScheduledAt] = useState('')
+  const [editQueueStatus, setEditQueueStatus] = useState<'pending' | 'sent' | 'failed'>('pending')
+  const [savingEditQueue, setSavingEditQueue] = useState(false)
   const mainSearchAbortRef = useRef<AbortController | null>(null)
   const followersSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mainSearchValueRef = useRef('')
@@ -67,9 +83,11 @@ export default function BulkMessage() {
   const [newHash, setNewHash] = useState('')
   const [newBody, setNewBody] = useState('')
   const [newRejectHashes, setNewRejectHashes] = useState<string[]>([])
+  const [newSendDelayMinutes, setNewSendDelayMinutes] = useState(1)
   const [editTemplate, setEditTemplate] = useState<MessageTemplate | null>(null)
   const [editBody, setEditBody] = useState('')
   const [editRejectHashes, setEditRejectHashes] = useState<string[]>([])
+  const [editSendDelayMinutes, setEditSendDelayMinutes] = useState(1)
   const [savingEdit, setSavingEdit] = useState(false)
   const [filterExcludeHandles, setFilterExcludeHandles] = useState<string[]>([])
   const selectedTemplate = useMemo(() => templates.find((t) => t.hash === selectedHash) ?? null, [templates, selectedHash])
@@ -126,8 +144,6 @@ export default function BulkMessage() {
       .catch(() => setReceivedHandles([]))
   }, [selectedHash])
 
-  const receivedSet = useMemo(() => new Set(receivedHandles.map((h) => h.toLowerCase())), [receivedHandles])
-
   // Filtro: rejeitar perfis que já receberam hashes do template (reject_hashes)
   useEffect(() => {
     const hashes = selectedTemplate?.reject_hashes ?? []
@@ -144,7 +160,6 @@ export default function BulkMessage() {
       .catch(() => setFilterExcludeHandles([]))
   }, [selectedTemplate?.reject_hashes])
 
-  const filterExcludeSet = useMemo(() => new Set(filterExcludeHandles.map((h) => h.toLowerCase())), [filterExcludeHandles])
   // Rejeitados = template selecionado (obrigatório) + hashes do filtro
   const rejectedSet = useMemo(() => {
     const s = new Set<string>()
@@ -224,13 +239,14 @@ export default function BulkMessage() {
       antMessage.warning('Selecione ao menos um hash para rejeitar perfis.')
       return
     }
-    createDirectTemplate(newHash.trim(), newBody.trim(), newRejectHashes)
+    createDirectTemplate(newHash.trim(), newBody.trim(), newRejectHashes, newSendDelayMinutes)
       .then(() => {
         antMessage.success('Template criado.')
         setModalTemplate(false)
         setNewHash('')
         setNewBody('')
         setNewRejectHashes([])
+        setNewSendDelayMinutes(1)
         loadTemplates()
       })
       .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Erro ao criar template'))
@@ -260,7 +276,8 @@ export default function BulkMessage() {
       antMessage.warning('Nenhum perfil a adicionar após o filtro.')
       return
     }
-    const scheduledAt = new Date(Date.now() + sendIntervalMinutes * 60 * 1000).toISOString()
+    const delayMin = tpl?.send_delay_minutes ?? 1
+    const scheduledAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString()
     setAdding(true)
     addToDirectQueue(toAdd, hash, scheduledAt)
       .then((r) => {
@@ -282,7 +299,7 @@ export default function BulkMessage() {
 
       <div style={{ marginBottom: s.lg }}>
         <Button type="default" onClick={() => setTemplatesModalOpen(true)}>
-          Getenciar Templates
+          Gerenciar Templates
         </Button>
       </div>
 
@@ -314,6 +331,7 @@ export default function BulkMessage() {
                 width: 260,
                 render: (v: string[] | undefined) => (v && v.length > 0 ? v.join(', ') : '—'),
               },
+              { title: 'Início em (min)', dataIndex: 'send_delay_minutes', key: 'send_delay_minutes', width: 100, render: (v: number | undefined) => v ?? 1 },
               { title: 'Criado', dataIndex: 'created_at', key: 'created_at', width: 160, render: (v: string) => (v ? new Date(v).toLocaleString('pt-BR') : '—') },
               {
                 title: '',
@@ -328,6 +346,7 @@ export default function BulkMessage() {
                       setEditTemplate(record)
                       setEditBody(record.body)
                       setEditRejectHashes(record.reject_hashes ?? [])
+                      setEditSendDelayMinutes(record.send_delay_minutes ?? 1)
                     }}
                   />
                 ),
@@ -339,19 +358,6 @@ export default function BulkMessage() {
 
       <Card title="Adicionar à fila" style={{ marginBottom: s.lg, borderRadius: r.lg }}>
         <Space direction="vertical" style={{ width: '100%' }} size="small">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>Início do envio em</Text>
-              <Select
-                value={sendIntervalMinutes}
-                onChange={(val) => {
-                  setSendIntervalMinutes(val)
-                }}
-                options={SEND_INTERVAL_OPTIONS}
-                style={{ width: 120 }}
-              />
-            </span>
-          </div>
           <div>
             <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>Template (obrigatório)</Text>
             <select
@@ -365,9 +371,14 @@ export default function BulkMessage() {
               ))}
             </select>
             {selectedTemplate && (
-              <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
-                Rejeitar perfis que já receberam: {selectedTemplate.reject_hashes?.join(', ') ?? '—'}
-              </Text>
+              <>
+                <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
+                  Rejeitar perfis que já receberam: {selectedTemplate.reject_hashes?.join(', ') ?? '—'}
+                </Text>
+                <Text type="secondary" style={{ display: 'block', marginTop: 2, fontSize: 12 }}>
+                  Início do envio: {selectedTemplate.send_delay_minutes ?? 1} min à frente (definido no template)
+                </Text>
+              </>
             )}
           </div>
           <div>
@@ -392,8 +403,7 @@ export default function BulkMessage() {
                 }}
                 options={mainSearchOptions}
                 style={{ flex: 1, maxWidth: 480 }}
-                placeholder="Digite nome ou @user para buscar (mín. 1 caractere)"
-                loading={mainSearchLoading}
+                placeholder={mainSearchLoading ? 'Buscando...' : 'Digite nome ou @user para buscar (mín. 1 caractere)'}
                 filterOption={false}
               />
               <Button
@@ -546,28 +556,42 @@ export default function BulkMessage() {
             {
               title: '',
               key: 'action',
-              width: 56,
+              width: 90,
               render: (_: unknown, record: DirectQueueItem) => (
-                <Popconfirm
-                  title="Remover este item?"
-                  onConfirm={async () => {
-                    setDeletingId(record.id)
-                    try {
-                      await deleteDirectQueueItem(record.id)
-                      antMessage.success('Item removido.')
-                      loadQueue()
-                    } catch (e) {
-                      antMessage.error(e instanceof Error ? e.message : 'Erro ao remover')
-                    } finally {
-                      setDeletingId(null)
-                    }
-                  }}
-                  okText="Remover"
-                  cancelText="Cancelar"
-                  okButtonProps={{ danger: true }}
-                >
-                  <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id} />
-                </Popconfirm>
+                <Space size="small">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => {
+                      setEditQueueItem(record)
+                      setEditQueueHash(record.message_hash)
+                      const raw = record.scheduled_at || record.created_at
+                      setEditQueueScheduledAt(raw ? toLocalDatetimeInputValue(new Date(raw)) : '')
+                      setEditQueueStatus((record.status === 'sent' || record.status === 'failed' ? record.status : 'pending') as 'pending' | 'sent' | 'failed')
+                    }}
+                  />
+                  <Popconfirm
+                    title="Remover este item?"
+                    onConfirm={async () => {
+                      setDeletingId(record.id)
+                      try {
+                        await deleteDirectQueueItem(record.id)
+                        antMessage.success('Item removido.')
+                        loadQueue()
+                      } catch (e) {
+                        antMessage.error(e instanceof Error ? e.message : 'Erro ao remover')
+                      } finally {
+                        setDeletingId(null)
+                      }
+                    }}
+                    okText="Remover"
+                    cancelText="Cancelar"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id} />
+                  </Popconfirm>
+                </Space>
               ),
             },
           ]}
@@ -588,6 +612,7 @@ export default function BulkMessage() {
           </div>
           <div>
             <Text type="secondary">Texto da mensagem</Text>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>Use {'{firstname}'} e {'{nickname}'} para personalizar (primeiro nome e @ do perfil).</Text>
             <TextArea value={newBody} onChange={(e) => setNewBody(e.target.value)} rows={5} placeholder="Olá! Somos a marca X..." style={{ marginTop: 4 }} />
           </div>
           <div>
@@ -609,13 +634,22 @@ export default function BulkMessage() {
               }
             />
           </div>
+          <div>
+            <Text type="secondary">Início do envio em (minutos à frente)</Text>
+            <Select
+              value={newSendDelayMinutes}
+              onChange={setNewSendDelayMinutes}
+              options={SEND_INTERVAL_OPTIONS}
+              style={{ width: 120, marginTop: 4, display: 'block' }}
+            />
+          </div>
         </Space>
       </Modal>
 
       <Modal
         title={`Editar template: ${editTemplate?.hash ?? ''}`}
         open={!!editTemplate}
-        onCancel={() => { setEditTemplate(null); setEditBody(''); setEditRejectHashes([]); }}
+        onCancel={() => { setEditTemplate(null); setEditBody(''); setEditRejectHashes([]); setEditSendDelayMinutes(1); }}
         onOk={async () => {
           if (!editTemplate) return
           if (editRejectHashes.length === 0) {
@@ -624,11 +658,12 @@ export default function BulkMessage() {
           }
           setSavingEdit(true)
           try {
-            await updateDirectTemplate(editTemplate.id, { body: editBody, reject_hashes: editRejectHashes })
+            await updateDirectTemplate(editTemplate.id, { body: editBody, reject_hashes: editRejectHashes, send_delay_minutes: editSendDelayMinutes })
             antMessage.success('Template atualizado.')
             setEditTemplate(null)
             setEditBody('')
             setEditRejectHashes([])
+            setEditSendDelayMinutes(1)
             loadTemplates()
           } catch (e) {
             antMessage.error(e instanceof Error ? e.message : 'Erro ao salvar')
@@ -642,6 +677,7 @@ export default function BulkMessage() {
         <Space direction="vertical" style={{ width: '100%' }} size="small">
           <div>
             <Text type="secondary">Texto da mensagem (hash não pode ser alterado)</Text>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>Use {'{firstname}'} e {'{nickname}'} para personalizar (primeiro nome e @ do perfil).</Text>
             <TextArea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={6} style={{ marginTop: 8, width: '100%' }} />
           </div>
           <div>
@@ -663,6 +699,93 @@ export default function BulkMessage() {
               filterOption={(input, option) =>
                 (option?.label ?? '').toString().toLowerCase().includes((input || '').toLowerCase())
               }
+            />
+          </div>
+          <div>
+            <Text type="secondary">Início do envio em (minutos à frente)</Text>
+            <Select
+              value={editSendDelayMinutes}
+              onChange={setEditSendDelayMinutes}
+              options={SEND_INTERVAL_OPTIONS}
+              style={{ width: 120, marginTop: 4, display: 'block' }}
+            />
+          </div>
+        </Space>
+      </Modal>
+
+      <Modal
+        title="Editar disparo"
+        open={!!editQueueItem}
+        onCancel={() => { setEditQueueItem(null); setEditQueueHash(''); setEditQueueScheduledAt(''); setEditQueueStatus('pending'); }}
+        onOk={async () => {
+          if (!editQueueItem) return
+          if (!editQueueHash.trim()) {
+            antMessage.warning('Selecione um template.')
+            return
+          }
+          setSavingEditQueue(true)
+          try {
+            await updateDirectQueueItem(editQueueItem.id, {
+              message_hash: editQueueHash.trim(),
+              scheduled_at: editQueueScheduledAt.trim() ? new Date(editQueueScheduledAt).toISOString() : null,
+              status: editQueueStatus,
+            })
+            antMessage.success('Disparo atualizado.')
+            setEditQueueItem(null)
+            setEditQueueHash('')
+            setEditQueueScheduledAt('')
+            loadQueue()
+          } catch (e) {
+            antMessage.error(e instanceof Error ? e.message : 'Erro ao salvar')
+          } finally {
+            setSavingEditQueue(false)
+          }
+        }}
+        okText="Salvar"
+        confirmLoading={savingEditQueue}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="small">
+          {editQueueItem && (
+            <div>
+              <Text type="secondary">@</Text>
+              <Text strong>@{editQueueItem.profile_handle}</Text>
+            </div>
+          )}
+          <div>
+            <Text type="secondary">Template</Text>
+            <Select
+              value={editQueueHash || undefined}
+              onChange={setEditQueueHash}
+              options={templates.map((t) => ({ value: t.hash, label: t.hash }))}
+              style={{ width: '100%', marginTop: 4 }}
+              placeholder="Selecione o template"
+              allowClear
+              showSearch
+              filterOption={(input, option) =>
+                (option?.label ?? '').toString().toLowerCase().includes((input || '').toLowerCase())
+              }
+            />
+          </div>
+          <div>
+            <Text type="secondary">Agendado em (deixe vazio para enviar quando possível)</Text>
+            <Input
+              type="datetime-local"
+              value={editQueueScheduledAt}
+              onChange={(e) => setEditQueueScheduledAt(e.target.value)}
+              style={{ marginTop: 4, width: '100%' }}
+            />
+          </div>
+          <div>
+            <Text type="secondary">Status</Text>
+            <Select
+              value={editQueueStatus}
+              onChange={(v) => setEditQueueStatus(v)}
+              options={[
+                { value: 'pending', label: 'Pendente' },
+                { value: 'sent', label: 'Enviado' },
+                { value: 'failed', label: 'Falha' },
+              ]}
+              style={{ width: '100%', marginTop: 4 }}
             />
           </div>
         </Space>

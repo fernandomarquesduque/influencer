@@ -39,12 +39,12 @@ $distPath = Join-Path $ProjectRoot "frontend\dist"
 Write-Host "Copiando site (frontend\dist) para $PublishRoot ..." -ForegroundColor Yellow
 Copy-Item -Path (Join-Path $distPath "*") -Destination $PublishRoot -Recurse -Force
 
-# 4) Copiar projeto crawl (API) para Publish\influencer\crawl (sem node_modules; COM data/ para o banco)
+# 4) Copiar projeto crawl (API) para Publish\influencer\crawl (sem node_modules, sem data/)
 $crawlSrc = Join-Path $ProjectRoot "crawl"
 $crawlDest = Join-Path $PublishRoot "crawl"
 New-Item -ItemType Directory -Path $crawlDest -Force | Out-Null
 
-$crawlExclude = @("node_modules", ".auth", "dist", ".env")
+$crawlExclude = @("node_modules", ".auth", "dist", ".env", "data")
 Get-ChildItem -Path $crawlSrc -Force | Where-Object { $crawlExclude -notcontains $_.Name } | ForEach-Object {
     Copy-Item -Path $_.FullName -Destination $crawlDest -Recurse -Force
 }
@@ -53,19 +53,6 @@ $crawlNodeModules = Join-Path $crawlDest "node_modules"
 if (Test-Path $crawlNodeModules) {
     Write-Host "Removendo node_modules do publish (não deve ser copiado)." -ForegroundColor Yellow
     Remove-Item -Recurse -Force $crawlNodeModules
-}
-# SQLite não deve ir no publish (no servidor será criado novo ou use .env SQLITE_DB_PATH)
-$crawlData = Join-Path $crawlDest "data"
-foreach ($name in @("influencer.db", "influencer.db-wal", "influencer.db-shm")) {
-    $f = Join-Path $crawlData $name
-    if (Test-Path $f) {
-        Write-Host "Removendo SQLite do publish: crawl\data\$name" -ForegroundColor Yellow
-        Remove-Item -Force $f
-    }
-}
-# (crawl\data com RocksDB é copiado no loop acima; SQLite removido acima)
-if (Test-Path (Join-Path $crawlSrc "data")) {
-    Write-Host "crawl\data (RocksDB) incluído no publish; SQLite excluído." -ForegroundColor Gray
 }
 
 # 5) npm ci + build no crawl (iisnode usa dist/ + openapi-rocksdb.json + openapi-sqlite.json)
