@@ -18,7 +18,7 @@ export interface AuthUser {
   username: string
   scope: AuthScope
   profile_handle: string | null
-  /** Para scope influencer: true se o cadastro foi ativado (whatsapp preenchido na ativação). */
+  /** Para scope influencer: true se o cadastro foi ativado (cidade preenchida na ativação). */
   profile_activated?: boolean
 }
 

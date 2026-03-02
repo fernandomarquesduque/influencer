@@ -142,9 +142,9 @@ export default function MediaKit() {
 
     try {
       const cached = getCachedMediaKit(h)
-      const hasWhatsapp = (act: ProfileActivation | null) => !!(act?.whatsapp && String(act.whatsapp).trim())
+      const hasCity = (act: ProfileActivation | null) => !!(act?.city && String(act.city).trim())
       if (cached) {
-        if (!hasWhatsapp(cached.activation)) {
+        if (!hasCity(cached.activation)) {
           mediaKitCache.delete(h.toLowerCase())
           setStatus('not_activated')
           return
@@ -173,7 +173,7 @@ export default function MediaKit() {
       const posts = postsRes.items ?? []
       const activation = (activationRes && typeof activationRes === 'object' ? activationRes : {}) as ProfileActivation
 
-      if (!hasWhatsapp(activation)) {
+      if (!hasCity(activation)) {
         setStatus('not_activated')
         return
       }

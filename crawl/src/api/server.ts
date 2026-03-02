@@ -415,7 +415,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
       } else {
         const handle = String(user.profile_handle).replace(/^@/, '').trim().toLowerCase();
         const act = sqlite.getActivation(handle);
-        profile_activated = !!(act?.whatsapp && String(act.whatsapp).trim());
+        profile_activated = !!(act?.city && String(act.city).trim());
       }
     }
     res.json({
@@ -447,7 +447,7 @@ app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
     } else {
       const handle = String(profileHandle).replace(/^@/, '').trim().toLowerCase();
       const activation = sqlite.getActivation(handle);
-      profile_activated = !!(activation?.whatsapp && String(activation.whatsapp).trim());
+      profile_activated = !!(activation?.city && String(activation.city).trim());
     }
   }
   res.json({
@@ -1842,12 +1842,26 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
       Array.isArray(contentType) ? contentType.filter((x): x is string => typeof x === 'string')
         : typeof contentType === 'string' ? (contentType ? [contentType] : undefined)
           : undefined;
+    const neighborhoodVal =
+      Array.isArray(body.neighborhood)
+        ? body.neighborhood.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean).join(', ')
+        : typeof body.neighborhood === 'string' && body.neighborhood.trim()
+          ? body.neighborhood.trim()
+          : undefined;
+    const city = typeof body.city === 'string' ? body.city.trim() : '';
+    const state = typeof body.state === 'string' ? body.state.trim() : '';
+    if (!city || !state) {
+      res.status(400).json({ error: 'Cidade e estado (UF) são obrigatórios.' });
+      return;
+    }
     sqlite.saveActivation(handle, {
       address: typeof body.address === 'string' ? body.address : undefined,
-      city: typeof body.city === 'string' ? body.city : undefined,
-      state: typeof body.state === 'string' ? body.state : undefined,
-      neighborhood: typeof body.neighborhood === 'string' ? body.neighborhood : undefined,
+      zip_code: typeof body.zip_code === 'string' ? body.zip_code.trim() || undefined : undefined,
+      city: city || undefined,
+      state: state || undefined,
+      neighborhood: neighborhoodVal || undefined,
       country: typeof body.country === 'string' ? body.country : undefined,
+      allow_gifts: typeof body.allow_gifts === 'boolean' ? body.allow_gifts : undefined,
       whatsapp: typeof body.whatsapp === 'string' ? body.whatsapp : undefined,
       tiktok: typeof body.tiktok === 'string' ? body.tiktok : undefined,
       facebook: typeof body.facebook === 'string' ? body.facebook : undefined,

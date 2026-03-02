@@ -24,10 +24,14 @@ export interface PricingData {
 /** Dados de ativação do perfil na plataforma (cadastro completo do influenciador). */
 export interface ProfileActivationData {
   address?: string;
+  /** CEP (apenas números ou formatado). */
+  zip_code?: string;
   city?: string;
   state?: string;
   neighborhood?: string;
   country?: string;
+  /** Autorização para marcas enviarem brindes ao endereço informado. */
+  allow_gifts?: boolean;
   whatsapp?: string;
   tiktok?: string;
   facebook?: string;
@@ -59,14 +63,14 @@ export class SqliteSync {
     this.ensureSchema();
     this.upsertActivation = this.db.prepare(`
       INSERT INTO profile_activation (
-        profile_handle, address, city, state, neighborhood, country,
+        profile_handle, address, zip_code, city, state, neighborhood, country, allow_gifts,
         whatsapp, tiktok, facebook, linkedin, twitter, websites,
         gender, description, about_topics, pricing, content_type,
         activated_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(profile_handle) DO UPDATE SET
-        address = excluded.address, city = excluded.city, state = excluded.state,
-        neighborhood = excluded.neighborhood, country = excluded.country,
+        address = excluded.address, zip_code = excluded.zip_code, city = excluded.city, state = excluded.state,
+        neighborhood = excluded.neighborhood, country = excluded.country, allow_gifts = excluded.allow_gifts,
         whatsapp = excluded.whatsapp, tiktok = excluded.tiktok, facebook = excluded.facebook,
         linkedin = excluded.linkedin, twitter = excluded.twitter, websites = excluded.websites,
         gender = excluded.gender, description = excluded.description,
@@ -75,7 +79,7 @@ export class SqliteSync {
         activated_at = COALESCE(excluded.activated_at, activated_at), updated_at = excluded.updated_at
     `);
     this.getActivationStmt = this.db.prepare(`
-      SELECT address, city, state, neighborhood, country,
+      SELECT address, zip_code, city, state, neighborhood, country, allow_gifts,
              whatsapp, tiktok, facebook, linkedin, twitter, websites,
              gender, description, about_topics, pricing, content_type,
              activated_at, updated_at
@@ -112,10 +116,12 @@ export class SqliteSync {
       CREATE TABLE IF NOT EXISTS profile_activation (
         profile_handle TEXT PRIMARY KEY,
         address TEXT,
+        zip_code TEXT,
         city TEXT,
         state TEXT,
         neighborhood TEXT,
         country TEXT,
+        allow_gifts TEXT,
         whatsapp TEXT,
         tiktok TEXT,
         facebook TEXT,
@@ -181,7 +187,7 @@ export class SqliteSync {
   }
 
   private migrateActivationColumns(): void {
-    const columns = ['gender', 'description', 'about_topics', 'pricing', 'content_type'] as const;
+    const columns = ['gender', 'description', 'about_topics', 'pricing', 'content_type', 'zip_code', 'allow_gifts'] as const;
     for (const col of columns) {
       try {
         this.db.exec(`ALTER TABLE profile_activation ADD COLUMN ${col} TEXT`);
@@ -214,10 +220,12 @@ export class SqliteSync {
     }
     return {
       address: row.address as string | undefined,
+      zip_code: row.zip_code as string | undefined,
       city: row.city as string | undefined,
       state: row.state as string | undefined,
       neighborhood: row.neighborhood as string | undefined,
       country: row.country as string | undefined,
+      allow_gifts: row.allow_gifts === '1' || row.allow_gifts === 'true',
       whatsapp: row.whatsapp as string | undefined,
       tiktok: row.tiktok as string | undefined,
       facebook: row.facebook as string | undefined,
@@ -265,7 +273,7 @@ export class SqliteSync {
       const chunk = normalized.slice(i, i + SqliteSync.BATCH_SIZE);
       const placeholders = chunk.map(() => '?').join(',');
       const stmt = this.db.prepare(`
-        SELECT profile_handle, address, city, state, neighborhood, country,
+        SELECT profile_handle, address, zip_code, city, state, neighborhood, country, allow_gifts,
                whatsapp, tiktok, facebook, linkedin, twitter, websites,
                gender, description, about_topics, pricing, content_type, activated_at, updated_at
         FROM profile_activation WHERE profile_handle IN (${placeholders})
@@ -289,10 +297,12 @@ export class SqliteSync {
     this.upsertActivation.run(
       handle,
       data.address ?? null,
+      data.zip_code ?? null,
       data.city ?? null,
       data.state ?? null,
       data.neighborhood ?? null,
       data.country ?? null,
+      data.allow_gifts === true ? '1' : (data.allow_gifts === false ? '0' : null),
       data.whatsapp ?? null,
       data.tiktok ?? null,
       data.facebook ?? null,

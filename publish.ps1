@@ -44,15 +44,23 @@ $crawlSrc = Join-Path $ProjectRoot "crawl"
 $crawlDest = Join-Path $PublishRoot "crawl"
 New-Item -ItemType Directory -Path $crawlDest -Force | Out-Null
 
+# Copiar crawl excluindo node_modules (e outras pastas) em todos os níveis
 $crawlExclude = @("node_modules", ".auth", "dist", ".env", "data")
-Get-ChildItem -Path $crawlSrc -Force | Where-Object { $crawlExclude -notcontains $_.Name } | ForEach-Object {
-    Copy-Item -Path $_.FullName -Destination $crawlDest -Recurse -Force
+$crawlItems = Get-ChildItem -Path $crawlSrc -Force | Where-Object { $crawlExclude -notcontains $_.Name }
+foreach ($item in $crawlItems) {
+    $destItem = Join-Path $crawlDest $item.Name
+    if ($item.PSIsContainer) {
+        # Copiar pasta sem node_modules: usar robocopy para excluir em todos os níveis
+        $null = robocopy $item.FullName $destItem /E /XD node_modules .auth dist .env data /NFL /NDL /NJH /NJS
+        if ($LASTEXITCODE -ge 8) { throw "robocopy falhou ao copiar $($item.Name)" }
+    } else {
+        Copy-Item -Path $item.FullName -Destination $destItem -Force
+    }
 }
-# Garantir que node_modules não foi copiado (remover se existir)
-$crawlNodeModules = Join-Path $crawlDest "node_modules"
-if (Test-Path $crawlNodeModules) {
-    Write-Host "Removendo node_modules do publish (não deve ser copiado)." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $crawlNodeModules
+# Garantir que nenhum node_modules ficou no publish
+Get-ChildItem -Path $crawlDest -Filter "node_modules" -Recurse -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    Write-Host "Removendo $($_.FullName) do publish." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $_.FullName
 }
 
 # 5) npm ci + build no crawl (iisnode usa dist/ + openapi-rocksdb.json + openapi-sqlite.json)
@@ -67,10 +75,17 @@ try {
 } finally {
     Pop-Location
 }
+# Remover node_modules da pasta de publicacao do crawl (instalar no servidor com npm ci)
+$crawlNodeModules = Join-Path $crawlDest "node_modules"
+if (Test-Path $crawlNodeModules) {
+    Write-Host "Removendo node_modules da pasta de publicacao do crawl ..." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $crawlNodeModules
+}
 
 Write-Host ""
 Write-Host "=== Pronto ===" -ForegroundColor Green
 Write-Host "Pasta: $PublishRoot" -ForegroundColor White
 Write-Host "  - Raiz: site (frontend). No IIS, physical path = esta pasta." -ForegroundColor Gray
 Write-Host "  - crawl\: API (iisnode). No IIS, adicione Application alias 'api', path /api, physical path = pasta crawl. A API sobe com o App Pool." -ForegroundColor Gray
+Write-Host "  - Na pasta crawl do servidor, rode 'npm ci --omit=dev' (ou npm ci) para instalar dependencias; node_modules nao e publicado." -ForegroundColor Gray
 Write-Host ""

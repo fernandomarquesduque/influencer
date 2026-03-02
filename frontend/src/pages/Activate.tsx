@@ -12,10 +12,10 @@ import {
   message,
   Select,
   Modal,
-  Collapse,
   Steps,
   Space,
   Divider,
+  Radio,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -24,6 +24,7 @@ import {
   MessageOutlined,
   LinkOutlined,
   GlobalOutlined,
+  PlayCircleOutlined,
 } from '@ant-design/icons'
 import {
   fetchProfile,
@@ -36,6 +37,7 @@ import {
   type ProfileActivation,
   type PricingData,
 } from '../api'
+import { fetchAddressByCep } from '../utils/viaCep'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
 import {
   PRICE_BUCKETS,
@@ -59,6 +61,43 @@ const GENDER_OPTIONS = [
 ]
 
 const PRICE_OPTIONS = PRICE_BUCKETS.map((b) => ({ value: b.value, label: b.label }))
+
+const ACTIVATE_DRAFT_KEY = (h: string) => `activate_draft_${h}`
+
+function parseStepFromHash(): number {
+  const m = window.location.hash.match(/^#step-(\d)$/)
+  const n = m ? parseInt(m[1], 10) : 0
+  return Number.isFinite(n) && n >= 0 && n <= 3 ? n : 0
+}
+
+/** Retorna o passo (0–3) em que o usuário deve ficar com base nos campos já preenchidos. */
+function getStepFromFormValues(values: Record<string, unknown>): number {
+  const hasGender = values.gender != null && String(values.gender).trim() !== ''
+  const contentType = values.content_type
+  const hasContentType = Array.isArray(contentType) && contentType.length > 0
+  const desc = values.description
+  const hasDescription = typeof desc === 'string' && desc.trim() !== ''
+  const step0Complete = !!hasGender && hasContentType && hasDescription
+
+  if (!step0Complete) return 0
+
+  const zip = values.zip_code
+  const hasZip = typeof zip === 'string' && zip.trim() !== ''
+  const informar = values.informar_endereco_completo
+  const address = values.address
+  const hasAddress = typeof address === 'string' && String(address).trim() !== ''
+  const step1Complete = hasZip && (informar !== true || hasAddress)
+
+  if (!step1Complete) return 1
+
+  const whatsapp = values.whatsapp
+  const digits = typeof whatsapp === 'string' ? parseWhatsAppDigits(whatsapp) : ''
+  const step2Complete = digits.length >= 10
+
+  if (!step2Complete) return 2
+
+  return 3
+}
 
 /** Faixa inicial baixa para "Preencher com padrão" (acessível a nano/micro). */
 const DEFAULT_PRICE_BUCKET = 50
@@ -100,15 +139,18 @@ export default function Activate() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [step, setStep] = useState(0)
+  const [step, setStep] = useState(parseStepFromHash)
+  const saveDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const firstFieldStep0Ref = useRef<HTMLDivElement>(null)
   const firstFieldStep1Ref = useRef<HTMLDivElement>(null)
   const firstFieldStep2Ref = useRef<HTMLDivElement>(null)
+  const firstFieldStep3Ref = useRef<HTMLDivElement>(null)
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
   const [profilePicError, setProfilePicError] = useState(false)
   const [profilePicLoading, setProfilePicLoading] = useState(false)
   const [followersCount, setFollowersCount] = useState<number>(0)
+  const [cepLoading, setCepLoading] = useState(false)
 
   useEffect(() => {
     if (!handle) return
@@ -153,12 +195,14 @@ export default function Activate() {
           if (v !== undefined) pricingForm[k] = v
         }
       }
-      form.setFieldsValue({
+      const neighborhoodsList =
+        act.neighborhood?.split(',').map((s) => s.trim()).filter(Boolean) ?? []
+      const formValuesFromAct = {
         address: act.address ?? '',
+        zip_code: act.zip_code ?? '',
         city: act.city ?? '',
         state: act.state ?? '',
-        neighborhood: act.neighborhood ?? '',
-        country: act.country ?? '',
+        neighborhoods: neighborhoodsList,
         whatsapp: act.whatsapp ?? '',
         tiktok: act.tiktok ?? '',
         facebook: act.facebook ?? '',
@@ -167,10 +211,24 @@ export default function Activate() {
         websites: act.websites ?? '',
         gender: act.gender ?? undefined,
         description: act.description ?? '',
-        about_topics: act.about_topics ?? '',
         content_type: act.content_type ?? [],
         pricing: pricingForm,
-      })
+      }
+      let valuesToSet = formValuesFromAct
+      try {
+        const raw = localStorage.getItem(ACTIVATE_DRAFT_KEY(handle))
+        if (raw) {
+          const parsed = JSON.parse(raw) as Record<string, unknown> | null
+          if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+            valuesToSet = { ...formValuesFromAct, ...parsed }
+          }
+        }
+      } catch {
+        // ignora rascunho inválido
+      }
+      form.setFieldsValue(valuesToSet)
+      const stepFromFields = getStepFromFormValues(valuesToSet)
+      setStep(stepFromFields)
     }).finally(() => {
       if (!cancelled) setLoading(false)
     })
@@ -180,7 +238,26 @@ export default function Activate() {
   }, [handle, form, canEditProfile, navigate, authLoading])
 
   useEffect(() => {
-    const refs = [firstFieldStep0Ref, firstFieldStep1Ref, firstFieldStep2Ref]
+    window.location.hash = `#step-${step}`
+  }, [step])
+
+  useEffect(() => {
+    const onHashChange = () => setStep(parseStepFromHash())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (saveDraftTimerRef.current) {
+        clearTimeout(saveDraftTimerRef.current)
+        saveDraftTimerRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const refs = [firstFieldStep0Ref, firstFieldStep1Ref, firstFieldStep2Ref, firstFieldStep3Ref]
     const el = refs[step]?.current
     if (!el) return
     const focusable = el.querySelector<HTMLElement>('input:not([type="hidden"]), textarea, .ant-select-selector, [role="combobox"]')
@@ -197,12 +274,19 @@ export default function Activate() {
         if (typeof v === 'string' && v.trim()) pricingData[key] = v.trim()
       }
     }
+    const neighborhoodsArr = Array.isArray(values.neighborhoods)
+      ? (values.neighborhoods as string[]).map((s) => String(s).trim()).filter(Boolean)
+      : []
+    const neighborhoodStr =
+      neighborhoodsArr.length > 0 ? neighborhoodsArr.join(', ') : undefined
     return {
-      address: typeof values.address === 'string' ? values.address?.trim() || undefined : undefined,
+      address: values.informar_endereco_completo === true && typeof values.address === 'string' ? values.address?.trim() || undefined : undefined,
+      zip_code: typeof values.zip_code === 'string' ? values.zip_code?.trim() || undefined : undefined,
       city: typeof values.city === 'string' ? values.city?.trim() || undefined : undefined,
       state: typeof values.state === 'string' ? values.state?.trim() || undefined : undefined,
-      neighborhood: typeof values.neighborhood === 'string' ? values.neighborhood?.trim() || undefined : undefined,
-      country: typeof values.country === 'string' ? values.country?.trim() || undefined : undefined,
+      neighborhood: neighborhoodStr,
+      country: undefined,
+      allow_gifts: values.informar_endereco_completo === true,
       whatsapp: typeof values.whatsapp === 'string' ? values.whatsapp?.trim() || undefined : undefined,
       tiktok: typeof values.tiktok === 'string' ? normalizeUrl(values.tiktok).trim() || undefined : undefined,
       facebook: typeof values.facebook === 'string' ? normalizeUrl(values.facebook).trim() || undefined : undefined,
@@ -211,13 +295,14 @@ export default function Activate() {
       websites: typeof values.websites === 'string' ? values.websites?.trim() || undefined : undefined,
       gender: typeof values.gender === 'string' ? values.gender || undefined : undefined,
       description: typeof values.description === 'string' ? values.description?.trim() || undefined : undefined,
-      about_topics: typeof values.about_topics === 'string' ? values.about_topics?.trim() || undefined : undefined,
       content_type: Array.isArray(values.content_type) && values.content_type.length
         ? values.content_type.filter((x): x is string => typeof x === 'string')
         : undefined,
       pricing: Object.keys(pricingData).length ? pricingData : undefined,
     }
   }
+
+  const informarEnderecoCompleto = Form.useWatch('informar_endereco_completo', form)
 
   const scrollToFirstError = () => {
     setTimeout(() => {
@@ -231,15 +316,19 @@ export default function Activate() {
   const goToNextStep = () => {
     const onError = () => {
       scrollToFirstError()
-      Modal.warning({
-        title: 'Campos obrigatórios',
-        content: 'Preencha os campos obrigatórios para continuar.',
-        okText: 'Entendi',
-      })
     }
     if (step === 0) {
-      form.validateFields(['city', 'state']).then(() => setStep((s) => s + 1)).catch(onError)
+      form.validateFields(['gender', 'content_type', 'description']).then(() => setStep((s) => s + 1)).catch(onError)
     } else if (step === 1) {
+      const informar = form.getFieldValue('informar_endereco_completo')
+      const address = form.getFieldValue('address')
+      if (informar === true && (!address || !String(address).trim())) {
+        form.setFields([{ name: 'address', errors: ['Informe o endereço completo'] }])
+        scrollToFirstError()
+        return
+      }
+      form.validateFields(['zip_code', 'informar_endereco_completo']).then(() => setStep((s) => s + 1)).catch(onError)
+    } else if (step === 2) {
       form.validateFields(['whatsapp']).then(() => setStep((s) => s + 1)).catch(onError)
     }
   }
@@ -250,6 +339,11 @@ export default function Activate() {
     try {
       await saveProfileActivation(handle, buildPayload(values))
       await refreshUser()
+      try {
+        localStorage.removeItem(ACTIVATE_DRAFT_KEY(handle))
+      } catch {
+        // ignora falha ao limpar rascunho
+      }
       message.success('Cadastro ativado com sucesso!')
       navigate(`/app/influencer/${encodeURIComponent(handle)}`, { replace: true })
     } catch {
@@ -309,8 +403,9 @@ export default function Activate() {
 
   const steps = [
     { title: 'Essencial', description: '' },
-    { title: 'Redes & Contato', description: '' },
-    { title: 'Conteúdo & Valores', description: '' },
+    { title: 'Localização', description: '' },
+    { title: 'Contato', description: '' },
+    { title: 'Valores', description: '' },
   ]
 
   return (
@@ -411,42 +506,68 @@ export default function Activate() {
           <Form
             form={form}
             layout="vertical"
+            onValuesChange={() => {
+              if (!handle) return
+              if (saveDraftTimerRef.current) clearTimeout(saveDraftTimerRef.current)
+              saveDraftTimerRef.current = setTimeout(() => {
+                try {
+                  const values = form.getFieldsValue()
+                  localStorage.setItem(ACTIVATE_DRAFT_KEY(handle), JSON.stringify(values))
+                } catch {
+                  // ignora falha ao salvar rascunho
+                }
+                saveDraftTimerRef.current = null
+              }, 500)
+            }}
             onFinish={onFinish}
             onFinishFailed={() => {
-              Modal.warning({
-                title: 'Campos obrigatórios',
-                content: 'Preencha os campos obrigatórios para continuar.',
-                okText: 'Entendi',
-              })
+              setTimeout(() => {
+                window.scrollBy(0, -100)
+              }, 100)
             }}
             scrollToFirstError
           >
-            {/* Passo 1: Essencial */}
+            {/* Passo 0: Essencial */}
             <div ref={firstFieldStep0Ref} style={{ display: step === 0 ? 'block' : 'none' }}>
               <>
                 <Form.Item
                   name="gender"
                   label="Gênero"
-                  extra="Opcional."
+                  rules={[{ required: true, message: 'Informe o gênero' }]}
                 >
-                  <Select placeholder="Selecione (opcional)" allowClear options={GENDER_OPTIONS} />
+                  <Select placeholder="Selecione" allowClear options={GENDER_OPTIONS} />
                 </Form.Item>
                 <Form.Item
-                  name="about_topics"
-                  label="Sobre o que você fala"
-                  extra="Temas e nichos que você aborda. Ex.: maternidade, moda, viagens."
+                  name="content_type"
+                  label="Tipo de conteúdo"
+                  required
+                  rules={[{ type: 'array' as const, min: 1, message: 'Selecione pelo menos um tipo de conteúdo' }]}
                 >
-                  <Input.TextArea
-                    placeholder="Ex.: maternidade, moda, viagens, fitness"
-                    rows={2}
-                    showCount
-                    maxLength={500}
+                  <Select
+                    mode="multiple"
+                    placeholder="Ex.: fitness, moda, viagens"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    options={CONTENT_TYPE_OPTIONS}
+                    maxTagCount="responsive"
                   />
                 </Form.Item>
                 <Form.Item
                   name="description"
                   label="Descrição sobre você"
-                  extra="Sua trajetória e proposta de valor em poucas linhas."
+                  required
+                  extra="Sua trajetória e proposta de valor em poucas linhas (mínimo 100 caracteres)."
+                  rules={[
+                    { required: true, message: 'Informe a descrição sobre você' },
+                    {
+                      validator: (_, v) => {
+                        if (!v || typeof v !== 'string') return Promise.reject(new Error('Mínimo 100 caracteres'))
+                        if (v.trim().length < 100) return Promise.reject(new Error('Mínimo 100 caracteres'))
+                        return Promise.resolve()
+                      },
+                    },
+                  ]}
                 >
                   <Input.TextArea
                     placeholder="Conte um pouco sobre você e o que você oferece"
@@ -455,55 +576,132 @@ export default function Activate() {
                     maxLength={2000}
                   />
                 </Form.Item>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ margin: '16px 0 12px' }}>
-                    Localização
-                  </div>
-                  <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
-                    Cidade e estado ajudam marcas a encontrar você.
-                  </Text>
-                </div>
+
+              </>
+            </div>
+
+            {/* Passo 1: Localização */}
+            <div ref={firstFieldStep1Ref} style={{ display: step === 1 ? 'block' : 'none' }}>
+              <>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 13 }}>
+                  Preencha suas informações para que marcas próximas a você possam te contratar.
+                </Text>
                 <Row gutter={16}>
                   <Col xs={24} sm={12}>
-                    <Form.Item name="city" label="Cidade" rules={[{ required: true, message: 'Informe a cidade' }]}>
-                      <Input placeholder="Ex.: São Paulo" />
+                    <Form.Item
+                      name="zip_code"
+                      label="CEP"
+                      rules={[
+                        { required: true, message: 'Informe o CEP' },
+                        {
+                          validator: (_, v) => {
+                            if (!v || !String(v).trim()) return Promise.resolve()
+                            const digits = String(v).replace(/\D/g, '')
+                            if (digits.length !== 8) {
+                              return Promise.reject(new Error('CEP deve ter 8 dígitos'))
+                            }
+                            return Promise.resolve()
+                          },
+                        },
+                      ]}
+                    >
+                      <Input
+                        placeholder="Ex.: 01310-100"
+                        maxLength={9}
+                        onChange={(e) => {
+                          const cep = e.target.value?.trim()
+                          if (!cep || cep.replace(/\D/g, '').length !== 8) return
+                          setCepLoading(true)
+                          fetchAddressByCep(cep).then((data) => {
+                            if (!data) return
+                            form.setFieldsValue({
+                              address: data.logradouro ?? form.getFieldValue('address'),
+                              city: data.localidade ?? form.getFieldValue('city'),
+                              state: data.uf ?? form.getFieldValue('state'),
+                            })
+                            const bairro = data.bairro?.trim()
+                            if (bairro) {
+                              const current = (form.getFieldValue('neighborhoods') as string[]) ?? []
+                              const lower = bairro.toLowerCase()
+                              if (!current.some((n) => n.trim().toLowerCase() === lower)) {
+                                form.setFieldsValue({ neighborhoods: [...current, bairro] })
+                              }
+                            }
+                          }).finally(() => setCepLoading(false))
+                        }}
+                        suffix={cepLoading ? <Spin size="small" /> : undefined}
+                      />
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>
-                    <Form.Item name="state" label="Estado (UF)" rules={[{ required: true, message: 'Informe o estado (UF)' }]}>
-                      <Input placeholder="Ex.: SP" maxLength={2} />
+                    <Form.Item name="city" label="Cidade">
+                      <Input placeholder="Preenchido pelo CEP" readOnly />
                     </Form.Item>
                   </Col>
                 </Row>
-                <Collapse
-                  ghost
-                  items={[
-                    {
-                      key: 'address',
-                      label: <Text type="secondary">Detalhes avançados (endereço completo)</Text>,
-                      children: (
-                        <>
-                          <Form.Item name="address" label="Endereço completo">
-                            <Input placeholder="Rua, número, complemento" />
-                          </Form.Item>
-                          <Form.Item name="neighborhood" label="Bairro">
-                            <Input placeholder="Bairro" />
-                          </Form.Item>
-                          <Form.Item name="country" label="País">
-                            <Input placeholder="País" />
-                          </Form.Item>
-                        </>
-                      ),
-                    },
-                  ]}
-                />
+                <Row gutter={16}>
+                  <Col xs={24} sm={12}>
+                    <Form.Item name="state" label="Estado (UF)">
+                      <Input placeholder="Preenchido pelo CEP" maxLength={2} readOnly />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} sm={12}>
+                    <Form.Item name="neighborhoods" label="Bairro">
+                      <Select
+                        mode="tags"
+                        placeholder="Preenchido pelo CEP"
+                        disabled
+                        maxTagCount="responsive"
+                        style={{ width: '100%' }}
+                        options={[]}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Row gutter={16} align="middle">
+                  <Col flex="0 0 auto" style={{ fontSize: 45, marginTop: -30, lineHeight: 1 }}>
+                    🎁
+                  </Col>
+                  <Col flex="1" style={{ minWidth: 0 }}>
+                    <Form.Item
+                      name="informar_endereco_completo"
+                      label="Gostaria de receber brindes e amostras de empresas para influenciadores em seu endereço?"
+                      rules={[{ required: true, message: 'Informe se deseja receber brindes em seu endereço' }]}
+                    >
+                      <Radio.Group>
+                        <Radio value={true}>Sim</Radio>
+                        <Radio value={false}>Não</Radio>
+                      </Radio.Group>
+                    </Form.Item>
+                  </Col>
+                </Row>
+                {informarEnderecoCompleto === true && (
+                  <>
+                    <Form.Item
+                      name="address"
+                      label="Endereço completo"
+                      required={informarEnderecoCompleto === true}
+                      rules={[
+                        {
+                          validator: (_, v) => {
+                            if (form.getFieldValue('informar_endereco_completo') !== true) return Promise.resolve()
+                            if (!v || !String(v).trim()) return Promise.reject(new Error('Informe o endereço completo'))
+                            return Promise.resolve()
+                          },
+                        },
+                      ]}
+                    >
+                      <Input placeholder="Rua, número, complemento" />
+                    </Form.Item>
+                  </>
+                )}
               </>
             </div>
 
             {/* Passo 2: Redes & Contato */}
-            <div ref={firstFieldStep1Ref} style={{ display: step === 1 ? 'block' : 'none' }}>
+            <div ref={firstFieldStep2Ref} style={{ display: step === 2 ? 'block' : 'none' }}>
               <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                Adicione redes e contato para marcas entrarem em contato. WhatsApp é obrigatório.
+                Adicione suas redes sociais e contatos para que marcas possam falar com você
               </Text>
               <Row gutter={[16, 0]}>
                 <Col xs={24} md={12}>
@@ -517,7 +715,6 @@ export default function Activate() {
                     }
                     extra="Ex.: +55 (11) 99999-9999. Use 10 a 13 dígitos (com DDI)."
                     rules={[
-                      { required: true, message: 'Informe o WhatsApp' },
                       {
                         validator: (_, v) => {
                           if (!v || !String(v).trim()) return Promise.resolve()
@@ -583,38 +780,23 @@ export default function Activate() {
             </div>
 
             {/* Passo 3: Conteúdo & Valores */}
-            <div ref={firstFieldStep2Ref} style={{ display: step === 2 ? 'block' : 'none' }}>
+            <div ref={firstFieldStep3Ref} style={{ display: step === 3 ? 'block' : 'none' }}>
               <>
-                <Form.Item
-                  name="content_type"
-                  label="Tipo de conteúdo"
-                  extra="Selecione os tipos que classificam seu conteúdo (ex.: fitness, moda)."
-                  rules={[{ type: 'array' as const, min: 1, message: 'Selecione pelo menos um tipo de conteúdo' }]}
-                >
-                  <Select
-                    mode="multiple"
-                    placeholder="Ex.: fitness, moda, viagens"
-                    allowClear
-                    showSearch
-                    optionFilterProp="label"
-                    options={CONTENT_TYPE_OPTIONS}
-                    maxTagCount="responsive"
-                  />
-                </Form.Item>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
                   Quanto você cobra (ou aceita) por tipo de parceria?
                 </div>
                 <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-                  Escolha a faixa de valor para cada formato. As faixas ajudam marcas a te encontrar. Se você ainda não definiu valores, use as sugestões abaixo (baseadas no seu perfil) ou o botão para um valor inicial — você pode alterar quando quiser.
+                  Informe quanto você cobra por cada formato de conteúdo.
+                  Esses valores orientam marcas durante a negociação.
                 </Text>
-                <Space style={{ marginBottom: 16 }}>
-                  <Button size="small" onClick={fillPricingDefault}>
-                    Usar valor sugerido
+                <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button type="primary" size="small" onClick={fillPricingDefault}>
+                    <Space>
+                      Usar valor sugerido
+                      <PlayCircleOutlined />
+                    </Space>
                   </Button>
-                  <Button size="small" onClick={clearPricing}>
-                    Limpar tudo
-                  </Button>
-                </Space>
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   {PRICING_FIELD_KEYS.map((key) => (
                     <div
@@ -659,12 +841,12 @@ export default function Activate() {
                   Voltar
                 </Button>
               )}
-              {step < 2 && (
+              {step < 3 && (
                 <Button type="primary" onClick={goToNextStep}>
                   Próximo
                 </Button>
               )}
-              {step === 2 && (
+              {step === 3 && (
                 <Button
                   type="primary"
                   htmlType="submit"

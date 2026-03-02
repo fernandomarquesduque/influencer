@@ -729,9 +729,12 @@ export async function searchProfiles(
     );
   }
   if (neighborhoodsFilter.length > 0) {
-    filteredItems = filteredItems.filter(
-      (i) => i.activation?.neighborhood?.trim() && neighborhoodsFilter.includes(i.activation.neighborhood!.trim().toLowerCase())
-    );
+    filteredItems = filteredItems.filter((i) => {
+      const raw = i.activation?.neighborhood?.trim();
+      if (!raw) return false;
+      const parts = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+      return parts.some((p) => neighborhoodsFilter.includes(p));
+    });
   }
   if (socialNetworksFilter.length > 0) {
     const hasNetwork = (act: ProfileActivationData, net: string): boolean => {
@@ -826,7 +829,10 @@ export async function searchProfiles(
       const act = item.activation;
       if (act.city?.trim()) cityCount.set(act.city.trim().toLowerCase(), (cityCount.get(act.city.trim().toLowerCase()) ?? 0) + 1);
       if (act.state?.trim()) stateCount.set(act.state.trim().toLowerCase(), (stateCount.get(act.state.trim().toLowerCase()) ?? 0) + 1);
-      if (act.neighborhood?.trim()) neighborhoodCount.set(act.neighborhood.trim().toLowerCase(), (neighborhoodCount.get(act.neighborhood.trim().toLowerCase()) ?? 0) + 1);
+      if (act.neighborhood?.trim()) {
+        const parts = act.neighborhood.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+        for (const p of parts) neighborhoodCount.set(p, (neighborhoodCount.get(p) ?? 0) + 1);
+      }
       if (act.whatsapp?.trim()) socialCount.whatsapp++;
       if (act.tiktok?.trim()) socialCount.tiktok++;
       if (act.facebook?.trim()) socialCount.facebook++;

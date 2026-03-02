@@ -552,6 +552,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                             </Descriptions.Item>
                           )}
                           {activation.address && <Descriptions.Item label="Endereço">{activation.address}</Descriptions.Item>}
+                          {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
                           {activation.content_type && activation.content_type.length > 0 && (
                             <Descriptions.Item label="Tipo de conteúdo">
                               <Space wrap size={[6, 6]}>{activation.content_type.map((ct) => <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>)}</Space>
@@ -620,6 +621,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                       </Descriptions.Item>
                     )}
                     {activation.address && <Descriptions.Item label="Endereço">{activation.address}</Descriptions.Item>}
+                    {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
                     {activation.content_type && activation.content_type.length > 0 && (
                       <Descriptions.Item label="Tipo de conteúdo">
                         <Space wrap size={[6, 6]}>{activation.content_type.map((ct) => <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>)}</Space>
@@ -709,7 +711,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                       Se você aumentar sua frequência de postagem mantendo o mesmo engajamento, seu perfil pode dobrar em 6 a 9 meses.
                     </Text>
                     <Space size={s.xs} wrap>
-                      {(reportInsights?.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas] : activation?.content_type?.length ? activation.content_type.slice(0, 3).map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct) : ['Esportes', 'Família', 'Lifestyle']).map((label) => (
+                      {(reportInsights?.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas] : activation?.content_type?.length ? activation.content_type.slice(0, 3).map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct) : CONTENT_TYPE_OPTIONS.slice(0, 3).map((ct) => ct.label)).map((label) => (
                         <Tag key={label} style={{ borderRadius: r, background: 'var(--app-border-light)', border: 'none', color: c.text }}>{label}</Tag>
                       ))}
                     </Space>

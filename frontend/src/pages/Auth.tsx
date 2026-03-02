@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Form, Input, Button, Card, message, Collapse } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
@@ -173,10 +173,10 @@ function RejectionFullScreen({
               type="primary"
               size="large"
               onClick={() => (onRetry ? onRetry(result.handle) : onUnderstood())}
-              style={{ height: 48, minWidth: 220, borderRadius: 14, fontWeight: 600, fontSize: 15, background: 'var(--app-primary)', border: 'none', display: 'block', margin: '0 auto' }}
+              style={{ height: 48, marginBottom: 12, minWidth: 220, borderRadius: 14, fontWeight: 600, fontSize: 15, background: 'var(--app-primary)', border: 'none', display: 'block', margin: '0 auto' }}
               icon={<ReloadOutlined />}
             >
-              Já sigo, tentar novamente
+              &nbsp;JÁ SIGO, Tentar novamente
             </Button>
           </>
         ) : (
@@ -501,12 +501,20 @@ export default function Auth() {
   const fromState = (location.state as { nickname?: string })?.nickname
   const fromQuery = searchParams.get('u') || searchParams.get('@')
   const savedNickname = fromState || (fromQuery ? fromQuery.replace(/^@/, '').trim().toLowerCase() : undefined)
+  const didAutoStartExtraction = useRef(false)
 
   useEffect(() => {
     if (savedNickname && form) {
       form.setFieldsValue({ nickname: savedNickname })
     }
   }, [savedNickname, form])
+
+  // Iniciar extração automaticamente quando chega por DM (ex.: do Login com nickname no state)
+  useEffect(() => {
+    if (!savedNickname || user?.profile_handle || didAutoStartExtraction.current) return
+    didAutoStartExtraction.current = true
+    onRequestCode({ nickname: savedNickname })
+  }, [savedNickname, user?.profile_handle])
 
   const onRequestCode = async (values: { nickname: string }) => {
     const n = (values.nickname ?? '').replace(/^@/, '').trim()

@@ -18,7 +18,10 @@ function FocusScrollHandler() {
       if (!isField) return
       const target = (el.closest('input, textarea, select') || el) as HTMLElement
       const scroll = () => {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
+        const rect = target.getBoundingClientRect()
+        const offset = 100
+        const top = Math.max(0, window.scrollY + rect.top - offset)
+        window.scrollTo({ top, behavior: 'smooth' })
       }
       setTimeout(scroll, 150)
       if ('visualViewport' in window) {
@@ -64,7 +67,6 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/premium" element={<Premium />} />
-        {/* Home: apresentação do projeto */}
         <Route path="/" element={<Home />} />
         {/* Lista, detalhe e auth: acesso público */}
         <Route path="/app" element={<ListCacheProvider><Layout /></ListCacheProvider>}>

@@ -746,10 +746,13 @@ export interface PricingData {
 /** Dados de ativação do perfil na plataforma (cadastro completo do influenciador). */
 export interface ProfileActivation {
   address?: string
+  zip_code?: string
   city?: string
   state?: string
   neighborhood?: string
   country?: string
+  /** Autorização para marcas enviarem brindes ao endereço informado. */
+  allow_gifts?: boolean
   whatsapp?: string
   tiktok?: string
   facebook?: string

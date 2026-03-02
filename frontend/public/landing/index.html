@@ -1,11 +1,14 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Busca Influencer – Descubra seu potencial como influencer | Relatório grátis e Media Kit</title>
-  <meta name="description" content="Descubra seu potencial como influencer em 1 minuto. Relatório grátis com seus pontos fortes, métricas e Media Kit em PDF. 100% seguro, sem senha. Entre na vitrine e seja encontrado por marcas.">
-  <meta name="keywords" content="influencer, relatório influencer, media kit, análise perfil Instagram, métricas influencer, vitrine influencer">
+  <meta name="description"
+    content="Descubra seu potencial como influencer em 1 minuto. Relatório grátis com seus pontos fortes, métricas e Media Kit em PDF. 100% seguro, sem senha. Entre na vitrine e seja encontrado por marcas.">
+  <meta name="keywords"
+    content="influencer, relatório influencer, media kit, análise perfil Instagram, métricas influencer, vitrine influencer">
   <meta name="robots" content="index, follow">
   <!-- Ajuste canonical e og:url ao publicar no domínio final -->
   <link rel="canonical" href="https://buscainfluencer.com.br/landing/">
@@ -14,7 +17,8 @@
   <meta property="og:type" content="website">
   <meta property="og:locale" content="pt_BR">
   <meta property="og:title" content="Busca Influencer – Descubra seu potencial como influencer">
-  <meta property="og:description" content="Relatório grátis em 1 minuto. Seus pontos fortes, métricas e Media Kit em PDF. 100% seguro. Entre na vitrine para marcas.">
+  <meta property="og:description"
+    content="Relatório grátis em 1 minuto. Seus pontos fortes, métricas e Media Kit em PDF. 100% seguro. Entre na vitrine para marcas.">
   <meta property="og:url" content="https://buscainfluencer.com.br/landing/">
   <meta property="og:site_name" content="Busca Influencer">
   <meta property="og:image" content="https://buscainfluencer.com.br/images/influencer.png">
@@ -22,7 +26,8 @@
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Busca Influencer – Descubra seu potencial como influencer">
-  <meta name="twitter:description" content="Relatório grátis em 1 minuto. Media Kit em PDF. 100% seguro. Vitrine para marcas.">
+  <meta name="twitter:description"
+    content="Relatório grátis em 1 minuto. Media Kit em PDF. 100% seguro. Vitrine para marcas.">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -41,10 +46,25 @@
       --chart-bar-top: #5980e4;
     }
 
-    *, *::before, *::after { box-sizing: border-box; }
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      overflow-x: hidden;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+    }
+
     body {
       margin: 0;
       min-height: 100vh;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       background: var(--lp-bg);
       font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
       color: var(--lp-text);
@@ -52,7 +72,13 @@
       overflow-x: hidden;
     }
 
-    .landing-vibrant { min-height: 100vh; position: relative; }
+    .landing-vibrant {
+      min-height: 100vh;
+      position: relative;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: hidden;
+    }
 
     /* Blobs de fundo */
     .blob-purple {
@@ -67,6 +93,7 @@
       filter: blur(60px);
       pointer-events: none;
     }
+
     .blob-primary {
       position: fixed;
       bottom: -120px;
@@ -82,16 +109,20 @@
 
     /* Header */
     .landing-header {
+      width: 100%;
+      max-width: 1200px;
+      min-width: 0;
       height: 72px;
       padding: 0 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      max-width: 1200px;
       margin: 0 auto;
       position: relative;
       z-index: 10;
+      box-sizing: border-box;
     }
+
     .landing-header-logo {
       display: flex;
       align-items: center;
@@ -99,18 +130,29 @@
       text-decoration: none;
       color: var(--lp-text);
     }
-    .landing-header-logo img { height: 40px; width: auto; display: block; }
+
+    .landing-header-logo img {
+      height: 40px;
+      width: auto;
+      max-width: 100%;
+      display: block;
+      object-fit: contain;
+      flex-shrink: 1;
+    }
+
     .landing-header-nav {
       display: flex;
       align-items: center;
       gap: 16px;
     }
+
     .landing-header-nav a {
       color: var(--lp-text);
       font-size: 15px;
       font-weight: 500;
       text-decoration: none;
     }
+
     .btn-create {
       background: var(--lp-primary);
       color: #fff;
@@ -122,12 +164,26 @@
       font-family: Montserrat, sans-serif;
       display: inline-block;
     }
+
     .landing-header-nav .btn-create,
-    .landing-header-nav .btn-create:hover { color: #fff; }
-    .btn-create:hover { filter: brightness(1.05); color: #fff; }
+    .landing-header-nav .btn-create:hover {
+      color: #fff;
+    }
+
+    main {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
+    .btn-create:hover {
+      filter: brightness(1.05);
+      color: #fff;
+    }
 
     /* Hero */
     .landing-hero {
+      width: 100%;
       max-width: 1100px;
       margin: 0 auto;
       padding: 56px 24px 80px;
@@ -137,7 +193,9 @@
       align-items: center;
       position: relative;
       z-index: 1;
+      min-width: 0;
     }
+
     .landing-hero h1 {
       font-size: clamp(28px, 3.2vw, 40px);
       font-weight: 700;
@@ -146,43 +204,75 @@
       margin: 0 0 20px;
       letter-spacing: -0.02em;
       font-family: Montserrat, sans-serif;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      word-break: break-word;
     }
+
     .landing-hero .hero-p {
       font-size: 17px;
       color: var(--lp-text);
       line-height: 1.65;
       margin: 0 0 16px;
       font-weight: 400;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      word-break: break-word;
     }
+
     .landing-hero h2 {
       font-size: clamp(20px, 2.2vw, 26px);
       font-weight: 600;
       color: var(--lp-hero-text);
       margin: 0 0 20px;
       font-family: Montserrat, sans-serif;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      word-break: break-word;
     }
-    .hero-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .hero-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
     .hero-list-item {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 10px;
       font-size: 15px;
       color: var(--lp-text);
       font-family: Montserrat, sans-serif;
+      min-width: 0;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      word-break: break-word;
     }
-    .hero-list-item strong { font-weight: 600; }
-    .star { color: #e8ba00; font-size: 18px; }
+
+    .hero-list-item strong {
+      font-weight: 600;
+    }
+
+    .star {
+      color: #e8ba00;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
     .hero-image-wrap {
       position: relative;
       display: flex;
       justify-content: center;
       align-items: center;
     }
+
     .hero-image-box {
       width: min(100%, 420px);
       overflow: hidden;
       border-radius: 12px;
     }
+
     .hero-image-box img {
       width: 100%;
       height: auto;
@@ -190,21 +280,33 @@
       vertical-align: middle;
     }
 
+    .landing-hero > div {
+      min-width: 0;
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+
     /* CTA card */
     .cta-section {
+      width: 100%;
       max-width: 640px;
       margin: 0 auto;
       padding: 0 24px 72px;
       position: relative;
       z-index: 1;
+      box-sizing: border-box;
     }
+
     .cta-card {
       background: var(--chart-bar-top);
       border: 1px solid var(--lp-border);
       border-radius: 20px;
       padding: 32px 28px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+      max-width: 100%;
+      box-sizing: border-box;
     }
+
     /* Formulário CTA (compartilhado entre .cta-card e .cta-final .card) */
     .cta-card .input-wrap,
     .cta-final .card .input-wrap {
@@ -212,6 +314,7 @@
       position: relative;
       display: block;
     }
+
     .cta-card .input-at,
     .cta-final .card .input-at {
       position: absolute;
@@ -228,6 +331,7 @@
       line-height: 1;
       pointer-events: none;
     }
+
     .cta-card input[type="text"],
     .cta-final .card input[type="text"] {
       width: 100%;
@@ -242,11 +346,13 @@
       box-sizing: border-box;
       display: block;
     }
+
     .cta-card input:focus,
     .cta-final .card input:focus {
       border-color: var(--lp-primary);
       box-shadow: 0 0 0 2px rgba(92, 103, 242, 0.2);
     }
+
     .cta-card .btn-submit,
     .cta-final .card .btn-submit {
       width: 100%;
@@ -263,8 +369,12 @@
       display: block;
       box-sizing: border-box;
     }
+
     .cta-card .btn-submit:hover,
-    .cta-final .card .btn-submit:hover { filter: brightness(1.05); }
+    .cta-final .card .btn-submit:hover {
+      filter: brightness(1.05);
+    }
+
     .cta-list {
       list-style: none;
       padding: 0;
@@ -273,6 +383,7 @@
       flex-direction: column;
       gap: 10px;
     }
+
     .cta-list li {
       display: flex;
       align-items: center;
@@ -281,7 +392,12 @@
       font-size: 14px;
       font-weight: 500;
     }
-    .cta-list .icon { flex-shrink: 0; font-size: 16px; }
+
+    .cta-list .icon {
+      flex-shrink: 0;
+      font-size: 16px;
+    }
+
     .cta-note {
       text-align: center;
       font-size: 15px;
@@ -293,6 +409,7 @@
       margin-left: auto;
       margin-right: auto;
     }
+
     .cta-note-small {
       text-align: center;
       font-size: 13px;
@@ -306,13 +423,17 @@
       background: var(--lp-bg-soft);
       border-radius: 16px;
     }
+
     .section {
+      width: 100%;
       max-width: 1100px;
       margin: 0 auto;
       padding: 56px 24px 72px;
       position: relative;
       z-index: 1;
+      box-sizing: border-box;
     }
+
     .section h2 {
       font-size: 28px;
       font-weight: 700;
@@ -321,19 +442,22 @@
       text-align: center;
       font-family: Montserrat, sans-serif;
     }
+
     .steps-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 24px;
     }
+
     .step-card {
       background: var(--lp-bg);
       border: 1px solid var(--lp-border);
       border-radius: 16px;
       padding: 28px;
       text-align: center;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
     }
+
     .step-icon {
       width: 56px;
       height: 56px;
@@ -345,6 +469,7 @@
       margin: 0 auto 16px;
       font-size: 28px;
     }
+
     .step-card h3 {
       font-size: 18px;
       font-weight: 700;
@@ -352,6 +477,7 @@
       margin: 0 0 10px;
       font-family: Montserrat, sans-serif;
     }
+
     .step-card p {
       font-size: 15px;
       color: var(--lp-text);
@@ -366,6 +492,7 @@
       grid-template-columns: repeat(2, 1fr);
       gap: 20px;
     }
+
     .report-card {
       background: var(--lp-bg);
       border: 1px solid var(--lp-border);
@@ -374,8 +501,9 @@
       display: flex;
       gap: 16px;
       align-items: flex-start;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
     }
+
     .report-icon {
       width: 44px;
       height: 44px;
@@ -387,6 +515,7 @@
       flex-shrink: 0;
       font-size: 22px;
     }
+
     .report-card h3 {
       font-size: 16px;
       font-weight: 700;
@@ -394,6 +523,7 @@
       margin: 0 0 6px;
       font-family: Montserrat, sans-serif;
     }
+
     .report-card p {
       font-size: 14px;
       color: var(--lp-text);
@@ -409,7 +539,12 @@
       position: relative;
       z-index: 1;
     }
-    .cta-final-inner { max-width: 560px; margin: 0 auto; }
+
+    .cta-final-inner {
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
     .cta-final h2 {
       font-size: 26px;
       font-weight: 700;
@@ -418,18 +553,21 @@
       text-align: center;
       font-family: Montserrat, sans-serif;
     }
+
     .cta-final .card {
       background: var(--lp-bg);
       border: 1px solid var(--lp-border);
       border-radius: 20px;
       padding: 28px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
     }
+
     .cta-card form,
     .cta-final .card form {
       width: 100%;
       display: block;
     }
+
     .cta-final-note {
       text-align: center;
       font-size: 14px;
@@ -447,6 +585,7 @@
       z-index: 1;
       background: var(--lp-bg);
     }
+
     .footer-links {
       display: flex;
       flex-wrap: wrap;
@@ -454,6 +593,7 @@
       gap: 28px;
       margin-bottom: 20px;
     }
+
     .footer-links a {
       font-size: 14px;
       color: var(--lp-text);
@@ -461,7 +601,11 @@
       text-decoration: none;
       font-weight: 500;
     }
-    .footer-links a:hover { text-decoration: underline; }
+
+    .footer-links a:hover {
+      text-decoration: underline;
+    }
+
     .footer-copy {
       text-align: center;
       font-size: 13px;
@@ -477,21 +621,89 @@
         justify-content: center;
         align-items: center;
         height: auto;
-        padding: 16px 24px;
+        padding: 16px 20px;
         gap: 14px;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        overflow-x: hidden;
+        box-sizing: border-box;
       }
-      .landing-header-logo { justify-content: center; }
-      .landing-header-nav { justify-content: center; }
+
+      .landing-header-logo {
+        justify-content: center;
+        max-width: 100%;
+        width: 100%;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .landing-header-logo img {
+        max-width: min(100%, 85vw);
+        width: auto;
+        height: auto;
+        max-height: 44px;
+        object-fit: contain;
+      }
+
+      .landing-header-nav {
+        justify-content: center;
+      }
     }
+
     @media (max-width: 900px) {
       .landing-hero {
         grid-template-columns: 1fr;
         text-align: center;
+        padding-left: 20px;
+        padding-right: 20px;
+        max-width: 100%;
+        overflow-x: hidden;
       }
-      .landing-hero .hero-image-wrap { margin-top: 24px; }
-      .landing-hero .hero-image-box { width: 100%; max-width: none; }
-      .steps-grid { grid-template-columns: 1fr; }
-      .report-grid { grid-template-columns: 1fr; }
+
+      .landing-hero .hero-image-wrap {
+        margin-top: 24px;
+      }
+
+      .landing-hero .hero-image-box {
+        width: 100%;
+        max-width: none;
+      }
+
+      .steps-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .report-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .cta-section {
+        padding-left: 20px;
+        padding-right: 20px;
+        max-width: 100%;
+        overflow-x: hidden;
+      }
+
+      .section {
+        padding-left: 20px;
+        padding-right: 20px;
+        max-width: 100%;
+        overflow-x: hidden;
+      }
+
+      .cta-final {
+        padding-left: 20px;
+        padding-right: 20px;
+        overflow-x: hidden;
+      }
+
+      footer.landing-footer {
+        padding-left: 20px;
+        padding-right: 20px;
+      }
     }
   </style>
 
@@ -511,6 +723,7 @@
   }
   </script>
 </head>
+
 <body>
   <div class="landing-vibrant">
     <div class="blob-purple" aria-hidden="true"></div>
@@ -518,7 +731,7 @@
 
     <header class="landing-header" role="banner">
       <a href="/" class="landing-header-logo" aria-label="Busca Influencer - Início">
-        <img src="/images/logo.svg" alt="Busca Influencer" width="160" height="40">
+        <img src="/images/logo.svg" alt="Busca Influencer">
       </a>
       <nav class="landing-header-nav" aria-label="Menu principal">
         <a href="/login">Entrar</a>
@@ -530,7 +743,8 @@
       <section id="hero" class="landing-hero" aria-labelledby="hero-title">
         <div>
           <h1 id="hero-title">Quer descobrir seu potencial como influencer?</h1>
-          <p class="hero-p">Às vezes, o que falta para você decolar é entender o que os números dizem. <strong>Em 1 minuto, a gente te mostra seus pontos fortes</strong> e o que as marcas estão buscando no seu perfil.</p>
+          <p class="hero-p">Às vezes, o que falta para você decolar é entender o que os números dizem. <strong>Em 1
+              minuto, a gente te mostra seus pontos fortes</strong> e o que as marcas estão buscando no seu perfil.</p>
           <h2>Gratuito e feito para te ajudar!</h2>
           <div class="hero-list">
             <div class="hero-list-item">
@@ -545,7 +759,8 @@
         </div>
         <div class="hero-image-wrap">
           <div class="hero-image-box">
-            <img src="/images/influencer.png" alt="Influenciadora sorrindo com óculos rosa" width="420" height="auto" loading="eager">
+            <img src="/images/influencer.png" alt="Influenciadora sorrindo com óculos rosa" width="420" height="auto"
+              loading="eager">
           </div>
         </div>
       </section>
@@ -556,17 +771,20 @@
             <input type="hidden" name="u" id="u" value="">
             <div class="input-wrap">
               <span class="input-at" aria-hidden="true">@</span>
-              <input type="text" id="nickname" placeholder="seuusuario" autocomplete="username" aria-label="Usuário do Instagram" maxlength="100">
+              <input type="text" id="nickname" placeholder="seuusuario" autocomplete="username"
+                aria-label="Usuário do Instagram" maxlength="100">
             </div>
             <button type="submit" class="btn-submit">Analisar perfil grátis</button>
           </form>
           <ul class="cta-list">
             <li><span class="icon">✓</span> Gratuito e feito para te ajudar!</li>
-            <li><span class="icon">✓</span> Entre na vitrine e seja encontrado por empresas parceiras que buscam influenciadores</li>
+            <li><span class="icon">✓</span> Entre na vitrine e seja encontrado por empresas parceiras que buscam
+              influenciadores</li>
             <li><span class="icon">✓</span> Relatório cheio de insights + Media Kit em PDF para enviar a marcas</li>
           </ul>
         </div>
-        <p class="cta-note">Cadastre-se grátis e entre na vitrine. Nossas empresas parceiras buscam influenciadores para campanhas e parcerias — seu perfil pode ser o próximo a ser contratado.</p>
+        <p class="cta-note">Cadastre-se grátis e entre na vitrine. Nossas empresas parceiras buscam influenciadores para
+          campanhas e parcerias — seu perfil pode ser o próximo a ser contratado.</p>
         <p class="cta-note-small">Processo rápido e seguro.</p>
       </section>
 
@@ -581,12 +799,14 @@
           <div class="step-card">
             <div class="step-icon" aria-hidden="true">📄</div>
             <h3>Media Kit</h3>
-            <p>Gere um Media Kit profissional em PDF com seus dados, métricas e melhores posts. Pronto para enviar a marcas e oportunidades.</p>
+            <p>Gere um Media Kit profissional em PDF com seus dados, métricas e melhores posts. Pronto para enviar a
+              marcas e oportunidades.</p>
           </div>
           <div class="step-card">
             <div class="step-icon" aria-hidden="true">🚀</div>
             <h3>Receba Insights</h3>
-            <p>Seu relatório completo e painel online ficam prontos em segundos. Além disso, você gera um Media Kit profissional em PDF para enviar a marcas e oportunidades.</p>
+            <p>Seu relatório completo e painel online ficam prontos em segundos. Além disso, você gera um Media Kit
+              profissional em PDF para enviar a marcas e oportunidades.</p>
           </div>
         </div>
       </section>
@@ -612,7 +832,8 @@
             <div class="report-icon" aria-hidden="true">📊</div>
             <div>
               <h3>Taxa de engajamento</h3>
-              <p>Nada de métricas de vaidade! Calculamos sua interação real para mostrar o quanto seu público é fiel.</p>
+              <p>Nada de métricas de vaidade! Calculamos sua interação real para mostrar o quanto seu público é fiel.
+              </p>
             </div>
           </div>
           <div class="report-card">
@@ -626,14 +847,16 @@
             <div class="report-icon" aria-hidden="true">👥</div>
             <div>
               <h3>Quem te acompanha</h3>
-              <p>Descubra a idade, cidade e os principais interesses de quem te segue para criar posts ainda mais certeiros.</p>
+              <p>Descubra a idade, cidade e os principais interesses de quem te segue para criar posts ainda mais
+                certeiros.</p>
             </div>
           </div>
           <div class="report-card">
             <div class="report-icon" aria-hidden="true">📋</div>
             <div>
               <h3>Guia de melhorias</h3>
-              <p>Um checklist prático com pontos que você pode ajustar para deixar seu perfil irresistível para novos patrocinadores.</p>
+              <p>Um checklist prático com pontos que você pode ajustar para deixar seu perfil irresistível para novos
+                patrocinadores.</p>
             </div>
           </div>
         </div>
@@ -647,7 +870,8 @@
               <input type="hidden" name="u" id="u2" value="">
               <div class="input-wrap">
                 <span class="input-at" aria-hidden="true">@</span>
-                <input type="text" id="nickname2" placeholder="seuusuario" autocomplete="username" aria-label="Usuário do Instagram" maxlength="100">
+                <input type="text" id="nickname2" placeholder="seuusuario" autocomplete="username"
+                  aria-label="Usuário do Instagram" maxlength="100">
               </div>
               <button type="submit" class="btn-submit">Analisar perfil</button>
             </form>
@@ -668,7 +892,7 @@
   </div>
 
   <script>
-    (function() {
+    (function () {
       var form1 = document.querySelector('#cta-inicial form');
       var form2 = document.querySelector('.cta-final form');
       var input1 = document.getElementById('nickname');
@@ -681,7 +905,7 @@
       }
 
       if (form1 && input1 && hidden1) {
-        form1.addEventListener('submit', function(e) {
+        form1.addEventListener('submit', function (e) {
           var v = normalize(input1.value);
           if (v) hidden1.value = v;
           if (!v) {
@@ -694,7 +918,7 @@
         });
       }
       if (form2 && input2 && hidden2) {
-        form2.addEventListener('submit', function(e) {
+        form2.addEventListener('submit', function (e) {
           var v = normalize(input2.value);
           if (v) hidden2.value = v;
           if (!v) {
@@ -709,4 +933,5 @@
     })();
   </script>
 </body>
+
 </html>
