@@ -26,7 +26,7 @@ import {
   buildConfigFromEnv,
   type ExtractSingleProfileResult,
 } from '../crawl/extractSingleProfile.js';
-import { searchProfiles, scheduleSearchCacheRewarm, warmSearchCache, type ProfilesSearchQuery } from './profilesSearch.js';
+import { searchProfiles, getProfileSummary, scheduleSearchCacheRewarm, warmSearchCache, type ProfilesSearchQuery } from './profilesSearch.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { loginWithCredentials } from '../instagramClient/login.js';
 import { profileExtractDelay, profileExtractDelayForApi } from '../utils/delay.js';
@@ -1928,23 +1928,63 @@ app.get('/api/profiles/:handle', rateLimitDataApi, async (req: RequestWithAuth, 
   }
 });
 
-/** Posts do perfil. Para público que atingiu limite diário, retorna posts sem métricas (likes, comentários, views). */
+/** Resumo do perfil com engagement e BI (métricas derivadas 100% do Instagram). Retorna profile + engagement + bi. */
+app.get('/api/profiles/:handle/summary', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    const handle = (req.params.handle || '').replace(/^@/, '');
+    const summary = await getProfileSummary(db, handle);
+    if (summary == null) {
+      res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    if (!req.user || publicAtLimit(req)) {
+      res.json({ profile: redactProfile(summary.profile), engagement: summary.engagement, bi: summary.bi });
+      return;
+    }
+    res.json(summary);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+const MEDIA_TYPES = ['post', 'reel', 'tagged', 'highlight'] as const;
+
+/** Deriva content_type do item: valor salvo ou chave handle:type:shortcode (retrocompat: handle:shortcode = post). */
+function getContentTypeFromItem(key: string, value: Record<string, unknown>): string {
+  const ct = value.content_type;
+  if (typeof ct === 'string' && MEDIA_TYPES.includes(ct as (typeof MEDIA_TYPES)[number])) return ct;
+  const parts = key.split(':');
+  if (parts.length >= 3 && MEDIA_TYPES.includes(parts[1] as (typeof MEDIA_TYPES)[number])) return parts[1];
+  return 'post';
+}
+
+/** Posts/reels/marcados/highlights do perfil. type=post|reel|tagged|highlight filtra; sem type retorna todos. */
 app.get('/api/posts', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
     const profileFilter = (req.query.profile as string)?.toLowerCase().replace(/^@/, '');
+    const typeFilter = (req.query.type as string)?.toLowerCase();
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Number(req.query.offset) || 0;
     const items = profileFilter
       ? await db.getByBucket('post', profileFilter + ':')
       : await db.getByBucket('post');
-    const total = items.length;
-    const slice = items.slice(offset, offset + limit).map(({ key, value }) => {
+    let filtered = items;
+    if (typeFilter && MEDIA_TYPES.includes(typeFilter as (typeof MEDIA_TYPES)[number])) {
+      filtered = items.filter(({ key, value }) => {
+        const v = value as Record<string, unknown>;
+        return getContentTypeFromItem(key, v) === typeFilter;
+      });
+    }
+    const total = filtered.length;
+    const slice = filtered.slice(offset, offset + limit).map(({ key, value }) => {
       const item = value as Record<string, unknown>;
       const post = item?.post as Record<string, unknown> | undefined;
       const content = item?.content as Record<string, unknown> | undefined;
       if (post && post.taken_at == null && content?.caption_created_at != null && typeof content.caption_created_at === 'number') {
         item.post = { ...post, taken_at: content.caption_created_at };
       }
+      if (!item.content_type) item.content_type = getContentTypeFromItem(key, item);
       return { key, ...item };
     });
     if (!req.user || publicAtLimit(req)) {

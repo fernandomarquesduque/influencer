@@ -252,9 +252,14 @@ export interface PostMetrics {
   view_count?: number
 }
 
+/** Tipo de mídia do perfil: post (feed), reel, tagged (marcados), highlight (destaques). */
+export type MediaKind = 'post' | 'reel' | 'tagged' | 'highlight'
+
 export interface PostItem {
   key: string
   profile_handle?: string
+  /** Tipo de mídia quando extraímos reels, marcados e destaques. */
+  content_type?: MediaKind
   influencer?: { username?: string; full_name?: string; profile_pic_url?: string }
   post?: { shortcode?: string; media_type?: number; taken_at?: number; collected_at?: string;[k: string]: unknown }
   content?: PostContent
@@ -601,9 +606,11 @@ export async function updateDirectQueueServiceInterval(minutes: number): Promise
   if (!res.ok) throw new Error('Falha ao alterar intervalo.')
 }
 
-export async function fetchPosts(profileHandle: string, limit = 50, offset = 0): Promise<PostsResponse> {
+export async function fetchPosts(profileHandle: string, limit = 50, offset = 0, type?: MediaKind): Promise<PostsResponse> {
   const h = profileHandle.replace(/^@/, '')
-  const res = await fetch(`${API_BASE}/posts?profile=${encodeURIComponent(h)}&limit=${limit}&offset=${offset}`, {
+  const params = new URLSearchParams({ profile: h, limit: String(limit), offset: String(offset) })
+  if (type) params.set('type', type)
+  const res = await fetch(`${API_BASE}/posts?${params.toString()}`, {
     headers: { ...authHeaders() },
   })
   if (res.status === 429) {

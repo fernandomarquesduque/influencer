@@ -1100,6 +1100,9 @@ function ConsistencyPage({
 export interface MediaKitData {
   profile: ProfileItem | null
   posts: PostItem[]
+  reels?: PostItem[]
+  tagged?: PostItem[]
+  highlights?: PostItem[]
   activation: ProfileActivation | null
   reportInsights: ReportInsights | null
   profilePicDataUrl?: string | null
@@ -1112,6 +1115,9 @@ export interface MediaKitData {
 export function MediaKitDocument({
   profile,
   posts,
+  reels = [],
+  tagged = [],
+  highlights = [],
   activation,
   reportInsights,
   profilePicDataUrl,
@@ -1205,10 +1211,16 @@ export function MediaKitDocument({
   const header = <PageHeader handle={handle} fullName={fullName} tierLabel={tierLabel} />
   const footer = <PageFooter dateStr={dateStr} />
 
+  const contentBreakdown: string[] = []
+  if (reels.length > 0) contentBreakdown.push(`Reels: ${reels.length}`)
+  if (tagged.length > 0) contentBreakdown.push(`Marcados: ${tagged.length}`)
+  if (highlights.length > 0) contentBreakdown.push(`Destaques: ${highlights.length}`)
+  const postsSub = contentBreakdown.length > 0 ? contentBreakdown.join(' · ') : undefined
+
   const kpis: { label: string; value: string; sub?: string }[] = [
     { label: 'Seguidores', value: formatShortNum(followersCount) },
     { label: 'Seguindo', value: formatShortNum(followingCount) },
-    { label: 'Posts', value: String(mediaCount) },
+    { label: 'Posts', value: String(mediaCount), ...(postsSub && { sub: postsSub }) },
     { label: 'Engajamento', value: `${(er || 0).toFixed(1)}%` },
     { label: 'Posts/sem', value: (postsPerWeek || 0).toFixed(1) },
   ]

@@ -85,6 +85,9 @@ const MEDIA_KIT_CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutos
 interface MediaKitCacheEntry {
   profile: ProfileItem
   posts: PostItem[]
+  reels: PostItem[]
+  tagged: PostItem[]
+  highlights: PostItem[]
   activation: ProfileActivation | null
   reportInsights: ReturnType<typeof buildReportInsights> | null
   profilePicDataUrl: string | null
@@ -170,7 +173,12 @@ export default function MediaKit() {
         return
       }
 
-      const posts = postsRes.items ?? []
+      const allItems = postsRes.items ?? []
+      const ct = (p: PostItem) => (p.content_type || 'post') as string
+      const posts = allItems.filter((p) => ct(p) === 'post')
+      const reels = allItems.filter((p) => ct(p) === 'reel')
+      const tagged = allItems.filter((p) => ct(p) === 'tagged')
+      const highlights = allItems.filter((p) => ct(p) === 'highlight')
       const activation = (activationRes && typeof activationRes === 'object' ? activationRes : {}) as ProfileActivation
 
       if (!hasCity(activation)) {
@@ -179,7 +187,7 @@ export default function MediaKit() {
       }
 
       setProgress('Calculando insights...')
-      const reportInsights = profile && posts.length > 0 ? buildReportInsights(profile, posts) : null
+      const reportInsights = profile && allItems.length > 0 ? buildReportInsights(profile, allItems) : null
 
       setProgress('Carregando foto do perfil...')
       const profilePicUrl = proxyImageUrl(getProfilePicUrl(profile))
@@ -288,6 +296,9 @@ export default function MediaKit() {
       setCachedMediaKit(h, {
         profile,
         posts,
+        reels,
+        tagged,
+        highlights,
         activation: Object.keys(activation).length ? activation : null,
         reportInsights,
         profilePicDataUrl,
@@ -327,6 +338,9 @@ export default function MediaKit() {
         <MediaKitDocument
           profile={cached.profile}
           posts={cached.posts}
+          reels={cached.reels ?? []}
+          tagged={cached.tagged ?? []}
+          highlights={cached.highlights ?? []}
           activation={cached.activation}
           reportInsights={cached.reportInsights}
           profilePicDataUrl={cached.profilePicDataUrl}

@@ -4,32 +4,49 @@ import { inferCategoriesFromHashtags } from './inferCategoriesFromHashtags.js';
 
 /**
  * Perfil enxuto para persistência: só o necessário para UI, busca e filtros.
- * Todos os campos vêm de data.user do response Polaris (ou fallbacks em timeline).
+ * Campos vindos de data.user (Polaris) ou edge_* quando a API usa esse formato.
+ * Apenas dados que o Instagram web (GraphQL/Polaris) entrega — nada inventado.
  */
 export interface SlimProfile extends Record<string, unknown> {
   handle: string;
-  username?: string;           // data.user.username
-  full_name?: string;         // data.user.full_name
-  profile_pic_url?: string;   // data.user.profile_pic_url
+  username?: string;
+  full_name?: string;
+  profile_pic_url?: string;
   hd_profile_pic_url?: string; // data.user.hd_profile_pic_url_info.url
-  id?: string;                // data.user.id
-  pk?: string;                // data.user.pk
-  followers_count: number;    // data.user.follower_count (API usa singular)
-  media_count?: number;       // data.user.media_count
-  following_count?: number;   // data.user.following_count
-  is_verified?: boolean;     // data.user.is_verified
-  is_private?: boolean;      // data.user.is_private
-  is_business_account?: boolean; // inferido + data.user
-  is_embeds_disabled?: boolean;  // data.user.is_embeds_disabled
-  biography?: string;        // data.user.biography
-  external_url?: string;     // data.user.external_url
-  categories: string[];      // inferido dos posts (hashtags), não vem no body
-  latest_reel_media?: number; // data.user.latest_reel_media
-  account_type?: number;     // data.user.account_type (1/2/3)
-  category?: string;         // data.user.category (filtro estabelecimento)
-  address_street?: string;   // data.user.address_street
-  city_name?: string;        // data.user.city_name
-  zip?: string;              // data.user.zip
+  id?: string;
+  pk?: string;
+  followers_count: number;    // follower_count ou edge_followed_by.count
+  media_count?: number;      // media_count ou edge_owner_to_timeline_media.count
+  following_count?: number;   // following_count ou edge_follow.count
+  is_verified?: boolean;
+  is_private?: boolean;
+  is_business_account?: boolean;
+  is_professional_account?: boolean; // data.user.is_professional_account
+  is_embeds_disabled?: boolean;
+  biography?: string;
+  external_url?: string;
+  categories: string[];       // inferido dos posts (hashtags)
+  latest_reel_media?: number;
+  account_type?: number;      // 1=pessoal, 2=criador, 3=empresa
+  category?: string;         // data.user.category
+  category_name?: string;     // nome legível da categoria (quando diferente de category)
+  business_category_name?: string;
+  overall_category_name?: string;
+  address_street?: string;
+  city_name?: string;
+  zip?: string;
+  /** Seguidores em comum com o viewer (quando disponível). */
+  mutual_followers_count?: number;
+  /** Total de reels/clips. */
+  total_clips_count?: number;
+  /** Tem arquivo de stories / destaques. */
+  has_story_archive?: boolean;
+  /** Número de highlights (edge_highlight_reels ou similar). */
+  highlight_reel_count?: number;
+  /** Tem reels (derivado: total_clips_count > 0). */
+  has_clips?: boolean;
+  /** Links da bio (array de { title, url } quando a API envia). */
+  bio_links?: Array<{ title?: string; url?: string }>;
   _collected_at: string;
   _discovered_by: string;
   _discovered_value: string;
@@ -223,7 +240,37 @@ export function buildSlimProfile(
     toNum(dataUser?.follower_count) ??
     toNum(user?.follower_count) ??
     toNum(deepFind(rawProfile, ['followers_count', 'follower_count'])) ??
+    deepFindCount(rawProfile, 'edge_followed_by') ??
     followersFromDiscovery ?? 0;
+
+  const mutual_followers_count = toNum(dataUser?.mutual_followers_count ?? user?.mutual_followers_count);
+
+  const totalClips = toNum(dataUser?.total_clips_count ?? user?.total_clips_count);
+  const total_clips_count = totalClips;
+  const has_clips = totalClips != null ? totalClips > 0 : undefined;
+
+  const hasStoryArchive = dataUser?.has_story_archive ?? user?.has_story_archive;
+  const has_story_archive = hasStoryArchive === true || (typeof hasStoryArchive === 'number' && hasStoryArchive > 0);
+
+  const highlightReelCount = toNum((dataUser ?? user)?.highlight_reel_count) ?? deepFindCount(rawProfile, 'edge_highlight_reels');
+  const is_professional_account = (dataUser?.is_professional_account ?? user?.is_professional_account) === true;
+
+  let bio_links: Array<{ title?: string; url?: string }> | undefined;
+  const rawBioLinks = dataUser?.bio_links ?? user?.bio_links;
+  if (Array.isArray(rawBioLinks) && rawBioLinks.length > 0) {
+    bio_links = rawBioLinks.map((l: unknown) => {
+      if (l != null && typeof l === 'object') {
+        const o = l as Record<string, unknown>;
+        return { title: toStr(o.title), url: toStr(o.url ?? o.lynx_url) };
+      }
+      return {};
+    }).filter((l) => l.url || l.title);
+  }
+  if (bio_links?.length === 0) bio_links = undefined;
+
+  const category_name = toStr((dataUser ?? user)?.category_name) ?? toStr(deepFind(rawProfile, ['category_name']));
+  const business_category_name = toStr((dataUser ?? user)?.business_category_name) ?? toStr(deepFind(rawProfile, ['business_category_name']));
+  const overall_category_name = toStr((dataUser ?? user)?.overall_category_name) ?? toStr(deepFind(rawProfile, ['overall_category_name']));
 
   return {
     handle: key,
@@ -239,6 +286,7 @@ export function buildSlimProfile(
     is_verified: is_verified || undefined,
     is_private: is_private || undefined,
     is_business_account: is_business_account || undefined,
+    is_professional_account: is_professional_account || undefined,
     is_embeds_disabled: is_embeds_disabled || undefined,
     biography: biography && biography.length > 0 ? biography.slice(0, 1000) : undefined,
     external_url: external_url && external_url.length > 0 ? external_url : undefined,
@@ -246,9 +294,18 @@ export function buildSlimProfile(
     latest_reel_media,
     ...(account_type !== undefined && { account_type }),
     ...(category !== undefined && category !== '' && { category }),
+    ...(category_name && { category_name }),
+    ...(business_category_name && { business_category_name }),
+    ...(overall_category_name && { overall_category_name }),
     ...(address_street !== undefined && { address_street }),
     ...(city_name !== undefined && { city_name }),
     ...(zip !== undefined && { zip }),
+    ...(mutual_followers_count !== undefined && mutual_followers_count > 0 && { mutual_followers_count }),
+    ...(total_clips_count !== undefined && { total_clips_count }),
+    ...(has_clips !== undefined && { has_clips }),
+    ...(typeof has_story_archive === 'boolean' && { has_story_archive }),
+    ...(highlightReelCount !== undefined && highlightReelCount > 0 && { highlight_reel_count: highlightReelCount }),
+    ...(bio_links && bio_links.length > 0 && { bio_links }),
     _collected_at: collectedAt,
     _discovered_by: discoveredBy,
     _discovered_value: discoveredValue,

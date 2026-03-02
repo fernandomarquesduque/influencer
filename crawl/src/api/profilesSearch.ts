@@ -5,6 +5,7 @@
 
 import type { CompositeStorage } from '../storage/compositeStorage.js';
 import type { ProfileActivationData } from '../storage/sqliteSync.js';
+import { computeInstagramBi, type InstagramBi, type PostForBi } from '../utils/instagramBi.js';
 
 /** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: só é substituído quando um novo reaquecimento termina (warmSearchCache ou scheduleSearchCacheRewarm). */
 let searchDataCache: {
@@ -310,7 +311,7 @@ function getPostMetrics(post: Record<string, unknown>): { likes: number; comment
   return { likes, comments, views };
 }
 
-/** Resultado de engajamento agregado dos posts do perfil. */
+/** Resultado de engajamento agregado dos posts do perfil (apenas dados Instagram). */
 export interface EngagementStats {
   posts_count: number;
   total_likes: number;
@@ -319,10 +320,18 @@ export interface EngagementStats {
   avg_likes: number;
   avg_comments: number;
   avg_views: number;
-  /** (total_likes + total_comments) / followers * 100. 0 se sem seguidores. */
+  /** (média de interações por post) / followers * 100. */
   engagement_rate: number;
-  /** Média de posts por semana (intervalo de datas dos posts analisados). */
+  /** Média de posts por semana (intervalo de datas). */
   posts_per_week?: number;
+  /** Alcance relativo: avg_views / followers (audiência ativa vs inflada). */
+  reach_ratio?: number;
+  /** comments / (likes + comments) — profundidade da comunidade. */
+  conversation_rate?: number;
+  /** total_likes / total_views quando views > 0. */
+  like_view_ratio?: number | null;
+  /** total_comments / followers. */
+  comments_per_follower?: number;
 }
 
 /** Bucket de facet (ex.: engajamento baixa/média/alta). */
@@ -352,7 +361,7 @@ export interface ProfilesSearchFacets {
   social: { whatsapp: number; tiktok: number; facebook: number; linkedin: number; twitter: number };
 }
 
-/** Item retornado na listagem (perfil + engajamento). */
+/** Item retornado na listagem (perfil + engajamento + BI quando há posts). */
 export interface ProfileListItem {
   key: string;
   handle: string;
@@ -365,11 +374,10 @@ export interface ProfileListItem {
   biography?: string;
   categories: string[];
   engagement: EngagementStats;
-  /** Relevância da busca (2 = frase completa, 1 = todas as palavras, 0 = sem busca ou não encontrado). */
+  /** Métricas derivadas e BI (distribuição, evolução temporal, topic concentration, etc.). */
+  bi?: InstagramBi;
   search_relevance?: number;
-  /** Dados brutos do perfil (data.user etc.) para compatibilidade. */
   data?: Record<string, unknown>;
-  /** Dados de ativação na plataforma (cadastro completo), quando existir. */
   activation?: ProfileActivationData;
   [key: string]: unknown;
 }
@@ -515,6 +523,12 @@ function computeEngagement(posts: Record<string, unknown>[], followersCount: num
     posts_per_week = n > 0 ? n : 0;
   }
 
+  const avgViews = n > 0 ? totalViews / n : 0;
+  const reach_ratio = followersCount > 0 ? avgViews / followersCount : 0;
+  const conversation_rate = totalInteractions > 0 ? totalComments / totalInteractions : 0;
+  const like_view_ratio = totalViews > 0 ? totalLikes / totalViews : null;
+  const comments_per_follower = followersCount > 0 ? totalComments / followersCount : 0;
+
   return {
     posts_count: n,
     total_likes: totalLikes,
@@ -525,6 +539,10 @@ function computeEngagement(posts: Record<string, unknown>[], followersCount: num
     avg_views: n > 0 ? Math.round(totalViews / n) : 0,
     engagement_rate: Math.round(engagementRate * 100) / 100,
     posts_per_week,
+    reach_ratio: Math.round(reach_ratio * 10000) / 10000,
+    conversation_rate: Math.round(conversation_rate * 100) / 100,
+    like_view_ratio: like_view_ratio != null ? Math.round(like_view_ratio * 10000) / 10000 : null,
+    comments_per_follower: Math.round(comments_per_follower * 100) / 100,
   };
 }
 
@@ -664,6 +682,13 @@ export async function searchProfiles(
       ...(pic && { profile_pic_url: pic }),
       data: profile.data as Record<string, unknown> | undefined,
     };
+    if (posts.length >= 2) {
+      try {
+        item.bi = computeInstagramBi(followersCount, posts as PostForBi[]);
+      } catch {
+        // ignora falha no BI (dados incompletos)
+      }
+    }
     Object.assign(item, profile);
     item.categories = categories;
     items.push(item);
@@ -909,4 +934,33 @@ export async function searchProfiles(
 
   const slice = items.slice(offset, offset + limit);
   return { total, items: slice, facets };
+}
+
+/** Resumo do perfil com engagement e BI (para GET /profiles/:handle/summary). */
+export interface ProfileSummary {
+  profile: Record<string, unknown>;
+  engagement: EngagementStats;
+  bi?: InstagramBi;
+}
+
+export async function getProfileSummary(
+  db: CompositeStorage,
+  handle: string
+): Promise<ProfileSummary | null> {
+  const key = handle.toLowerCase().replace(/^@/, '');
+  const profile = await db.get<Record<string, unknown>>('profile', key);
+  if (profile == null) return null;
+  const postsRaw = await db.getByBucket<Record<string, unknown>>('post', key + ':');
+  const posts = postsRaw.map(({ value }) => value);
+  const followersCount = getFollowers(profile);
+  const engagement = computeEngagement(posts, followersCount);
+  let bi: InstagramBi | undefined;
+  if (posts.length >= 2) {
+    try {
+      bi = computeInstagramBi(followersCount, posts as PostForBi[]);
+    } catch {
+      // ignora
+    }
+  }
+  return { profile, engagement, bi };
 }

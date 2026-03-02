@@ -1,6 +1,9 @@
 /** Entidade dinâmica: qualquer objeto com pelo menos `handle` para perfis. Sem normalização. */
 export type Entity = Record<string, unknown>;
 
+/** Tipo de mídia do perfil: feed principal, reels, marcados (tagged) ou histórico (highlights). */
+export type MediaKind = 'post' | 'reel' | 'tagged' | 'highlight';
+
 export type DiscoveredBy = 'hashtag' | 'location' | 'seed' | 'explore' | 'engagement' | 'feed';
 
 export interface CrawlConfig {

@@ -101,7 +101,7 @@ export async function extractSingleProfileWithPage(
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[extractSingleProfile] ${logTimestamp()} @${cleanHandle} +${Date.now() - t0}ms ${msg}`);
   logStep('extractProfile retornou, construindo slim...');
-  const { profile: rawProfile, posts } = extracted;
+  const { profile: rawProfile, posts, reels = [], tagged = [], highlights = [] } = extracted;
   const raw = rawProfile as Record<string, unknown>;
 
   const followersFromRaw = getFollowersFromEntity(raw);
@@ -112,17 +112,27 @@ export async function extractSingleProfileWithPage(
   const followsOfficialProfile =
     requiredProfile && requiredProfile.length > 0 ? isFollowingViewerFromEntity(raw) : undefined;
 
+  const saveAllMedia = async (collectedAt: string): Promise<number> => {
+    let total = await storage.savePosts(slim.handle, posts, collectedAt);
+    if (typeof storage.saveMedia === 'function') {
+      if (reels.length > 0) total += await storage.saveMedia(slim.handle, 'reel', reels, collectedAt);
+      if (tagged.length > 0) total += await storage.saveMedia(slim.handle, 'tagged', tagged, collectedAt);
+      if (highlights.length > 0) total += await storage.saveMedia(slim.handle, 'highlight', highlights, collectedAt);
+    }
+    return total;
+  };
+
   if (options?.forRefresh) {
     logStep('forRefresh: salvando perfil...');
     await storage.save(slim as Entity & { handle: string });
     const collectedAt = String(slim._collected_at ?? new Date().toISOString());
     if (typeof storage.deletePostsByHandle === 'function') {
-      logStep('deletando posts antigos...');
+      logStep('deletando mídia antiga...');
       await storage.deletePostsByHandle(slim.handle);
     }
-    logStep('salvando posts...');
-    const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
-    logStep(`pronto (${postsSaved} posts).`);
+    logStep('salvando posts, reels, marcados e highlights...');
+    const postsSaved = await saveAllMedia(collectedAt);
+    logStep(`pronto (${postsSaved} itens).`);
     return { success: true, saved: true, handle: cleanHandle, followers, postsSaved, followsOfficialProfile };
   }
 
@@ -218,9 +228,12 @@ export async function extractSingleProfileWithPage(
   logStep('salvando perfil...');
   await storage.save(slim as Entity & { handle: string });
   const collectedAt = String(slim._collected_at ?? new Date().toISOString());
-  logStep('salvando posts...');
-  const postsSaved = await storage.savePosts(slim.handle, posts, collectedAt);
-  logStep(`pronto (${postsSaved} posts).`);
+  if (typeof storage.deletePostsByHandle === 'function') {
+    await storage.deletePostsByHandle(slim.handle);
+  }
+  logStep('salvando posts, reels, marcados e highlights...');
+  const postsSaved = await saveAllMedia(collectedAt);
+  logStep(`pronto (${postsSaved} itens).`);
   return {
     success: true,
     saved: true,

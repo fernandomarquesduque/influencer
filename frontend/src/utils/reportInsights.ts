@@ -222,11 +222,17 @@ function inferOQueFuncionou(post: PostItem, followersCount: number): string {
 export function getTopPosts(
   posts: PostItem[],
   followersCount: number
-): { byInteractions: TopPostInfo[]; byConversation: TopPostInfo[]; byViews: TopPostInfo[] } {
+): { byInteractions: TopPostInfo[]; byInteractionsAll: TopPostInfo[]; byConversation: TopPostInfo[]; byViews: TopPostInfo[] } {
   const withMeta: TopPostInfo[] = posts.map((post) => {
     const likes = toNum(post.metrics?.likes)
     const comments = toNum(post.metrics?.comments)
-    const interactions = likes + comments
+    // Interações = só curtidas + comentários (nunca view_count para posts/reels/marcados)
+    let interactions = likes + comments
+    // Destaques costumam ter só view_count; usa como "interações" para ordenar e exibir ER
+    if (interactions === 0 && post.content_type === 'highlight') {
+      const views = toNum(post.metrics?.view_count)
+      if (views > 0) interactions = views
+    }
     const erPost = followersCount > 0 ? (interactions / followersCount) * 100 : 0
     const conversationRatio = interactions > 0 ? comments / interactions : 0
     return {
@@ -238,11 +244,13 @@ export function getTopPosts(
     }
   })
 
-  const byInteractions = [...withMeta].sort((a, b) => b.interactions - a.interactions).slice(0, 4)
+  const byInteractionsSorted = [...withMeta].sort((a, b) => b.interactions - a.interactions)
+  const byInteractions = byInteractionsSorted.slice(0, 4)
+  const byInteractionsAll = byInteractionsSorted
   const byConversation = [...withMeta].filter((a) => a.interactions >= 5).sort((a, b) => b.conversationRatio - a.conversationRatio).slice(0, 3)
   const byViews = [...withMeta].filter((a) => (a.post.metrics?.view_count ?? 0) > 0).sort((a, b) => toNum(b.post.metrics?.view_count) - toNum(a.post.metrics?.view_count)).slice(0, 3)
 
-  return { byInteractions, byConversation, byViews }
+  return { byInteractions, byInteractionsAll, byConversation, byViews }
 }
 
 /** Consistência: posts por semana (últimas 8 semanas), heatmap (dia x semana), melhor dia/hora. */

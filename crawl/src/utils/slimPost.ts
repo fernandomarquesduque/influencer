@@ -77,12 +77,25 @@ function extractHashtags(text: string | undefined): string[] {
   return out;
 }
 
-/** 3) Conteúdo (legenda, hashtags e áudio). */
+/** Localização do post (quando o Instagram envia). */
+export interface NormalizedPostLocation {
+  name?: string;
+  id?: string;
+  pk?: string;
+  short_name?: string;
+  address_json?: string;
+}
+
+/** 3) Conteúdo (legenda, hashtags, áudio, localização). */
 export interface NormalizedPostContent {
   caption_text?: string;
   caption_created_at?: number;
   hashtags?: string[];
   has_audio?: boolean;
+  /** Legenda de acessibilidade (quando a API envia). */
+  accessibility_caption?: string;
+  /** Local do post (quando geolocalizado). */
+  location?: NormalizedPostLocation;
   audio?: {
     audio_type?: string;
     original_audio_title?: string;
@@ -100,13 +113,15 @@ export interface NormalizedPostMedia {
   video_versions: Array<{ width: number; height: number; type?: number; url: string }>;
 }
 
-/** 5) Métricas (ranking e score). */
+/** 5) Métricas (ranking e score). Apenas o que o Instagram entrega (edge_liked_by, edge_media_to_comment, video_view_count). */
 export interface NormalizedPostMetrics {
   likes?: number;
   comments?: number;
   fb_like_count?: number;
   like_and_view_counts_disabled?: boolean;
-  view_count?: number | null;
+  view_count?: number | null;   // video_view_count ou view_count
+  /** Duração do vídeo em segundos (para reels/vídeo). Permite views/segundo. */
+  video_duration?: number | null;
 }
 
 /** 6) Sinais extras (filtros). */
@@ -114,6 +129,8 @@ export interface NormalizedPostFlags {
   is_paid_partnership?: boolean;
   can_viewer_reshare?: boolean;
   ig_media_sharing_disabled?: boolean;
+  /** Número de usuários marcados no post (edge_media_to_tagged_user). */
+  tagged_user_count?: number;
 }
 
 /** Post normalizado salvo no banco. */
@@ -185,11 +202,30 @@ export function buildNormalizedPost(media: Record<string, unknown>, collectedAt:
     : caption_text;
   const hashtags = extractHashtags(rawCaptionForHashtags ?? undefined);
 
+  const accessibility_caption = str(media.accessibility_caption ?? getIn(media, 'accessibility_caption'));
+  let location: NormalizedPostLocation | undefined;
+  const locRaw = media.location ?? getIn(media, 'location');
+  if (locRaw != null && typeof locRaw === 'object') {
+    const loc = locRaw as Record<string, unknown>;
+    const name = str(loc.name ?? loc.title);
+    if (name || loc.id != null || loc.pk != null) {
+      location = {
+        name,
+        id: str(loc.id),
+        pk: str(loc.pk),
+        short_name: str(loc.short_name),
+        address_json: typeof loc.address_json === 'string' ? loc.address_json : undefined,
+      };
+    }
+  }
+
   const content: NormalizedPostContent = {
     caption_text,
     caption_created_at,
     ...(hashtags.length > 0 && { hashtags }),
     has_audio: media.has_audio === true,
+    ...(accessibility_caption && { accessibility_caption }),
+    ...(location && (location.name || location.id) && { location }),
   };
   const clipsMeta = media.clips_metadata;
   if (clipsMeta != null && typeof clipsMeta === 'object') {
@@ -259,16 +295,20 @@ export function buildNormalizedPost(media: Record<string, unknown>, collectedAt:
     video_versions,
   };
 
-  // Likes/comments: API pode enviar like_count/comment_count ou edge_media_preview_like.count / edge_media_to_comment.count
+  // Likes/comments: like_count, edge_liked_by.count, edge_media_preview_like.count
   const likeCount =
     num(media.like_count) ??
+    num((media.edge_liked_by as { count?: number } | undefined)?.count) ??
     num(getIn(media, 'edge_media_preview_like.count')) ??
     num((media.edge_media_preview_like as { count?: number } | undefined)?.count);
   const commentCount =
     num(media.comment_count) ??
     num(getIn(media, 'edge_media_to_comment.count')) ??
     num((media.edge_media_to_comment as { count?: number } | undefined)?.count);
-  const viewCountRaw = media.view_count != null ? num(media.view_count) ?? null : null;
+  const viewCountRaw = media.view_count != null || media.video_view_count != null
+    ? num(media.video_view_count ?? media.view_count) ?? null
+    : null;
+  const video_duration = num(media.video_duration ?? getIn(media, 'video_duration'));
 
   const metrics: NormalizedPostMetrics = {
     likes: likeCount,
@@ -276,12 +316,19 @@ export function buildNormalizedPost(media: Record<string, unknown>, collectedAt:
     fb_like_count: num(media.fb_like_count),
     like_and_view_counts_disabled: media.like_and_view_counts_disabled === true,
     view_count: viewCountRaw,
+    ...(video_duration != null && video_duration > 0 && { video_duration }),
   };
+
+  const taggedEdge = media.edge_media_to_tagged_user as { count?: number; edges?: unknown[] } | undefined;
+  const tagged_user_count =
+    num(taggedEdge?.count) ??
+    (Array.isArray(taggedEdge?.edges) ? taggedEdge.edges.length : undefined);
 
   const flags: NormalizedPostFlags = {
     is_paid_partnership: media.is_paid_partnership === true,
     can_viewer_reshare: media.can_viewer_reshare === true,
     ig_media_sharing_disabled: media.ig_media_sharing_disabled === true,
+    ...(tagged_user_count !== undefined && tagged_user_count > 0 && { tagged_user_count }),
   };
 
   return {

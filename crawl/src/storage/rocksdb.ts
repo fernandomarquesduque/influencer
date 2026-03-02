@@ -3,7 +3,7 @@ import { dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import type { Entity } from '../types/index.js';
 import { estimatePayloadSize } from '../utils/estimatePayloadSize.js';
-import type { CrawlConfig } from '../types/index.js';
+import type { CrawlConfig, MediaKind } from '../types/index.js';
 
 const NODE_MAX_BYTES_DEFAULT = 1024 * 1024; // 1MB
 
@@ -216,7 +216,8 @@ export class RocksDBStorage {
   }
 
   /**
-   * Remove todos os posts de um perfil (key prefix = handle:). Usado no refresh para manter só os da última extração.
+   * Remove todos os posts/reels/tagged/highlights de um perfil (key prefix = handle:).
+   * Usado no refresh para manter só os da última extração.
    */
   async deletePostsByHandle(profileHandle: string): Promise<number> {
     const handle = profileHandle.toLowerCase().replace(/^@/, '');
@@ -224,14 +225,15 @@ export class RocksDBStorage {
   }
 
   /**
-   * Salva posts no bucket "post" (key = profileHandle:shortcode).
-   * Deve receber apenas posts normalizados (buildNormalizedPost); não persistir JSON bruto da API.
+   * Salva itens de mídia no bucket "post" (key = profileHandle:mediaKind:shortcode).
+   * Deve receber apenas itens normalizados (buildNormalizedPost); não persistir JSON bruto da API.
+   * Inclui content_type no valor para filtro na API.
    */
-  async savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number> {
-    if (posts.length === 0) return 0;
+  async saveMedia(profileHandle: string, mediaKind: MediaKind, items: Entity[], collectedAt: string): Promise<number> {
+    if (items.length === 0) return 0;
     const handle = profileHandle.toLowerCase().replace(/^@/, '');
     let saved = 0;
-    for (const p of posts) {
+    for (const p of items) {
       const po = p as Record<string, unknown>;
       const postBlock = po.post as Record<string, unknown> | undefined;
       const shortcode =
@@ -239,11 +241,19 @@ export class RocksDBStorage {
         (po.shortcode != null ? String(po.shortcode) : null) ??
         (po.post_url != null ? String(po.post_url) : null) ??
         String(saved);
-      const key = `${handle}:${shortcode}`;
-      await this.set('post', key, { ...p, profile_handle: handle });
+      const key = `${handle}:${mediaKind}:${shortcode}`;
+      await this.set('post', key, { ...p, profile_handle: handle, content_type: mediaKind });
       saved++;
     }
     return saved;
+  }
+
+  /**
+   * Salva posts do feed principal (key = profileHandle:post:shortcode).
+   * Mantido para compatibilidade com CrawlStorage.savePosts.
+   */
+  async savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number> {
+    return this.saveMedia(profileHandle, 'post', posts, collectedAt);
   }
 
   /** Fecha o banco (opcional, para shutdown limpo). */

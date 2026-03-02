@@ -4,6 +4,7 @@
  */
 
 import type { Entity } from '../types/index.js';
+import type { MediaKind } from '../types/index.js';
 import type { RocksDBStorage } from './rocksdb.js';
 import type { SqliteSync, ProfileActivationData } from './sqliteSync.js';
 
@@ -39,6 +40,12 @@ export class CompositeStorage {
 
   async savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number> {
     const n = await this.rocks.savePosts(profileHandle, posts, collectedAt);
+    this.onInvalidateSearch?.(this);
+    return n;
+  }
+
+  async saveMedia(profileHandle: string, mediaKind: MediaKind, items: Entity[], collectedAt: string): Promise<number> {
+    const n = await this.rocks.saveMedia(profileHandle, mediaKind, items, collectedAt);
     this.onInvalidateSearch?.(this);
     return n;
   }

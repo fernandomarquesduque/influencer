@@ -1,4 +1,4 @@
-import { DEFAULT_CRAWL_CONFIG, type CrawlConfig, type DiscoveredBy, type Entity } from '../types/index.js';
+import { DEFAULT_CRAWL_CONFIG, type CrawlConfig, type DiscoveredBy, type Entity, type MediaKind } from '../types/index.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { ensureLoggedIn } from '../instagramClient/login.js';
 import { discoverAndProcessByHashtag, discoverAndProcessByHomeFeed, discoverAndProcessByExplore, type DiscoveredProfileRef } from '../discoveryService/index.js';
@@ -12,6 +12,8 @@ import { buildSlimProfile } from '../utils/slimProfile.js';
 export interface CrawlStorage {
   save(entity: Entity & { handle: string }): Promise<{ path: string; bytes: number }>;
   savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number>;
+  /** Salva itens por tipo (post, reel, tagged, highlight). Se não existir, fallback para savePosts apenas para posts. */
+  saveMedia?(profileHandle: string, mediaKind: MediaKind, items: Entity[], collectedAt: string): Promise<number>;
   deletePostsByHandle?(profileHandle: string): Promise<number>;
   listHandles(): Promise<Set<string>>;
   clearAll(): Promise<void>;
@@ -82,7 +84,7 @@ async function processOneProfileWithTimeout(
           logProfileOutcome(ref.handle, false, 'falha ao extrair');
           return false;
         }
-        const { profile: rawProfile, posts } = result;
+        const { profile: rawProfile, posts, reels = [], tagged = [], highlights = [] } = result;
         const raw = rawProfile as Record<string, unknown>;
         const slim = buildSlimProfile(
           raw,
@@ -131,7 +133,15 @@ async function processOneProfileWithTimeout(
         }
         await storage.save(slim as Entity & { handle: string });
         const collectedAt = String(slim._collected_at ?? new Date().toISOString());
+        if (typeof storage.deletePostsByHandle === 'function') {
+          await storage.deletePostsByHandle(slim.handle);
+        }
         await storage.savePosts(slim.handle, posts, collectedAt);
+        if (typeof storage.saveMedia === 'function') {
+          if (reels.length > 0) await storage.saveMedia(slim.handle, 'reel', reels, collectedAt);
+          if (tagged.length > 0) await storage.saveMedia(slim.handle, 'tagged', tagged, collectedAt);
+          if (highlights.length > 0) await storage.saveMedia(slim.handle, 'highlight', highlights, collectedAt);
+        }
         existingHandles.add(ref.handle.toLowerCase());
         logProfileOutcome(ref.handle, true, `${followers} seguidores`);
         return true;

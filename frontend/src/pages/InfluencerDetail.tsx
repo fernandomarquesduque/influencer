@@ -2,9 +2,7 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Spin,
-  Empty,
   Button,
-  Image,
   Space,
   Descriptions,
   Tag,
@@ -22,7 +20,6 @@ import {
   FileTextOutlined,
   HeartOutlined,
   CommentOutlined,
-  EyeOutlined,
   RiseOutlined,
   SafetyOutlined,
   MessageOutlined,
@@ -35,7 +32,7 @@ import {
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
-import { buildReportInsights, REPORT_POSTS_LIMIT, getWeekdayName } from '../utils/reportInsights'
+import { buildReportInsights, getWeekdayName } from '../utils/reportInsights'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 import { PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
@@ -46,14 +43,16 @@ import {
   ReportHero,
   ScoreOverview,
   InsightCardsGrid,
-  ProofCarousel,
   AudienceQualityCard,
   PricingHighlight,
-  TabsSection,
   StickyCTA,
   ReportSkeleton,
 } from './InfluencerDetailReport'
 import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
+import { PostAnalysisSection } from '../components/PostAnalysisSection'
+import { ReelsAnalysisSection } from '../components/ReelsAnalysisSection'
+import { TaggedAnalysisSection } from '../components/TaggedAnalysisSection'
+import { HighlightsAnalysisSection } from '../components/HighlightsAnalysisSection'
 
 const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh, typography: typ, layout: lay } = t
@@ -331,6 +330,16 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       }
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [posts])
+
+  const mediaByType = useMemo(() => {
+    const ct = (p: PostItem) => (p.content_type || 'post') as string
+    return {
+      posts: posts.filter((p) => ct(p) === 'post'),
+      reels: posts.filter((p) => ct(p) === 'reel'),
+      tagged: posts.filter((p) => ct(p) === 'tagged'),
+      highlights: posts.filter((p) => ct(p) === 'highlight'),
+    }
   }, [posts])
 
   const loading = profileLoading || postsLoading
@@ -722,171 +731,62 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
           )
         })()}
 
-        {!isLimitedView && !isRedacted && (canShowProof ? (
-          <div style={{ marginBottom: gap }}>
-            <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>Análise de posts</h2>
-            {reportInsights && posts.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.md, alignItems: 'stretch', justifyContent: 'center', marginBottom: s.xl }}>
-                <Tooltip title={METRIC_TOOLTIPS.totalCurtidas} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: 'var(--app-shadow-lg)' }}>
-                    <HeartOutlined style={{ fontSize: 20, color: 'var(--app-icon-heart)' }} />
-                    <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{formatShortNum(engagement.total_likes)}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>curtidas</span></span>
-                  </div>
-                </Tooltip>
-                <Tooltip title={METRIC_TOOLTIPS.totalComentarios} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: 'var(--app-shadow-lg)' }}>
-                    <CommentOutlined style={{ fontSize: 20, color: 'var(--app-icon-comment)' }} />
-                    <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{formatShortNum(engagement.total_comments)}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>comentários</span></span>
-                  </div>
-                </Tooltip>
-                <Tooltip title={METRIC_TOOLTIPS.mediaLikesPost} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: 'var(--app-shadow-lg)' }}>
-                    <RiseOutlined style={{ fontSize: 20, color: c.primary }} />
-                    <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.avg_likes.toLocaleString('pt-BR')}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>média likes/post</span></span>
-                  </div>
-                </Tooltip>
-                <Tooltip title={METRIC_TOOLTIPS.totalPosts} placement="top">
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'help', padding: `${s.sm}px ${s.lg}px`, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}`, boxShadow: 'var(--app-shadow-lg)' }}>
-                    <FileImageOutlined style={{ fontSize: 20, color: 'var(--app-icon-image)' }} />
-                    <span><strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.posts_count}</strong> <span style={{ color: c.textSecondary, fontSize: 13 }}>posts</span></span>
-                  </div>
-                </Tooltip>
-              </div>
-            )}
-            <Row gutter={[s.lg, s.lg]}>
-              <Col xs={24}>
-                <div style={{ ...typH3, color: c.textSecondary, marginBottom: s.sm }}>Top 4 por interações (últimos {REPORT_POSTS_LIMIT} posts)</div>
-                <ProofCarousel
-                  items={reportInsights!.topPosts.byInteractions.slice(0, 4).map(({ post, interactions, erPost, oQueFuncionou }, idx) => ({
-                    post,
-                    interactions,
-                    erPost,
-                    oQueFuncionou,
-                    isTop: idx === 0,
-                    geraConversa: reportInsights!.conversation.rate >= 8,
-                  }))}
-                  getImageUrl={(p) => getPostImageUrl(p as PostItem)}
-                  getLink={(p) => getPostLink(p as PostItem)}
-                  proxyUrl={(url) => proxyImageUrl(url) ?? ''}
-                  failedImages={failedPostImages}
-                  formatShortNum={formatShortNum}
-                />
-              </Col>
-            </Row>
-          </div>
-        ) : reportInsights && postsLoading ? (
-          <Card size="small" style={{ ...cardStyle, marginBottom: gap }}>
-            <div style={{ textAlign: 'center', padding: s.xl }}><Spin /></div>
-          </Card>
-        ) : null)}
+        {!isLimitedView && !isRedacted && (
+          <PostAnalysisSection
+            reportInsights={reportInsights}
+            engagement={engagement}
+            postsCount={posts.length}
+            postsLoading={postsLoading}
+            canShowProof={canShowProof}
+            categories={categories}
+            allHashtags={allHashtags}
+            failedPostImages={failedPostImages}
+            formatShortNum={formatShortNum}
+            getPostImageUrl={getPostImageUrl}
+            getPostLink={getPostLink}
+            proxyImageUrl={proxyImageUrl}
+            gap={gap}
+            cardStyle={cardStyle}
+          />
+        )}
 
-        {!isLimitedView && !isRedacted && reportInsights && (() => {
-          const hasWeekData = reportInsights.consistency && reportInsights.consistency.postsPerWeekByWeek.length > 0
-          const hasHashtagData = (reportInsights.nicho && (reportInsights.nicho.topHashtags.length > 0 || reportInsights.nicho.performingHashtags.length > 0)) || categories.length > 0 || allHashtags.length > 0
-          if (!hasWeekData && !hasHashtagData) return null
-          const weekData = reportInsights.consistency?.postsPerWeekByWeek ?? []
-          const maxBar = Math.max(1, ...weekData)
-          const bestDay = reportInsights.consistency ? getWeekdayName(reportInsights.consistency.bestWeekday) : ''
-          const bestHour = reportInsights.consistency?.bestHour ?? 0
-          return (
-            <div style={{ marginBottom: gap }}>
-              <Card size="small" style={{ ...cardStyle }}>
-                {hasWeekData && (
-                  <>
-                    <Tooltip title={METRIC_TOOLTIPS.postsPorSemanaUltimas8} placement="top">
-                      <div style={{ ...typ.caption, color: c.primary, fontWeight: 600, marginBottom: 8, cursor: 'help', display: 'inline-block' }}>Posts por semana (últimas 8)</div>
-                    </Tooltip>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 40, width: '100%' }}>
-                      {weekData.map((n, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            height: Math.max(8, (n / maxBar) * 34),
-                            background: 'var(--app-chart-bar-gradient)',
-                            borderRadius: 6,
-                            boxShadow: 'var(--app-chart-bar-shadow)',
-                          }}
-                          title={`${n} posts`}
-                        />
-                      ))}
-                    </div>
-                    <Tooltip title={METRIC_TOOLTIPS.melhorDiaHora} placement="top">
-                      <div style={{ ...typ.caption, color: c.textSecondary, marginTop: 10, marginBottom: hasHashtagData ? s.lg : 0, fontWeight: 500, cursor: 'help', display: 'inline-block' }}>
-                        🕐 Melhor: {bestDay} às {bestHour}h
-                      </div>
-                    </Tooltip>
-                  </>
-                )}
-                {hasHashtagData && (
-                  <>
-                    {hasWeekData && <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg, marginTop: 0 }} />}
-                    <div style={{ ...typ.caption, color: c.textMuted, marginBottom: s.md, fontWeight: 600 }}>Conteúdo analisado — assinatura de conteúdo</div>
-                    {reportInsights?.nicho && (reportInsights.nicho.topHashtags.length > 0 || reportInsights.nicho.performingHashtags.length > 0) && (() => {
-                      const byTag = new Map<string, { count: number; avgEr: number | null }>()
-                      for (const { tag, count } of reportInsights.nicho.topHashtags) {
-                        byTag.set(tag, { count, avgEr: null })
-                      }
-                      for (const { tag, avgEr, count: perfCount } of reportInsights.nicho.performingHashtags) {
-                        const cur = byTag.get(tag)
-                        byTag.set(tag, { count: cur?.count ?? perfCount, avgEr })
-                      }
-                      const rows = Array.from(byTag.entries())
-                        .map(([tag, { count, avgEr }]) => ({ tag, count, avgEr }))
-                        .sort((a, b) => b.count - a.count || (b.avgEr ?? 0) - (a.avgEr ?? 0))
-                        .slice(0, 15)
-                      return (
-                        <div style={{ marginBottom: categories.length > 0 ? s.lg : 0 }}>
-                          <Tooltip title={METRIC_TOOLTIPS.hashtagsMaisUsadas} placement="top">
-                            <div style={{ ...typ.caption, color: c.textSecondary, marginBottom: 8, cursor: 'help', display: 'inline-block' }}>Hashtags · últimos {REPORT_POSTS_LIMIT} posts</div>
-                          </Tooltip>
-                          <div style={{ display: 'grid', gap: 6, gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
-                            {rows.map(({ tag, count, avgEr }) => (
-                              <div
-                                key={tag}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  gap: 8,
-                                  padding: '8px 10px',
-                                  background: c.cardBgSoft,
-                                  borderRadius: 8,
-                                  border: `1px solid ${c.borderLight}`,
-                                }}
-                              >
-                                <span style={{ ...typ.bodySmall, fontWeight: 600, color: c.primary }}>#{tag}</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                                  <Tooltip title={METRIC_TOOLTIPS.hashtagsMaisUsadas} placement="top">
-                                    <span style={{ ...typ.caption, color: c.textMuted, cursor: 'help' }}>{count}×</span>
-                                  </Tooltip>
-                                  {avgEr != null ? (
-                                    <Tooltip title={METRIC_TOOLTIPS.hashtagsPerformam} placement="top">
-                                      <span style={{ ...typ.caption, fontWeight: 600, color: c.success, cursor: 'help', whiteSpace: 'nowrap' }}>{avgEr.toFixed(1)}%</span>
-                                    </Tooltip>
-                                  ) : (
-                                    <span style={{ ...typ.caption, color: c.textMuted }}>—</span>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })()}
-                    {categories.length > 0 && (
-                      <div>
-                        <Text strong style={{ ...typ.caption, display: 'block', marginBottom: s.xs, color: c.textSecondary }}>Temas</Text>
-                        <Space wrap size={[6, 6]}>{categories.map((cat) => <Tag key={cat} style={{ borderRadius: 6 }}>{cat}</Tag>)}</Space>
-                      </div>
-                    )}
-                  </>
-                )}
-              </Card>
-            </div>
-          )
-        })()}
+        {!isLimitedView && !isRedacted && (
+          <ReelsAnalysisSection
+            reels={mediaByType.reels}
+            followersCount={followersCount}
+            failedPostImages={failedPostImages}
+            formatShortNum={formatShortNum}
+            getPostImageUrl={getPostImageUrl}
+            getPostLink={getPostLink}
+            proxyImageUrl={proxyImageUrl}
+            gap={gap}
+            cardStyle={cardStyle}
+          />
+        )}
+
+        {!isLimitedView && !isRedacted && (
+          <TaggedAnalysisSection
+            tagged={mediaByType.tagged}
+            followersCount={followersCount}
+            failedPostImages={failedPostImages}
+            formatShortNum={formatShortNum}
+            getPostImageUrl={getPostImageUrl}
+            getPostLink={getPostLink}
+            proxyImageUrl={proxyImageUrl}
+            gap={gap}
+          />
+        )}
+
+        {!isLimitedView && !isRedacted && (
+          <HighlightsAnalysisSection
+            highlights={mediaByType.highlights}
+            failedPostImages={failedPostImages}
+            getPostImageUrl={getPostImageUrl}
+            getPostLink={getPostLink}
+            proxyImageUrl={proxyImageUrl}
+            gap={gap}
+          />
+        )}
 
         <div id="cta-final" className="report-cta-final" style={{ textAlign: 'center', marginBottom: s.section, paddingTop: s.xl }}>
           <h2 style={{ ...typH2, color: c.text, marginBottom: s.sm }}>Feche parcerias locais mais rápido</h2>
@@ -907,50 +807,6 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             </>
           )}
         </div>
-
-        {!isLimitedView && !isRedacted && (() => {
-          const hasFeed = !dataRedacted && user?.scope !== 'influencer'
-          const tabItems: { key: string; label: React.ReactNode; children: React.ReactNode }[] = []
-          if (hasFeed) {
-            tabItems.push({
-              key: 'feed',
-              label: <>Feed{postsTotal > 0 ? ` (${postsTotal})` : ''}</>,
-              children: postsLoading ? (
-                <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div>
-              ) : posts.length === 0 ? (
-                <Empty description="Nenhum post encontrado para este perfil." style={{ padding: 48 }} />
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 4 }}>
-                  {posts.map((post) => {
-                    const imgUrl = getPostImageUrl(post)
-                    const link = getPostLink(post)
-                    const likes = post.metrics?.likes ?? 0
-                    const comments = post.metrics?.comments ?? 0
-                    const views = post.metrics?.view_count
-                    return (
-                      <a key={post.key} href={link} target="_blank" rel="noopener noreferrer" style={{ aspectRatio: '1', position: 'relative', display: 'block', overflow: 'hidden', background: c.border }}>
-                        {imgUrl ? (failedPostImages.has(post.key) ? (
-                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileImageOutlined style={{ fontSize: 40, color: 'var(--app-text-tertiary)' }} /></div>
-                        ) : (
-                          <Image alt="" src={proxyImageUrl(imgUrl)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} preview={false} onError={() => { setFailedPostImages((prev) => new Set(prev).add(post.key)); if (!refreshQueuedRef.current && handle) { refreshQueuedRef.current = true; queueRefreshProfile(handle).catch(() => { }); startRefreshPolling.current(handle) } }} />
-                        )) : (
-                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileImageOutlined style={{ fontSize: 40, color: 'var(--app-text-tertiary)' }} /></div>
-                        )}
-                        <div className="post-hover-overlay" style={{ position: 'absolute', inset: 0, background: 'var(--app-overlay-light)', opacity: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, color: 'var(--brand-white)', fontWeight: 600, transition: 'opacity 0.2s' }}>
-                          <span><HeartOutlined style={{ marginRight: 6 }} />{formatShortNum(likes)}</span>
-                          <span><CommentOutlined style={{ marginRight: 6 }} />{formatShortNum(comments)}</span>
-                          {views != null && <span><EyeOutlined style={{ marginRight: 6 }} />{formatShortNum(Number(views))}</span>}
-                        </div>
-                      </a>
-                    )
-                  })}
-                </div>
-              ),
-            })
-          }
-          if (tabItems.length === 0) return null
-          return <TabsSection items={tabItems} defaultActiveKey={tabItems[0].key} />
-        })()}
       </div>
 
       <StickyCTA
@@ -963,8 +819,6 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       />
 
       <style>{`
-        a:hover .post-hover-overlay { opacity: 1 !important; }
-
         .report-card {
           transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
@@ -980,8 +834,6 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
           transform: translateY(-2px) scale(1.02);
           box-shadow: var(--app-shadow-lg);
         }
-
-        .ant-tabs-nav::before { border-bottom: none !important; }
 
         .report-hero { max-width: 100%; }
         .report-hero-inner { position: relative; }
