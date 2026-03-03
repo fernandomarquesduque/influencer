@@ -28,7 +28,6 @@ export function ActivationCtaPanel({
   const buttonLabel = 'Ativar e Gerar MediaKit'
   const disclaimer = 'Seu Media Kit organiza seus dados, comprova sua performance e aumenta sua credibilidade na hora de negociar com marcas.'
 
-  const floatingHeight = 24
   const horizontalPadding = isMobile ? PAGE_PADDING_MOBILE : PAGE_PADDING_DESKTOP
 
   return (
@@ -151,8 +150,6 @@ export function ActivationCtaPanel({
           </Row>
         </div>
       </div>
-
-      <div style={{ height: floatingHeight }} />
     </>
   )
 }

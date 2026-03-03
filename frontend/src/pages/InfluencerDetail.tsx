@@ -779,11 +779,14 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                           style={{
                             position: 'absolute',
                             inset: 0,
-                            background: 'rgba(0,0,0,0.2)',
+                            background: 'rgba(0,0,0,0.4)',
                             display: 'flex',
+                            flexDirection: 'column',
                             alignItems: 'center',
                             justifyContent: 'center',
+                            gap: s.sm,
                             pointerEvents: 'auto',
+                            padding: s.lg,
                           }}
                         >
                           <Button
@@ -799,6 +802,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                           >
                             Desbloquear análise completa
                           </Button>
+                          <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                            Descubra quanto criadores do seu nível estão cobrando na sua cidade.
+                          </Text>
                         </div>
                       )}
                     </div>
@@ -866,11 +872,14 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               style={{
                                 position: 'absolute',
                                 inset: 0,
-                                background: 'rgba(0,0,0,0.2)',
+                                background: 'rgba(0,0,0,0.4)',
                                 display: 'flex',
+                                flexDirection: 'column',
                                 alignItems: 'center',
                                 justifyContent: 'center',
+                                gap: s.sm,
                                 pointerEvents: 'auto',
+                                padding: s.lg,
                               }}
                             >
                               <Button
@@ -886,6 +895,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               >
                                 Desbloquear análise completa
                               </Button>
+                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                Descubra o padrão que faz seus posts viralizarem.
+                              </Text>
                             </div>
                           )}
                         </div>
@@ -927,11 +939,14 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               style={{
                                 position: 'absolute',
                                 inset: 0,
-                                background: 'rgba(0,0,0,0.2)',
+                                background: 'rgba(0,0,0,0.4)',
                                 display: 'flex',
+                                flexDirection: 'column',
                                 alignItems: 'center',
                                 justifyContent: 'center',
+                                gap: s.sm,
                                 pointerEvents: 'auto',
+                                padding: s.lg,
                               }}
                             >
                               <Button
@@ -947,6 +962,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               >
                                 Desbloquear análise completa
                               </Button>
+                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                Veja qual tipo de reel tem maior potencial de descoberta.
+                              </Text>
                             </div>
                           )}
                         </div>
@@ -975,11 +993,14 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               style={{
                                 position: 'absolute',
                                 inset: 0,
-                                background: 'rgba(0,0,0,0.2)',
+                                background: 'rgba(0,0,0,0.4)',
                                 display: 'flex',
+                                flexDirection: 'column',
                                 alignItems: 'center',
                                 justifyContent: 'center',
+                                gap: s.sm,
                                 pointerEvents: 'auto',
+                                padding: s.lg,
                               }}
                             >
                               <Button
@@ -995,6 +1016,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               >
                                 Desbloquear análise completa
                               </Button>
+                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                Veja as marcas que estão buscando criadores na sua região agora.
+                              </Text>
                             </div>
                           )}
                         </div>

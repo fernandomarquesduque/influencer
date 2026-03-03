@@ -36,7 +36,7 @@ import { sendVerificationCode, sendDirectMessage } from '../instagramClient/send
 import { followUser, followUserFromCurrentPage } from '../instagramClient/followUser.js';
 import { openFollowersModal, searchInFollowersModal } from '../instagramClient/getMyFollowers.js';
 import type { Page } from 'playwright';
-import { extractProfile } from '../profileExtractor/index.js';
+import { extractProfile, extractReelsAndTaggedFromCurrentPage } from '../profileExtractor/index.js';
 import { isFollowingViewerFromEntity } from '../utils/entityAccess.js';
 import { AuthDb } from '../auth/authDb.js';
 import { authOptional, requireScopes, requireScopesOrPublic, canEditProfile, type RequestWithAuth } from '../auth/middleware.js';
@@ -216,6 +216,8 @@ async function runOneExtract(
   fromExtractProfileApi = false,
   options?: RunOneExtractOptions
 ): Promise<ExtractSingleProfileResult> {
+  let page: Page | undefined;
+  let result: ExtractSingleProfileResult | undefined;
   try {
     const now = Date.now();
     if (now < apiExtractBlockedUntil) {
@@ -235,13 +237,12 @@ async function runOneExtract(
     }
     const client = options?.client ?? getApiExtractClient();
     await client.init();
-    const page = await client.newPage();
+    page = await client.newPage();
     const config = buildConfigFromEnv();
     const extractTimeoutMs = Math.max(60000, parseInt(process.env.PROFILE_PROCESS_TIMEOUT_MS ?? '180000', 10) || 180000);
     const timeoutPromise = new Promise<ExtractSingleProfileResult>((_, reject) =>
       setTimeout(() => reject(new Error(`Extract profile timeout (${extractTimeoutMs / 1000}s)`)), extractTimeoutMs)
     );
-    let result: ExtractSingleProfileResult;
     try {
       result = await Promise.race([
         extractSingleProfileWithPage(page, handle, db, config, { forRefresh, fastMode: fromExtractProfileApi }),
@@ -249,20 +250,29 @@ async function runOneExtract(
       ]);
       console.log(`[runOneExtract] @${handle} extração concluída, fechando página...`);
     } finally {
-      const tClose = Date.now();
-      await page.close().catch(() => { });
-      console.log(`[runOneExtract] @${handle} página fechada em ${Date.now() - tClose}ms`);
+      const skipCloseForSupplement = fromExtractProfileApi && result?.success === true;
+      if (!skipCloseForSupplement && page) {
+        const tClose = Date.now();
+        await page.close().catch(() => { });
+        console.log(`[runOneExtract] @${handle} página fechada em ${Date.now() - tClose}ms`);
+      } else if (skipCloseForSupplement) {
+        console.log(`[runOneExtract] @${handle} página mantida aberta para supplement reels/tagged em background`);
+      }
     }
     const tAuth = Date.now();
     await client.saveAuthState();
     console.log(`[runOneExtract] @${handle} auth state salvo em ${Date.now() - tAuth}ms`);
 
+    if (result === undefined) {
+      return { success: false, handle, error: 'Extração não retornou resultado.' };
+    }
     if (isBlockSignal(result)) {
       record429();
       apiExtractBlockedUntil = Date.now() + get429BackoffMs();
       if (isLoginOrChallengeSignal(result)) {
         await client.closeContext();
       }
+      if (fromExtractProfileApi && result.success && page) await page.close().catch(() => {});
       return result;
     }
     if (result.success && result.saved
@@ -270,6 +280,9 @@ async function runOneExtract(
     ) {
       console.log(`[runOneExtract] @${result.handle} extração salva, tentando enfileirar #selecao (30 min)`);
       enqueueSelectionMessageIfAllowed(result.handle);
+    }
+    if (fromExtractProfileApi && result.success && page) {
+      runSupplementReelsAndTagged(page, handle, db).catch(() => {});
     }
     if (!options?.skipCount) apiExtractProfileCount++;
     return result;
@@ -311,7 +324,45 @@ async function runOneExtract(
     }
 
     console.error(`[API] runOneExtract @${handle} exceção:`, msg, stack ?? '');
+    if (fromExtractProfileApi && result?.success && page) await page.close().catch(() => {});
     return { success: false, handle, error: msg };
+  }
+}
+
+/** Storage com loadByHandle e saveMedia para o supplement de reels/tagged. */
+interface SupplementStorage {
+  loadByHandle(handle: string): Promise<{ _collected_at?: string } | null>;
+  saveMedia?(profileHandle: string, mediaKind: 'reel' | 'tagged', items: unknown[], collectedAt: string): Promise<number>;
+}
+
+/** Executa em background: extrai reels e marcados da página já no perfil e persiste. Fecha a página ao terminar. */
+async function runSupplementReelsAndTagged(
+  page: Page,
+  handle: string,
+  storage: SupplementStorage
+): Promise<void> {
+  const cleanHandle = handle.replace(/^@/, '').trim().toLowerCase();
+  try {
+    const profile = await storage.loadByHandle(cleanHandle);
+    const collectedAt =
+      (profile && typeof (profile as { _collected_at?: string })._collected_at === 'string'
+        ? (profile as { _collected_at: string })._collected_at
+        : null) ?? new Date().toISOString();
+    const { reels, tagged } = await extractReelsAndTaggedFromCurrentPage(page, cleanHandle, collectedAt);
+    if (typeof storage.saveMedia === 'function') {
+      if (reels.length > 0) await storage.saveMedia(cleanHandle, 'reel', reels, collectedAt);
+      if (tagged.length > 0) await storage.saveMedia(cleanHandle, 'tagged', tagged, collectedAt);
+      if (reels.length > 0 || tagged.length > 0) {
+        console.log(`[runSupplementReelsAndTagged] @${cleanHandle} salvos: reels=${reels.length} tagged=${tagged.length}`);
+      }
+    }
+  } catch (err) {
+    console.error(
+      '[runSupplementReelsAndTagged] @' + cleanHandle + ':',
+      err instanceof Error ? err.message : String(err)
+    );
+  } finally {
+    await page.close().catch(() => {});
   }
 }
 

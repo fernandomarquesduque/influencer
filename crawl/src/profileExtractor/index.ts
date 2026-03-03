@@ -1310,3 +1310,184 @@ export async function extractProfile(
     highlights: allHighlights,
   };
 }
+
+const SUPPLEMENT_WAIT_AFTER_TAB_MS = 2200;
+
+/**
+ * Extrai apenas Reels e Marcados com a página já aberta no perfil.
+ * Usado em fastMode após a extração principal: clica nas abas Reels e Marcados,
+ * intercepta as respostas da API e retorna as entidades. Não navega nem extrai perfil/posts.
+ */
+export async function extractReelsAndTaggedFromCurrentPage(
+  page: Page,
+  handle: string,
+  collectedAt: string
+): Promise<{ reels: Entity[]; tagged: Entity[] }> {
+  const t0 = Date.now();
+  const logStep = (msg: string) =>
+    console.log(`[extractReelsAndTagged] ${logTimestamp()} @${handle} +${Date.now() - t0}ms ${msg}`);
+  const keyHandle = handle.toLowerCase().replace(/^@/, '');
+
+  const captured: { url: string; status: number; body?: unknown }[] = [];
+  const onResponse = async (response: Response) => {
+    const url = response.url();
+    const status = response.status();
+    if (status === 429 || status >= 400) return;
+    if (!RESPONSE_URL_PATTERNS.some((p) => p.test(url))) return;
+    if (captured.length >= MAX_CAPTURED_RESPONSES) return;
+    const contentType = response.headers()['content-type'] ?? '';
+    if (!contentType.includes('application/json')) return;
+    try {
+      const body = await response.json();
+      if (body != null && typeof body === 'object') captured.push({ url, status, body });
+    } catch {
+      // ignore
+    }
+  };
+
+  page.on('response', onResponse);
+  try {
+    const tryClickTabByIndex = async (tabIndex: number, label: string): Promise<boolean> => {
+      const tabList = page.locator('[role="tablist"]').first();
+      if ((await tabList.count()) === 0) return false;
+      const tabLinks = tabList.locator('a[href]');
+      const n = await tabLinks.count();
+      if (tabIndex >= n) return false;
+      try {
+        await tabLinks.nth(tabIndex).scrollIntoViewIfNeeded().catch(() => null);
+        await tabLinks.nth(tabIndex).click({ timeout: 5000 });
+        logStep(`aba ${label} clicada (índice ${tabIndex})`);
+        await page.waitForTimeout(SUPPLEMENT_WAIT_AFTER_TAB_MS);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const tryClickLinkByHref = async (pathPart: string, label: string): Promise<boolean> => {
+      const selectors = [
+        `a[href*="${keyHandle}/${pathPart}"]`,
+        `a[href*="/${pathPart}/"]`,
+        `a[href*="${pathPart}"]`,
+      ];
+      for (const sel of selectors) {
+        const link = page.locator(sel).first();
+        if ((await link.count()) > 0) {
+          try {
+            await link.scrollIntoViewIfNeeded().catch(() => null);
+            await link.click({ timeout: 5000 });
+            logStep(`aba ${label} clicada (link)`);
+            await page.waitForTimeout(SUPPLEMENT_WAIT_AFTER_TAB_MS);
+            return true;
+          } catch {
+            continue;
+          }
+        }
+      }
+      return false;
+    };
+
+    let reelsOk = await tryClickTabByIndex(1, 'Reels');
+    if (!reelsOk) reelsOk = await tryClickLinkByHref('reels', 'Reels');
+    if (!reelsOk) logStep('aba Reels não encontrada.');
+
+    let taggedOk = await tryClickTabByIndex(3, 'Marcados');
+    if (!taggedOk) taggedOk = await tryClickTabByIndex(2, 'Marcados');
+    if (!taggedOk) taggedOk = await tryClickLinkByHref('tagged', 'Marcados');
+    if (!taggedOk) logStep('aba Marcados não encontrada.');
+  } finally {
+    page.off('response', onResponse);
+  }
+
+  const bodies = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
+  const shortcodeOf = (p: Entity): string => {
+    const po = p as Record<string, unknown>;
+    const postBlock = (po?.post as Record<string, unknown> | undefined);
+    return (postBlock?.shortcode != null ? String(postBlock.shortcode) : String((po as { shortcode?: string }).shortcode ?? '')) || '';
+  };
+  const seenReels = new Set<string>();
+  const seenTagged = new Set<string>();
+  const allReels: Entity[] = [];
+  const allTagged: Entity[] = [];
+
+  const addFromPaths = (paths: string[], seen: Set<string>, out: Entity[]): void => {
+    for (const body of bodies) {
+      const edges = getEdgesFromRaw(body, paths);
+      for (const p of extractMediaFromEdges(edges, collectedAt)) {
+        const sc = shortcodeOf(p);
+        if (sc && !seen.has(sc)) {
+          seen.add(sc);
+          out.push(p);
+        }
+      }
+    }
+  };
+
+  addFromPaths(REELS_EDGES_PATHS, seenReels, allReels);
+  addFromPaths(TAGGED_EDGES_PATHS, seenTagged, allTagged);
+
+  for (const body of bodies) {
+    const taggedArrays = [
+      ...findAllEdgesByKeyHint(body, 'tagged'),
+      ...findAllEdgesByKeyHint(body, 'usertags'),
+    ];
+    for (const edges of taggedArrays) {
+      for (const p of extractMediaFromEdges(edges, collectedAt)) {
+        const sc = shortcodeOf(p);
+        if (sc && !seenTagged.has(sc)) {
+          seenTagged.add(sc);
+          allTagged.push(p);
+        }
+      }
+    }
+  }
+
+  if (allTagged.length === 0) {
+    try {
+      const scraped = await page
+        .evaluate(() => {
+          const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/p/"], a[href*="/reel/"]'));
+          const seen = new Set<string>();
+          return links
+            .map((a) => {
+              const href = a.getAttribute('href') || '';
+              const pMatch = href.match(/\/p\/([^/]+)\/?$/);
+              const reelMatch = href.match(/\/reel\/([^/]+)\/?$/);
+              const shortcode = reelMatch ? reelMatch[1]! : pMatch ? pMatch[1]! : null;
+              if (!shortcode || seen.has(shortcode)) return null;
+              seen.add(shortcode);
+              const img = a.querySelector('img');
+              const coverUrl = img ? (img.getAttribute('src') || (img as HTMLImageElement).src) : null;
+              const caption = (img?.getAttribute('alt') || '').slice(0, 500);
+              return { shortcode, cover_url: coverUrl, caption, is_reel: /\/reel\//.test(href) };
+            })
+            .filter((x): x is { shortcode: string; cover_url: string | null; caption: string; is_reel: boolean } => x != null && x.shortcode != null);
+        })
+        .catch(() => []);
+      for (const item of scraped) {
+        if (seenTagged.has(item.shortcode)) continue;
+        seenTagged.add(item.shortcode);
+        allTagged.push({
+          influencer: { is_verified: false, is_private: false },
+          post: {
+            shortcode: item.shortcode,
+            collected_at: collectedAt,
+            product_type: item.is_reel ? 'reel' : undefined,
+          },
+          content: { caption_text: item.caption || undefined },
+          media: {
+            cover_images: item.cover_url ? [{ width: 144, height: 144, url: item.cover_url }] : [],
+            video_versions: [],
+          },
+          metrics: {},
+          flags: {},
+        } as Entity);
+      }
+      if (scraped.length > 0) logStep(`[fallback DOM] ${scraped.length} marcados do grid.`);
+    } catch (e) {
+      logStep(`[fallback DOM] erro ao extrair marcados: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  logStep(`reels=${allReels.length} tagged=${allTagged.length}`);
+  return { reels: allReels, tagged: allTagged };
+}
