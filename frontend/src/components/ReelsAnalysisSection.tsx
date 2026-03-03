@@ -4,7 +4,7 @@
  */
 import React, { useMemo, useState } from 'react'
 import { Row, Col, Tooltip, Modal } from 'antd'
-import { HeartOutlined, CommentOutlined, RiseOutlined, VideoCameraOutlined, EyeOutlined } from '@ant-design/icons'
+import { HeartOutlined, CommentOutlined, RiseOutlined, RocketOutlined, VideoCameraOutlined, EyeOutlined } from '@ant-design/icons'
 import { reportTokens as t } from '../pages/reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { getTopPosts } from '../utils/reportInsights'
@@ -35,6 +35,10 @@ export interface ReelsAnalysisSectionProps {
   gap?: number
   /** Estilo do card. */
   cardStyle?: React.CSSProperties
+  /** Ex.: "Seu último reel atingiu 3,2× sua base de seguidores." (Reel Views ÷ Followers) */
+  lastReelAmplificationLabel?: string | null
+  /** Quando true, não renderiza o título da seção (para exibir o título fora do blur). */
+  contentOnly?: boolean
 }
 
 export function ReelsAnalysisSection({
@@ -47,6 +51,8 @@ export function ReelsAnalysisSection({
   proxyImageUrl,
   gap = s.xl,
   cardStyle = { borderRadius: r, border: 'none', boxShadow: t.shadowLegacy, padding: s.lg, background: c.cardBg },
+  lastReelAmplificationLabel,
+  contentOnly = false,
 }: ReelsAnalysisSectionProps) {
   const engagement = useMemo(
     () => computeEngagementFromPosts(reels, followersCount),
@@ -62,22 +68,37 @@ export function ReelsAnalysisSection({
   const geraConversa = conversationRate >= 8
   const [galleryModalOpen, setGalleryModalOpen] = useState(false)
 
-  if (reels.length === 0) return null
+  if (reels.length === 0) {
+    return (
+      <div style={{ marginBottom: gap }}>
+        {!contentOnly && (
+          <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+            Análise de reels
+          </h2>
+        )}
+        <div style={{ textAlign: 'center', padding: s.xl, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}` }}>
+          <span style={{ ...typ.body, color: c.textSecondary }}>Nenhum reel encontrado para este perfil.</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ marginBottom: gap }}>
-      <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-        Análise de reels
-      </h2>
+      {!contentOnly && (
+        <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+          Análise de reels
+        </h2>
+      )}
 
       <div
         style={{
           display: 'flex',
           flexWrap: 'wrap',
-          gap: s.md,
+          gap: s.sm,
           alignItems: 'stretch',
           justifyContent: 'center',
-          marginBottom: s.xl,
+          marginBottom: s.lg,
         }}
       >
         <Tooltip title={METRIC_TOOLTIPS.totalCurtidas} placement="top">
@@ -85,21 +106,21 @@ export function ReelsAnalysisSection({
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 6,
               cursor: 'help',
-              padding: `${s.sm}px ${s.lg}px`,
+              padding: '6px 10px',
               background: c.cardBgSoft,
-              borderRadius: 12,
+              borderRadius: 8,
               border: `1px solid ${c.borderLight}`,
-              boxShadow: 'var(--app-shadow-lg)',
+              boxShadow: 'var(--app-shadow-sm)',
             }}
           >
-            <HeartOutlined style={{ fontSize: 20, color: 'var(--app-icon-heart)' }} />
+            <HeartOutlined style={{ fontSize: 16, color: 'var(--app-icon-heart)' }} />
             <span>
-              <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>
+              <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
                 {formatShortNum(engagement.total_likes)}
               </strong>{' '}
-              <span style={{ color: c.textSecondary, fontSize: 13 }}>curtidas</span>
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>curtidas</span>
             </span>
           </div>
         </Tooltip>
@@ -108,69 +129,168 @@ export function ReelsAnalysisSection({
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 6,
               cursor: 'help',
-              padding: `${s.sm}px ${s.lg}px`,
+              padding: '6px 10px',
               background: c.cardBgSoft,
-              borderRadius: 12,
+              borderRadius: 8,
               border: `1px solid ${c.borderLight}`,
-              boxShadow: 'var(--app-shadow-lg)',
+              boxShadow: 'var(--app-shadow-sm)',
             }}
           >
-            <CommentOutlined style={{ fontSize: 20, color: 'var(--app-icon-comment)' }} />
+            <CommentOutlined style={{ fontSize: 16, color: 'var(--app-icon-comment)' }} />
             <span>
-              <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>
+              <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
                 {formatShortNum(engagement.total_comments)}
               </strong>{' '}
-              <span style={{ color: c.textSecondary, fontSize: 13 }}>comentários</span>
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>comentários</span>
             </span>
           </div>
         </Tooltip>
-        {engagement.total_views > 0 && (
-          <Tooltip title="Total de visualizações nos reels analisados." placement="top">
+        <Tooltip title={METRIC_TOOLTIPS.er} placement="top">
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              cursor: 'help',
+              padding: '6px 10px',
+              background: c.cardBgSoft,
+              borderRadius: 8,
+              border: `1px solid ${c.borderLight}`,
+              boxShadow: 'var(--app-shadow-sm)',
+            }}
+          >
+            <RocketOutlined style={{ fontSize: 16, color: c.primary }} />
+            <span>
+              <strong style={{ ...typ.body, fontSize: 13, color: c.primary }}>
+                {(engagement.engagement_rate ?? 0).toFixed(2)}%
+              </strong>{' '}
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>ER médio (reels)</span>
+            </span>
+          </div>
+        </Tooltip>
+        {lastReelAmplificationLabel && (
+          <Tooltip title={METRIC_TOOLTIPS.viralizacaoReel} placement="top">
             <div
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 8,
+                gap: 6,
+                padding: '6px 10px',
+                background: c.primaryBg ?? `${c.primary}15`,
+                borderRadius: 8,
+                border: `1px solid ${c.primary}40`,
+                width: '100%',
+                maxWidth: 360,
+                justifyContent: 'center',
                 cursor: 'help',
-                padding: `${s.sm}px ${s.lg}px`,
-                background: c.cardBgSoft,
-                borderRadius: 12,
-                border: `1px solid ${c.borderLight}`,
-                boxShadow: 'var(--app-shadow-lg)',
               }}
             >
-              <EyeOutlined style={{ fontSize: 20, color: c.primary }} />
-              <span>
-                <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>
-                  {formatShortNum(engagement.total_views)}
-                </strong>{' '}
-                <span style={{ color: c.textSecondary, fontSize: 13 }}>visualizações</span>
+              <RiseOutlined style={{ fontSize: 14, color: c.primary }} />
+              <span style={{ ...typ.body, fontSize: 12, color: c.text, fontWeight: 600 }}>
+                {lastReelAmplificationLabel}
               </span>
             </div>
           </Tooltip>
+        )}
+        {engagement.total_views > 0 && (
+          <>
+            <Tooltip title={METRIC_TOOLTIPS.totalViewsReels} placement="top">
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'help',
+                  padding: '6px 10px',
+                  background: c.cardBgSoft,
+                  borderRadius: 8,
+                  border: `1px solid ${c.borderLight}`,
+                  boxShadow: 'var(--app-shadow-sm)',
+                }}
+              >
+                <EyeOutlined style={{ fontSize: 16, color: c.primary }} />
+                <span>
+                  <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
+                    {formatShortNum(engagement.total_views)}
+                  </strong>{' '}
+                  <span style={{ color: c.textSecondary, fontSize: 12 }}>visualizações</span>
+                </span>
+              </div>
+            </Tooltip>
+            {(engagement.avg_views ?? 0) > 0 && (
+              <Tooltip title={METRIC_TOOLTIPS.mediaViewsReel} placement="top">
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    cursor: 'help',
+                    padding: '6px 10px',
+                    background: c.cardBgSoft,
+                    borderRadius: 8,
+                    border: `1px solid ${c.borderLight}`,
+                    boxShadow: 'var(--app-shadow-sm)',
+                  }}
+                >
+                  <EyeOutlined style={{ fontSize: 16, color: c.primary }} />
+                  <span>
+                    <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
+                      {formatShortNum(engagement.avg_views ?? 0)}
+                    </strong>{' '}
+                    <span style={{ color: c.textSecondary, fontSize: 12 }}>média views/reel</span>
+                  </span>
+                </div>
+              </Tooltip>
+            )}
+            {(engagement.engagement_rate_by_views ?? 0) > 0 && (
+              <Tooltip title={METRIC_TOOLTIPS.erPorViews} placement="top">
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    cursor: 'help',
+                    padding: '6px 10px',
+                    background: c.cardBgSoft,
+                    borderRadius: 8,
+                    border: `1px solid ${c.borderLight}`,
+                    boxShadow: 'var(--app-shadow-sm)',
+                  }}
+                >
+                  <RiseOutlined style={{ fontSize: 16, color: c.primary }} />
+                  <span>
+                    <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
+                      {(engagement.engagement_rate_by_views ?? 0).toFixed(2)}%
+                    </strong>{' '}
+                    <span style={{ color: c.textSecondary, fontSize: 12 }}>ER por views</span>
+                  </span>
+                </div>
+              </Tooltip>
+            )}
+          </>
         )}
         <Tooltip title={METRIC_TOOLTIPS.mediaLikesPost} placement="top">
           <div
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 6,
               cursor: 'help',
-              padding: `${s.sm}px ${s.lg}px`,
+              padding: '6px 10px',
               background: c.cardBgSoft,
-              borderRadius: 12,
+              borderRadius: 8,
               border: `1px solid ${c.borderLight}`,
-              boxShadow: 'var(--app-shadow-lg)',
+              boxShadow: 'var(--app-shadow-sm)',
             }}
           >
-            <RiseOutlined style={{ fontSize: 20, color: c.primary }} />
+            <RiseOutlined style={{ fontSize: 16, color: c.primary }} />
             <span>
-              <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>
+              <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
                 {engagement.avg_likes.toLocaleString('pt-BR')}
               </strong>{' '}
-              <span style={{ color: c.textSecondary, fontSize: 13 }}>média likes/reel</span>
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>média likes/reel</span>
             </span>
           </div>
         </Tooltip>
@@ -179,19 +299,19 @@ export function ReelsAnalysisSection({
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 6,
               cursor: 'help',
-              padding: `${s.sm}px ${s.lg}px`,
+              padding: '6px 10px',
               background: c.cardBgSoft,
-              borderRadius: 12,
+              borderRadius: 8,
               border: `1px solid ${c.borderLight}`,
-              boxShadow: 'var(--app-shadow-lg)',
+              boxShadow: 'var(--app-shadow-sm)',
             }}
           >
-            <VideoCameraOutlined style={{ fontSize: 20, color: 'var(--app-icon-image)' }} />
+            <VideoCameraOutlined style={{ fontSize: 16, color: 'var(--app-icon-image)' }} />
             <span>
-              <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.posts_count}</strong>{' '}
-              <span style={{ color: c.textSecondary, fontSize: 13 }}>reels</span>
+              <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>{engagement.posts_count}</strong>{' '}
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>reels</span>
             </span>
           </div>
         </Tooltip>
@@ -235,6 +355,7 @@ export function ReelsAnalysisSection({
               footer={null}
               width="90%"
               style={{ maxWidth: 900 }}
+              bodyStyle={{ maxHeight: '70vh', overflowY: 'auto' }}
             >
               <ProofCarousel
                 items={allReelsItems.map(({ post, interactions, erPost, oQueFuncionou }, idx) => ({

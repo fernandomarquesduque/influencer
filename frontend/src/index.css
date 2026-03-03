@@ -102,6 +102,18 @@ body {
   outline-offset: 2px;
 }
 
+/* Botão do painel de ativação: alto contraste (usa tema) */
+.activation-cta-btn.ant-btn-primary {
+  background: var(--app-warning) !important;
+  color: var(--app-text) !important;
+  border-color: transparent !important;
+}
+.activation-cta-btn.ant-btn-primary:hover {
+  background: var(--app-warning-accent) !important;
+  color: var(--app-text) !important;
+  filter: none;
+}
+
 /* Scroll ao focar: deixa espaço para o teclado e o botão de ação */
 input,
 textarea,

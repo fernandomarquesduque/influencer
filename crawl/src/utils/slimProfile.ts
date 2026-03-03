@@ -47,6 +47,12 @@ export interface SlimProfile extends Record<string, unknown> {
   has_clips?: boolean;
   /** Links da bio (array de { title, url } quando a API envia). */
   bio_links?: Array<{ title?: string; url?: string }>;
+  /** Pronomes exibidos no perfil. */
+  pronouns?: string[];
+  /** Tem sugestões de contas (chaining). */
+  has_chaining?: boolean;
+  /** Badge de app de texto (ex.: Threads). */
+  text_post_app_badge_label?: string;
   _collected_at: string;
   _discovered_by: string;
   _discovered_value: string;
@@ -268,6 +274,14 @@ export function buildSlimProfile(
   }
   if (bio_links?.length === 0) bio_links = undefined;
 
+  const pronounsRaw = dataUser?.pronouns ?? user?.pronouns;
+  const pronouns = Array.isArray(pronounsRaw) && pronounsRaw.length > 0
+    ? pronounsRaw.map((p: unknown) => (typeof p === 'string' ? p : String(p))).filter(Boolean)
+    : undefined;
+
+  const has_chaining = (dataUser?.has_chaining ?? user?.has_chaining) === true;
+  const text_post_app_badge_label = toStr((dataUser ?? user)?.text_post_app_badge_label);
+
   const category_name = toStr((dataUser ?? user)?.category_name) ?? toStr(deepFind(rawProfile, ['category_name']));
   const business_category_name = toStr((dataUser ?? user)?.business_category_name) ?? toStr(deepFind(rawProfile, ['business_category_name']));
   const overall_category_name = toStr((dataUser ?? user)?.overall_category_name) ?? toStr(deepFind(rawProfile, ['overall_category_name']));
@@ -306,6 +320,9 @@ export function buildSlimProfile(
     ...(typeof has_story_archive === 'boolean' && { has_story_archive }),
     ...(highlightReelCount !== undefined && highlightReelCount > 0 && { highlight_reel_count: highlightReelCount }),
     ...(bio_links && bio_links.length > 0 && { bio_links }),
+    ...(pronouns && pronouns.length > 0 && { pronouns }),
+    ...(has_chaining && { has_chaining: true }),
+    ...(text_post_app_badge_label && { text_post_app_badge_label }),
     _collected_at: collectedAt,
     _discovered_by: discoveredBy,
     _discovered_value: discoveredValue,

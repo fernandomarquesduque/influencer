@@ -1,10 +1,10 @@
 /**
- * Seção "Análise de posts": métricas de resumo, Top 4 por interações,
+ * Seção "Análise de Feed": métricas de resumo, Top 4 por interações,
  * posts por semana, conteúdo analisado e hashtags.
  */
 import React, { useState } from 'react'
 import { Card, Row, Col, Tooltip, Spin, Tag, Space, Typography, Modal } from 'antd'
-import { HeartOutlined, CommentOutlined, RiseOutlined, FileImageOutlined } from '@ant-design/icons'
+import { HeartOutlined, CommentOutlined, RiseOutlined, RocketOutlined, FileImageOutlined } from '@ant-design/icons'
 import { reportTokens as t } from '../pages/reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { buildReportInsights, REPORT_POSTS_LIMIT, getWeekdayName } from '../utils/reportInsights'
@@ -48,6 +48,8 @@ export interface PostAnalysisSectionProps {
   gap?: number
   /** Estilo do card (bordas, sombra). */
   cardStyle?: React.CSSProperties
+  /** Quando true, não renderiza o título da seção (para exibir o título fora do blur). */
+  contentOnly?: boolean
 }
 
 export function PostAnalysisSection({
@@ -65,6 +67,7 @@ export function PostAnalysisSection({
   proxyImageUrl,
   gap = s.xl,
   cardStyle = { borderRadius: r, border: 'none', boxShadow: t.shadowLegacy, padding: s.lg, background: c.cardBg },
+  contentOnly = false,
 }: PostAnalysisSectionProps) {
   const [galleryModalOpen, setGalleryModalOpen] = useState(false)
   if (!reportInsights && !postsLoading) return null
@@ -91,9 +94,11 @@ export function PostAnalysisSection({
     <>
       {canShowProof && (
         <div style={{ marginBottom: gap }}>
-          <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-            Análise de posts
-          </h2>
+          {!contentOnly && (
+            <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+              Análise de Feed
+            </h2>
+          )}
           {reportInsights && postsCount > 0 && (
             <div
               style={{
@@ -151,6 +156,29 @@ export function PostAnalysisSection({
                   </span>
                 </div>
               </Tooltip>
+              <Tooltip title={METRIC_TOOLTIPS.er} placement="top">
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    cursor: 'help',
+                    padding: `${s.sm}px ${s.lg}px`,
+                    background: c.cardBgSoft,
+                    borderRadius: 12,
+                    border: `1px solid ${c.borderLight}`,
+                    boxShadow: 'var(--app-shadow-lg)',
+                  }}
+                >
+                  <RocketOutlined style={{ fontSize: 20, color: c.primary }} />
+                  <span>
+                    <strong style={{ ...typ.body, fontSize: 15, color: c.primary }}>
+                      {(engagement.engagement_rate ?? 0).toFixed(2)}%
+                    </strong>{' '}
+                    <span style={{ color: c.textSecondary, fontSize: 13 }}>ER médio (feed)</span>
+                  </span>
+                </div>
+              </Tooltip>
               <Tooltip title={METRIC_TOOLTIPS.mediaLikesPost} placement="top">
                 <div
                   style={{
@@ -170,7 +198,7 @@ export function PostAnalysisSection({
                     <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>
                       {engagement.avg_likes.toLocaleString('pt-BR')}
                     </strong>{' '}
-                    <span style={{ color: c.textSecondary, fontSize: 13 }}>média likes/post</span>
+                    <span style={{ color: c.textSecondary, fontSize: 13 }}>média likes (feed)</span>
                   </span>
                 </div>
               </Tooltip>
@@ -191,7 +219,7 @@ export function PostAnalysisSection({
                   <FileImageOutlined style={{ fontSize: 20, color: 'var(--app-icon-image)' }} />
                   <span>
                     <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.posts_count}</strong>{' '}
-                    <span style={{ color: c.textSecondary, fontSize: 13 }}>posts</span>
+                    <span style={{ color: c.textSecondary, fontSize: 13 }}>itens (feed)</span>
                   </span>
                 </div>
               </Tooltip>
@@ -201,7 +229,7 @@ export function PostAnalysisSection({
             <Col xs={24}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: s.sm, marginBottom: s.sm }}>
                 <div style={{ ...typH3, color: c.textSecondary, margin: 0 }}>
-                  Top 4 por interações (últimos {REPORT_POSTS_LIMIT} posts)
+                  Top 4 por interações (últimos {REPORT_POSTS_LIMIT} do feed)
                 </div>
                 {reportInsights && reportInsights.topPosts.byInteractionsAll.length > 4 && (
                   <a
@@ -232,7 +260,7 @@ export function PostAnalysisSection({
                     formatShortNum={formatShortNum}
                   />
                   <Modal
-                    title="Todos os posts"
+                    title="Todo o feed"
                     open={galleryModalOpen}
                     onCancel={() => setGalleryModalOpen(false)}
                     footer={null}
@@ -285,7 +313,7 @@ export function PostAnalysisSection({
                         display: 'inline-block',
                       }}
                     >
-                      Posts por semana (últimas 8)
+                      Feed por semana (últimas 8)
                     </div>
                   </Tooltip>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 40, width: '100%' }}>
@@ -300,7 +328,7 @@ export function PostAnalysisSection({
                           borderRadius: 6,
                           boxShadow: 'var(--app-chart-bar-shadow)',
                         }}
-                        title={`${n} posts`}
+                        title={`${n} itens no feed`}
                       />
                     ))}
                   </div>
@@ -364,32 +392,32 @@ export function PostAnalysisSection({
                                 display: 'inline-block',
                               }}
                             >
-                              Hashtags · últimos {REPORT_POSTS_LIMIT} posts
+                              Hashtags · últimos {REPORT_POSTS_LIMIT} do feed
                             </div>
                           </Tooltip>
                           <div
                             style={{
-                              display: 'grid',
+                              display: 'flex',
+                              flexWrap: 'wrap',
                               gap: 6,
-                              gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
                             }}
                           >
                             {rows.map(({ tag, count, avgEr }) => (
                               <div
                                 key={tag}
                                 style={{
-                                  display: 'flex',
+                                  display: 'inline-flex',
                                   alignItems: 'center',
-                                  justifyContent: 'space-between',
                                   gap: 8,
                                   padding: '8px 10px',
                                   background: c.cardBgSoft,
                                   borderRadius: 8,
                                   border: `1px solid ${c.borderLight}`,
+                                  width: 'fit-content',
                                 }}
                               >
                                 <span style={{ ...typ.bodySmall, fontWeight: 600, color: c.primary }}>#{tag}</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                                   <Tooltip title={METRIC_TOOLTIPS.hashtagsMaisUsadas} placement="top">
                                     <span style={{ ...typ.caption, color: c.textMuted, cursor: 'help' }}>
                                       {count}×

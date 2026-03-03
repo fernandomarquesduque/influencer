@@ -1,59 +1,92 @@
 /**
- * Textos de tooltip que explicam o cálculo de cada métrica do relatório.
+ * Textos de tooltip que explicam cada métrica do relatório — linguagem clara e direta.
  */
 export const METRIC_TOOLTIPS = {
   seguidores:
-    'Número de seguidores do perfil no Instagram (dado oficial da API).',
+    'Quantos seguidores o perfil tem no Instagram (dado que vem direto da rede).',
 
-  er: 'Taxa de engajamento (ER): (média de interações por post ÷ seguidores) × 100. Interações = curtidas + comentários. Reflete quanto do seu público reage em média a cada post.',
+  er: 'Taxa de engajamento: a gente pega curtidas + comentários, divide pelos seguidores e vira porcentagem. Mostra quanto sua galera reage de verdade nos posts.',
 
   postsPerSemana:
-    'Média de posts por semana: total de posts no período analisado ÷ número de semanas entre o primeiro e o último post (mínimo 1 semana).',
+    'Quantos posts em média saem por semana: a gente conta tudo que foi postado e divide pelas semanas do período. Assim você vê se o perfil é consistente ou sumido.',
 
   score:
-    'Score 0–100: média ponderada de 5 pilares — Comunidade (25%): proporção de comentários nas interações; Consistência (20%): cadência de posts/semana; Alcance (25%): views ou ER como proxy; Autoridade (15%): verificado, bio, link, tipo de conta; Conteúdo (15%): % de posts acima de um mínimo de performance.',
+    'É a nota geral do perfil (0 a 100). A gente junta: quanto sua audiência interage (comunidade), se você posta com frequência (consistência), alcance dos posts, se o perfil passa confiança (autoridade) e qualidade do conteúdo. Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias.',
 
   topPercentil:
-    'Percentil de engajamento na sua faixa de alcance (Nano/Micro/Mid/Macro). Seu ER é comparado com as faixas de referência da faixa e convertido em um percentil (0–90). Top 90% = engajamento no topo da faixa.',
+    'Você está no topo da sua faixa. A gente compara seu engajamento com outros perfis do mesmo tamanho (Nano, Micro, Mid, Macro). Top 90% = você engaja mais que a maioria da galera.',
 
   selo:
-    'Selo do perfil: "Comunidade Forte" (score ≥75), "Alta Consistência" (≥60), "Potencial Alto" (≥45), "Audiência Envolvida" (≥15% comentários) ou "Em crescimento".',
+    'Conquistas do perfil: "Comunidade Forte" (nota alta e muita conversa), "Alta Consistência" (postando direto), "Potencial Alto", "Audiência Envolvida" (muita gente comentando) ou "Em crescimento".',
 
   conversacao:
-    'Seu público conversa?: percentual de comentários em relação ao total de interações (curtidas + comentários). ≥12% = Comunidade conversadora; ≥6% = Médio; &lt;6% = Público passivo.',
+    'Sua audiência comenta ou só curte? A gente vê a fatia de comentários no total de interações. Quanto mais comentários, mais sua galera participa de verdade.',
 
   valorEstimado:
-    'Valor estimado por post: base = (seguidores ÷ 1000) × (ER ÷ 2), com ajustes por alcance (views), perfil verificado (+20%), conta profissional (+10%) e audiência que comenta (+15%). Faixa final: base × 0,7 a base × 1,5 (mín. R$ 50).',
+    'Quanto o mercado costuma pagar por um post no feed. A base leva em conta seguidores e engajamento; aí entram bônus (perfil verificado, conta pro, audiência que comenta) e o alcance. A faixa é uma estimativa para você ter uma ideia.',
+
+  valorEstimadoDestaque:
+    'Destaque (Highlights) não é formato principal: é aquele catálogo fixo no perfil. O mercado usa como bônus (tipo +10% a +25% do story por 30 dias) ou inclui no pacote. Quem vê é quem já entra no perfil. Em nichos tipo restaurante e clínica pode valer um pouco mais.',
 
   postsPorSemanaUltimas8:
-    'Quantidade de posts publicados em cada uma das últimas 8 semanas, contados pela data de publicação do post.',
+    'Quantos posts saíram em cada uma das últimas 8 semanas. Assim você vê se a pessoa está postando de verdade ou sumida.',
 
   melhorDiaHora:
-    'Dia da semana e hora (0–23h) em que mais posts foram publicados nas últimas 8 semanas.',
+    'Dia e horário em que mais posts foram publicados nas últimas 8 semanas. Dá para saber quando o perfil costuma estar no ar.',
 
   interacoesPost:
-    'Interações do post = curtidas + comentários.',
+    'Tudo que o post recebeu: curtidas + comentários. Quanto mais, mais a galera interagiu.',
 
   erPost:
-    'ER do post: (interações do post ÷ seguidores) × 100. Mostra o engajamento daquele post em relação ao seu alcance.',
+    'Engajamento daquele post: curtidas e comentários em % dos seguidores. Mostra se aquele post bombou ou passou batido.',
 
   hashtagsMaisUsadas:
-    'Número de vezes que cada hashtag apareceu nos últimos 25 posts analisados.',
+    'Quantas vezes cada hashtag apareceu nos últimos 25 posts. Dá para ver o que a pessoa mais usa.',
 
   hashtagsPerformam:
-    'ER médio dos posts em que a hashtag aparece. Mostra quais hashtags estão associadas a posts com maior engajamento.',
+    'Engajamento médio dos posts em que a hashtag aparece. Assim você vê quais hashtags estão ligadas a posts que bombam.',
 
   totalCurtidas:
-    'Soma de todas as curtidas dos posts analisados (até os últimos 100 posts).',
+    'Soma de todas as curtidas nos posts que a gente analisou (até os últimos 100).',
 
   totalComentarios:
-    'Soma de todos os comentários dos posts analisados (até os últimos 100 posts).',
+    'Soma de todos os comentários nos posts analisados (até os últimos 100).',
 
   mediaLikesPost:
-    'Média de curtidas por post: total de curtidas ÷ número de posts analisados.',
+    'Média de curtidas por post: total de curtidas dividido pelo número de posts. Dá uma noção do que o perfil costuma fazer.',
 
   totalPosts:
-    'Quantidade total de posts considerados na análise (período dos posts carregados).',
+    'Quantos posts entraram na análise (o período que a gente considerou).',
+
+  engajamentoPorTipo:
+    'Engajamento separado por tipo: posts do feed, reels e quando o perfil foi marcado. Assim você vê qual tipo de conteúdo mais engaja.',
+
+  evolucaoPorSemana:
+    'Engajamento e total de interações por semana nas últimas 8. Barras mais altas = semana em que o perfil mandou bem.',
+
+  erPorViews:
+    'Engajamento considerando as views (quem viu). Importante em reels e vídeos, onde muita gente vê sem ser seguidor.',
+
+  totalViewsMarcados:
+    'Soma de todas as visualizações nos posts em que o perfil foi marcado.',
+
+  viralizacaoReel:
+    'Views do último reel dividido pelos seguidores. Mostra se o vídeo estourou além da sua base.',
+
+  totalViewsReels:
+    'Soma de todas as visualizações nos reels analisados.',
+
+  mediaViewsReel:
+    'Média de views por reel. Dá para ver se os vídeos costumam performar.',
+
+  erPorSeguidoresEViews:
+    'Aqui a gente mostra o engajamento de duas formas: em relação aos seguidores e em relação a quem viu (views). Em reels, as views costumam ser bem maiores.',
+
+  somaItensDestaques:
+    'Soma de todos os itens (stories) que estão em todos os destaques do perfil.',
+
+  mediaItensDestaque:
+    'Média de itens por destaque. Mostra se os destaques são curtos ou bem recheados.',
 } as const
 
 export type MetricTooltipKey = keyof typeof METRIC_TOOLTIPS

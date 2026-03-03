@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react'
+import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Spin,
@@ -13,6 +13,7 @@ import {
   Tooltip,
   Collapse,
   message,
+  Skeleton,
 } from 'antd'
 import {
   EditOutlined,
@@ -23,28 +24,31 @@ import {
   RiseOutlined,
   SafetyOutlined,
   MessageOutlined,
+  SyncOutlined,
   VideoCameraOutlined,
   FacebookOutlined,
   LinkedinOutlined,
+  RocketOutlined,
   TwitterOutlined,
-  CheckCircleFilled,
+  LockOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { buildReportInsights, getWeekdayName } from '../utils/reportInsights'
-import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
+import { CONTENT_TYPE_LABELS, CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 import { PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
-import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
+import { DETAIL_SECTION_ORDER, type DetailSectionId } from '../constants/detailLayout'
 import { useAuth } from '../contexts/AuthContext'
 import { reportTokens as t } from './reportTokens'
 import {
   ReportHero,
   ScoreOverview,
-  InsightCardsGrid,
-  AudienceQualityCard,
-  PricingHighlight,
+  DiagnosticoBISection,
+  EngajamentoPorTipoSection,
+  ValorEpublicoSection,
+  StrategicMetricsSection,
   StickyCTA,
   ReportSkeleton,
 } from './InfluencerDetailReport'
@@ -185,8 +189,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const mediaKitCtaLabel = mustCompleteCadastro
     ? 'Finalize seu cadastro para gerar Media Kit'
     : user
-      ? 'Gerar Media Kit Profissional'
+      ? 'Transformar em proposta comercial agora'
       : 'Faça login para gerar Media Kit'
+  const mediaKitCtaShortLabel = mustCompleteCadastro ? 'Ativar e Gerar MediaKit' : user ? 'Gerar MediaKit' : 'Entrar'
   const isLimitedView = !user || isPublic
   const [profileLoading, setProfileLoading] = useState(true)
   const [postsLoading, setPostsLoading] = useState(true)
@@ -197,6 +202,8 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const [dataRedacted, setDataRedacted] = useState(false)
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+  const [showActivationCta, setShowActivationCta] = useState(false)
+  const feedSectionRef = useRef<HTMLDivElement>(null)
   const refreshQueuedRef = useRef(false)
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768)
@@ -299,6 +306,43 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     }
   }, [])
 
+  // Mostrar painel de ativação apenas quando o scroll chegar no elemento com blur (Análise de Feed).
+  // Esconder só quando o blur sair por baixo (viewport acima do blur); threshold 0 garante callback quando sair totalmente.
+  useEffect(() => {
+    if (isLimitedView) return
+    let cancelled = false
+    const setupObserver = () => {
+      const el = document.getElementById('blur-feed-analysis')
+      if (!el || cancelled) return
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          if (!entry) return
+          if (entry.isIntersecting) {
+            setShowActivationCta(true)
+            return
+          }
+          const rect = entry.boundingClientRect
+          const viewportHeight = entry.rootBounds?.height ?? window.innerHeight
+          // Só esconde quando o blur está totalmente abaixo da viewport (rolamos para cima)
+          if (rect.top >= viewportHeight) setShowActivationCta(false)
+        },
+        { rootMargin: '0px', threshold: [0, 0.1] }
+      )
+      observer.observe(el)
+      return () => observer.disconnect()
+    }
+    let cleanup: (() => void) | undefined
+    const raf = requestAnimationFrame(() => {
+      if (cancelled) return
+      cleanup = setupObserver()
+    })
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      cleanup?.()
+    }
+  }, [isLimitedView, profileLoading, postsLoading])
+
   const userData = profile?.data?.user as Record<string, unknown> | undefined
   const displayHandle = (profile?.handle ?? profile?.username ?? profile?.key ?? handle ?? '') as string
   const fullName: string | undefined = profile?.full_name ?? (userData?.full_name != null ? String(userData.full_name) : undefined)
@@ -342,10 +386,23 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     }
   }, [posts])
 
+  /** ER e totais por tipo de conteúdo (posts, reels, marcados) para card de métricas. */
+  const engagementByType = useMemo(() => {
+    const eng = (list: PostItem[]) => computeEngagementFromPosts(list, followersCount)
+    const feed = eng(mediaByType.posts)
+    const reels = eng(mediaByType.reels)
+    const tagged = eng(mediaByType.tagged)
+    return {
+      posts: { er: feed.engagement_rate ?? 0, erByViews: undefined as number | undefined, count: feed.posts_count },
+      reels: { er: reels.engagement_rate ?? 0, erByViews: reels.engagement_rate_by_views, count: reels.posts_count },
+      tagged: { er: tagged.engagement_rate ?? 0, erByViews: tagged.engagement_rate_by_views, count: tagged.posts_count },
+    }
+  }, [mediaByType.posts, mediaByType.reels, mediaByType.tagged, followersCount])
+
   const loading = profileLoading || postsLoading
   if (loading && !profile && posts.length === 0) {
     return (
-      <div style={{ background: (t.colors as { pageBg?: string }).pageBg ?? 'var(--app-page-bg)', minHeight: '100vh', paddingBottom: 80 }}>
+      <div style={{ minHeight: '100vh', paddingBottom: 80 }}>
         <ReportSkeleton />
       </div>
     )
@@ -366,12 +423,8 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
 
   const tierLabel = followersCount < 10_000 ? 'Nano Influencer' : followersCount < 50_000 ? 'Micro Influencer' : followersCount < 500_000 ? 'Mid Influencer' : 'Macro Influencer'
 
-  const postsPerWeek = engagement.posts_per_week ?? 0
   const engagementScore = reportInsights?.score.total ?? Math.min(100, Math.round((engagement.engagement_rate / 12) * 100))
   const scoreSelo = reportInsights?.score.selo ?? 'Alto Engajamento'
-  const diagnosticoFazBem = reportInsights?.diagnostico.fazBem ?? `Seu perfil tem um engajamento de ${engagement.engagement_rate.toFixed(2)}%, que indica conexão com a audiência.`
-  const diagnosticoTrava = reportInsights?.diagnostico.trava ?? (postsPerWeek < 1 ? `Você posta pouco (${postsPerWeek.toFixed(1)} posts/semana).` : 'Há espaço para crescer a frequência.')
-  const diagnosticoFazerPrimeiro = reportInsights?.diagnostico.fazerPrimeiro ?? 'Defina uma meta de 2–3 posts por semana.'
   const valorEstimadoFromPricing = (): { min: number; max: number; porque?: string } => {
     const p = activation?.pricing as Record<string, string | number | undefined> | undefined
     if (p) {
@@ -404,7 +457,6 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   }
 
   const hasList = (arr: unknown[] | undefined) => Array.isArray(arr) && arr.length > 0
-  const hasGrowthChips = !!reportInsights?.nicho || !!activation?.content_type?.length
   const canShowProof =
     !!reportInsights &&
     hasList(reportInsights.topPosts?.byInteractions) &&
@@ -417,6 +469,21 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   }
   const gap = isMobile ? s.lg : sectionGap
   const rowGutter: [number, number] = isMobile ? [s.md, s.md] : [s.lg, s.lg]
+
+  const bio = profile?.biography ?? (profile?.data?.user as Record<string, unknown>)?.biography
+  const defaultHeadline = (bio != null && String(bio).trim()) ? String(bio).trim() : 'Seu perfil tem potencial real de monetização'
+  const heroHeadline = (hasActivationData && activation && (activation.content_type?.length || activation.description?.trim()))
+    ? (activation.description?.trim() ? <div style={{ marginBottom: 0 }}>{activation.description.trim()}</div> : null)
+    : defaultHeadline
+  const heroTypesTags = (hasActivationData && activation && activation.content_type && activation.content_type.length > 0)
+    ? (
+      <Space wrap size={[2, 2]}>
+        {activation.content_type.map((ct) => (
+          <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>
+        ))}
+      </Space>
+    )
+    : undefined
 
   return (
     <div style={{ paddingBottom: s.xl, background: c.pageBg, minHeight: '100vh' }}>
@@ -447,378 +514,511 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
 
       <div style={{ width: '100%', padding: `0 ${isMobile ? (lay.contentPaddingMobile ?? s.md) : 0}px ${isMobile ? 160 : s.xl}px`, position: 'relative', zIndex: 1, background: c.pageBg }}>
         {!isRedacted && (
-          <ReportHero
-            profilePic={profilePic || ''}
-            name={fullName}
-            handle={displayHandle}
-            isMobile={isMobile}
-            score={reportInsights ? engagementScore : undefined}
-            scoreTooltip={reportInsights ? 'Quanto maior o score, mais seu perfil está pronto para parcerias.' : undefined}
-            tierLabel={reportInsights ? tierLabel : undefined}
-            percentil={reportInsights?.benchmark?.percentil ?? undefined}
-            scoreSelo={reportInsights ? scoreSelo : undefined}
-            headline="Seu perfil tem potencial real de monetização"
-            badgeLabel={!reportInsights ? tierLabel : undefined}
-            highlights={[
-              { label: 'Seguidores', value: formatShortNum(followersCount) },
-              { label: 'ER', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
-              { label: 'Posts/sem', value: reportInsights?.consistency?.postsPerWeekByWeek?.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
-            ]}
-            onBack={() => navigate(-1)}
-            onSendMessage={user && (isAdm || user.scope === 'assinante') && handle ? () => navigate(`/app/influencer/${encodeURIComponent(handle)}/send-message`) : undefined}
-            onUpdateInstagram={isAdm && handle ? async () => {
-              const r = await queueRefreshProfile(handle, { priority: true })
-              if (r.queued) message.success(r.message)
-              else message.warning(r.message)
-            } : undefined}
-            onCta={goToMediaKitOrLogin}
-            onAvatarError={() => {
-              if (!refreshQueuedRef.current && handle) {
-                refreshQueuedRef.current = true
-                queueRefreshProfile(handle).catch(() => { })
-                startRefreshPolling.current(handle)
-              }
-            }}
-            extraContent={!isLimitedView && reportInsights ? (
-              <ScoreOverview
-                embedded
-                tierInHero
-                hidePostsPerWeek
-                hideExplanationInEmbedded
-                score={engagementScore}
-                tierLabel={tierLabel}
-                scoreSelo={scoreSelo}
-                percentil={reportInsights.benchmark?.percentil ?? null}
-                explanation="Quanto maior o score, mais seu perfil está pronto para parcerias."
-                statPills={layout.showScorePills ? [
-                  { label: 'Seguidores', value: formatShortNum(followersCount) },
-                  { label: 'ER', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
-                  { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
-                ] : []}
-                postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
-                bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
-                bestHour={reportInsights.consistency.bestHour}
-              />
-            ) : null}
-          />
-        )}
-
-        {!hasActivationData && canEdit && handle && (
-          <ActivationCtaPanel
-            handle={handle}
-            isMobile={isMobile}
-            marginBottom={gap}
-          />
+          <>
+            {/* Ações da tela: acima do perfil */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', justifyContent: 'center', marginBottom: s.md, paddingLeft: isMobile ? 0 : 0, paddingRight: isMobile ? 0 : 0 }}>
+              <Tooltip title={mediaKitCtaLabel}>
+                <Button
+                  type="primary"
+                  size="large"
+                  icon={<RocketOutlined />}
+                  onClick={goToMediaKitOrLogin}
+                  style={{ borderRadius: r, background: c.gold ?? 'var(--app-gold)', borderColor: c.gold ?? 'var(--app-gold)', color: 'var(--brand-white)', fontWeight: 600, minHeight: 44 }}
+                >
+                  {mediaKitCtaShortLabel}
+                </Button>
+              </Tooltip>
+              {user && (isAdm || user.scope === 'assinante') && handle && (
+                <Button
+                  type="default"
+                  size="large"
+                  icon={<MessageOutlined />}
+                  onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}/send-message`)}
+                  style={{ borderRadius: r, minHeight: 44 }}
+                  aria-label="Enviar mensagem"
+                >
+                  Mensagem
+                </Button>
+              )}
+              {isAdm && handle && (
+                <Tooltip title="Força re-extração do perfil no Instagram (prioritária, só admin)">
+                  <Button
+                    type="default"
+                    size="large"
+                    icon={<SyncOutlined />}
+                    onClick={async () => {
+                      const res = await queueRefreshProfile(handle, { priority: true })
+                      if (res.queued) message.success(res.message)
+                      else message.warning(res.message)
+                    }}
+                    style={{ borderRadius: r, minHeight: 44 }}
+                    aria-label="Atualizar Instagram"
+                  >
+                    Atualizar
+                  </Button>
+                </Tooltip>
+              )}
+            </div>
+            <ReportHero
+              profilePic={profilePic || ''}
+              name={fullName}
+              handle={displayHandle}
+              isMobile={isMobile}
+              score={reportInsights ? engagementScore : undefined}
+              scoreTooltip={reportInsights?.score?.pillars
+                ? `Sua nota é uma mistura de: comunidade (${reportInsights.score.pillars.comunidade}), consistência (${reportInsights.score.pillars.consistencia}), alcance (${reportInsights.score.pillars.alcance}), autoridade (${reportInsights.score.pillars.autoridade}) e conteúdo (${reportInsights.score.pillars.conteudo}). Quanto maior, mais seu perfil está pronto para marcas e parcerias.`
+                : reportInsights ? 'É a nota geral do perfil. Quanto maior, mais pronto você está para fechar parcerias com marcas.' : undefined}
+              tierLabel={reportInsights ? tierLabel : undefined}
+              percentil={reportInsights?.benchmark?.percentil ?? undefined}
+              scoreSelo={reportInsights ? scoreSelo : undefined}
+              headline={heroHeadline}
+              typesTags={heroTypesTags}
+              badgeLabel={!reportInsights ? tierLabel : undefined}
+              highlights={[
+                { label: 'Seguidores', value: formatShortNum(followersCount) },
+                { label: 'ER médio (últ. 25)', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
+                { label: 'Posts/sem', value: reportInsights?.consistency?.postsPerWeekByWeek?.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
+              ]}
+              onBack={() => navigate(-1)}
+              onAvatarError={() => {
+                if (!refreshQueuedRef.current && handle) {
+                  refreshQueuedRef.current = true
+                  queueRefreshProfile(handle).catch(() => { })
+                  startRefreshPolling.current(handle)
+                }
+              }}
+              extraContent={!isLimitedView && reportInsights ? (
+                <ScoreOverview
+                  embedded
+                  tierInHero
+                  hidePostsPerWeek
+                  hideExplanationInEmbedded
+                  score={engagementScore}
+                  tierLabel={tierLabel}
+                  scoreSelo={scoreSelo}
+                  percentil={reportInsights.benchmark?.percentil ?? null}
+                  explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
+                  scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
+                  statPills={layout.showScorePills ? [
+                    { label: 'Seguidores', value: formatShortNum(followersCount) },
+                    { label: 'ER médio (últ. 25)', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
+                    { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
+                  ] : []}
+                  postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
+                  bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
+                  bestHour={reportInsights.consistency.bestHour}
+                />
+              ) : null}
+            />
+          </>
         )}
 
         {!isLimitedView && !isRedacted && hasActivationData && activation && (
           <div style={{ marginBottom: gap }}>
-            {user?.scope === 'influencer' ? (
-              <Collapse
-                defaultActiveKey={[]}
-                items={[{
-                  key: 'contato',
-                  label: (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
-                      <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />Contato e dados da ativação</span>
-                      {canEdit && handle && (
-                        <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
-                          Editar
-                        </Button>
-                      )}
-                    </div>
-                  ),
-                  children: (
-                    <>
-                      {activation.pricing && (() => {
-                        const costTier = getCostTier(activation.pricing)
-                        const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
-                          const val = activation.pricing![key as keyof typeof activation.pricing]
-                          return val !== undefined && val !== null && String(val).trim() !== ''
-                        })
-                        if (!hasAnyPricing) return null
-                        return (
-                          <>
-                            <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
-                            <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
-                              {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
-                              {PRICING_FIELD_KEYS.map((key) => {
-                                const val = activation.pricing![key as keyof typeof activation.pricing]
-                                if (val === undefined || val === null || String(val).trim() === '') return null
-                                const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
-                                return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
-                              })}
-                            </Descriptions>
-                          </>
-                        )
-                      })()}
-                      <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
-                        <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Contato e informações</div>
-                        <Descriptions column={1} bordered size="small">
-                          {(activation.city || activation.state || activation.neighborhood || activation.country) && (
-                            <Descriptions.Item label="Localização">
-                              {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
-                            </Descriptions.Item>
-                          )}
-                          {activation.address && <Descriptions.Item label="Endereço">{activation.address}</Descriptions.Item>}
-                          {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
-                          {activation.content_type && activation.content_type.length > 0 && (
-                            <Descriptions.Item label="Tipo de conteúdo">
-                              <Space wrap size={[6, 6]}>{activation.content_type.map((ct) => <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>)}</Space>
-                            </Descriptions.Item>
-                          )}
-                          {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
-                          {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
-                          {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
-                          {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
-                          {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
-                          {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
-                          {activation.description?.trim() && <Descriptions.Item label="Descrição">{activation.description}</Descriptions.Item>}
-                          {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
-                          {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
-                          {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
-                        </Descriptions>
-                      </div>
-                    </>
-                  ),
-                }]}
-                style={{ borderRadius: r, overflow: 'hidden', border: 'none', boxShadow: sh }}
-              />
-            ) : (
-              <ReportSection
-                variant="analytical"
-                sectionTitle={false}
-                title={
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                    <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />Contato e dados da ativação</span>
+            <Collapse
+              defaultActiveKey={[]}
+              items={[{
+                key: 'contato',
+                label: (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
+                    <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />{[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || 'Localização'}</span>
                     {canEdit && handle && (
-                      <Button type="default" size="small" icon={<EditOutlined />} onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)} style={{ borderRadius: r }}>
+                      <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
                         Editar
                       </Button>
                     )}
                   </div>
-                }
-              >
-                {activation.pricing && (() => {
-                  const costTier = getCostTier(activation.pricing)
-                  const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
-                    const val = activation.pricing![key as keyof typeof activation.pricing]
-                    return val !== undefined && val !== null && String(val).trim() !== ''
-                  })
-                  if (!hasAnyPricing) return null
-                  return (
-                    <>
-                      <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
-                      <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
-                        {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
-                        {PRICING_FIELD_KEYS.map((key) => {
-                          const val = activation.pricing![key as keyof typeof activation.pricing]
-                          if (val === undefined || val === null || String(val).trim() === '') return null
-                          const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
-                          return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
-                        })}
+                ),
+                children: (
+                  <>
+                    {activation.pricing && (() => {
+                      const costTier = getCostTier(activation.pricing)
+                      const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
+                        const val = activation.pricing![key as keyof typeof activation.pricing]
+                        return val !== undefined && val !== null && String(val).trim() !== ''
+                      })
+                      if (!hasAnyPricing) return null
+                      return (
+                        <>
+                          <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
+                          <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
+                            {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
+                            {PRICING_FIELD_KEYS.map((key) => {
+                              const val = activation.pricing![key as keyof typeof activation.pricing]
+                              if (val === undefined || val === null || String(val).trim() === '') return null
+                              const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
+                              return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
+                            })}
+                          </Descriptions>
+                        </>
+                      )
+                    })()}
+                    <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
+                      <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Contato e informações</div>
+                      <Descriptions column={1} bordered size="small">
+                        {(activation.city || activation.state || activation.neighborhood || activation.country) && (
+                          <Descriptions.Item label="Localização">
+                            {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
+                          </Descriptions.Item>
+                        )}
+                        {activation.address && <Descriptions.Item label="Endereço">{activation.address}</Descriptions.Item>}
+                        {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
+                        {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
+                        {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
+                        {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
+                        {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
+                        {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
+                        {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
+                        {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
+                        {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
+                        {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
                       </Descriptions>
-                    </>
-                  )
-                })()}
-                <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
-                  <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Contato e informações</div>
-                  <Descriptions column={1} bordered size="small">
-                    {(activation.city || activation.state || activation.neighborhood || activation.country) && (
-                      <Descriptions.Item label="Localização">
-                        {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
-                      </Descriptions.Item>
-                    )}
-                    {activation.address && <Descriptions.Item label="Endereço">{activation.address}</Descriptions.Item>}
-                    {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
-                    {activation.content_type && activation.content_type.length > 0 && (
-                      <Descriptions.Item label="Tipo de conteúdo">
-                        <Space wrap size={[6, 6]}>{activation.content_type.map((ct) => <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>)}</Space>
-                      </Descriptions.Item>
-                    )}
-                    {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
-                    {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
-                    {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
-                    {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
-                    {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
-                    {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
-                    {activation.description?.trim() && <Descriptions.Item label="Descrição">{activation.description}</Descriptions.Item>}
-                    {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
-                    {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
-                    {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
-                  </Descriptions>
-                </div>
-              </ReportSection>
-            )}
-          </div>
-        )}
-
-        {!isLimitedView && !isRedacted && (
-          <div id="diagnostico-secao" style={{ marginBottom: gap }}>
-            <InsightCardsGrid fazBem={diagnosticoFazBem} trava={diagnosticoTrava} fazerPrimeiro={diagnosticoFazerPrimeiro} />
-          </div>
-        )}
-        {!isLimitedView && !isRedacted && (reportInsights ? (
-          <div style={{ marginBottom: gap }}>
-            <Row gutter={rowGutter}>
-              <Col xs={24}>
-                <Row gutter={rowGutter} align="stretch">
-                  <Col xs={24} md={12} style={{ display: 'flex' }}>
-                    <PricingHighlight
-                      min={valorEstimadoMin}
-                      max={valorEstimadoMax}
-                      porque={valorEstimadoPorque ?? ''}
-                      onCta={() => document.getElementById('cta-final')?.scrollIntoView({ behavior: 'smooth' })}
-                      hideCta={isMobile || layout.showMainCta === 'final'}
-                      tooltip={METRIC_TOOLTIPS.valorEstimado}
-                      style={{ flex: 1, minHeight: '100%' }}
-                    />
-                  </Col>
-                  <Col xs={24} md={12} style={{ display: 'flex' }}>
-                    <AudienceQualityCard rate={reportInsights.conversation.rate} label={reportInsights.conversation.label} color={reportInsights.conversation.color} tooltip={METRIC_TOOLTIPS.conversacao} style={{ flex: 1, minHeight: '100%' }} />
-                  </Col>
-                </Row>
-              </Col>
-            </Row>
-          </div>
-        ) : postsLoading ? (
-          <Card size="small" style={{ ...cardStyle, marginBottom: gap }}>
-            <div style={{ textAlign: 'center', padding: s.xl }}><Spin /></div>
-          </Card>
-        ) : null)}
-
-        {!isLimitedView && !isRedacted && ((reportInsights?.resumoExecutivo?.length ?? 0) > 0 || hasGrowthChips) && (() => {
-          const hasResumo = (reportInsights?.resumoExecutivo?.length ?? 0) > 0
-          const hasGrowth = hasGrowthChips
-          const sideBySide = hasResumo && hasGrowth
-          return (
-            <Row gutter={rowGutter} align="stretch" style={{ marginBottom: gap }}>
-              {hasResumo && (
-                <Col xs={24} md={sideBySide ? 12 : 24} style={sideBySide ? { display: 'flex' } : undefined}>
-                  <Card size="small" className="report-card report-card--hover" style={{ ...cardStyle, flex: 1, minHeight: sideBySide ? '100%' : undefined, background: c.cardBgSoft, border: `1px solid ${c.borderLight}` }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: s.md }}>
-                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: c.primaryMuted, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <FileTextOutlined style={{ fontSize: 16, color: c.primary }} />
-                      </div>
-                      <div style={{ ...typH3, color: c.text, margin: 0 }}>Resumo Executivo</div>
                     </div>
-                    <ul style={{ margin: 0, paddingLeft: 20, listStyle: 'none' }}>
-                      {(reportInsights?.resumoExecutivo ?? []).map((bullet, i) => (
-                        <li key={i} style={{ marginBottom: s.sm, display: 'flex', gap: s.sm, alignItems: 'flex-start' }}>
-                          <span style={{ color: c.textMuted, fontWeight: 500, fontSize: 8 }}>•</span>
-                          <span style={{ ...typ.body, color: c.text }}>{bullet}</span>
-                        </li>
-                      ))}
-                    </ul>
+                  </>
+                ),
+              }]}
+              style={{ borderRadius: r, overflow: 'hidden', border: 'none', boxShadow: sh }}
+            />
+          </div>
+        )}
+
+        {!isLimitedView && !isRedacted && DETAIL_SECTION_ORDER.map((sectionId) => {
+          const renderSection = (id: DetailSectionId) => {
+            switch (id) {
+              case 'diagnostico': {
+                const topPercent = reportInsights?.benchmark?.percentil != null
+                  ? Math.max(1, Math.min(99, 100 - reportInsights.benchmark.percentil))
+                  : null
+                const comparacaoLocalComCidade = activation?.city && topPercent != null
+                  ? `Você está entre os ${topPercent}% com maior engajamento em ${activation.city}.`
+                  : reportInsights?.diagnosticoBI?.comparacaoLocal ?? null
+                return (
+                  <div key="diagnostico" id="diagnostico-secao" style={{ marginBottom: gap }}>
+                    {reportInsights?.diagnosticoBI && (
+                      <DiagnosticoBISection
+                        erPct={reportInsights.diagnosticoBI.erPct}
+                        erMaxViral={reportInsights.diagnosticoBI.erMaxViral}
+                        erNote={reportInsights.diagnosticoBI.erNote}
+                        benchmarkTier={reportInsights.diagnosticoBI.benchmarkTier}
+                        forcas={reportInsights.diagnosticoBI.forcas}
+                        ondePerdeAlcance={reportInsights.diagnosticoBI.ondePerdeAlcance}
+                        ondePerdeMonetizacao={reportInsights.diagnosticoBI.ondePerdeMonetizacao}
+                        proximoPassoTop3={reportInsights.diagnosticoBI.proximoPassoTop3}
+                        nichoLabel={reportInsights.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas].join(', ') : undefined}
+                        conversationLabel={reportInsights.conversation?.label}
+                        conversationCard={reportInsights.conversation ? { rate: reportInsights.conversation.rate, label: reportInsights.conversation.label, comparisonLabel: reportInsights.conversation.comparisonLabel, color: reportInsights.conversation.color } : undefined}
+                        topHashtags={reportInsights.nicho?.topHashtags}
+                        performingHashtags={reportInsights.nicho?.performingHashtags}
+                        conversationHashtags={reportInsights.nicho?.conversationHashtags}
+                        proximoPatamar={reportInsights.diagnosticoBI.proximoPatamar}
+                        faltaParaProximo={reportInsights.diagnosticoBI.faltaParaProximo}
+                        percentualNoPatamar={reportInsights.diagnosticoBI.percentualNoPatamar}
+                        insightPatamar={reportInsights.diagnosticoBI.insightPatamar}
+                        projecaoProximoPatamar={reportInsights.diagnosticoBI.projecaoProximoPatamar}
+                        comparacaoLocal={comparacaoLocalComCidade}
+                        hashtagsSugeridas={reportInsights.nicho?.hashtagsSugeridas}
+                        proximoPassoConcreto={reportInsights.diagnosticoBI.proximoPassoConcreto}
+                        growthProjectionNote={reportInsights?.strategicMetrics?.growthProjectionNote}
+                        semana1Items={reportInsights.diagnosticoBI.proximoPassoTop3}
+                      />
+                    )}
+                  </div>
+                )
+              }
+              case 'engajamentoPorTipo':
+                return (
+                  <div key="engajamentoPorTipo" id="engajamento-por-tipo" style={{ marginBottom: gap }}>
+                    <EngajamentoPorTipoSection
+                      engagementByType={engagementByType}
+                      rowGutter={rowGutter}
+                      erByTypeNarrative={reportInsights?.strategicMetrics?.erByTypeNarrative ?? null}
+                    />
+                  </div>
+                )
+              case 'metricasEstrategicas':
+                return reportInsights?.strategicMetrics ? (
+                  <div key="metricasEstrategicas" id="metricas-estrategicas" style={{ marginBottom: gap }}>
+                    <StrategicMetricsSection
+                      metrics={reportInsights.strategicMetrics}
+                      monetizationReadinessScore={reportInsights.monetizationReadinessScore}
+                      nicheAuthorityScore={reportInsights.nicheAuthorityScore}
+                    />
+                  </div>
+                ) : null
+              case 'valorEpublico':
+                return reportInsights ? (
+                  <div key="valorEpublico" style={{ marginBottom: gap }}>
+                    {!hasActivationData && (
+                      <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                        Valor estimado das postagens
+                      </h2>
+                    )}
+                    <div
+                      style={{
+                        position: 'relative',
+                        overflow: 'hidden',
+                        ...(!hasActivationData && { borderRadius: t.radius.lg, minHeight: 80 }),
+                      }}
+                    >
+                      <div
+                        style={{
+                          ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                        }}
+                      >
+                        <ValorEpublicoSection
+                          valorEstimado={{ min: valorEstimadoMin, max: valorEstimadoMax, porque: valorEstimadoPorque }}
+                          valorEstimadoPorTipo={reportInsights.valorEstimadoPorTipo}
+                          hideCta={layout.showMainCta === 'final'}
+                          ctaLabel={mediaKitCtaShortLabel}
+                          rowGutter={rowGutter}
+                          isMobile={isMobile}
+                        />
+                      </div>
+                      {!hasActivationData && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            background: 'rgba(0,0,0,0.2)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            pointerEvents: 'auto',
+                          }}
+                        >
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<LockOutlined />}
+                            onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
+                            style={{
+                              borderRadius: t.radius.md,
+                              fontWeight: 600,
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                            }}
+                          >
+                            Desbloquear análise completa
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : postsLoading ? (
+                  <Card key="valorEpublico" size="small" style={{ ...cardStyle, marginBottom: gap }}>
+                    <div style={{ textAlign: 'center', padding: s.xl }}><Spin /></div>
                   </Card>
-                </Col>
-              )}
-              {hasGrowth && (
-                <Col xs={24} md={sideBySide ? 12 : 24} style={sideBySide ? { display: 'flex' } : undefined}>
-                  <ReportSection variant="analytical" title={<div style={{ display: 'flex', alignItems: 'center', gap: s.sm }}><div style={{ width: 34, height: 34, borderRadius: '50%', background: c.successBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><RiseOutlined style={{ fontSize: 16, color: c.success }} /></div>Potencial de Crescimento</div>} style={sideBySide ? { flex: 1, minHeight: '100%', background: c.cardBgSoft, border: `1px solid ${c.borderLight}` } : { background: c.cardBgSoft, border: `1px solid ${c.borderLight}` }}>
-                    <Text style={{ ...typ.bodySmall, color: c.text, display: 'block', marginBottom: s.sm }}>
-                      Se você aumentar sua frequência de postagem mantendo o mesmo engajamento, seu perfil pode dobrar em 6 a 9 meses.
-                    </Text>
-                    <Space size={s.xs} wrap>
-                      {(reportInsights?.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas] : activation?.content_type?.length ? activation.content_type.slice(0, 3).map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct) : CONTENT_TYPE_OPTIONS.slice(0, 3).map((ct) => ct.label)).map((label) => (
-                        <Tag key={label} style={{ borderRadius: r, background: 'var(--app-border-light)', border: 'none', color: c.text }}>{label}</Tag>
-                      ))}
-                    </Space>
-                  </ReportSection>
-                </Col>
-              )}
-            </Row>
-          )
-        })()}
+                ) : null
+              case 'destaques':
+                return (
+                  <div key="destaques" id="secao-destaques">
+                    {postsLoading ? (
+                      <Card size="small" style={{ ...cardStyle, marginBottom: gap }}>
+                        <Skeleton active paragraph={{ rows: 2 }} title={{ width: 120 }} />
+                      </Card>
+                    ) : (
+                      <HighlightsAnalysisSection
+                        highlights={mediaByType.highlights}
+                        failedPostImages={failedPostImages}
+                        getPostImageUrl={getPostImageUrl}
+                        getPostLink={getPostLink}
+                        proxyImageUrl={proxyImageUrl}
+                        gap={gap}
+                      />
+                    )}
+                  </div>
+                )
+              case 'conteudoPerforma':
+                return (
+                  <div key="conteudoPerforma" id="secao-conteudo-performa" ref={feedSectionRef} style={{ marginBottom: gap }}>
+                    {!hasActivationData && canEdit && handle && showActivationCta && (
+                      <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={gap} />
+                    )}
+                    {postsLoading ? (
+                      <Card size="small" style={{ ...cardStyle, marginBottom: gap }}>
+                        <Skeleton active paragraph={{ rows: 4 }} title={{ width: 200 }} />
+                      </Card>
+                    ) : (
+                      <>
+                        {!hasActivationData && (
+                          <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                            Análise de Feed
+                          </h2>
+                        )}
+                        <div
+                          id="blur-feed-analysis"
+                          style={{
+                            marginBottom: gap,
+                            position: 'relative',
+                            overflow: 'hidden',
+                            borderRadius: t.radius.lg,
+                            minHeight: hasActivationData ? undefined : 80,
+                          }}
+                        >
+                          <div
+                            style={{
+                              ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                            }}
+                          >
+                            <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={posts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} proxyImageUrl={proxyImageUrl} gap={gap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
+                          </div>
+                          {!hasActivationData && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                background: 'rgba(0,0,0,0.2)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                pointerEvents: 'auto',
+                              }}
+                            >
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={<LockOutlined />}
+                                onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                style={{
+                                  borderRadius: t.radius.md,
+                                  fontWeight: 600,
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                Desbloquear análise completa
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                        {!hasActivationData && (
+                          <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                            Análise de reels
+                          </h2>
+                        )}
+                        <div
+                          style={{
+                            marginBottom: gap,
+                            position: 'relative',
+                            overflow: 'hidden',
+                            borderRadius: t.radius.lg,
+                            minHeight: hasActivationData ? undefined : 80,
+                          }}
+                        >
+                          <div
+                            style={{
+                              ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                            }}
+                          >
+                            <ReelsAnalysisSection
+                              reels={mediaByType.reels}
+                              followersCount={followersCount}
+                              failedPostImages={failedPostImages}
+                              formatShortNum={formatShortNum}
+                              getPostImageUrl={getPostImageUrl}
+                              getPostLink={getPostLink}
+                              proxyImageUrl={proxyImageUrl}
+                              gap={gap}
+                              cardStyle={cardStyle}
+                              lastReelAmplificationLabel={reportInsights?.strategicMetrics?.lastReelAmplificationLabel}
+                              contentOnly={!hasActivationData}
+                            />
+                          </div>
+                          {!hasActivationData && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                background: 'rgba(0,0,0,0.2)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                pointerEvents: 'auto',
+                              }}
+                            >
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={<LockOutlined />}
+                                onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                style={{
+                                  borderRadius: t.radius.md,
+                                  fontWeight: 600,
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                Desbloquear análise completa
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                        {!hasActivationData && (
+                          <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                            Análise de marcados
+                          </h2>
+                        )}
+                        <div
+                          style={{
+                            position: 'relative',
+                            overflow: 'hidden',
+                            borderRadius: t.radius.lg,
+                            minHeight: hasActivationData ? undefined : 80,
+                          }}
+                        >
+                          <div
+                            style={{
+                              ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                            }}
+                          >
+                            <TaggedAnalysisSection tagged={mediaByType.tagged} followersCount={followersCount} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} proxyImageUrl={proxyImageUrl} gap={gap} contentOnly={!hasActivationData} />
+                          </div>
+                          {!hasActivationData && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                background: 'rgba(0,0,0,0.2)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                pointerEvents: 'auto',
+                              }}
+                            >
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={<LockOutlined />}
+                                onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                style={{
+                                  borderRadius: t.radius.md,
+                                  fontWeight: 600,
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                Desbloquear análise completa
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              default:
+                return null
+            }
+          }
+          return renderSection(sectionId)
+        })}
 
-        {!isLimitedView && !isRedacted && (
-          <PostAnalysisSection
-            reportInsights={reportInsights}
-            engagement={engagement}
-            postsCount={posts.length}
-            postsLoading={postsLoading}
-            canShowProof={canShowProof}
-            categories={categories}
-            allHashtags={allHashtags}
-            failedPostImages={failedPostImages}
-            formatShortNum={formatShortNum}
-            getPostImageUrl={getPostImageUrl}
-            getPostLink={getPostLink}
-            proxyImageUrl={proxyImageUrl}
-            gap={gap}
-            cardStyle={cardStyle}
-          />
-        )}
+        <StickyCTA
+          visible={isMobile && !isRedacted}
+          primaryLabel={mediaKitCtaShortLabel}
+          primarySubtext="Pronto em 30s · PDF bonito · Envie para marcas"
+          onPrimary={goToMediaKitOrLogin}
+          secondaryLabel={user && (isAdm || user.scope === 'assinante') && handle ? 'Mensagem' : undefined}
+          onSecondary={user && (isAdm || user.scope === 'assinante') && handle ? () => navigate(`/app/influencer/${encodeURIComponent(handle!)}/send-message`) : undefined}
+        />
 
-        {!isLimitedView && !isRedacted && (
-          <ReelsAnalysisSection
-            reels={mediaByType.reels}
-            followersCount={followersCount}
-            failedPostImages={failedPostImages}
-            formatShortNum={formatShortNum}
-            getPostImageUrl={getPostImageUrl}
-            getPostLink={getPostLink}
-            proxyImageUrl={proxyImageUrl}
-            gap={gap}
-            cardStyle={cardStyle}
-          />
-        )}
-
-        {!isLimitedView && !isRedacted && (
-          <TaggedAnalysisSection
-            tagged={mediaByType.tagged}
-            followersCount={followersCount}
-            failedPostImages={failedPostImages}
-            formatShortNum={formatShortNum}
-            getPostImageUrl={getPostImageUrl}
-            getPostLink={getPostLink}
-            proxyImageUrl={proxyImageUrl}
-            gap={gap}
-          />
-        )}
-
-        {!isLimitedView && !isRedacted && (
-          <HighlightsAnalysisSection
-            highlights={mediaByType.highlights}
-            failedPostImages={failedPostImages}
-            getPostImageUrl={getPostImageUrl}
-            getPostLink={getPostLink}
-            proxyImageUrl={proxyImageUrl}
-            gap={gap}
-          />
-        )}
-
-        <div id="cta-final" className="report-cta-final" style={{ textAlign: 'center', marginBottom: s.section, paddingTop: s.xl }}>
-          <h2 style={{ ...typH2, color: c.text, marginBottom: s.sm }}>Feche parcerias locais mais rápido</h2>
-          <ul style={{ listStyle: 'none', margin: `0 auto ${s.lg}px`, padding: 0, maxWidth: 400, textAlign: 'left' }}>
-            <li style={{ display: 'flex', gap: s.sm, alignItems: 'center' }}><CheckCircleFilled style={{ color: c.success, flexShrink: 0 }} /><span style={{ ...typ.body, color: c.text }}>PDF profissional para enviar às marcas</span></li>
-          </ul>
-          {showInlineCtas && (
-            <>
-              <Button
-                type="primary"
-                size="large"
-                style={{ borderRadius: radiusLarge, paddingLeft: s.xl, paddingRight: s.xl, height: 52, background: gold, borderColor: gold, color: 'var(--brand-white)', marginBottom: s.sm }}
-                onClick={goToMediaKitOrLogin}
-              >
-                {mediaKitCtaLabel}
-              </Button>
-              <div style={{ ...typ.caption, color: c.textMuted, marginBottom: s.sm }}>Pronto em 30s · PDF bonito · Envie para marcas</div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <StickyCTA
-        visible={isMobile && !isRedacted}
-        primaryLabel={mediaKitCtaLabel}
-        primarySubtext="Pronto em 30s · PDF bonito · Envie para marcas"
-        onPrimary={goToMediaKitOrLogin}
-        secondaryLabel={user && (isAdm || user.scope === 'assinante') && handle ? 'Enviar mensagem' : undefined}
-        onSecondary={user && (isAdm || user.scope === 'assinante') && handle ? () => navigate(`/app/influencer/${encodeURIComponent(handle!)}/send-message`) : undefined}
-      />
-
-      <style>{`
+        <style>{`
         .report-card {
           transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
@@ -839,10 +1039,13 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         .report-hero-inner { position: relative; }
         .proof-thumb:hover .proof-overlay { opacity: 1 !important; }
         .report-sticky-cta { safe-area-inset-bottom: env(safe-area-inset-bottom, 0); }
-        .report-cta-final ul { margin-left: auto; margin-right: auto; }
         .section-h2 { letter-spacing: -0.02em; }
         .stat-pill { display: inline-flex; align-items: center; }
+        @media print {
+          .no-print { display: none !important; }
+        }
       `}</style>
+      </div>
     </div>
   )
 }

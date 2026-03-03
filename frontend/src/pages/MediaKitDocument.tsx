@@ -687,7 +687,7 @@ function ValuePage({
 
         <View style={{ flexDirection: 'row', marginBottom: s.lg }}>
           <View style={{ flex: 1, marginRight: s.lg }}>
-            <Card title="Valor por post (estimado)">
+            <Card title="Valor por feed (estimado)">
               <Text style={{ fontSize: 18, fontWeight: 'bold', color: pal.text }}>
                 R$ {min.toLocaleString('pt-BR')} - R$ {max.toLocaleString('pt-BR')}
               </Text>

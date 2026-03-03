@@ -381,7 +381,7 @@ export default function MediaKit() {
       <div style={{ padding: s.xl, maxWidth: 640, margin: '0 auto', textAlign: 'left' }}>
         <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={s.lg} />
         <div style={{ textAlign: 'center', marginTop: s.lg }}>
-          <Button onClick={() => navigate(-1)}>Voltar</Button>
+          <Button onClick={() => handle ? navigate(`/app/influencer/${encodeURIComponent(handle)}`) : navigate(-1)}>Voltar</Button>
         </div>
       </div>
     )
@@ -483,7 +483,7 @@ export default function MediaKit() {
           </div>
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => handle ? navigate(`/app/influencer/${encodeURIComponent(handle)}`) : navigate(-1)}
             style={{
               background: 'none',
               border: 'none',
@@ -625,7 +625,7 @@ export default function MediaKit() {
           </div>
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => handle ? navigate(`/app/influencer/${encodeURIComponent(handle)}`) : navigate(-1)}
             style={{
               background: 'none',
               border: 'none',
@@ -650,7 +650,7 @@ export default function MediaKit() {
           title="Falha ao gerar Media Kit"
           subTitle={error ?? 'Tente novamente mais tarde.'}
           extra={[
-            <Button key="back" onClick={() => navigate(-1)}>
+            <Button key="back" onClick={() => handle ? navigate(`/app/influencer/${encodeURIComponent(handle)}`) : navigate(-1)}>
               Voltar
             </Button>,
             <Button key="retry" type="primary" onClick={() => runInBackground()}>

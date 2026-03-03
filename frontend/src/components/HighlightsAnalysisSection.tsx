@@ -11,7 +11,6 @@ import type { PostItem } from '../api'
 
 const { spacing: s, colors: c, typography: typ, shadow: sh, radius: rad } = t
 const typH2 = t.typography.h2 as { fontSize: number; fontWeight: number }
-const typH3 = t.typography.h3 as { fontSize: number; fontWeight: number }
 
 /** Extrai quantidade de itens do destaque (post.highlight_item_count). */
 function getHighlightItemCount(post: PostItem): number {
@@ -79,11 +78,22 @@ export function HighlightsAnalysisSection({
   const allHighlights = byItemCount
   const [galleryModalOpen, setGalleryModalOpen] = useState(false)
 
-  if (highlights.length === 0) return null
+  if (highlights.length === 0) {
+    return (
+      <div style={{ marginBottom: gap }}>
+        <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.xs, fontSize: typH2.fontSize * 0.9 }}>
+          Análise de destaques
+        </h2>
+        <div style={{ textAlign: 'center', padding: s.xl, background: c.cardBgSoft, borderRadius: 10, border: `1px solid ${c.borderLight}` }}>
+          <span style={{ ...typ.body, color: c.textSecondary }}>Nenhum destaque encontrado para este perfil.</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ marginBottom: gap }}>
-      <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+      <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.xs, fontSize: typH2.fontSize * 0.9 }}>
         Análise de destaques
       </h2>
 
@@ -91,51 +101,51 @@ export function HighlightsAnalysisSection({
         style={{
           display: 'flex',
           flexWrap: 'wrap',
-          gap: s.md,
+          gap: s.sm,
           alignItems: 'stretch',
           justifyContent: 'center',
-          marginBottom: s.xl,
+          marginBottom: s.md,
         }}
       >
-        <Tooltip title="Soma dos itens (stories) em todos os destaques." placement="top">
+        <Tooltip title={METRIC_TOOLTIPS.somaItensDestaques} placement="top">
           <div
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 6,
               cursor: 'help',
-              padding: `${s.sm}px ${s.lg}px`,
+              padding: `${s.xs}px ${s.md}px`,
               background: c.cardBgSoft,
-              borderRadius: 12,
+              borderRadius: 10,
               border: `1px solid ${c.borderLight}`,
               boxShadow: 'var(--app-shadow-lg)',
             }}
           >
-            <UnorderedListOutlined style={{ fontSize: 20, color: c.primary }} />
+            <UnorderedListOutlined style={{ fontSize: 16, color: c.primary }} />
             <span>
-              <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{totalItems.toLocaleString('pt-BR')}</strong>{' '}
-              <span style={{ color: c.textSecondary, fontSize: 13 }}>itens no total</span>
+              <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>{totalItems.toLocaleString('pt-BR')}</strong>{' '}
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>itens no total</span>
             </span>
           </div>
         </Tooltip>
-        <Tooltip title="Média de itens por destaque." placement="top">
+        <Tooltip title={METRIC_TOOLTIPS.mediaItensDestaque} placement="top">
           <div
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 6,
               cursor: 'help',
-              padding: `${s.sm}px ${s.lg}px`,
+              padding: `${s.xs}px ${s.md}px`,
               background: c.cardBgSoft,
-              borderRadius: 12,
+              borderRadius: 10,
               border: `1px solid ${c.borderLight}`,
               boxShadow: 'var(--app-shadow-lg)',
             }}
           >
-            <RiseOutlined style={{ fontSize: 20, color: c.primary }} />
+            <RiseOutlined style={{ fontSize: 16, color: c.primary }} />
             <span>
-              <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{avgItems.toLocaleString('pt-BR')}</strong>{' '}
-              <span style={{ color: c.textSecondary, fontSize: 13 }}>média itens/destaque</span>
+              <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>{avgItems.toLocaleString('pt-BR')}</strong>{' '}
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>média itens/destaque</span>
             </span>
           </div>
         </Tooltip>
@@ -144,45 +154,34 @@ export function HighlightsAnalysisSection({
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 6,
               cursor: 'help',
-              padding: `${s.sm}px ${s.lg}px`,
+              padding: `${s.xs}px ${s.md}px`,
               background: c.cardBgSoft,
-              borderRadius: 12,
+              borderRadius: 10,
               border: `1px solid ${c.borderLight}`,
               boxShadow: 'var(--app-shadow-lg)',
             }}
           >
-            <StarOutlined style={{ fontSize: 20, color: 'var(--app-icon-image)' }} />
+            <StarOutlined style={{ fontSize: 16, color: 'var(--app-icon-image)' }} />
             <span>
-              <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{highlights.length}</strong>{' '}
-              <span style={{ color: c.textSecondary, fontSize: 13 }}>destaques</span>
+              <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>{highlights.length}</strong>{' '}
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>destaques</span>
             </span>
           </div>
         </Tooltip>
       </div>
 
       {topHighlights.length > 0 && (
-        <Row gutter={[s.lg, s.lg]}>
+        <Row gutter={[s.sm, s.sm]}>
           <Col xs={24}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: s.sm, marginBottom: s.sm }}>
-              <div style={{ ...typH3, color: c.textSecondary, margin: 0 }}>
-                Destaques por quantidade de itens
-              </div>
-              {allHighlights.length > 4 && (
-                <a
-                  onClick={() => setGalleryModalOpen(true)}
-                  style={{ ...typ.caption, color: c.primary, fontWeight: 600, cursor: 'pointer' }}
-                >
-                  Ver mais
-                </a>
-              )}
-            </div>
             <div
               style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-                gap: s.lg,
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: s.sm,
+                alignItems: 'flex-start',
+                justifyContent: 'center',
                 width: '100%',
               }}
               role="list"
@@ -192,6 +191,7 @@ export function HighlightsAnalysisSection({
                 const imgUrl = getPostImageUrl(post)
                 const link = getPostLink(post)
                 const failed = failedPostImages.has(key)
+                const size = 80
                 return (
                   <a
                     key={key}
@@ -200,26 +200,38 @@ export function HighlightsAnalysisSection({
                     rel="noopener noreferrer"
                     className="report-card--hover"
                     style={{
-                      display: 'block',
-                      borderRadius: rad.lg,
-                      overflow: 'hidden',
-                      boxShadow: sh.md,
-                      background: c.cardBg,
-                      minWidth: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      width: size + 24,
+                      minWidth: size + 24,
                       transition: t.animation.hoverTransition,
+                      textDecoration: 'none',
                     }}
                     aria-label={`Destaque ${name}, ${itemCount} itens`}
                   >
-                    <div style={{ position: 'relative', aspectRatio: '1', background: c.borderLight }}>
+                    <div
+                      style={{
+                        position: 'relative',
+                        width: size,
+                        height: size,
+                        borderRadius: '50%',
+                        overflow: 'hidden',
+                        flexShrink: 0,
+                        border: `2px solid ${c.borderLight}`,
+                        boxShadow: sh.sm,
+                        background: c.borderLight,
+                      }}
+                    >
                       {idx === 0 && (
-                        <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 1 }}>
+                        <div style={{ position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
                           <span
                             style={{
-                              padding: '2px 6px',
-                              borderRadius: 6,
+                              padding: '1px 4px',
+                              borderRadius: 4,
                               background: c.primary,
                               color: 'var(--brand-white)',
-                              fontSize: 10,
+                              fontSize: 9,
                               fontWeight: 600,
                             }}
                           >
@@ -244,25 +256,37 @@ export function HighlightsAnalysisSection({
                             justifyContent: 'center',
                           }}
                         >
-                          <StarOutlined style={{ fontSize: 32, color: c.textMuted }} aria-hidden />
+                          <StarOutlined style={{ fontSize: 20, color: c.textMuted }} aria-hidden />
                         </div>
                       )}
                     </div>
-                    <div style={{ padding: s.sm }}>
-                      <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, marginBottom: 2 }}>
+                    <div style={{ marginTop: s.xs, textAlign: 'center', minHeight: 28 }}>
+                      <div style={{ ...typ.caption, color: c.text, fontSize: 11, fontWeight: 600, lineHeight: 1.2, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
                         {name}
                       </div>
-                      <div style={{ ...typ.caption, color: c.textMuted }}>
+                      <div style={{ ...typ.caption, color: c.textSecondary, fontSize: 10, lineHeight: 1.2 }}>
                         {itemCount} {itemCount === 1 ? 'item' : 'itens'}
-                        {getHighlightDateLabel(post) && (
-                          <span style={{ display: 'block', marginTop: 2 }}>{getHighlightDateLabel(post)}</span>
-                        )}
                       </div>
+                      {getHighlightDateLabel(post) && (
+                        <div style={{ ...typ.caption, color: c.textMuted, fontSize: 9 }}>
+                          {getHighlightDateLabel(post)}
+                        </div>
+                      )}
                     </div>
                   </a>
                 )
               })}
             </div>
+            {allHighlights.length > 4 && (
+              <div style={{ textAlign: 'center', marginTop: s.sm }}>
+                <a
+                  onClick={() => setGalleryModalOpen(true)}
+                  style={{ ...typ.caption, color: c.primary, fontWeight: 600, cursor: 'pointer', fontSize: 12 }}
+                >
+                  Ver mais
+                </a>
+              </div>
+            )}
             <Modal
               title="Todos os destaques"
               open={galleryModalOpen}
@@ -270,6 +294,7 @@ export function HighlightsAnalysisSection({
               footer={null}
               width="90%"
               style={{ maxWidth: 900 }}
+              bodyStyle={{ maxHeight: '70vh', overflowY: 'auto' }}
             >
               <div
                 style={{

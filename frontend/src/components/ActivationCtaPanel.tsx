@@ -1,16 +1,10 @@
 import { useNavigate } from 'react-router-dom'
 import { Button, Row, Col, Typography } from 'antd'
-import { RocketOutlined, AimOutlined, MessageOutlined, FilePdfOutlined } from '@ant-design/icons'
+import { RocketOutlined } from '@ant-design/icons'
 import { reportTokens as t } from '../pages/reportTokens'
 
 const { Text } = Typography
-const { spacing: s, radiusLegacy: r, shadowLegacy: sh, typography: typ } = t
-
-const BENEFITS = [
-  { icon: AimOutlined, title: 'Visibilidade', desc: 'Aparece na busca de marcas e agências parceiras' },
-  { icon: MessageOutlined, title: 'Contato', desc: 'Seus dados ficam disponíveis para convites de campanhas' },
-  { icon: FilePdfOutlined, title: 'Media Kit PDF', desc: 'Documento profissional para enviar a oportunidades' },
-] as const
+const { spacing: s, typography: typ } = t
 
 export interface ActivationCtaPanelProps {
   handle: string
@@ -18,140 +12,147 @@ export interface ActivationCtaPanelProps {
   marginBottom?: number
 }
 
+const CONTENT_MAX_WIDTH = 1120
+const PAGE_PADDING_DESKTOP = 24
+const PAGE_PADDING_MOBILE = 16
+
 export function ActivationCtaPanel({
   handle,
   isMobile,
-  marginBottom = s.lg,
+  marginBottom = 40,
 }: ActivationCtaPanelProps) {
   const navigate = useNavigate()
 
-  const headline = 'Ative seu perfil para baixar o Media Kit e entrar na vitrine para marcas.'
+  const headline = 'Marcas perto de você estão procurando criadores agora.'
+  const subline = 'Ao ativar, você entra na busca comercial e passa a ser considerado por marcas que procuram criadores na sua região.'
+  const buttonLabel = 'Ativar e Gerar MediaKit'
+  const disclaimer = 'Seu Media Kit organiza seus dados, comprova sua performance e aumenta sua credibilidade na hora de negociar com marcas.'
+
+  const floatingHeight = 24
+  const horizontalPadding = isMobile ? PAGE_PADDING_MOBILE : PAGE_PADDING_DESKTOP
 
   return (
-    <div
-      style={{
-        marginBottom,
-        minWidth: isMobile ? undefined : 600,
-        width: '100%',
-        maxWidth: '100%',
-        boxSizing: 'border-box',
-        borderRadius: r,
-        border: '1px solid var(--app-success-border)',
-        background: 'var(--app-surface-dark)',
-        boxShadow: sh,
-        overflow: 'hidden',
-        padding: isMobile ? s.lg : s.xl,
-      }}
-    >
-      <Row gutter={isMobile ? 0 : s.lg} wrap>
-        <Col xs={24} md={14}>
-          <div style={{ marginBottom: s.md }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: s.sm, marginBottom: s.sm }}>
-              <div
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 10,
-                  background: 'var(--app-success-bg)',
-                  border: '1px solid var(--app-success-border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                <RocketOutlined style={{ fontSize: 20, color: 'var(--app-success)' }} />
-              </div>
-              <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                <Text
-                  strong
-                  style={{
-                    fontSize: isMobile ? typ.h2.fontSize : typ.h1.fontSize,
-                    color: 'var(--app-on-dark)',
-                    letterSpacing: '-0.02em',
-                    lineHeight: 1.3,
-                    display: 'block',
-                    wordWrap: 'break-word',
-                    overflowWrap: 'break-word',
-                  }}
-                >
-                  {headline}
-                </Text>
-                <Text
-                  style={{
-                    fontSize: typ.body.fontSize,
-                    color: 'var(--app-on-dark-muted)',
-                    lineHeight: 1.5,
-                    display: 'block',
-                    marginTop: 6,
-                    wordWrap: 'break-word',
-                    overflowWrap: 'break-word',
-                  }}
-                >
-                  Perfis ativados aparecem na busca de parceiros e podem receber convites para campanhas.
-                </Text>
-              </div>
-            </div>
-          </div>
-
-          <div style={{ padding: '20px 0px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: s.sm, rowGap: s.md }}>
-            <Button
-              type="primary"
-              size="large"
-              icon={<RocketOutlined />}
-              onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-              className="btn-activate-green"
-              style={{ borderRadius: t.radius.md, color: 'var(--brand-white)' }}
-            >
-              Ativar e ficar elegível
-            </Button>
-          </div>
-          <Text style={{ fontSize: typ.caption.fontSize, color: 'var(--app-on-dark-subtle)', lineHeight: 1.5, display: 'block', marginTop: s.md, maxWidth: isMobile ? '100%' : 420, wordWrap: 'break-word', overflowWrap: 'break-word' }}>
-            A ativação não garante contratação — mas te coloca elegível para ser encontrado por parceiros.
-          </Text>
-        </Col>
-
-        <Col xs={24} md={10}>
-          <div style={{ ...(isMobile && { marginTop: s.lg }) }}>
-            <Text
-              style={{
-                fontSize: typ.overline.fontSize,
-                fontWeight: 600,
-                color: 'var(--app-on-dark-subtle)',
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-                display: 'block',
-                marginBottom: s.sm,
-              }}
-            >
-              O que você desbloqueia
-            </Text>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: s.sm }}>
-              {BENEFITS.map(({ icon: Icon, title, desc }) => (
-                <div
-                  key={title}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: s.sm,
-                    padding: s.sm,
-                    borderRadius: t.radius.sm,
-                    background: 'var(--app-overlay-white-08)',
-                    border: '1px solid var(--app-overlay-white-12)',
-                    minWidth: 0,
-                  }}
-                >
-                  <Icon style={{ fontSize: 16, color: 'var(--app-success)', flexShrink: 0 }} />
-                  <div style={{ minWidth: 0, flex: 1, wordWrap: 'break-word', overflowWrap: 'break-word' }}>
-                    <Text strong style={{ fontSize: typ.body.fontSize, color: 'var(--app-on-dark)' }}>{title}</Text>
-                    <Text style={{ fontSize: typ.bodySmall.fontSize, color: 'var(--app-on-dark-muted)', display: 'block' }}>{desc}</Text>
+    <>
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          zIndex: 1000,
+          paddingLeft: horizontalPadding,
+          paddingRight: horizontalPadding,
+          paddingBottom: marginBottom,
+          boxSizing: 'border-box',
+          pointerEvents: 'none',
+        }}
+      >
+        <div
+          style={{
+            pointerEvents: 'auto',
+            maxWidth: CONTENT_MAX_WIDTH,
+            margin: '0 auto',
+            maxHeight: '85vh',
+            overflowY: 'auto',
+            background: 'var(--app-primary)',
+            border: '2px solid var(--brand-white)',
+            borderRadius: t.radius.lg,
+            padding: isMobile ? s.lg : s.xl,
+            paddingBottom: `max(${s.xl}px, env(safe-area-inset-bottom))`,
+            boxSizing: 'border-box',
+          }}
+        >
+          <Row gutter={isMobile ? 0 : s.lg} wrap align="top">
+            <Col xs={24} md={14}>
+              <div style={{ marginBottom: s.lg }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: s.sm, marginBottom: s.sm }}>
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 14,
+                      background: 'var(--brand-white)',
+                      border: '2px solid var(--app-border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <RocketOutlined style={{ fontSize: 24, color: 'var(--app-primary)' }} />
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                    <Text
+                      strong
+                      style={{
+                        fontSize: isMobile ? typ.h2.fontSize : typ.h1.fontSize,
+                        color: 'var(--brand-white)',
+                        letterSpacing: '-0.02em',
+                        lineHeight: 1.3,
+                        display: 'block',
+                        wordWrap: 'break-word',
+                        overflowWrap: 'break-word',
+                      }}
+                    >
+                      {headline}
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: typ.body.fontSize,
+                        color: 'var(--brand-white)',
+                        lineHeight: 1.5,
+                        display: 'block',
+                        marginTop: 8,
+                        wordWrap: 'break-word',
+                        overflowWrap: 'break-word',
+                      }}
+                    >
+                      {subline}
+                    </Text>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        </Col>
-      </Row>
-    </div>
+              </div>
+            </Col>
+
+            <Col xs={24} md={10}>
+              <div style={{ ...(isMobile && { marginTop: s.md }), display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: s.md }}>
+                <Button
+                  type="primary"
+                  size="large"
+                  icon={<RocketOutlined />}
+                  onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                  className="activation-cta-btn"
+                  style={{
+                    borderRadius: t.radius.md,
+                    background: 'var(--app-warning)',
+                    borderColor: 'transparent',
+                    color: 'var(--app-text)',
+                    fontWeight: 700,
+                    minHeight: 48,
+                  }}
+                >
+                  {buttonLabel}
+                </Button>
+                <Text
+                  style={{
+                    fontSize: typ.caption.fontSize,
+                    color: 'var(--brand-white)',
+                    lineHeight: 1.5,
+                    display: 'block',
+                    maxWidth: 420,
+                    wordWrap: 'break-word',
+                    overflowWrap: 'break-word',
+                  }}
+                >
+                  {disclaimer}
+                </Text>
+              </div>
+            </Col>
+          </Row>
+        </div>
+      </div>
+
+      <div style={{ height: floatingHeight }} />
+    </>
   )
 }

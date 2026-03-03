@@ -1632,7 +1632,7 @@ function publicAtLimit(req: RequestWithAuth): boolean {
 /** Reduz perfil para versão sem dados sensíveis (público que atingiu limite). Mantém apenas bio e dados mínimos de exibição (foto, nome, handle). */
 function redactProfile(profile: Record<string, unknown>): Record<string, unknown> {
   const out = { ...profile };
-  const sensitive = ['followers_count', 'following_count', 'media_count', 'media_count_visible', 'categories', 'external_url', '_collected_at', '_discovered_by', '_discovered_value'];
+  const sensitive = ['followers_count', 'following_count', 'media_count', 'media_count_visible', 'categories', 'external_url', 'mutual_followers_count', 'total_clips_count', '_collected_at', '_discovered_by', '_discovered_value'];
   for (const k of sensitive) {
     out[k] = null;
   }

@@ -4,7 +4,7 @@
  */
 import React, { useMemo, useState } from 'react'
 import { Row, Col, Tooltip, Modal } from 'antd'
-import { HeartOutlined, CommentOutlined, RiseOutlined, TagOutlined, EyeOutlined } from '@ant-design/icons'
+import { HeartOutlined, CommentOutlined, RiseOutlined, RocketOutlined, TagOutlined, EyeOutlined } from '@ant-design/icons'
 import { reportTokens as t } from '../pages/reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { getTopPosts } from '../utils/reportInsights'
@@ -33,6 +33,8 @@ export interface TaggedAnalysisSectionProps {
   proxyImageUrl: (url: string | undefined) => string | undefined
   /** Espaçamento inferior da seção. */
   gap?: number
+  /** Quando true, não renderiza o título da seção (para exibir o título fora do blur). */
+  contentOnly?: boolean
 }
 
 export function TaggedAnalysisSection({
@@ -44,6 +46,7 @@ export function TaggedAnalysisSection({
   getPostLink,
   proxyImageUrl,
   gap = s.xl,
+  contentOnly = false,
 }: TaggedAnalysisSectionProps) {
   const engagement = useMemo(
     () => computeEngagementFromPosts(tagged, followersCount),
@@ -59,13 +62,28 @@ export function TaggedAnalysisSection({
   const geraConversa = conversationRate >= 8
   const [galleryModalOpen, setGalleryModalOpen] = useState(false)
 
-  if (tagged.length === 0) return null
+  if (tagged.length === 0) {
+    return (
+      <div style={{ marginBottom: gap }}>
+        {!contentOnly && (
+          <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+            Análise de marcados
+          </h2>
+        )}
+        <div style={{ textAlign: 'center', padding: s.xl, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}` }}>
+          <span style={{ ...typ.body, color: c.textSecondary }}>Nenhum post marcado encontrado para este perfil.</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ marginBottom: gap }}>
-      <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-        Análise de marcados
-      </h2>
+      {!contentOnly && (
+        <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+          Análise de marcados
+        </h2>
+      )}
 
       <div
         style={{
@@ -123,8 +141,31 @@ export function TaggedAnalysisSection({
             </span>
           </div>
         </Tooltip>
+        <Tooltip title={METRIC_TOOLTIPS.er} placement="top">
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              cursor: 'help',
+              padding: `${s.sm}px ${s.lg}px`,
+              background: c.cardBgSoft,
+              borderRadius: 12,
+              border: `1px solid ${c.borderLight}`,
+              boxShadow: 'var(--app-shadow-lg)',
+            }}
+          >
+            <RocketOutlined style={{ fontSize: 20, color: c.primary }} />
+            <span>
+              <strong style={{ ...typ.body, fontSize: 15, color: c.primary }}>
+                {(engagement.engagement_rate ?? 0).toFixed(2)}%
+              </strong>{' '}
+              <span style={{ color: c.textSecondary, fontSize: 13 }}>ER médio (marcados)</span>
+            </span>
+          </div>
+        </Tooltip>
         {engagement.total_views > 0 && (
-          <Tooltip title="Total de visualizações nos posts marcados." placement="top">
+          <Tooltip title={METRIC_TOOLTIPS.totalViewsMarcados} placement="top">
             <div
               style={{
                 display: 'inline-flex',
@@ -224,6 +265,7 @@ export function TaggedAnalysisSection({
               proxyUrl={(url) => proxyImageUrl(url) ?? ''}
               failedImages={failedPostImages}
               formatShortNum={formatShortNum}
+              showAuthor
             />
             <Modal
               title="Todos os marcados"
@@ -232,6 +274,7 @@ export function TaggedAnalysisSection({
               footer={null}
               width="90%"
               style={{ maxWidth: 900 }}
+              bodyStyle={{ maxHeight: '70vh', overflowY: 'auto' }}
             >
               <ProofCarousel
                 items={allTaggedItems.map(({ post, interactions, erPost, oQueFuncionou }, idx) => ({
@@ -247,6 +290,7 @@ export function TaggedAnalysisSection({
                 proxyUrl={(url) => proxyImageUrl(url) ?? ''}
                 failedImages={failedPostImages}
                 formatShortNum={formatShortNum}
+                showAuthor
               />
             </Modal>
           </Col>

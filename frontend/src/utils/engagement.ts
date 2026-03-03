@@ -51,12 +51,34 @@ export function computeEngagementFromPosts(
   }
   const n = posts.length
   const totalInteractions = totalLikes + totalComments
-  // Engajamento = (média de interações por post) / seguidores — assim o % não ultrapassa 100%
+  // ER médio = (média de interações por post) / seguidores — pode ser > 100% em perfis virais
   const avgInteractionsPerPost = n > 0 ? totalInteractions / n : 0
   const engagementRate =
     followersCount > 0 && avgInteractionsPerPost >= 0
       ? (avgInteractionsPerPost / followersCount) * 100
       : 0
+  // ER do maior viral (um único post): credibilidade para marca
+  let engagementRateMaxViral: number | undefined
+  if (n > 0 && followersCount > 0) {
+    let maxEr = 0
+    for (const p of posts) {
+      const m = p.metrics
+      const likes = toNum(m?.likes ?? (p as { like_count?: number }).like_count)
+      const comments = toNum(m?.comments ?? (p as { comment_count?: number }).comment_count)
+      const er = ((likes + comments) / followersCount) * 100
+      if (er > maxEr) maxEr = er
+    }
+    engagementRateMaxViral = Math.round(maxEr * 100) / 100
+  }
+  const engagementRateNote =
+    engagementRate > 100
+      ? 'ER acima de 100% indica alcance além da base (viralização).'
+      : undefined
+  // ER por alcance (views): relevante para reels/vídeos com descoberta; (likes+comments)/views × 100
+  const engagementRateByViews =
+    totalViews > 0 && totalInteractions >= 0
+      ? (totalInteractions / totalViews) * 100
+      : undefined
 
   let posts_per_week: number | undefined
   if (timestamps.length >= 2) {
@@ -79,6 +101,9 @@ export function computeEngagementFromPosts(
     avg_comments: n > 0 ? Math.round(totalComments / n) : 0,
     avg_views: n > 0 ? Math.round(totalViews / n) : 0,
     engagement_rate: Math.round(engagementRate * 100) / 100,
+    ...(engagementRateByViews !== undefined && { engagement_rate_by_views: Math.round(engagementRateByViews * 100) / 100 }),
     ...(posts_per_week !== undefined && { posts_per_week }),
+    ...(engagementRateMaxViral !== undefined && { engagement_rate_max_viral: engagementRateMaxViral }),
+    ...(engagementRateNote && { engagement_rate_note: engagementRateNote }),
   }
 }

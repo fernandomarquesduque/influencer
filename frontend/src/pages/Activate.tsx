@@ -24,7 +24,6 @@ import {
   MessageOutlined,
   LinkOutlined,
   GlobalOutlined,
-  PlayCircleOutlined,
 } from '@ant-design/icons'
 import {
   fetchProfile,
@@ -40,10 +39,7 @@ import {
 import { fetchAddressByCep } from '../utils/viaCep'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
 import {
-  PRICE_BUCKETS,
   PRICING_FIELD_KEYS,
-  PRICING_FIELD_LABELS,
-  PRICING_FIELD_DESCRIPTIONS,
   getSuggestedPricingFromFollowers,
   type PricingFieldKey,
 } from '../constants/pricingBuckets'
@@ -60,47 +56,13 @@ const GENDER_OPTIONS = [
   { value: 'prefiro_nao_dizer', label: 'Prefiro não dizer' },
 ]
 
-const PRICE_OPTIONS = PRICE_BUCKETS.map((b) => ({ value: b.value, label: b.label }))
-
 const ACTIVATE_DRAFT_KEY = (h: string) => `activate_draft_${h}`
 
 function parseStepFromHash(): number {
   const m = window.location.hash.match(/^#step-(\d)$/)
   const n = m ? parseInt(m[1], 10) : 0
-  return Number.isFinite(n) && n >= 0 && n <= 3 ? n : 0
+  return Number.isFinite(n) && n >= 0 && n <= 2 ? n : 0
 }
-
-/** Retorna o passo (0–3) em que o usuário deve ficar com base nos campos já preenchidos. */
-function getStepFromFormValues(values: Record<string, unknown>): number {
-  const hasGender = values.gender != null && String(values.gender).trim() !== ''
-  const contentType = values.content_type
-  const hasContentType = Array.isArray(contentType) && contentType.length > 0
-  const desc = values.description
-  const hasDescription = typeof desc === 'string' && desc.trim() !== ''
-  const step0Complete = !!hasGender && hasContentType && hasDescription
-
-  if (!step0Complete) return 0
-
-  const zip = values.zip_code
-  const hasZip = typeof zip === 'string' && zip.trim() !== ''
-  const informar = values.informar_endereco_completo
-  const address = values.address
-  const hasAddress = typeof address === 'string' && String(address).trim() !== ''
-  const step1Complete = hasZip && (informar !== true || hasAddress)
-
-  if (!step1Complete) return 1
-
-  const whatsapp = values.whatsapp
-  const digits = typeof whatsapp === 'string' ? parseWhatsAppDigits(whatsapp) : ''
-  const step2Complete = digits.length >= 10
-
-  if (!step2Complete) return 2
-
-  return 3
-}
-
-/** Faixa inicial baixa para "Preencher com padrão" (acessível a nano/micro). */
-const DEFAULT_PRICE_BUCKET = 50
 
 function getFollowersFromProfile(profile: ProfileItem | null): number {
   if (!profile) return 0
@@ -144,12 +106,10 @@ export default function Activate() {
   const firstFieldStep0Ref = useRef<HTMLDivElement>(null)
   const firstFieldStep1Ref = useRef<HTMLDivElement>(null)
   const firstFieldStep2Ref = useRef<HTMLDivElement>(null)
-  const firstFieldStep3Ref = useRef<HTMLDivElement>(null)
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
   const [profilePicError, setProfilePicError] = useState(false)
   const [profilePicLoading, setProfilePicLoading] = useState(false)
-  const [followersCount, setFollowersCount] = useState<number>(0)
   const [cepLoading, setCepLoading] = useState(false)
 
   useEffect(() => {
@@ -168,7 +128,6 @@ export default function Activate() {
       if (cancelled) return
       if (profile) {
         setProfileName((profile.full_name as string) || (profile.username as string) || handle)
-        setFollowersCount(getFollowersFromProfile(profile))
         const pic = getProfilePicUrl(profile)
         const picUrl = pic ? proxyImageUrl(pic) : undefined
         setProfilePic(picUrl)
@@ -197,6 +156,11 @@ export default function Activate() {
       }
       const neighborhoodsList =
         act.neighborhood?.split(',').map((s) => s.trim()).filter(Boolean) ?? []
+      const profileBio =
+        (profile as ProfileItem)?.biography ??
+        (profile?.data?.user as { biography?: string } | undefined)?.biography
+      const suggestedBio =
+        typeof profileBio === 'string' && profileBio.trim() ? profileBio.trim() : ''
       const formValuesFromAct = {
         address: act.address ?? '',
         zip_code: act.zip_code ?? '',
@@ -210,7 +174,7 @@ export default function Activate() {
         twitter: act.twitter ?? '',
         websites: act.websites ?? '',
         gender: act.gender ?? undefined,
-        description: act.description ?? '',
+        description: act.description?.trim() || suggestedBio,
         content_type: act.content_type ?? [],
         pricing: pricingForm,
       }
@@ -226,9 +190,12 @@ export default function Activate() {
       } catch {
         // ignora rascunho inválido
       }
+      // Se a descrição ficou vazia (ex.: rascunho com ""), preenche com a bio do perfil como sugestão
+      const desc = valuesToSet.description
+      if ((!desc || typeof desc !== 'string' || !desc.trim()) && suggestedBio) {
+        valuesToSet = { ...valuesToSet, description: suggestedBio }
+      }
       form.setFieldsValue(valuesToSet)
-      const stepFromFields = getStepFromFormValues(valuesToSet)
-      setStep(stepFromFields)
     }).finally(() => {
       if (!cancelled) setLoading(false)
     })
@@ -257,7 +224,7 @@ export default function Activate() {
   }, [])
 
   useEffect(() => {
-    const refs = [firstFieldStep0Ref, firstFieldStep1Ref, firstFieldStep2Ref, firstFieldStep3Ref]
+    const refs = [firstFieldStep0Ref, firstFieldStep1Ref, firstFieldStep2Ref]
     const el = refs[step]?.current
     if (!el) return
     const focusable = el.querySelector<HTMLElement>('input:not([type="hidden"]), textarea, .ant-select-selector, [role="combobox"]')
@@ -345,41 +312,12 @@ export default function Activate() {
         // ignora falha ao limpar rascunho
       }
       message.success('Cadastro ativado com sucesso!')
-      navigate(`/app/influencer/${encodeURIComponent(handle)}`, { replace: true })
+      navigate(`/app/influencer/${encodeURIComponent(handle)}/media-kit`, { replace: true })
     } catch {
       message.error('Falha ao salvar. Tente novamente.')
     } finally {
       setSaving(false)
     }
-  }
-
-  const fillPricingDefault = () => {
-    const current = form.getFieldValue('pricing') || {}
-    const next = { ...current }
-    if (followersCount > 0) {
-      const suggested = getSuggestedPricingFromFollowers(followersCount)
-      for (const key of PRICING_FIELD_KEYS) {
-        const v = suggested[key as PricingFieldKey]
-        if (v !== undefined) next[key] = v
-      }
-      message.info('Valores sugeridos aplicados com base no seu perfil. Você pode alterar qualquer valor.')
-    } else {
-      for (const key of PRICING_FIELD_KEYS) {
-        next[key] = DEFAULT_PRICE_BUCKET
-      }
-      message.info('Faixas preenchidas com o padrão (R$ 50 – R$ 100). Você pode alterar qualquer valor.')
-    }
-    form.setFieldsValue({ pricing: next })
-  }
-
-  const clearPricing = () => {
-    form.setFieldsValue({
-      pricing: PRICING_FIELD_KEYS.reduce<Record<string, undefined>>((acc, k) => {
-        acc[k] = undefined
-        return acc
-      }, {}),
-    })
-    message.info('Valores de preço limpos.')
   }
 
   if (!handle) {
@@ -405,7 +343,6 @@ export default function Activate() {
     { title: 'Essencial', description: '' },
     { title: 'Localização', description: '' },
     { title: 'Contato', description: '' },
-    { title: 'Valores', description: '' },
   ]
 
   return (
@@ -779,60 +716,6 @@ export default function Activate() {
               </Row>
             </div>
 
-            {/* Passo 3: Conteúdo & Valores */}
-            <div ref={firstFieldStep3Ref} style={{ display: step === 3 ? 'block' : 'none' }}>
-              <>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                  Quanto você cobra (ou aceita) por tipo de parceria?
-                </div>
-                <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-                  Informe quanto você cobra por cada formato de conteúdo.
-                  Esses valores orientam marcas durante a negociação.
-                </Text>
-                <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
-                  <Button type="primary" size="small" onClick={fillPricingDefault}>
-                    <Space>
-                      Usar valor sugerido
-                      <PlayCircleOutlined />
-                    </Space>
-                  </Button>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {PRICING_FIELD_KEYS.map((key) => (
-                    <div
-                      key={key}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 16,
-                        padding: '12px 0',
-                        borderBottom: '1px solid var(--app-border)',
-                      }}
-                    >
-                      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-                        <div style={{ fontWeight: 500, marginBottom: 2 }}>
-                          {PRICING_FIELD_LABELS[key as PricingFieldKey]}
-                        </div>
-                        <div style={{ fontSize: 12, color: 'var(--app-text-tertiary)' }}>
-                          {PRICING_FIELD_DESCRIPTIONS[key as PricingFieldKey]}
-                        </div>
-                      </div>
-                      <div style={{ flex: '0 0 220px' }}>
-                        <Form.Item name={['pricing', key]} noStyle>
-                          <Select
-                            placeholder="Escolher faixa"
-                            allowClear
-                            options={PRICE_OPTIONS}
-                            style={{ width: '100%' }}
-                          />
-                        </Form.Item>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            </div>
-
             {/* Navegação e ações */}
             <Divider style={{ margin: '24px 0 16px' }} />
             <Space wrap size="middle">
@@ -841,12 +724,12 @@ export default function Activate() {
                   Voltar
                 </Button>
               )}
-              {step < 3 && (
+              {step < 2 && (
                 <Button type="primary" onClick={goToNextStep}>
                   Próximo
                 </Button>
               )}
-              {step === 3 && (
+              {step === 2 && (
                 <Button
                   type="primary"
                   htmlType="submit"

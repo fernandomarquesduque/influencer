@@ -168,13 +168,19 @@ export function buildNormalizedPost(media: Record<string, unknown>, collectedAt:
   }
 
   const shortcode = str(media.code ?? media.shortcode) ?? '';
-  // API pode enviar: taken_at, taken_at_timestamp ou aninhado em media (node.media.taken_at)
+  // API pode enviar: taken_at, taken_at_timestamp, caption.created_at ou aninhado em media
   const taken_at =
     num(media.taken_at) ??
     num(media.taken_at_timestamp) ??
     num(getIn(media, 'taken_at')) ??
     num(getIn(media, 'media.taken_at')) ??
-    num(getIn(media, 'media.taken_at_timestamp'));
+    num(getIn(media, 'media.taken_at_timestamp')) ??
+    (() => {
+      const cap = media.caption;
+      if (cap != null && typeof cap === 'object' && 'created_at' in (cap as object))
+        return num((cap as Record<string, unknown>).created_at);
+      return undefined;
+    })();
   const post: NormalizedPostIdentity = {
     id: str(media.id ?? getIn(media, 'id')),
     media_pk: media.pk != null ? str(media.pk) : undefined,

@@ -33,6 +33,30 @@ export interface ProfileItem {
   is_verified?: boolean
   is_private?: boolean
   data?: { user?: Record<string, unknown> }
+  /** Seguidores em comum com o viewer (quando disponível). */
+  mutual_followers_count?: number
+  /** Total de reels/clips. */
+  total_clips_count?: number
+  /** Categoria do perfil (ex.: conta profissional). */
+  category?: string
+  category_name?: string
+  business_category_name?: string
+  overall_category_name?: string
+  is_business_account?: boolean
+  is_professional_account?: boolean
+  /** 1=pessoal, 2=criador, 3=empresa */
+  account_type?: number
+  /** Links da bio. */
+  bio_links?: Array<{ title?: string; url?: string }>
+  pronouns?: string[]
+  has_chaining?: boolean
+  text_post_app_badge_label?: string
+  has_clips?: boolean
+  has_story_archive?: boolean
+  highlight_reel_count?: number
+  address_street?: string
+  city_name?: string
+  zip?: string
   [key: string]: unknown
 }
 
@@ -70,8 +94,14 @@ export interface EngagementStats {
   avg_comments: number
   avg_views: number
   engagement_rate: number
+  /** ER por alcance: (likes+comments)/views × 100 quando há views (relevante para reels). */
+  engagement_rate_by_views?: number
   /** Média de posts por semana (baseado no intervalo de datas dos posts analisados). */
   posts_per_week?: number
+  /** ER do post com maior (likes+comments)/seguidores — evita confusão quando ER médio > 100%. */
+  engagement_rate_max_viral?: number
+  /** Nota quando ER médio > 100%: explica viralização. */
+  engagement_rate_note?: string
 }
 
 /** Item da listagem com filtros (endpoint /api/profiles/search). */
