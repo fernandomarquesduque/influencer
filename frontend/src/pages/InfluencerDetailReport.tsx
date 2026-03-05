@@ -15,7 +15,7 @@ import {
 } from '@ant-design/icons'
 import { reportTokens as t } from './reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
-import { ERGaugeChart, ER_QUALIDADE_BANDAS, erBandaRangeLabel } from '../components/ERGaugeChart'
+import { ERGaugeChart, ER_QUALIDADE_BANDAS, erBandaRangeLabel, getErBanda } from '../components/ERGaugeChart'
 import type { StrategicMetrics, ExecutiveSummaryForBrands, BenchmarkInsight } from '../utils/reportInsights'
 
 const s = t.spacing
@@ -956,7 +956,22 @@ export function ProofCarousel({
                 <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, cursor: 'help', display: 'inline-block' }}>{formatShortNum(interactions)} interações&nbsp;</div>
               </Tooltip>
               <Tooltip title={METRIC_TOOLTIPS.erPost} placement="top">
-                <div style={{ ...typ.caption, color: c.textMuted, cursor: 'help', display: 'inline-block' }}>ER {erPost.toFixed(1)}%</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ ...typ.caption, color: c.textMuted, cursor: 'help' }}>ER {erPost.toFixed(1)}%</span>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 600,
+                      padding: '1px 4px',
+                      borderRadius: 3,
+                      background: `${getErBanda(erPost).color}22`,
+                      color: getErBanda(erPost).color,
+                      border: `1px solid ${getErBanda(erPost).color}44`,
+                    }}
+                  >
+                    {getErBanda(erPost).label}
+                  </span>
+                </div>
               </Tooltip>
               <div style={{ ...typ.caption, color: c.primary, marginTop: 4 }}>{oQueFuncionou}</div>
             </div>
@@ -1162,7 +1177,7 @@ export function MetricasMediakitSection({
         <Row gutter={rowGutter}>
           {converteQuadrants.map((q) => (
             <Col xs={24} sm={8} key={q.label}>
-              <div style={{ ...metricasCardBase, background: q.bg, border: `2px solid ${q.accent}40`, textAlign: 'center' }}>
+              <div style={{ ...metricasCardBase, background: q.bg, border: 'none', textAlign: 'center' }}>
                 <div style={{ fontSize: 20, fontWeight: 800, color: q.accent }}>{q.value}</div>
                 {'qualityLabel' in q && q.qualityLabel ? (
                   <div style={{ ...typ.bodySmall, fontWeight: 600, color: q.accent, marginTop: 6 }}>Pico {q.qualityLabel}</div>
@@ -1218,8 +1233,24 @@ export function MetricasMediakitSection({
                   <>
                     <div style={{ ...typ.caption, fontSize: 11, color: c.textSecondary, marginTop: 2 }}>ER {erDay.toFixed(1)}%</div>
                     {(() => {
-                      const banda = ER_QUALIDADE_BANDAS.find((b) => erDay >= b.min && erDay < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]
-                      return <div style={{ ...typ.caption, fontSize: 10, fontWeight: 600, color: banda.color, marginTop: 2 }}>{banda.label}</div>
+                      const banda = getErBanda(erDay)
+                      return (
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            marginTop: 4,
+                            fontSize: 9,
+                            fontWeight: 600,
+                            padding: '1px 4px',
+                            borderRadius: 3,
+                            background: `${banda.color}22`,
+                            color: banda.color,
+                            border: `1px solid ${banda.color}44`,
+                          }}
+                        >
+                          {banda.label}
+                        </span>
+                      )
                     })()}
                   </>
                 )}

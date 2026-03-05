@@ -7,6 +7,7 @@ import { Card, Row, Col, Tooltip, Spin, Modal } from 'antd'
 import { HeartOutlined, CommentOutlined, RiseOutlined, RocketOutlined, FileImageOutlined } from '@ant-design/icons'
 import { reportTokens as t } from '../pages/reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
+import { getErBanda } from './ERGaugeChart'
 import { buildReportInsights, REPORT_POSTS_LIMIT } from '../utils/reportInsights'
 import { ProofCarousel } from '../pages/InfluencerDetailReport'
 import type { EngagementStats } from '../api'
@@ -166,8 +167,28 @@ export function PostAnalysisSection({
                     <strong style={{ ...typ.body, fontSize: 13, color: c.primary }}>
                       {(engagement.engagement_rate ?? 0).toFixed(2)}%
                     </strong>{' '}
-                    <span style={{ color: c.textSecondary, fontSize: 12 }}>ER médio (feed)</span>
+                    <span style={{ color: c.textSecondary, fontSize: 12 }}>ER Médio</span>
                   </span>
+                  {(() => {
+                    const er = engagement.engagement_rate ?? 0
+                    const banda = getErBanda(er)
+                    return (
+                      <span
+                        style={{
+                          marginLeft: 2,
+                          fontSize: 9,
+                          fontWeight: 600,
+                          padding: '1px 4px',
+                          borderRadius: 3,
+                          background: `${banda.color}22`,
+                          color: banda.color,
+                          border: `1px solid ${banda.color}44`,
+                        }}
+                      >
+                        {banda.label}
+                      </span>
+                    )
+                  })()}
                 </div>
               </Tooltip>
               <Tooltip title={METRIC_TOOLTIPS.mediaLikesPost} placement="top">

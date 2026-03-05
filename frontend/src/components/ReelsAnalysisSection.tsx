@@ -7,6 +7,7 @@ import { Row, Col, Tooltip, Modal } from 'antd'
 import { HeartOutlined, CommentOutlined, RiseOutlined, RocketOutlined, VideoCameraOutlined, EyeOutlined } from '@ant-design/icons'
 import { reportTokens as t } from '../pages/reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
+import { getErBanda } from './ERGaugeChart'
 import { getTopPosts } from '../utils/reportInsights'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { ProofCarousel } from '../pages/InfluencerDetailReport'
@@ -168,6 +169,26 @@ export function ReelsAnalysisSection({
               </strong>{' '}
               <span style={{ color: c.textSecondary, fontSize: 12 }}>ER médio (reels)</span>
             </span>
+            {(() => {
+              const er = engagement.engagement_rate ?? 0
+              const banda = getErBanda(er)
+              return (
+                <span
+                  style={{
+                    marginLeft: 2,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    padding: '1px 4px',
+                    borderRadius: 3,
+                    background: `${banda.color}22`,
+                    color: banda.color,
+                    border: `1px solid ${banda.color}44`,
+                  }}
+                >
+                  {banda.label}
+                </span>
+              )
+            })()}
           </div>
         </Tooltip>
         {lastReelAmplificationLabel && (
@@ -266,6 +287,26 @@ export function ReelsAnalysisSection({
                     </strong>{' '}
                     <span style={{ color: c.textSecondary, fontSize: 12 }}>ER por views</span>
                   </span>
+                  {(() => {
+                    const erViews = engagement.engagement_rate_by_views ?? 0
+                    const banda = getErBanda(erViews)
+                    return (
+                      <span
+                        style={{
+                          marginLeft: 2,
+                          fontSize: 9,
+                          fontWeight: 600,
+                          padding: '1px 4px',
+                          borderRadius: 3,
+                          background: `${banda.color}22`,
+                          color: banda.color,
+                          border: `1px solid ${banda.color}44`,
+                        }}
+                      >
+                        {banda.label}
+                      </span>
+                    )
+                  })()}
                 </div>
               </Tooltip>
             )}

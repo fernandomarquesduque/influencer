@@ -14,15 +14,20 @@ export type ERQualidadeBanda = { min: number; max: number; label: string; color:
 /** Faixas de qualidade do ER para o Gauge — escala 0–6%, cores: ruim → bom */
 export const ER_QUALIDADE_BANDAS: ERQualidadeBanda[] = [
   { min: 0, max: 2, label: 'Baixo', color: '#dc2626' },
-  { min: 2, max: 4, label: 'Bom', color: '#eab308' },
-  { min: 4, max: 6, label: 'Excelente', color: '#22c55e' },
-  { min: 6, max: 10, label: 'Viral', color: '#0891b2' },
+  { min: 2, max: 4, label: 'Bom', color: '#fa8c16' },
+  { min: 4, max: 6, label: 'Excelente', color: '#0891b2' },
+  { min: 6, max: 10, label: 'Viral', color: '#22c55e' },
 ]
 
 export function erBandaRangeLabel(b: ERQualidadeBanda): string {
   if (b.min === 0) return '< 2%'
   if (b.max >= 10) return `> ${b.min}%`
   return `${b.min}% – ${b.max}%`
+}
+
+/** Retorna a banda de qualidade do ER para um valor (label + color). */
+export function getErBanda(er: number): ERQualidadeBanda {
+  return ER_QUALIDADE_BANDAS.find((b) => er >= b.min && er < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]
 }
 
 const ER_GAUGE_MAX = 7
