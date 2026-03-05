@@ -25,7 +25,7 @@ function Login() {
 
   const onFinish = async (values: { password: string }) => {
     if (!normalizedNick) {
-      message.error('Informe o usuário')
+      message.error('Coloca seu @ ou usuário aí.')
       return
     }
     setLoading(true)
@@ -35,9 +35,9 @@ function Login() {
       message.success('Login realizado com sucesso')
       navigate(from, { replace: true })
     } catch {
-      message.error('Verifique seu usuário e senha')
+      message.error('Usuário ou senha errados. Confere e tenta de novo.')
       form.setFields([
-        { name: 'password', errors: ['Verifique seu usuário e senha'] },
+        { name: 'password', errors: ['Usuário ou senha errados. Confere e tenta de novo.'] },
       ])
       setFailedAttempts((n) => {
         const next = n + 1
@@ -92,10 +92,10 @@ function Login() {
             <Logo height={48} alt="Relatório de Influencer" />
             <Space direction="vertical" size={4} align="center" style={{ width: '100%' }}>
               <Title level={3} style={{ margin: 0, fontWeight: 600 }}>
-                Bem-vindo de volta
+                E aí, de volta?
               </Title>
               <Text type="secondary" style={{ fontSize: 14 }}>
-                Acesse sua conta para continuar
+                Entra aí e continua de onde parou.
               </Text>
             </Space>
           </Space>
@@ -155,7 +155,7 @@ function Login() {
               }}
             >
               <MessageOutlined />
-              Acessar por DM
+              Entrar por DM
             </button>
           </div>
 
@@ -170,11 +170,11 @@ function Login() {
                 color: 'var(--app-text)',
               }}
             >
-              {accessMode === 'password' ? 'Usuário' : 'Seu @ do Instagram'}
+              {accessMode === 'password' ? 'Seu @ ou usuário' : 'Seu @ do Instagram'}
             </label>
             <Input
               prefix={<UserOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
-              placeholder={accessMode === 'password' ? '@handle ou admin' : 'ex: seu_usuario'}
+              placeholder={accessMode === 'password' ? 'ex: seu_usuario' : 'ex: seu_usuario'}
               value={nickname}
               onChange={(e) => setNickname(e.target.value.replace(/^\s*@/, '').trimStart())}
               onPressEnter={accessMode === 'dm' ? goToDmAccess : () => form.submit()}
@@ -196,12 +196,12 @@ function Login() {
               <Form.Item
                 name="password"
                 label="Senha"
-                rules={[{ required: true, message: 'Informe a senha' }]}
+                rules={[{ required: true, message: 'Preenche a senha.' }]}
                 style={{ marginBottom: 28 }}
               >
                 <Input.Password
                   prefix={<LockOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
-                  placeholder="Sua senha de acesso"
+                  placeholder="Digite sua senha"
                   autoComplete="current-password"
                   visibilityToggle
                 />
@@ -230,7 +230,7 @@ function Login() {
                   }}
                 >
                   <Text style={{ fontSize: 13, color: 'var(--app-text-secondary)', marginRight: 8 }}>
-                    Não conseguiu?
+                    Esqueceu a senha?
                   </Text>
                   <Button
                     type="link"
@@ -238,7 +238,7 @@ function Login() {
                     onClick={() => setAccessMode('dm')}
                     style={{ padding: 0, height: 'auto', fontWeight: 600, fontSize: 13 }}
                   >
-                    Tente acessar por DM
+                    Tenta entrar por DM
                   </Button>
                 </div>
               )}
@@ -256,7 +256,7 @@ function Login() {
                   lineHeight: 1.5,
                 }}
               >
-                Enviamos um código de ativação por mensagem direta no Instagram.
+                A gente manda um código no Direct do Instagram. Cola aí e segue.
               </Text>
               <Button
                 type="primary"
@@ -284,10 +284,10 @@ function Login() {
               style={{ fontSize: 12, cursor: 'pointer' }}
               onClick={() => window.location.href = '/'}
             >
-              Voltar para o site
+              Voltar ao site
             </Text>
             <Text type="secondary" style={{ fontSize: 11 }}>
-              Seus dados são protegidos.
+              Seus dados ficam seguros com a gente.
             </Text>
           </Space>
         </Card>

@@ -18,16 +18,16 @@ export default function AuthPassword() {
 
   const onFinish = async (values: { password: string; confirmPassword: string }) => {
     if (values.password !== values.confirmPassword) {
-      message.error('As senhas não coincidem.')
+      message.error('As duas senhas precisam ser iguais.')
       return
     }
     setLoading(true)
     try {
       await setMyPassword(values.password)
-      message.success('Senha definida. Redirecionando para seu relatório...')
+      message.success('Senha criada. Te levando pro seu relatório...')
       navigate(`/app/influencer/${encodeURIComponent(handle)}`, { state: { fromSignup: true }, replace: true })
     } catch (e) {
-      message.error(e instanceof Error ? e.message : 'Falha ao definir senha')
+      message.error(e instanceof Error ? e.message : 'Não deu pra criar a senha. Tenta de novo.')
     } finally {
       setLoading(false)
     }
@@ -35,22 +35,22 @@ export default function AuthPassword() {
 
   return (
     <div style={{ maxWidth: 420, margin: '0 auto' }}>
-      <Card title="Definir senha">
+      <Card title="Criar sua senha">
         <p style={{ marginBottom: 16, color: 'var(--app-text-secondary)' }}>
-          Perfil <strong>@{handle}</strong> validado. Defina uma senha para acessar sua conta.
+          <strong>@{handle}</strong> validado. Cria uma senha pra acessar quando quiser.
         </p>
         <Form form={form} name="set-password" onFinish={onFinish} layout="vertical" requiredMark={false}>
           <Form.Item
             name="password"
             label="Senha"
             rules={[
-              { required: true, message: 'Informe a senha' },
-              { min: 6, message: 'Mínimo 6 caracteres' },
+              { required: true, message: 'Coloca uma senha com no mínimo 6 caracteres.' },
+              { min: 6, message: 'Coloca uma senha com no mínimo 6 caracteres.' },
             ]}
           >
             <Input.Password
               prefix={<LockOutlined style={{ color: '#bfbfbf' }} />}
-              placeholder="Mínimo 6 caracteres"
+              placeholder="Mín. 6 caracteres"
               size="large"
               autoComplete="new-password"
               autoFocus
@@ -58,21 +58,21 @@ export default function AuthPassword() {
           </Form.Item>
           <Form.Item
             name="confirmPassword"
-            label="Confirmar senha"
+            label="Repetir a senha"
             dependencies={['password']}
             rules={[
-              { required: true, message: 'Confirme a senha' },
+              { required: true, message: 'Repete a senha.' },
               ({ getFieldValue }) => ({
                 validator(_, value) {
                   if (!value || getFieldValue('password') === value) return Promise.resolve()
-                  return Promise.reject(new Error('As senhas não coincidem'))
+                  return Promise.reject(new Error('As duas senhas precisam ser iguais.'))
                 },
               }),
             ]}
           >
             <Input.Password
               prefix={<LockOutlined style={{ color: '#bfbfbf' }} />}
-              placeholder="Repita a senha"
+              placeholder="Repete a mesma senha"
               size="large"
               autoComplete="new-password"
             />

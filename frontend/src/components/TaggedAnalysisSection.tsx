@@ -1,5 +1,5 @@
 /**
- * Seção "Análise de marcados": métricas de posts em que o influencer foi marcado,
+ * Seção "Quando te marcam": métricas de posts em que o influencer foi marcado,
  * Top 4 por interações e visualização em carrossel.
  */
 import { useMemo, useState } from 'react'
@@ -68,7 +68,7 @@ export function TaggedAnalysisSection({
     <div style={{ marginBottom: gap }}>
       {!contentOnly && (
         <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-          Análise de marcados
+          Quando te marcam
         </h2>
       )}
 

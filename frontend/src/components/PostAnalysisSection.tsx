@@ -1,5 +1,5 @@
 /**
- * Seção "Análise de Feed": métricas de resumo, Top 4 por interações,
+ * Seção "Análise do feed": métricas de resumo, Top 4 por interações,
  * posts por semana, conteúdo analisado e hashtags.
  */
 import React, { useState } from 'react'
@@ -87,7 +87,7 @@ export function PostAnalysisSection({
         <div style={{ marginBottom: gap }}>
           {!contentOnly && (
             <h2 className="section-h2" style={{ ...typH2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-              Análise de Feed
+              Análise do feed
             </h2>
           )}
           {reportInsights && postsCount > 0 && (

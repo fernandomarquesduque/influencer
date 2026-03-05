@@ -13,14 +13,13 @@ export default function Premium() {
             <CrownOutlined style={{ fontSize: 56, color: 'var(--app-primary)' }} />
           </div>
           <Title level={2} style={{ textAlign: 'center', marginBottom: 16 }}>
-            Seja assinante
+            Vira assinante
           </Title>
           <Paragraph style={{ fontSize: 16, color: 'var(--app-text-secondary)', textAlign: 'center', marginBottom: 24 }}>
-          No plano gratuito você vê apenas a primeira página e até 10 buscas por dia.
-          Como assinante você acessa mais páginas, filtros avançados e métricas completas dos influenciadores.
+          No grátis você vê só a primeira página e até 10 buscas por dia. Como assinante: mais páginas, filtros e métricas completas.
         </Paragraph>
         <Paragraph style={{ textAlign: 'center', marginBottom: 32 }}>
-          Entre em contato com nossa equipe para conhecer os planos.
+          Fala com a gente pra ver os planos.
         </Paragraph>
         <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
             <Link to="/app">

@@ -394,7 +394,7 @@ export default function InfluencerList() {
 
         <Space.Compact size="large" style={{ width: '100%', maxWidth: 584 }}>
           <Input
-            placeholder="Nome, @handle, categoria..."
+            placeholder="Nome, @handle ou categoria"
             allowClear
             prefix={<SearchOutlined style={{ color: 'var(--colorTextPlaceholder)' }} />}
             value={searchInput}
@@ -408,7 +408,7 @@ export default function InfluencerList() {
           </Button>
         </Space.Compact>
         <Text type="secondary" style={{ marginTop: 16, fontSize: 13 }}>
-          Digite e pressione Enter ou clique em Buscar
+          Digita e dá Enter ou clica em Buscar
         </Text>
       </div>
     )
@@ -448,13 +448,13 @@ export default function InfluencerList() {
             }}
           >
             <Typography.Title level={5} style={{ marginBottom: 8, marginTop: 0 }}>
-              <FilterOutlined /> {total === 0 ? 'Nenhum influencer encontrado' : `${total} influencers`}
+              <FilterOutlined /> {total === 0 ? 'Nenhum criador encontrado' : `${total} criadores`}
             </Typography.Title>
             <div style={{ marginBottom: 0 }}>
               <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
                 {total === 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span>Tente outro termo ou remova filtros.</span>
+                    <span>Muda o termo ou limpa os filtros.</span>
                     {hasActiveFilters && (
                       <Button
                         type="default"
@@ -463,7 +463,7 @@ export default function InfluencerList() {
                         onClick={clearFilters}
                         style={{ fontSize: 11, padding: '0 6px', color: '#d46b08', borderColor: '#d46b08', flexShrink: 0 }}
                       >
-                        Limpar
+                        Limpar filtros
                       </Button>
                     )}
                   </div>
@@ -472,7 +472,7 @@ export default function InfluencerList() {
                   <>
                     {hasActiveFilters && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span>Com filtros aplicados</span>
+                        <span>Com filtros</span>
                         <Button
                           type="default"
                           size="small"
@@ -480,11 +480,11 @@ export default function InfluencerList() {
                           onClick={clearFilters}
                           style={{ fontSize: 11, padding: '0 6px', color: '#d46b08', borderColor: '#d46b08', flexShrink: 0 }}
                         >
-                          Limpar
+                          Limpar filtros
                         </Button>
                       </div>
                     )}
-                    {!hasActiveFilters && 'Todos os resultados da busca'}
+                    {!hasActiveFilters && 'Todos os resultados'}
                   </>
                 )}
               </Text>
@@ -494,7 +494,7 @@ export default function InfluencerList() {
           {facets != null && (
             <div style={{ marginBottom: 16 }}>
               <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                Ordenar
+                Ordenar por
               </Text>
               <Select
                 size="small"
@@ -518,7 +518,7 @@ export default function InfluencerList() {
             <Select
               mode="multiple"
               size="small"
-              placeholder="Filtrar por hashtag..."
+              placeholder="Filtrar por hashtag"
               allowClear
               showSearch
               optionFilterProp="label"
@@ -550,7 +550,7 @@ export default function InfluencerList() {
               <Select
                 mode="multiple"
                 size="small"
-                placeholder="Filtrar por tipo..."
+                placeholder="Filtrar por tipo"
                 allowClear
                 showSearch
                 optionFilterProp="label"
@@ -624,7 +624,7 @@ export default function InfluencerList() {
                             <Select
                               mode="multiple"
                               size="small"
-                              placeholder="Filtrar por faixa..."
+                              placeholder="Escolher faixa"
                               allowClear
                               value={value}
                               options={options}
@@ -654,12 +654,12 @@ export default function InfluencerList() {
                   children: (
                     <div style={{ paddingTop: 4 }}>
                       <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                        Taxa engajamento %
+                        Engajamento %
                       </Text>
                       <Select
                         mode="multiple"
                         size="small"
-                        placeholder="Filtrar por faixa..."
+                        placeholder="Escolher faixa"
                         allowClear
                         showSearch
                         optionFilterProp="label"
@@ -673,12 +673,12 @@ export default function InfluencerList() {
                         maxTagCount="responsive"
                       />
                       <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                        Média curtidas/post
+                        Curtidas/post (média)
                       </Text>
                       <Select
                         mode="multiple"
                         size="small"
-                        placeholder="Filtrar por faixa..."
+                        placeholder="Escolher faixa"
                         allowClear
                         showSearch
                         optionFilterProp="label"
@@ -692,12 +692,12 @@ export default function InfluencerList() {
                         maxTagCount="responsive"
                       />
                       <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                        Posts analisados
+                        Posts na análise
                       </Text>
                       <Select
                         mode="multiple"
                         size="small"
-                        placeholder="Filtrar por faixa..."
+                        placeholder="Escolher faixa"
                         allowClear
                         showSearch
                         optionFilterProp="label"
@@ -731,12 +731,12 @@ export default function InfluencerList() {
                       {facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0) && (
                         <div style={{ marginBottom: 12 }}>
                           <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                            Cadastro na plataforma
+                            Cadastro ativado
                           </Text>
                           <Select
                             mode="multiple"
                             size="small"
-                            placeholder="Ativados / Não ativados..."
+                            placeholder="Ativado ou não"
                             allowClear
                             showSearch={false}
                             value={selectedActivation}
@@ -753,7 +753,7 @@ export default function InfluencerList() {
                       {facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0) && (
                         <div style={{ marginBottom: 0 }}>
                           <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                            Redes (ativados)
+                            Redes (quem tem cadastro)
                           </Text>
                           <Select
                             mode="multiple"
@@ -789,7 +789,7 @@ export default function InfluencerList() {
               items={[
                 {
                   key: 'endereco',
-                  label: <Text strong style={{ fontSize: 12 }}>Endereço</Text>,
+                  label: <Text strong style={{ fontSize: 12 }}>Local</Text>,
                   children: (
                     <div style={{ paddingTop: 4 }}>
                       {facets?.cities && facets.cities.length > 0 && (
@@ -861,7 +861,7 @@ export default function InfluencerList() {
 
           {facets == null && !loading && (
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Digite na busca e pressione Enter para ver a sumarização.
+              Busque algo e dá Enter pra ver filtros e resultados.
             </Text>
           )}
         </aside>
@@ -885,11 +885,11 @@ export default function InfluencerList() {
           <div ref={filterDrawerRef} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
               <Typography.Title level={5} style={{ marginBottom: 8, marginTop: 0 }}>
-                <FilterOutlined /> {total === 0 ? 'Nenhum perfil encontrado' : `${total} perfil(is) encontrado(s)`}
+                <FilterOutlined /> {total === 0 ? 'Nenhum perfil encontrado' : `${total} perfil(is)`}
               </Typography.Title>
               <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-                {total === 0 && 'Tente outro termo ou remova filtros.'}
-                {total > 0 && (hasActiveFilters ? 'Com filtros aplicados' : 'Todos os resultados da busca')}
+                {total === 0 && 'Muda o termo ou limpa os filtros.'}
+                {total > 0 && (hasActiveFilters ? 'Com filtros' : 'Todos os resultados')}
               </Text>
               {hasActiveFilters && (
                 <Button type="default" size="small" icon={<ClearOutlined />} onClick={clearFilters} style={{ marginTop: 8 }}>
@@ -899,7 +899,7 @@ export default function InfluencerList() {
             </div>
             {facets != null && (
               <div>
-                <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Ordenar</Text>
+                <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Ordenar por</Text>
                 <Select
                   size="small"
                   value={query.sort ?? 'engagement_desc'}
@@ -919,7 +919,7 @@ export default function InfluencerList() {
                 <Select
                   mode="multiple"
                   size="small"
-                  placeholder="Filtrar por hashtag..."
+                  placeholder="Filtrar por hashtag"
                   allowClear
                   showSearch
                   optionFilterProp="label"
@@ -943,7 +943,7 @@ export default function InfluencerList() {
                 <Select
                   mode="multiple"
                   size="small"
-                  placeholder="Filtrar por tipo..."
+                  placeholder="Filtrar por tipo"
                   allowClear
                   showSearch
                   optionFilterProp="label"
@@ -973,7 +973,7 @@ export default function InfluencerList() {
         <div style={{ marginBottom: 24, width: '100%' }}>
           <Space.Compact size="large" style={{ width: '100%', maxWidth: '100%' }}>
             <Input
-              placeholder="Buscar por nome, @handle, categoria..."
+              placeholder="Nome, @handle ou categoria"
               allowClear
               prefix={<SearchOutlined style={{ color: 'var(--colorTextPlaceholder)' }} />}
               value={searchInput}
@@ -996,7 +996,7 @@ export default function InfluencerList() {
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
               <span>
-                Você alcançou o limite diário de buscas. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para continuar buscando.
+                Você chegou no limite de buscas de hoje. Volta amanhã ou <Link to="/premium">assina o Premium</Link>.
               </span>
             }
           />
@@ -1005,13 +1005,13 @@ export default function InfluencerList() {
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
               <span>
-                {limitReachedCode === 'PUBLIC_PAGE_LIMIT' ? 'Mais páginas são para assinantes.' : 'Filtros avançados são para assinantes.'}{' '}
-                <Link to="/premium">Assine o plano premium</Link> para acessar.
+                {limitReachedCode === 'PUBLIC_PAGE_LIMIT' ? 'Ver mais páginas é só pra assinante.' : 'Filtros avançados são só pra assinante.'}{' '}
+                <Link to="/premium">Assina o Premium</Link> pra acessar.
               </span>
             }
           />
         ) : data.length === 0 ? (
-          <Empty description="Nenhum influenciador encontrado. Ajuste os filtros ou execute o crawl." />
+          <Empty description="Nenhum criador encontrado. Ajusta os filtros ou tenta outro termo." />
         ) : (
           <>
             <Row gutter={[16, 16]}>
@@ -1042,7 +1042,7 @@ export default function InfluencerList() {
             {data.length < total && isLimitedView && (
               <div style={{ textAlign: 'center', marginTop: 24 }}>
                 <Button type="primary" onClick={() => navigate('/premium')} size="large">
-                  Seja assinante para ver mais resultados
+                  Assine pra ver mais resultados
                 </Button>
               </div>
             )}
@@ -1050,7 +1050,7 @@ export default function InfluencerList() {
         )}
         {total > 0 && (
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 16 }}>
-            Exibindo {data.length} de {total} perfil(is)
+            {data.length} de {total} perfis
           </Typography.Text>
         )}
       </main>

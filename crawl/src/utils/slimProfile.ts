@@ -1,6 +1,7 @@
 import type { Entity } from '../types/index.js';
 import { isBusinessFromEntity } from './entityAccess.js';
 import { inferCategoriesFromHashtags } from './inferCategoriesFromHashtags.js';
+import { sanitizeText } from './sanitizeText.js';
 
 /**
  * Perfil enxuto para persistência: só o necessário para UI, busca e filtros.
@@ -138,7 +139,7 @@ function collectHashtagsAndCaptions(posts: Entity[]): { hashtags: string[]; capt
     if (caption != null && typeof caption === 'object') {
       const text = (caption as Record<string, unknown>).text;
       if (typeof text === 'string' && text.length > 0) {
-        captionTexts.push(text);
+        captionTexts.push(sanitizeText(text));
         const matches = text.match(/#[\w\u00C0-\u024F]+/g);
         if (matches) {
           for (const m of matches) {
@@ -197,7 +198,8 @@ export function buildSlimProfile(
   const dataUser = getIn(rawProfile, 'data.user') as Record<string, unknown> | undefined;
 
   const username = (user?.username ?? dataUser?.username ?? key) as string;
-  const full_name = (user?.full_name ?? dataUser?.full_name) as string | undefined;
+  const full_nameRaw = user?.full_name ?? dataUser?.full_name;
+  const full_name = typeof full_nameRaw === 'string' ? (sanitizeText(full_nameRaw) || undefined) : undefined;
   const profile_pic_url = (user?.profile_pic_url ?? dataUser?.profile_pic_url) as string | undefined;
   const hdPic = user?.hd_profile_pic_url_info ?? dataUser?.hd_profile_pic_url_info;
   const hd_profile_pic_url =
@@ -212,16 +214,19 @@ export function buildSlimProfile(
   const latest_reel_media = toNum(user?.latest_reel_media ?? dataUser?.latest_reel_media);
   const account_type = toNum(user?.account_type ?? dataUser?.account_type) ?? (user?.account_type ?? dataUser?.account_type) as number | undefined;
   const category = (user?.category ?? dataUser?.category ?? deepFind(rawProfile, ['category'])) as string | undefined;
-  const toStr = (v: unknown): string | undefined =>
-    typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
+  const toStr = (v: unknown): string | undefined => {
+    if (typeof v !== 'string') return undefined;
+    const s = sanitizeText(v);
+    return s.length > 0 ? s : undefined;
+  };
   const address_street = toStr(user?.address_street ?? dataUser?.address_street);
   const city_name = toStr(user?.city_name ?? dataUser?.city_name);
   const zip = toStr(user?.zip ?? dataUser?.zip);
 
   const biographyRaw = user?.biography ?? dataUser?.biography ?? deepFind(rawProfile, ['biography', 'bio']);
-  const biography = typeof biographyRaw === 'string' ? biographyRaw : undefined;
+  const biography = typeof biographyRaw === 'string' ? (sanitizeText(biographyRaw) || undefined) : undefined;
   const externalUrlRaw = user?.external_url ?? dataUser?.external_url ?? deepFind(rawProfile, ['external_url', 'external_link']);
-  const external_url = typeof externalUrlRaw === 'string' ? externalUrlRaw : undefined;
+  const external_url = typeof externalUrlRaw === 'string' ? (sanitizeText(externalUrlRaw) || undefined) : undefined;
   const is_business_account = isBusinessFromEntity(rawProfile);
 
   const mediaCount =
@@ -276,7 +281,7 @@ export function buildSlimProfile(
 
   const pronounsRaw = dataUser?.pronouns ?? user?.pronouns;
   const pronouns = Array.isArray(pronounsRaw) && pronounsRaw.length > 0
-    ? pronounsRaw.map((p: unknown) => (typeof p === 'string' ? p : String(p))).filter(Boolean)
+    ? pronounsRaw.map((p: unknown) => (typeof p === 'string' ? sanitizeText(p) : sanitizeText(String(p)))).filter(Boolean)
     : undefined;
 
   const has_chaining = (dataUser?.has_chaining ?? user?.has_chaining) === true;

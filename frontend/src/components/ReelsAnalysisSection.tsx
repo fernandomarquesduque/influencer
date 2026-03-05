@@ -77,7 +77,7 @@ export function ReelsAnalysisSection({
           </h2>
         )}
         <div style={{ textAlign: 'center', padding: s.xl, background: c.cardBgSoft, borderRadius: 12, border: `1px solid ${c.borderLight}` }}>
-          <span style={{ ...typ.body, color: c.textSecondary }}>Nenhum reel encontrado para este perfil.</span>
+          <span style={{ ...typ.body, color: c.textSecondary }}>Nenhum reel nesse perfil.</span>
         </div>
       </div>
     )

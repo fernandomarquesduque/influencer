@@ -56,10 +56,10 @@ export function ActivationCtaPanel({
     return () => observer.disconnect()
   }, [scrollAnchorId])
 
-  const headline = 'Marcas perto de você estão procurando criadores agora.'
-  const subline = 'Ao ativar, você entra na busca comercial e passa a ser considerado por marcas que procuram criadores na sua região.'
-  const buttonLabel = 'Ativar Cadastro'
-  const disclaimer = 'Monetize seus posts e transforme sua reputação em lucro.'
+  const headline = 'Marcas perto de você procuram criadores agora.'
+  const subline = 'Ativando, você entra na busca e marcas da sua região te encontram.'
+  const buttonLabel = 'Ativar cadastro'
+  const disclaimer = 'Monetiza seus posts e sua reputação.'
 
   const horizontalPadding = isMobile ? PAGE_PADDING_MOBILE : PAGE_PADDING_DESKTOP
 

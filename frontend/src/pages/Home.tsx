@@ -183,7 +183,7 @@ export default function Home() {
               fontFamily: 'Montserrat, sans-serif',
             }}
           >
-            Encontre os influenciadores certos para sua campanha
+            Ache os criadores certos pra sua campanha
           </h1>
           <p
             style={{
@@ -195,7 +195,7 @@ export default function Home() {
               maxWidth: 560,
             }}
           >
-            Vitrine com criadores verificados, métricas reais e filtros por nicho e engajamento. Menos tempo procurando, mais resultado nas parcerias.
+            Vitrine de criadores verificados, métricas reais e filtros por nicho e engajamento. Menos tempo caçando, mais parceria.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'center' }}>
             <Link
@@ -213,7 +213,7 @@ export default function Home() {
                 boxShadow: '0 4px 20px rgba(104, 39, 143, 0.3)',
               }}
             >
-              Conhecer a vitrine
+              Ver vitrine
             </Link>
             <Link
               to="/login"
@@ -230,7 +230,7 @@ export default function Home() {
                 fontFamily: 'Montserrat, sans-serif',
               }}
             >
-              Entrar na plataforma
+              Entrar
             </Link>
           </div>
         </section>
@@ -257,7 +257,7 @@ export default function Home() {
               fontFamily: 'Montserrat, sans-serif',
             }}
           >
-            Feito para quem precisa fechar parcerias com critério
+            Feito pra quem quer fechar parceria com critério
           </h2>
           <div
             style={{
@@ -273,22 +273,22 @@ export default function Home() {
               {
                 icon: <SearchOutlined style={{ fontSize: 24, color: 'var(--lp-primary)' }} />,
                 title: 'Vitrine curada',
-                text: 'Influenciadores com perfil verificado e métricas reais. Sem perfis fake ou inflados.',
+                text: 'Criadores verificados, métricas reais. Sem fake.',
               },
               {
                 icon: <FilterOutlined style={{ fontSize: 24, color: 'var(--lp-primary)' }} />,
                 title: 'Filtros que importam',
-                text: 'Nicho, alcance, engajamento e valor sugerido. Encontre quem se encaixa no seu briefing.',
+                text: 'Nicho, alcance, engajamento e valor. Acha quem encaixa no briefing.',
               },
               {
                 icon: <BarChartOutlined style={{ fontSize: 24, color: 'var(--lp-primary)' }} />,
                 title: 'Dados transparentes',
-                text: 'Relatórios e Media Kits disponíveis. Decisão baseada em números, não em impressão.',
+                text: 'Relatórios e Media Kits na mão. Decisão em número, não no achismo.',
               },
               {
                 icon: <ThunderboltOutlined style={{ fontSize: 24, color: 'var(--lp-primary)' }} />,
                 title: 'Menos tempo perdido',
-                text: 'Centralize a busca em um só lugar. Ideal para agências com múltiplas campanhas.',
+                text: 'Tudo num lugar. Ideal pra agência com várias campanhas.',
               },
             ].map((item, i) => (
               <div
@@ -357,7 +357,7 @@ export default function Home() {
               fontFamily: 'Montserrat, sans-serif',
             }}
           >
-            Como funciona para sua marca ou agência
+            Como funciona pra sua marca ou agência
           </h2>
           <div
             style={{
@@ -370,9 +370,9 @@ export default function Home() {
             className="home-steps-grid"
           >
             {[
-              { step: '1', title: 'Acesse a vitrine', desc: 'Entre na plataforma e veja influenciadores com perfil verificado e métricas atualizadas.' },
-              { step: '2', title: 'Filtre e compare', desc: 'Use nicho, alcance, engajamento e valor sugerido para encontrar os melhores fits para a campanha.' },
-              { step: '3', title: 'Feche a parceria', desc: 'Consulte Media Kits e relatórios. Entre em contato e feche com transparência e segurança.' },
+              { step: '1', title: 'Acesse a vitrine', desc: 'Entra e vê criadores verificados com métricas atualizadas.' },
+              { step: '2', title: 'Filtre e compare', desc: 'Usa nicho, alcance, engajamento e valor pra achar o fit da campanha.' },
+              { step: '3', title: 'Feche a parceria', desc: 'Vê Media Kit e relatório, entra em contato e fecha com transparência.' },
             ].map((item) => (
               <div
                 key={item.step}
@@ -442,7 +442,7 @@ export default function Home() {
                 fontFamily: 'Montserrat, sans-serif',
               }}
             >
-              Por que marcas e agências escolhem o Busca Influencer
+              Por que marcas e agências usam o Busca Influencer
             </h2>
             <ul
               style={{
@@ -455,11 +455,11 @@ export default function Home() {
               }}
             >
               {[
-                'Métricas verificadas — nada de seguidores ou engajamento inflados.',
-                'Vitrine com influenciadores que já têm perfil analisado e Media Kit.',
-                'Filtros por nicho, alcance e valor sugerido para orçamento.',
-                'Processo seguro e transparente para ambas as partes.',
-                'Suporte à gestão de campanhas e múltiplos influenciadores.',
+                'Métricas reais. Sem seguidor ou engajamento inflado.',
+                'Vitrine com criadores já analisados e com Media Kit.',
+                'Filtros por nicho, alcance e valor pra orçamento.',
+                'Processo seguro e transparente pros dois lados.',
+                'Suporte pra gestão de campanhas e vários criadores.',
               ].map((text, i) => (
                 <li
                   key={i}
@@ -519,7 +519,7 @@ export default function Home() {
                 fontFamily: 'Montserrat, sans-serif',
               }}
             >
-              Pronto para encontrar seus influenciadores?
+              Pronto pra achar seus criadores?
             </h2>
             <p
               style={{
@@ -530,7 +530,7 @@ export default function Home() {
                 marginBottom: 28,
               }}
             >
-              Acesse a vitrine ou entre em contato com nossa equipe para conhecer planos para marcas e agências.
+              Entra na vitrine ou fala com a gente pra ver planos.
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
               <Link
@@ -637,7 +637,7 @@ export default function Home() {
               margin: 0,
             }}
           >
-            © {new Date().getFullYear()} Busca Influencer. Plataforma para marcas e agências encontrarem influenciadores.
+            © {new Date().getFullYear()} Busca Influencer. Pra marcas e agências acharem criadores.
           </p>
         </footer>
       </main>

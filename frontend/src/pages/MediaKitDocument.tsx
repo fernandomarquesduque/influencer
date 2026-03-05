@@ -58,19 +58,66 @@ const headerHeight = 24
 const footerHeight = 48
 
 // -------------------- Utils
+/** Converte letras matemáticas/Unicode (ex.: 𝐀 𝐁 𝐚 𝐛) para A-Z a-z para o PDF renderizar o nome corretamente. */
+function normalizeFancyUnicode(input: string): string {
+  if (!input) return ''
+  return input.replace(/[\u{1D400}-\u{1D419}\u{1D41A}-\u{1D433}\u{1D434}-\u{1D44D}\u{1D44E}-\u{1D467}\u{1D468}-\u{1D481}\u{1D482}-\u{1D49B}]/gu, (ch) => {
+    const cp = ch.codePointAt(0) ?? 0
+    if (cp >= 0x1D400 && cp <= 0x1D419) return String.fromCharCode(65 + (cp - 0x1D400))
+    if (cp >= 0x1D41A && cp <= 0x1D433) return String.fromCharCode(97 + (cp - 0x1D41A))
+    if (cp >= 0x1D434 && cp <= 0x1D44D) return String.fromCharCode(65 + (cp - 0x1D434))
+    if (cp >= 0x1D44E && cp <= 0x1D467) return String.fromCharCode(97 + (cp - 0x1D44E))
+    if (cp >= 0x1D468 && cp <= 0x1D481) return String.fromCharCode(65 + (cp - 0x1D468))
+    if (cp >= 0x1D482 && cp <= 0x1D49B) return String.fromCharCode(97 + (cp - 0x1D482))
+    return ch
+  })
+}
+
+/** Remove emojis, modificadores (tom de pele etc.) e variation selectors que viram lixo no PDF. */
+function removeEmojiAndModifiers(input: string): string {
+  if (!input) return ''
+  let s = input
+  // Emojis e pictográficos
+  try {
+    s = s.replace(/\p{Extended_Pictographic}/gu, '')
+  } catch {
+    s = s
+      .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')
+      .replace(/[\u{2600}-\u{26FF}]/gu, '')
+      .replace(/[\u{2700}-\u{27BF}]/gu, '')
+      .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '')
+  }
+  // Modificadores de tom de pele (👧🏽 → sobra 🏽) e variation selectors (deixam <ýç<÷ no PDF)
+  s = s
+    .replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '')
+    .replace(/[\uFE00-\uFE0F]/g, '')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+  return s
+}
+
+/** Mantém só caracteres que o PDF renderiza bem: letras, números, espaços e pontuação comum. */
+function onlyPdfSafeChars(input: string): string {
+  if (!input) return ''
+  // Permite: letras (\p{L}), números (\p{N}), espaços (\s), pontuação de bio/email: . , ; @ - ' " : / ( ) ! ? # & + = % * [ ] ~ \n
+  const safe =
+    /[\p{L}\p{N}\s.,;@\-'"():/!?#&+=%*[\]~\n\r\u00A0]/u
+  return Array.from(input)
+    .map((ch) => (safe.test(ch) ? ch : ''))
+    .join('')
+}
+
 function sanitizeText(str: string): string {
   if (!str || typeof str !== 'string') return ''
-  return str
+  const normalized = normalizeFancyUnicode(str)
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/[\u201C\u201D]/g, '"')
     .replace(/\u2013|\u2014/g, '-')
     .replace(/\u00A0/g, ' ')
     .replace(/\u00B7/g, '-')
     .replace(/\u00D7/g, 'x')
-    .replace(/[\uFE0F\u200D]/g, '')
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
+  const withoutEmoji = removeEmojiAndModifiers(normalized)
+  const safe = onlyPdfSafeChars(withoutEmoji)
+  return safe.replace(/\s{2,}/g, ' ').trim()
 }
 
 function formatShortNum(n: number): string {
@@ -408,7 +455,7 @@ function PageHeader({
           </Text>
           {fullName ? (
             <Text style={{ fontSize: typo.caption, color: pal.textSecondary }}>
-              {truncate(fullName, 38)}
+              {sanitizeText(fullName)}
             </Text>
           ) : null}
         </View>
@@ -488,11 +535,14 @@ function CoverPage(props: CoverPageProps) {
 
   const cpeValue = cpmCpe.cpeEstimate != null && cpmCpe.cpeEstimate > 0 ? `R$ ${cpmCpe.cpeEstimate.toFixed(2)}` : '—'
   const cpmValue = cpmCpe.cpmEstimate != null && cpmCpe.cpmEstimate > 0 ? `R$ ${cpmCpe.cpmEstimate.toFixed(1)}` : null
-  const metrics = [
+  // Views omitido quando API não fornece; layout em uma linha (2 cards = 50% cada, 3 = 33.33%)
+  const metricsBase = [
     { label: 'Curtidas', value: formatShortNum(totalLikes), desc: 'Total de curtidas nos posts analisados' },
     { label: 'Comentários', value: formatShortNum(totalComments), desc: 'Total de comentários nos posts' },
-    { label: 'Views', value: formatShortNum(totalViews), desc: 'Total de visualizações nos posts analisados' },
+    ...(totalViews > 0 ? [{ label: 'Views', value: formatShortNum(totalViews), desc: 'Total de visualizações nos posts analisados' }] : []),
   ]
+  const metrics = metricsBase
+  const metricCardWidth = metrics.length === 2 ? '50%' : '33.33%'
 
   const converteQuadrants = [
     { value: `${(er || 0).toFixed(1)}%`, label: 'Engajamento' },
@@ -526,18 +576,20 @@ function CoverPage(props: CoverPageProps) {
           </Text>
         </View>
 
-        {/* KPIs — Curtidas | Comentários | Views */}
+        {/* KPIs — Curtidas | Comentários (Views omitido quando API não fornece) */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
           {metrics.map((k, i) => {
             const cardBg = i === 0 ? pal.brandSoft : pal.cardAlt
             const titleColor = i === 0 ? pal.brandDark : pal.text
+            const isLastInRow = i === metrics.length - 1
+            const isFirstInRow = i === 0
             return (
               <View
                 key={k.label}
                 style={{
-                  width: '33.33%',
-                  paddingRight: i % 3 !== 2 ? 4 : 0,
-                  paddingLeft: i % 3 !== 0 ? 4 : 0,
+                  width: metricCardWidth,
+                  paddingRight: !isLastInRow ? 4 : 0,
+                  paddingLeft: !isFirstInRow ? 4 : 0,
                   paddingBottom: 5,
                 }}
               >
@@ -551,16 +603,16 @@ function CoverPage(props: CoverPageProps) {
           })}
         </View>
 
-        {/* CPE e CPM — linha separada, mesmo layout, em destaque (success + primary do tema) */}
+        {/* CPE e CPM — CPM omitido quando não há views (API não fornece) */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 13 }}>
-          <View style={{ width: '50%', paddingRight: 4, paddingBottom: 5 }}>
+          <View style={{ width: cpmValue && totalViews > 0 ? '50%' : '100%', paddingRight: cpmValue && totalViews > 0 ? 4 : 0, paddingBottom: 5 }}>
             <View style={{ backgroundColor: pal.cardAlt, borderRadius: radius, borderWidth: 1, borderColor: pal.brand, paddingVertical: 9, paddingHorizontal: 8, alignItems: 'center' }}>
               <Text style={{ fontSize: 16, fontWeight: 'bold', color: pal.brandDark }}>{cpeValue}</Text>
               <Text style={{ fontSize: 9, fontWeight: 'bold', color: pal.textSecondary, marginTop: 3 }}>CPE</Text>
               <Text style={{ fontSize: 7, color: pal.textMuted, marginTop: 2, textAlign: 'center' }}>Valor estimado por curtida ou comentário.</Text>
             </View>
           </View>
-          {cpmValue && (
+          {cpmValue && totalViews > 0 && (
             <View style={{ width: '50%', paddingLeft: 4, paddingBottom: 5 }}>
               <View style={{ backgroundColor: pal.brandSoft, borderRadius: radius, borderWidth: 1, borderColor: pal.brand, paddingVertical: 9, paddingHorizontal: 8, alignItems: 'center' }}>
                 <Text style={{ fontSize: 16, fontWeight: 'bold', color: pal.brandDark }}>{cpmValue}</Text>
@@ -780,7 +832,7 @@ function OverviewPage({
               </Text>
             </View>
           )}
-          <Text style={{ fontSize: 22, fontWeight: 'bold', color: pal.ink }}>{truncate(displayName, 26)}</Text>
+          <Text style={{ fontSize: 22, fontWeight: 'bold', color: pal.ink }}>{displayName}</Text>
           <Text style={{ fontSize: 12, color: pal.textSecondary, marginTop: 4 }}>@{safeHandle}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 12 }}>
             {percentil > 0 && topLabel ? (
@@ -1103,7 +1155,7 @@ function CtaPage({
 }) {
   const pal = usePdfPalette()
   const safeHandle = sanitizeText(handle).replace(/^@/, '')
-  const displayName = truncate(fullName || safeHandle, 40)
+  const displayName = fullName ? sanitizeText(fullName) : safeHandle
   const fullAddress = [
     activation?.address,
     activation?.neighborhood,

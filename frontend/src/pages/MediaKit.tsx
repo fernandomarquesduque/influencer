@@ -137,7 +137,7 @@ export default function MediaKit() {
 
   const runInBackground = useCallback(async () => {
     if (!handle) {
-      setError('Handle do perfil não informado.')
+      setError('Perfil não informado.')
       setStatus('error')
       return
     }
@@ -187,7 +187,7 @@ export default function MediaKit() {
         return
       }
 
-      setProgress('Calculando insights...')
+      setProgress('Calculando dados...')
       const reportInsights = profile && allItems.length > 0 ? buildReportInsights(profile, allItems) : null
 
       setProgress('Carregando foto do perfil...')
@@ -322,7 +322,7 @@ export default function MediaKit() {
       setStatus('ready')
     } catch (e) {
       if (abortRef.current) return
-      setError(e instanceof Error ? e.message : 'Erro ao gerar Media Kit.')
+      setError(e instanceof Error ? e.message : 'Não deu pra gerar o Media Kit. Tenta de novo.')
       setStatus('error')
     }
   }, [handle])
@@ -339,7 +339,7 @@ export default function MediaKit() {
     const h = handle.replace(/^@/, '')
     const cached = getCachedMediaKit(h)
     if (!cached) {
-      setError('Dados não disponíveis. Tente novamente.')
+      setError('Dados indisponíveis. Tenta de novo.')
       setStatus('error')
       return
     }
@@ -366,7 +366,7 @@ export default function MediaKit() {
       )
       const blob = await pdf(doc).toBlob()
       if (!blob || blob.size < MIN_PDF_SIZE) {
-        setError('O PDF gerado está vazio ou inválido.')
+        setError('O PDF veio vazio ou inválido. Gera de novo.')
         setStatus('error')
         return
       }
@@ -386,7 +386,7 @@ export default function MediaKit() {
       setValidated(blob.size >= MIN_PDF_SIZE)
       setStatus('done')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erro ao gerar Media Kit.')
+      setError(e instanceof Error ? e.message : 'Não deu pra gerar o Media Kit. Tenta de novo.')
       setStatus('error')
     }
   }, [handle])

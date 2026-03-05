@@ -291,7 +291,7 @@ export default function Activate() {
       const informar = form.getFieldValue('informar_endereco_completo')
       const address = form.getFieldValue('address')
       if (informar === true && (!address || !String(address).trim())) {
-        form.setFields([{ name: 'address', errors: ['Informe o endereço completo'] }])
+        form.setFields([{ name: 'address', errors: ['Coloca o endereço completo.'] }])
         scrollToFirstError()
         return
       }
@@ -312,10 +312,10 @@ export default function Activate() {
       } catch {
         // ignora falha ao limpar rascunho
       }
-      message.success('Cadastro ativado com sucesso!')
+      message.success('Cadastro ativado.')
       navigate(`/app/influencer/${encodeURIComponent(handle)}/media-kit`, { replace: true })
     } catch {
-      message.error('Falha ao salvar. Tente novamente.')
+      message.error('Não deu pra salvar. Tenta de novo.')
     } finally {
       setSaving(false)
     }
@@ -327,7 +327,7 @@ export default function Activate() {
         <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
           Voltar
         </Button>
-        <Title level={4}>Handle não informado.</Title>
+        <Title level={4}>Perfil não informado.</Title>
       </div>
     )
   }
@@ -342,7 +342,7 @@ export default function Activate() {
 
   const steps = [
     { title: 'Essencial', description: '' },
-    { title: 'Localização', description: '' },
+    { title: 'Local', description: '' },
     { title: 'Contato', description: '' },
   ]
 
@@ -493,22 +493,22 @@ export default function Activate() {
                 </Form.Item>
                 <Form.Item
                   name="description"
-                  label="Descrição sobre você"
+                  label="Fala de você (trajetória e proposta)"
                   required
-                  extra="Sua trajetória e proposta de valor em poucas linhas (mínimo 100 caracteres)."
+                  extra="Em poucas linhas: quem você é e o que oferece. Mín. 100 caracteres."
                   rules={[
-                    { required: true, message: 'Informe a descrição sobre você' },
+                    { required: true, message: 'Preenche com pelo menos 100 caracteres.' },
                     {
                       validator: (_, v) => {
-                        if (!v || typeof v !== 'string') return Promise.reject(new Error('Mínimo 100 caracteres'))
-                        if (v.trim().length < 100) return Promise.reject(new Error('Mínimo 100 caracteres'))
+                        if (!v || typeof v !== 'string') return Promise.reject(new Error('Preenche com pelo menos 100 caracteres.'))
+                        if (v.trim().length < 100) return Promise.reject(new Error('Preenche com pelo menos 100 caracteres.'))
                         return Promise.resolve()
                       },
                     },
                   ]}
                 >
                   <Input.TextArea
-                    placeholder="Conte um pouco sobre você e o que você oferece"
+                    placeholder="Conta um pouco de você e o que você oferece"
                     rows={4}
                     showCount
                     maxLength={2000}
@@ -522,7 +522,7 @@ export default function Activate() {
             <div ref={firstFieldStep1Ref} style={{ display: step === 1 ? 'block' : 'none' }}>
               <>
                 <Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 13 }}>
-                  Preencha suas informações para que marcas próximas a você possam te contratar.
+                  Preenche pra marcas da sua região te encontrarem.
                 </Text>
                 <Row gutter={16}>
                   <Col xs={24} sm={12}>
@@ -536,7 +536,7 @@ export default function Activate() {
                             if (!v || !String(v).trim()) return Promise.resolve()
                             const digits = String(v).replace(/\D/g, '')
                             if (digits.length !== 8) {
-                              return Promise.reject(new Error('CEP deve ter 8 dígitos'))
+                              return Promise.reject(new Error('CEP tem 8 números.'))
                             }
                             return Promise.resolve()
                           },
@@ -603,8 +603,8 @@ export default function Activate() {
                   <Col flex="1" style={{ minWidth: 0 }}>
                     <Form.Item
                       name="informar_endereco_completo"
-                      label="Gostaria de receber brindes e amostras de empresas para influenciadores em seu endereço?"
-                      rules={[{ required: true, message: 'Informe se deseja receber brindes em seu endereço' }]}
+                      label="Quer receber brindes/amostras em casa?"
+                      rules={[{ required: true, message: 'Responde se quer receber brindes em casa.' }]}
                     >
                       <Radio.Group>
                         <Radio value={true}>Sim</Radio>
@@ -623,7 +623,7 @@ export default function Activate() {
                         {
                           validator: (_, v) => {
                             if (form.getFieldValue('informar_endereco_completo') !== true) return Promise.resolve()
-                            if (!v || !String(v).trim()) return Promise.reject(new Error('Informe o endereço completo'))
+                            if (!v || !String(v).trim()) return Promise.reject(new Error('Coloca o endereço completo.'))
                             return Promise.resolve()
                           },
                         },
@@ -639,7 +639,7 @@ export default function Activate() {
             {/* Passo 2: Redes & Contato */}
             <div ref={firstFieldStep2Ref} style={{ display: step === 2 ? 'block' : 'none' }}>
               <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                Adicione suas redes sociais e contatos para que marcas possam falar com você
+                Coloca redes e contato pra marca falar com você
               </Text>
               <Row gutter={[16, 0]}>
                 <Col xs={24} md={12}>
@@ -658,7 +658,7 @@ export default function Activate() {
                           if (!v || !String(v).trim()) return Promise.resolve()
                           const digits = parseWhatsAppDigits(v)
                           if (digits.length < 10 || digits.length > 13) {
-                            return Promise.reject(new Error('Use 10 a 13 dígitos (com DDI).'))
+                            return Promise.reject(new Error('WhatsApp: 10 a 13 números com DDI.'))
                           }
                           return Promise.resolve()
                         },
@@ -751,12 +751,12 @@ export default function Activate() {
             type="button"
             onClick={() => {
               Modal.confirm({
-                title: isAdm && handle ? 'Excluir conta deste influenciador?' : 'Excluir conta permanentemente?',
+                title: isAdm && handle ? 'Excluir conta desse influenciador?' : 'Excluir sua conta pra valer?',
                 content:
                   isAdm && handle
-                    ? `Todos os dados de @${handle} serão removidos (perfil, cadastro, posts). Esta ação não pode ser desfeita.`
-                    : 'Todos os seus dados serão removidos (perfil, cadastro, posts). Esta ação não pode ser desfeita.',
-                okText: isAdm && handle ? 'Sim, excluir conta' : 'Sim, excluir minha conta',
+                    ? `Tudo do @${handle} some (perfil, cadastro, posts). Não dá pra desfazer.`
+                    : 'Tudo seu some (perfil, cadastro, posts). Não dá pra desfazer.',
+                okText: 'Sim, excluir',
                 okType: 'danger',
                 cancelText: 'Cancelar',
                 onOk: async () => {
@@ -771,7 +771,7 @@ export default function Activate() {
                       navigate('/login', { replace: true })
                     }
                   } catch (e) {
-                    message.error(e instanceof Error ? e.message : 'Falha ao excluir conta')
+                    message.error(e instanceof Error ? e.message : 'Não deu pra excluir. Tenta de novo.')
                   } finally {
                     setDeleting(false)
                   }

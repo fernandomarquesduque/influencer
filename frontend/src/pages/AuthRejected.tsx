@@ -15,11 +15,11 @@ export default function AuthRejected() {
 
   return (
     <div style={{ maxWidth: 420, margin: '0 auto' }}>
-      <Card title="Perfil não elegível">
+      <Card title="Perfil não entrou no programa">
         <Alert type="warning" message="Motivo" description={reason} showIcon style={{ marginBottom: 24 }} />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Button type="primary" onClick={() => navigate('/app')}>
-            Ir para a lista
+            Ver lista de influenciadores
           </Button>
           <Button onClick={validateAnotherProfile}>Validar outro perfil</Button>
         </div>

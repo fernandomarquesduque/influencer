@@ -1087,12 +1087,14 @@ export function MetricasMediakitSection({
   const picoDayLabel = bestDayByErIndex >= 0 ? WEEKDAY_LABELS[bestDayByErIndex] : bestDay
   const cpeValue = cpmCpe.cpeEstimate != null && cpmCpe.cpeEstimate > 0 ? `R$ ${cpmCpe.cpeEstimate.toFixed(2)}` : '—'
   const cpmValue = cpmCpe.cpmEstimate != null && cpmCpe.cpmEstimate > 0 ? `R$ ${cpmCpe.cpmEstimate.toFixed(1)}` : null
-  // Primeira linha: Curtidas | Comentários | Views
-  const metrics = [
+  // Primeira linha: Curtidas | Comentários | Views (Views omitido quando API não fornece)
+  const metricsBase = [
     { label: 'Curtidas', value: formatShortNum(totalLikes), desc: 'Total de curtidas nos posts analisados', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary },
     { label: 'Comentários', value: formatShortNum(totalComments), desc: 'Total de comentários nos posts', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.success },
-    { label: 'Views', value: formatShortNum(totalViews), desc: 'Total de visualizações nos posts analisados', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary },
+    ...(totalViews > 0 ? [{ label: 'Views', value: formatShortNum(totalViews), desc: 'Total de visualizações nos posts analisados', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary }] : []),
   ]
+  const metrics = metricsBase
+  const metricsColSpan = metrics.length === 2 ? 12 : 8 // 2 cards em uma linha (12+12), 3 cards (8+8+8)
   const converteQuadrants = [
     { value: `${er.toFixed(1)}%`, label: 'Engajamento', desc: 'Interações (curtidas + comentários) em % dos seguidores.', bg: c.cardBgStrategic ?? c.primary + '18', accent: c.primary },
     { value: `${Math.round(conversationRate)}%`, label: conversationLabel ?? 'Taxa comentários', desc: '% de comentários no total de interações; mais comentários costumam indicar maior conexão.', bg: c.successBg ?? c.success + '20', accent: c.success },
@@ -1104,10 +1106,10 @@ export function MetricasMediakitSection({
 
 
 
-      {/* KPIs: Curtidas | Comentários | Views */}
+      {/* KPIs: Curtidas | Comentários (Views omitido quando API não fornece) */}
       <Row gutter={rowGutter} style={{ marginBottom: s.lg }}>
         {metrics.map((k) => (
-          <Col xs={24} sm={8} key={k.label}>
+          <Col xs={24} sm={metricsColSpan} key={k.label}>
             <div style={{ ...metricasCardBase, padding: s.sm, background: k.bg, border: k.border, textAlign: 'center', boxShadow: 'none' }}>
               <div style={{ fontSize: 16, fontWeight: 600, color: k.accent }}>{k.value}</div>
               <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginTop: 4 }}>{k.label}</div>
@@ -1117,16 +1119,16 @@ export function MetricasMediakitSection({
         ))}
       </Row>
 
-      {/* CPE e CPM — cards de preço em destaque (success + primary do tema) */}
+      {/* CPE e CPM — CPM omitido quando não há views (API não fornece) */}
       <Row gutter={rowGutter} style={{ marginBottom: s.lg }}>
-        <Col xs={24} sm={12}>
+        <Col xs={24} sm={cpmValue && totalViews > 0 ? 12 : 24}>
           <div style={{ ...metricasCardBase, padding: s.sm, background: c.successBg, border: `1px solid ${c.successBorder ?? c.success}`, textAlign: 'center', boxShadow: sh.sm }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: c.success }}>{cpeValue}</div>
             <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginTop: 4 }}>CPE</div>
             <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, marginTop: 2 }}>Valor estimado por curtida ou comentário.</div>
           </div>
         </Col>
-        {cpmValue && (
+        {cpmValue && totalViews > 0 && (
           <Col xs={24} sm={12}>
             <div style={{ ...metricasCardBase, padding: s.sm, background: c.cardBgStrategic, border: `1px solid ${c.primaryMuted ?? c.primary}`, textAlign: 'center', boxShadow: sh.sm }}>
               <div style={{ fontSize: 18, fontWeight: 700, color: c.primary }}>{cpmValue}</div>

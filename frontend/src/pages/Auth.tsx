@@ -7,12 +7,12 @@ import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutline
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
   nao_segue_perfil: '', // tratado por bloco especial no RejectionFullScreen
-  perfil_privado: 'O perfil está privado; é necessário que seja público para participar do programa.',
-  estabelecimento_comercial: 'Perfil classificado como estabelecimento comercial (ex.: bar, restaurante, loja).',
-  conta_empresa: 'Conta do tipo empresa; aceitamos apenas perfis pessoais ou de criador.',
-  conta_tipo_desconhecido: 'Tipo de conta não identificado como pessoa ou criador.',
-  seguidores_abaixo_minimo: 'Número de seguidores abaixo do mínimo exigido para o seu tipo de conta.',
-  nenhum_post_com_curtidas_minimas: 'Nenhum post com o mínimo de curtidas exigido.',
+  perfil_privado: 'Perfil precisa ser público. Marca não vê conteúdo de conta fechada.',
+  estabelecimento_comercial: 'Conta de negócio (bar, loja, etc.). Só aceitamos perfil de criador ou pessoa.',
+  conta_empresa: 'Essa conta é de empresa. Aqui entram só perfil pessoal ou criador.',
+  conta_tipo_desconhecido: 'Não conseguimos identificar se é perfil de pessoa/criador.',
+  seguidores_abaixo_minimo: 'Seguidores abaixo do mínimo do programa para seu tipo de conta.',
+  nenhum_post_com_curtidas_minimas: 'Nenhum post atingiu o mínimo de curtidas que o programa pede.',
 }
 
 const INSTALL_PHRASES = [
@@ -38,7 +38,7 @@ const ELIGIBILITY_RULES = (
       color: 'var(--app-text-secondary)',
     }}
   >
-    <li>É obrigatório <strong style={{ color: 'var(--app-text)' }}>seguir o perfil oficial do programa</strong> no Instagram para receber o código de ativação por mensagem direta (2FA).</li>
+    <li>Tem que <strong style={{ color: 'var(--app-text)' }}>seguir o perfil do programa</strong> no Instagram para receber o código na DM.</li>
     <li>O perfil precisa ser <strong style={{ color: 'var(--app-text)' }}>público</strong> (não aceitamos perfis privados).</li>
     <li>O perfil deve ser de <strong style={{ color: 'var(--app-text)' }}>pessoa ou criador</strong> (não aceitamos contas de empresa ou estabelecimentos como bares, restaurantes, lojas).</li>
     <li><strong style={{ color: 'var(--app-text)' }}>Conta pessoal</strong>: é exigido o dobro do mínimo de seguidores configurado no programa.</li>
@@ -140,14 +140,14 @@ function RejectionFullScreen({
                 <InstagramOutlined style={{ fontSize: 32, color: '#fff' }} />
               </div>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--app-text)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>
-                Quase lá! Só falta um passinho
+                Quase! Só falta um passo
               </h1>
               <p style={{ fontSize: 15, color: 'var(--app-text-secondary)', margin: 0, lineHeight: 1.5 }}>
                 Segue o{' '}
                 <a href={result.followProfileUrl!} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--app-primary)', fontWeight: 600, textDecoration: 'none' }}>
                   @{followProfileHandle}
                 </a>
-                {' '}no Insta para mandarmos o código de acesso na DM.
+                {' '}no Instagram que a gente manda o código na DM.
               </p>
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
@@ -163,11 +163,11 @@ function RejectionFullScreen({
                 }}
               >
                 <InstagramOutlined style={{ fontSize: 16 }} />
-                Seguir Perfil
+                Seguir no Instagram
               </a>
             </div>
             <p style={{ fontSize: 13, color: 'var(--app-text-tertiary)', textAlign: 'center', margin: 0, marginBottom: 20 }}>
-              Depois de seguir, volte aqui e tente novamente.
+              Depois de seguir, volta aqui e clica de novo.
             </p>
             <Button
               type="primary"
@@ -176,7 +176,7 @@ function RejectionFullScreen({
               style={{ height: 48, marginBottom: 12, minWidth: 220, borderRadius: 14, fontWeight: 600, fontSize: 15, background: 'var(--app-primary)', border: 'none', display: 'block', margin: '0 auto' }}
               icon={<ReloadOutlined />}
             >
-              &nbsp;JÁ SIGO, Tentar novamente
+              &nbsp;&nbsp;Já sigo, tentar de novo
             </Button>
           </>
         ) : (
@@ -198,12 +198,12 @@ function RejectionFullScreen({
                 <EditOutlined style={{ fontSize: 28, color: 'var(--app-warning-accent)' }} />
               </div>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--app-text)', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
-                {isNotFound ? `@${result.handle} não encontrado` : 'Esse perfil não deu certo'}
+                {isNotFound ? `@${result.handle} não encontrado` : 'Esse perfil não passou'}
               </h1>
               <p style={{ fontSize: 15, color: 'var(--app-text-secondary)', margin: 0, lineHeight: 1.5 }}>
                 {isNotFound
-                  ? 'Verifique se o seu @ do Instagram esta correto e validamos de novamente.'
-                  : `@${result.handle} não atende aos critérios do programa. Coloque outro @ ou o perfil correto para continuar.`}
+                  ? 'Confere se o @ está certo e tenta de novo.'
+                  : `@${result.handle} não bate com as regras do programa. Usa outro @ ou o perfil certo.`}
               </p>
             </div>
 
@@ -227,12 +227,12 @@ function RejectionFullScreen({
 
             <div style={{ marginBottom: 20 }}>
               <label style={{ display: 'block', fontSize: 14, fontWeight: 600, color: 'var(--app-text)', marginBottom: 10 }}>
-                Coloque o @ correto do Instagram
+                Coloca o @ certo do Instagram
               </label>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <Input
                   prefix={<span style={{ color: 'var(--app-text-tertiary)', fontWeight: 500 }}>@</span>}
-                  placeholder="seu_usuario"
+                  placeholder="ex: seu_usuario"
                   value={correctHandle}
                   onChange={(e) => setCorrectHandle(e.target.value.replace(/^@/, '').trim())}
                   onPressEnter={handleTryCorrectProfile}
@@ -257,12 +257,13 @@ function RejectionFullScreen({
         )}
 
         <Collapse
+
           size="small"
-          style={{ background: 'rgba(104, 39, 143, 0.04)', border: '1px solid var(--app-border)', borderRadius: 14 }}
+          style={{ marginTop: '20px', background: 'rgba(104, 39, 143, 0.04)', border: '1px solid var(--app-border)', borderRadius: 14 }}
           items={[
             {
               key: 'regras',
-              label: <span style={{ color: 'var(--app-text)', fontWeight: 600, fontSize: 13 }}>Regras de elegibilidade do programa</span>,
+              label: <span style={{ color: 'var(--app-text)', fontWeight: 600, fontSize: 13 }}>Regras do programa</span>,
               children: <div style={{ paddingTop: 2, paddingBottom: 2 }}>{ELIGIBILITY_RULES}</div>,
             },
           ]}
@@ -532,9 +533,9 @@ export default function Auth() {
       setStep('code')
       form.setFieldValue('code', data.code ?? '')
       if (data.sent) {
-        message.success('Código enviado! Confira sua caixa de entrada do Instagram (direct).')
+        message.success('Código enviado! Olha no Direct do Instagram.')
       } else if (data.code) {
-        message.warning(data.error ?? 'DM não enviada. Use o código abaixo para testar.')
+        message.warning(data.error ?? 'DM não foi. Usa o código que apareceu aí em baixo.')
       } else if (data.error) {
         message.warning(data.error)
       }
@@ -556,14 +557,14 @@ export default function Auth() {
       const data = await verifyProfile(nickname, code)
       if (data.token && data.user) {
         loginWithToken(data.token, data.user as AuthUser)
-        message.success('Entrada feita! Perfil validado.')
+        message.success('Entrou! Perfil validado.')
       } else {
         await refreshUser()
-        message.success('Perfil validado com sucesso!')
+        message.success('Perfil validado.')
       }
       navigate('/app/create/password', { state: { handle: nickname }, replace: true })
     } catch (e) {
-      message.error(e instanceof Error ? e.message : 'Código inválido ou expirado')
+      message.error(e instanceof Error ? e.message : 'Código errado ou já venceu. Pede outro.')
     } finally {
       setLoading(false)
     }
@@ -594,9 +595,9 @@ export default function Auth() {
       setStep('code')
       form.setFieldValue('code', data.code ?? '')
       if (data.sent) {
-        message.success('Código enviado! Confira sua caixa de entrada do Instagram (direct).')
+        message.success('Código enviado! Olha no Direct do Instagram.')
       } else if (data.code) {
-        message.warning(data.error ?? 'DM não enviada. Use o código abaixo para testar.')
+        message.warning(data.error ?? 'DM não foi. Usa o código que apareceu aí em baixo.')
       } else if (data.error) {
         message.warning(data.error)
       }
@@ -661,7 +662,7 @@ export default function Auth() {
                   letterSpacing: '-0.02em',
                 }}
               >
-                Faça parte do programa de influenciadores
+                Entra pro programa de influenciadores
               </h1>
               <p
                 style={{
@@ -671,7 +672,7 @@ export default function Auth() {
                   lineHeight: 1.5,
                 }}
               >
-                Valide seu perfil do Instagram em poucos passos e comece a receber ofertas de marcas.
+                Valida teu perfil em poucos cliques e começa a receber proposta de marca.
               </p>
             </div>
           )}
@@ -686,7 +687,7 @@ export default function Auth() {
               ) : (
                 <span>
                   <SafetyCertificateOutlined style={{ marginRight: 8 }} />
-                  Validar perfil Instagram
+                  Validar perfil no Instagram
                 </span>
               )
             }
@@ -696,7 +697,7 @@ export default function Auth() {
             {user?.profile_handle && step === 'nickname' && (
               <div style={{ marginBottom: 16, padding: 12, background: 'var(--app-alert-success-bg)', border: '1px solid var(--app-alert-success-border)', borderRadius: 12 }}>
                 <p style={{ margin: 0, color: 'var(--app-alert-success-text)' }}>
-                  Você já validou o perfil <strong>@{user.profile_handle}</strong>.
+                  Você já validou o <strong>@{user.profile_handle}</strong>.
                 </p>
                 <div style={{ marginTop: 8 }}>
                   <Button type="primary" size="small" onClick={() => navigate(`/activate/${user.profile_handle}`)}>
@@ -712,10 +713,10 @@ export default function Auth() {
             {!user?.profile_handle && step === 'nickname' && (
               <>
                 <p style={{ color: 'var(--app-text-secondary)', marginBottom: 20, fontSize: 14, lineHeight: 1.5 }}>
-                  Digite seu <strong>@ do Instagram</strong>. Enviamos um código de ativação por <strong>mensagem direta</strong> no Instagram.
+                  Coloca teu <strong>@</strong>. A gente manda um código no <strong>Direct do Instagram</strong>.
                 </p>
                 <Form form={form} name="request-code" onFinish={onRequestCode} layout="vertical" requiredMark={false}>
-                  <Form.Item name="nickname" label="Seu nickname no Instagram" rules={[{ required: true, message: 'Informe seu @ do Instagram' }]}>
+                  <Form.Item name="nickname" label="Seu @ no Instagram" rules={[{ required: true, message: 'Coloca teu @ do Instagram.' }]}>
                     <Input
                       prefix={<UserOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
                       placeholder="ex: seu_usuario"
@@ -735,7 +736,7 @@ export default function Auth() {
                       icon={<MessageOutlined />}
                       style={{ height: 48, borderRadius: 10, fontWeight: 600 }}
                     >
-                      Cadastrar Instagram
+                      Pedir código no Instagram
                     </Button>
                   </Form.Item>
                 </Form>
@@ -746,7 +747,7 @@ export default function Auth() {
               <>
                 <div style={{ marginBottom: 16, padding: 14, background: 'var(--app-info-bg)', border: '1px solid var(--app-info-border)', borderRadius: 12 }}>
                   <p style={{ margin: 0, color: 'var(--app-info-text)', fontSize: 14 }}>
-                    Enviamos um código de 6 dígitos por <strong style={{ color: 'var(--app-info-text-accent)' }}>mensagem no Instagram</strong> para <strong style={{ color: 'var(--app-info-text-accent)' }}>@{nickname}</strong>. Confira o Direct e digite abaixo.
+                    Mandamos um código de 6 números no <strong style={{ color: 'var(--app-info-text-accent)' }}>Direct</strong> para <strong style={{ color: 'var(--app-info-text-accent)' }}>@{nickname}</strong>. Olha a DM e cola aqui.
                   </p>
                 </div>
                 <Form form={form} name="verify" onFinish={onVerify} layout="vertical" requiredMark={false}>
@@ -755,8 +756,8 @@ export default function Auth() {
                   </Form.Item>
                   <Form.Item
                     name="code"
-                    label="Código de ativação"
-                    rules={[{ required: true, message: 'Informe o código' }, { len: 6, message: 'O código tem 6 dígitos' }]}
+                    label="Código de 6 dígitos"
+                    rules={[{ required: true, message: 'Coloca o código de 6 números.' }, { len: 6, message: 'Coloca o código de 6 números.' }]}
                   >
                     <Input
                       placeholder="000000"
@@ -778,12 +779,12 @@ export default function Auth() {
                       icon={<SafetyCertificateOutlined />}
                       style={{ height: 48, borderRadius: 10, fontWeight: 600 }}
                     >
-                      Validar perfil
+                      Validar e continuar
                     </Button>
                   </Form.Item>
                   <Form.Item style={{ marginBottom: 0 }}>
                     <Button type="link" block onClick={startOver} style={{ padding: 0 }}>
-                      Usar outro nickname
+                      Usar outro @
                     </Button>
                   </Form.Item>
                 </Form>

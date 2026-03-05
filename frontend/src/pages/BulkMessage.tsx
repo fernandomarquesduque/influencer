@@ -96,7 +96,7 @@ export default function BulkMessage() {
     setLoadingTemplates(true)
     fetchDirectTemplates()
       .then((r) => setTemplates(r.items))
-      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Erro ao carregar templates'))
+      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Não deu pra carregar os templates.'))
       .finally(() => setLoadingTemplates(false))
   }
 
@@ -107,7 +107,7 @@ export default function BulkMessage() {
         setQueue(r.items)
         setTotal(r.total)
       })
-      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Erro ao carregar fila'))
+      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Não deu pra carregar a fila.'))
       .finally(() => setLoadingQueue(false))
   }
 
@@ -214,7 +214,7 @@ export default function BulkMessage() {
         .catch((err) => {
           if (err?.name === 'AbortError') return
           if (mainSearchValueRef.current.trim() !== searchTerm) return
-          antMessage.error(err instanceof Error ? err.message : 'Erro na busca de seguidores')
+          antMessage.error(err instanceof Error ? err.message : 'Falha na busca de seguidores.')
           setMainSearchOptions([])
         })
         .finally(() => setMainSearchLoading(false))
@@ -232,7 +232,7 @@ export default function BulkMessage() {
 
   const handleAddTemplate = () => {
     if (!newHash.trim() || !newBody.trim()) {
-      antMessage.warning('Preencha o hash e o texto do template.')
+      antMessage.warning('Coloca o hash e o texto do template.')
       return
     }
     if (newRejectHashes.length === 0) {
@@ -249,7 +249,7 @@ export default function BulkMessage() {
         setNewSendDelayMinutes(1)
         loadTemplates()
       })
-      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Erro ao criar template'))
+      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Não deu pra criar o template.'))
   }
 
   const handleAddToQueue = () => {
@@ -285,7 +285,7 @@ export default function BulkMessage() {
         setSelectedFromAutocomplete([])
         loadQueue()
       })
-      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Erro ao adicionar'))
+      .catch((e) => antMessage.error(e instanceof Error ? e.message : 'Não deu pra adicionar.'))
       .finally(() => setAdding(false))
   }
 
@@ -426,7 +426,7 @@ export default function BulkMessage() {
                     else if (allUsernames.length > 0) antMessage.info('Todos já estão na seleção ou foram rejeitados pelo filtro.')
                     else antMessage.warning('Nenhum seguidor encontrado.')
                   } catch (e) {
-                    antMessage.error(e instanceof Error ? e.message : 'Erro ao buscar seguidores')
+                    antMessage.error(e instanceof Error ? e.message : 'Falha na busca de seguidores.')
                   } finally {
                     setLoadingAddAll(false)
                   }
@@ -496,7 +496,7 @@ export default function BulkMessage() {
                   antMessage.success('Serviço pausado.')
                 }
               } catch (e) {
-                antMessage.error(e instanceof Error ? e.message : 'Erro ao alterar serviço')
+                antMessage.error(e instanceof Error ? e.message : 'Não deu pra alterar o serviço.')
               } finally {
                 setLoadingServiceToggle(false)
               }
@@ -506,7 +506,7 @@ export default function BulkMessage() {
           </Button>
           <Popconfirm
             title="Deletar toda a fila?"
-            description="Todos os itens (pendentes, enviados e falhas) serão removidos. Não é possível desfazer."
+            description="Tudo da fila será apagado (pendentes, enviados, falhas). Não dá pra desfazer."
             onConfirm={async () => {
               setLoadingDeleteQueue(true)
               try {
@@ -514,7 +514,7 @@ export default function BulkMessage() {
                 antMessage.success(`Fila deletada (${r.deleted} itens).`)
                 loadQueue()
               } catch (e) {
-                antMessage.error(e instanceof Error ? e.message : 'Erro ao deletar fila')
+                antMessage.error(e instanceof Error ? e.message : 'Não deu pra apagar a fila.')
               } finally {
                 setLoadingDeleteQueue(false)
               }
@@ -580,7 +580,7 @@ export default function BulkMessage() {
                         antMessage.success('Item removido.')
                         loadQueue()
                       } catch (e) {
-                        antMessage.error(e instanceof Error ? e.message : 'Erro ao remover')
+                        antMessage.error(e instanceof Error ? e.message : 'Não deu pra remover.')
                       } finally {
                         setDeletingId(null)
                       }
@@ -666,7 +666,7 @@ export default function BulkMessage() {
             setEditSendDelayMinutes(1)
             loadTemplates()
           } catch (e) {
-            antMessage.error(e instanceof Error ? e.message : 'Erro ao salvar')
+            antMessage.error(e instanceof Error ? e.message : 'Não deu pra salvar.')
           } finally {
             setSavingEdit(false)
           }
@@ -736,7 +736,7 @@ export default function BulkMessage() {
             setEditQueueScheduledAt('')
             loadQueue()
           } catch (e) {
-            antMessage.error(e instanceof Error ? e.message : 'Erro ao salvar')
+            antMessage.error(e instanceof Error ? e.message : 'Não deu pra salvar.')
           } finally {
             setSavingEditQueue(false)
           }

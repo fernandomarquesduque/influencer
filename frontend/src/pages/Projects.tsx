@@ -55,7 +55,7 @@ function ProjectList() {
   if (!user) {
     return (
       <div style={{ padding: 48, textAlign: 'center' }}>
-        <Title level={4} style={{ color: 'var(--app-text)' }}>Faça login para ver os projetos</Title>
+        <Title level={4} style={{ color: 'var(--app-text)' }}>Entra na sua conta pra ver os projetos</Title>
         <Link to="/login"><Button type="primary">Entrar</Button></Link>
       </div>
     )
@@ -67,12 +67,12 @@ function ProjectList() {
     return (
       <div style={{ padding: 48, textAlign: 'center', maxWidth: 480, margin: '0 auto' }}>
         <Title level={4} style={{ color: 'var(--app-text)', marginBottom: 16 }}>
-          Complete seu cadastro
+          Completa teu cadastro
         </Title>
         <Paragraph style={{ color: 'var(--app-text-secondary)', marginBottom: 24, fontSize: 15 }}>
           {temHandle
-            ? 'Para ver e se candidatar a projetos, finalize o cadastro do seu perfil de influenciador (dados, preços e ativação).'
-            : 'Para ver e se candidatar a projetos, ative seu perfil de influenciador na plataforma. Valide seu perfil do Instagram e preencha seus dados.'}
+            ? 'Pra ver e se candidatar, finaliza o cadastro (dados, preços e ativação).'
+            : 'Pra ver projetos, ativa teu perfil: valida o Instagram e preenche os dados.'}
         </Paragraph>
         <Link to={temHandle ? `/activate/${encodeURIComponent(user.profile_handle!)}` : '/app/create'}>
           <Button type="primary" size="large">
@@ -88,7 +88,7 @@ function ProjectList() {
       <div style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <Title level={3} style={{ margin: 0, color: 'var(--app-text)' }}>Projetos</Title>
-          <Text type="secondary">Encontre campanhas e trabalhos para representar como influenciador</Text>
+          <Text type="secondary">Acha campanhas e trabalhos pra atuar como criador</Text>
         </div>
         {isAdm && (
           <Link to="/app/projects/new">
