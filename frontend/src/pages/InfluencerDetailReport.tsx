@@ -4,8 +4,6 @@
 import React, { useState, useEffect } from 'react'
 import { Button, Card, Tag, Avatar, Progress, Skeleton, Tabs, Tooltip, Spin, Row, Col } from 'antd'
 import {
-  SyncOutlined,
-  RiseOutlined,
   UserOutlined,
   CheckCircleFilled,
   WarningFilled,
@@ -271,7 +269,7 @@ export function ReportHero({
                         size={isMobile ? 12 : 14}
                         style={{ flex: 1, marginBottom: 0 }}
                       />
-                      <span style={{ ...typ.caption, fontWeight: 700, color: c.text, flexShrink: 0, fontSize: 12 }}>Nota {scoreValue}/100</span>
+                      <span style={{ ...typ.caption, fontWeight: 700, color: c.text, flexShrink: 0, fontSize: 12 }}>SCORE {scoreValue}/100</span>
                     </div>
                   </div>
                 )
@@ -611,6 +609,8 @@ export interface DiagnosticoBIProps {
   benchmarkTier: string
   forcas: { titulo: string; descricao?: string }[]
   ondePerdeAlcance: string[]
+  /** Insight positivo de alcance (ex.: feed engaja mais que reels) — exibido em "O que está bom" */
+  alcancePositivo?: string
   ondePerdeMonetizacao?: string[]
   proximoPassoTop3: string[]
   /** Nicho dominante + subtemas */
@@ -655,12 +655,13 @@ export function DiagnosticoBISection({
   benchmarkTier,
   forcas,
   ondePerdeAlcance,
+  alcancePositivo,
   ondePerdeMonetizacao = [],
   proximoPassoTop3,
   nichoLabel,
   conversationLabel,
-  topHashtags = [],
-  performingHashtags = [],
+  topHashtags: _topHashtags = [],
+  performingHashtags: _performingHashtags = [],
   conversationHashtags = [],
   scoreInfo,
   proximoPatamar,
@@ -669,7 +670,7 @@ export function DiagnosticoBISection({
   insightPatamar,
   projecaoProximoPatamar,
   comparacaoLocal,
-  hashtagsSugeridas = [],
+  hashtagsSugeridas: _hashtagsSugeridas = [],
   proximoPassoConcreto,
   growthProjectionNote,
   semana1Items = [],
@@ -692,11 +693,11 @@ export function DiagnosticoBISection({
   return (
     <div className="diagnostico-bi-section">
       {scoreInfo && <div style={{ marginBottom: s.xl }}>{scoreInfo}</div>}
-      <Row gutter={[s.lg, s.lg]} align="stretch">
-        {temPatamar && (
-          <Col xs={24} md={10} style={{ display: 'flex', flexDirection: 'column' }}>
+      {/* Card de patamar (Nano → Micro) em linha inteira */}
+      {temPatamar && (
+        <Row gutter={[s.lg, s.lg]} style={{ marginBottom: s.lg }}>
+          <Col xs={24}>
             <Card size="small" className="report-card report-card--hover" style={cardStyle}>
-
               <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: s.sm, flexWrap: 'wrap', marginBottom: 8 }}>
                   <span style={{ fontSize: 28, fontWeight: 800, color: c.primary, letterSpacing: '-0.02em' }}>{benchmarkTier}</span>
@@ -743,8 +744,11 @@ export function DiagnosticoBISection({
               </div>
             </Card>
           </Col>
-        )}
-        <Col xs={24} md={temPatamar ? 14 : 24} style={{ display: 'flex', flexDirection: 'column' }}>
+        </Row>
+      )}
+      {/* O que está bom (esquerda) | O que melhorar (meio) | Plano de Ação (direita) */}
+      <Row gutter={[s.lg, s.lg]} align="stretch">
+        <Col xs={24} md={7} style={{ display: 'flex', flexDirection: 'column' }}>
           <Card size="small" className="report-card report-card--hover" style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: 16 }}>
               <div style={{ width: 32, height: 32, borderRadius: '50%', background: c.successBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -755,7 +759,7 @@ export function DiagnosticoBISection({
             <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 11, color: c.textMuted, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Engajamento</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: c.text, marginBottom: 2 }}>ER médio (últimos 25): {erStr}%</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: c.text, marginBottom: 2 }}>ER médio: {erStr}%</div>
                 {erMaxViral != null && (
                   <div style={{ fontSize: 14, color: c.textSecondary, marginBottom: 4 }}>ER do maior viral: {erMaxViral.toFixed(2).replace('.', ',')}%</div>
                 )}
@@ -774,6 +778,12 @@ export function DiagnosticoBISection({
                 <div style={{ display: 'flex', alignItems: 'center', gap: s.xs, marginBottom: 6 }}>
                   <span style={{ color: c.success }}>✓</span>
                   <span>{conversationCard.label} ({conversationCard.rate}%){conversationCard.comparisonLabel ? ` — ${conversationCard.comparisonLabel}` : ''}</span>
+                </div>
+              )}
+              {alcancePositivo && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: s.xs, marginBottom: 6 }}>
+                  <span style={{ color: c.success }}>✓</span>
+                  <span>{alcancePositivo}</span>
                 </div>
               )}
               {conversationLabel && conversationLabel !== 'Público passivo' && !conversationCard && (
@@ -797,9 +807,7 @@ export function DiagnosticoBISection({
             </div>
           </Card>
         </Col>
-      </Row>
-      <Row gutter={[s.lg, s.lg]} align="stretch" style={{ marginTop: s.lg }}>
-        <Col xs={24} md={14} style={{ display: 'flex', flexDirection: 'column' }}>
+        <Col xs={24} md={10} style={{ display: 'flex', flexDirection: 'column' }}>
           <Card size="small" className="report-card report-card--hover" style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: 16 }}>
               <div style={{ width: 32, height: 32, borderRadius: '50%', background: c.warningBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -819,12 +827,7 @@ export function DiagnosticoBISection({
                   {ondePerdeAlcance.length > 0 && (
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 4 }}>Alcance</div>
-                      {ondePerdeAlcance.filter((item) => /Seu feed engaja mais que reels/.test(item)).map((item, i) => (
-                        <div key={`feed-${i}`} style={{ marginBottom: 8, padding: s.sm, background: c.primaryMuted ?? `${c.primary}15`, borderRadius: r.md, ...typ.bodySmall, color: c.primary, fontWeight: 600 }}>
-                          {item}
-                        </div>
-                      ))}
-                      {ondePerdeAlcance.filter((item) => !/Seu feed engaja mais que reels/.test(item)).map((item, i) => (
+                      {ondePerdeAlcance.map((item, i) => (
                         <div key={i} style={{ marginBottom: 4 }}>⚠ {item}</div>
                       ))}
                     </div>
@@ -852,7 +855,7 @@ export function DiagnosticoBISection({
             </div>
           </Card>
         </Col>
-        <Col xs={24} md={10} style={{ display: 'flex', flexDirection: 'column' }}>
+        <Col xs={24} md={7} style={{ display: 'flex', flexDirection: 'column' }}>
           <PlanoAcao90DiasSection semana1Items={semana1Items} style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }} />
         </Col>
       </Row>
@@ -937,7 +940,7 @@ export function ProofCarousel({
             <div style={{ padding: s.sm }}>
               {showAuthor && (post as { influencer?: { username?: string } })?.influencer?.username && (
                 <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 2 }}>
-                  Postado por @{(post as { influencer: { username: string } }).influencer.username}
+                  Postado por @{(post as { influencer?: { username?: string } }).influencer!.username}
                 </div>
               )}
               <Tooltip title={METRIC_TOOLTIPS.interacoesPost} placement="top">
@@ -974,40 +977,57 @@ export interface EngajamentoPorTipoSectionProps {
   erByTypeNarrative?: string | null
 }
 
+const ER_EXPLICACAO = 'ER (Engagement Rate) é a taxa de engajamento: o percentual de interações (curtidas + comentários) em relação aos seguidores. Quanto maior o ER, mais a audiência reage ao conteúdo — um indicador importante para marcas avaliarem o potencial de alcance e conexão.'
+
 export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg, s.lg], erByTypeNarrative }: EngajamentoPorTipoSectionProps) {
-  const cardStyle = { padding: s.md, background: c.cardBgSoft, borderRadius: r.md, border: `1px solid ${c.borderLight}`, boxShadow: sh.sm, height: '100%', cursor: 'help' as const }
+  const cardStyle = {
+    padding: s.sm,
+    background: c.cardBgSoft,
+    borderRadius: r.md,
+    border: `1px solid ${c.borderLight}`,
+    boxShadow: 'none',
+    height: '100%',
+    cursor: 'help' as const,
+  }
+  const cardOQueEr = {
+    padding: s.sm,
+    background: c.cardBgSoft,
+    borderRadius: r.md,
+    border: `1px solid ${c.borderLight}`,
+    borderLeft: `2px solid ${c.primary}`,
+    boxShadow: 'none',
+  }
   return (
     <div>
+      <Row gutter={rowGutter} style={{ marginBottom: rowGutter[1] ?? s.lg }}>
+        <Col xs={24}>
+          <div style={cardOQueEr}>
+            <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginBottom: 4 }}>O que é ER?</div>
+            <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, lineHeight: 1.45 }}>{ER_EXPLICACAO}</div>
+          </div>
+        </Col>
+      </Row>
       <Row gutter={rowGutter}>
-        <Col xs={24} sm={8}>
+        <Col xs={24} sm={12}>
           <Tooltip title={METRIC_TOOLTIPS.er} placement="top">
             <div style={cardStyle}>
               <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 2, fontSize: 11 }}>ER médio por Feed</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c.primary, margin: 0 }}>{engagementByType.posts.er.toFixed(2)}%</div>
-              <div style={{ ...typ.caption, color: c.textSecondary }}>{engagementByType.posts.count} itens</div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: c.primary, margin: 0 }}>{engagementByType.posts.er.toFixed(2)}%</div>
+              <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted }}>{engagementByType.posts.count} itens</div>
             </div>
           </Tooltip>
         </Col>
-        <Col xs={24} sm={8}>
+        <Col xs={24} sm={12}>
           <Tooltip title={engagementByType.reels.erByViews != null ? METRIC_TOOLTIPS.erPorSeguidoresEViews : METRIC_TOOLTIPS.er} placement="top">
             <div style={cardStyle}>
               <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 2, fontSize: 11 }}>ER médio por Reel</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c.success, margin: 0 }}>{engagementByType.reels.er.toFixed(2)}%</div>
-              <div style={{ ...typ.caption, color: c.textSecondary }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: c.success, margin: 0 }}>{engagementByType.reels.er.toFixed(2)}%</div>
+              <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted }}>
                 {engagementByType.reels.count} itens
                 {engagementByType.reels.erByViews != null && (
-                  <span style={{ color: c.textMuted, marginLeft: 4 }}>({engagementByType.reels.erByViews.toFixed(1)}% views)</span>
+                  <span style={{ marginLeft: 4 }}>({engagementByType.reels.erByViews.toFixed(1)}% views)</span>
                 )}
               </div>
-            </div>
-          </Tooltip>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Tooltip title={METRIC_TOOLTIPS.er} placement="top">
-            <div style={cardStyle}>
-              <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 2, fontSize: 11 }}>ER médio por Marcado</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c.warning, margin: 0 }}>{engagementByType.tagged.er.toFixed(2)}%</div>
-              <div style={{ ...typ.caption, color: c.textSecondary }}>{engagementByType.tagged.count} itens</div>
             </div>
           </Tooltip>
         </Col>
@@ -1017,6 +1037,181 @@ export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg,
           {erByTypeNarrative}
         </div>
       )}
+    </div>
+  )
+}
+
+// ——— MetricasMediakitSection (espelho da página 2 do Media Kit: Métricas) ———
+const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+
+const metricasCardBase = { padding: s.md, borderRadius: r.md, border: 'none', boxShadow: sh.sm, height: '100%' as const }
+
+export interface MetricasMediakitSectionProps {
+  formatShortNum: (n: number) => string
+  followersCount: number
+  engagement: { total_likes?: number; total_comments?: number; total_views?: number; engagement_rate?: number }
+  conversationRate: number
+  conversationLabel?: string
+  bestDay?: string
+  bestHour?: number
+  engagementPerWeekday: number[]
+  maxEr: number
+  cpmCpe: { cpmEstimate: number | null; cpeEstimate: number | null }
+  strategicMetrics: StrategicMetrics | null
+  rowGutter?: [number, number]
+}
+
+export function MetricasMediakitSection({
+  formatShortNum,
+  followersCount,
+  engagement,
+  conversationRate = 0,
+  conversationLabel,
+  bestDay,
+  bestHour,
+  engagementPerWeekday = [0, 0, 0, 0, 0, 0, 0],
+  maxEr = 0,
+  cpmCpe,
+  strategicMetrics,
+  rowGutter = [s.lg, s.lg],
+}: MetricasMediakitSectionProps) {
+  const totalLikes = engagement.total_likes ?? 0
+  const totalComments = engagement.total_comments ?? 0
+  const totalViews = engagement.total_views ?? 0
+  const er = engagement.engagement_rate ?? 0
+  const erPerWeekday = followersCount > 0
+    ? engagementPerWeekday.map((sum) => (sum / followersCount) * 100)
+    : [0, 0, 0, 0, 0, 0, 0]
+  const maxErDay = Math.max(0.01, ...erPerWeekday)
+  const bestDayByErIndex = maxErDay > 0 ? erPerWeekday.findIndex((v) => v >= maxErDay - 1e-6) : -1
+  const picoDayLabel = bestDayByErIndex >= 0 ? WEEKDAY_LABELS[bestDayByErIndex] : bestDay
+  const cpeValue = cpmCpe.cpeEstimate != null && cpmCpe.cpeEstimate > 0 ? `R$ ${cpmCpe.cpeEstimate.toFixed(2)}` : '—'
+  const cpmValue = cpmCpe.cpmEstimate != null && cpmCpe.cpmEstimate > 0 ? `R$ ${cpmCpe.cpmEstimate.toFixed(1)}` : null
+  // Primeira linha: Curtidas | Comentários | Views
+  const metrics = [
+    { label: 'Curtidas', value: formatShortNum(totalLikes), desc: 'Total de curtidas nos posts analisados', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary },
+    { label: 'Comentários', value: formatShortNum(totalComments), desc: 'Total de comentários nos posts', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.success },
+    { label: 'Views', value: formatShortNum(totalViews), desc: 'Total de visualizações nos posts analisados', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary },
+  ]
+  const converteQuadrants = [
+    { value: `${er.toFixed(1)}%`, label: 'Engajamento', desc: 'Interações (curtidas + comentários) em % dos seguidores.', bg: c.cardBgStrategic ?? c.primary + '18', accent: c.primary },
+    { value: `${Math.round(conversationRate)}%`, label: conversationLabel ?? 'Taxa comentários', desc: '% de comentários no total de interações; mais comentários costumam indicar maior conexão.', bg: c.successBg ?? c.success + '20', accent: c.success },
+    { value: maxEr > 0 ? `${maxEr.toFixed(1)}%` : '—', label: 'Pico de ER', desc: 'Maior ER em um único post; indica potencial de alcance quando o conteúdo viraliza.', bg: c.warningBg ?? c.warning + '25', accent: c.warning },
+  ]
+
+  return (
+    <div>
+
+
+
+      {/* KPIs: Curtidas | Comentários | Views */}
+      <Row gutter={rowGutter} style={{ marginBottom: s.lg }}>
+        {metrics.map((k) => (
+          <Col xs={24} sm={8} key={k.label}>
+            <div style={{ ...metricasCardBase, padding: s.sm, background: k.bg, border: k.border, textAlign: 'center', boxShadow: 'none' }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: k.accent }}>{k.value}</div>
+              <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginTop: 4 }}>{k.label}</div>
+              <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, marginTop: 2 }}>{k.desc}</div>
+            </div>
+          </Col>
+        ))}
+      </Row>
+
+      {/* CPE e CPM — cards de preço em destaque (success + primary do tema) */}
+      <Row gutter={rowGutter} style={{ marginBottom: s.lg }}>
+        <Col xs={24} sm={12}>
+          <div style={{ ...metricasCardBase, padding: s.sm, background: c.successBg, border: `1px solid ${c.successBorder ?? c.success}`, textAlign: 'center', boxShadow: sh.sm }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: c.success }}>{cpeValue}</div>
+            <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginTop: 4 }}>CPE</div>
+            <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, marginTop: 2 }}>Valor estimado por curtida ou comentário.</div>
+          </div>
+        </Col>
+        {cpmValue && (
+          <Col xs={24} sm={12}>
+            <div style={{ ...metricasCardBase, padding: s.sm, background: c.cardBgStrategic, border: `1px solid ${c.primaryMuted ?? c.primary}`, textAlign: 'center', boxShadow: sh.sm }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: c.primary }}>{cpmValue}</div>
+              <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginTop: 4 }}>CPM</div>
+              <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, marginTop: 2 }}>Custo por mil impressões (views); valor para alcançar 1.000 visualizações.</div>
+            </div>
+          </Col>
+        )}
+      </Row>
+
+      {/* Por que minha audiência converte — 3 quadrantes coloridos */}
+      <div style={{ marginBottom: s.lg }}>
+
+        <Row gutter={rowGutter}>
+          {converteQuadrants.map((q) => (
+            <Col xs={24} sm={8} key={q.label}>
+              <div style={{ ...metricasCardBase, background: q.bg, border: `2px solid ${q.accent}40`, textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: q.accent }}>{q.value}</div>
+                <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, marginTop: 6 }}>{q.label}</div>
+                <div style={{ ...typ.caption, color: c.textMuted, marginTop: 6 }}>{q.desc}</div>
+              </div>
+            </Col>
+          ))}
+        </Row>
+      </div>
+
+      {/* Melhor horário — gráfico em card */}
+      <Card size="small" style={{ marginBottom: s.lg, borderRadius: r.lg, overflow: 'hidden', border: `1px solid ${c.borderLight}`, boxShadow: sh.sm }}>
+        <div style={{ padding: s.md, borderBottom: `1px solid ${c.borderLight}` }}>
+          <div style={{ ...typ.bodySmall, fontWeight: 700, color: c.text }}>Melhor horário</div>
+          {(picoDayLabel || (bestHour ?? 0) > 0) && (
+            <div style={{ ...typ.caption, color: c.primary, fontWeight: 600, marginTop: 4 }}>
+              Pico: {[picoDayLabel, (bestHour ?? 0) > 0 ? `às ${bestHour}h` : ''].filter(Boolean).join(' · ')}
+            </div>
+          )}
+          <div style={{ ...typ.caption, color: c.textMuted, marginTop: 2 }}>
+            ER por dia da semana: (curtidas + comentários) ÷ seguidores × 100
+          </div>
+        </div>
+        <div style={{ padding: s.md, display: 'flex', alignItems: 'flex-end', gap: 8, minHeight: 100 }}>
+          {WEEKDAY_LABELS.map((label, d) => {
+            const erDay = erPerWeekday[d] ?? 0
+            const pct = maxErDay > 0 ? (erDay / maxErDay) * 100 : 0
+            const isBestEng = maxErDay > 0 && erDay >= maxErDay - 1e-6
+            const barHeight = erDay > 0 ? Math.max(14, Math.round((pct / 100) * 52)) : 0
+            return (
+              <div key={label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}>
+                <div style={{ width: '100%', height: 56, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  {barHeight > 0 && (
+                    <div
+                      style={{
+                        width: '78%',
+                        minWidth: 20,
+                        height: barHeight,
+                        backgroundColor: isBestEng ? (c.gold ?? '#d4a574') : (c.primary ?? '#6366f1'),
+                        borderRadius: 6,
+                        border: isBestEng ? `2px solid ${c.gold ?? '#b8860b'}` : `1px solid ${c.borderLight}`,
+                        boxShadow: isBestEng ? '0 2px 8px rgba(212,165,116,0.5)' : '0 1px 4px rgba(0,0,0,0.12)',
+                        opacity: isBestEng ? 1 : 0.85,
+                      }}
+                    />
+                  )}
+                </div>
+                <div style={{ ...typ.caption, fontWeight: isBestEng ? 700 : 500, color: isBestEng ? (c.gold ?? '#b8860b') : c.text, marginTop: 8 }}>{label}</div>
+                {erDay > 0 && <div style={{ ...typ.caption, fontSize: 11, color: c.textSecondary, marginTop: 2 }}>ER {erDay.toFixed(1)}%</div>}
+              </div>
+            )
+          })}
+        </div>
+      </Card>
+
+      {/* Reach / Reels — card com bordas coloridas */}
+      {(strategicMetrics?.reachMultiplier?.max != null && strategicMetrics.reachMultiplier.max >= 1) || (strategicMetrics?.reelsAmplification != null && strategicMetrics.reelsAmplification >= 1) ? (
+        <Card size="small" style={{ marginBottom: s.lg, borderRadius: r.md, borderLeft: `4px solid ${c.primary}`, background: c.cardBgSoft, boxShadow: sh.sm }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm }}>
+            {strategicMetrics?.reachMultiplier?.max != null && strategicMetrics.reachMultiplier.max >= 1 && (
+              <span style={{ ...typ.bodySmall, padding: '6px 10px', background: c.primary + '20', color: c.primary, borderRadius: r.sm, fontWeight: 600 }}>Reach até {strategicMetrics.reachMultiplier.max.toFixed(1)}× seguidores</span>
+            )}
+            {strategicMetrics?.reelsAmplification != null && strategicMetrics.reelsAmplification >= 1 && (
+              <span style={{ ...typ.bodySmall, padding: '6px 10px', background: c.gold + '25', color: c.gold, borderRadius: r.sm, fontWeight: 600 }}>Reels: {strategicMetrics.reelsAmplification.toFixed(1)}× base em média</span>
+            )}
+          </div>
+        </Card>
+      ) : null}
+
     </div>
   )
 }
@@ -1449,7 +1644,7 @@ export function PlanoAcao90DiasSection({ semana1Items, style: styleProp }: Plano
     >
       <div style={{ padding: s.md }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, marginBottom: s.md }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: c.primaryBg ?? `${c.primary}20`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: c.cardBgHighlight ?? `${c.primary}20`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <RocketOutlined style={{ fontSize: 16, color: c.primary }} />
           </div>
           <div style={{ ...typ.h3, color: c.text, margin: 0, fontSize: typ.h3?.fontSize ?? 16 }}>Plano de Ação</div>
@@ -1486,29 +1681,97 @@ export function PlanoAcao90DiasSection({ semana1Items, style: styleProp }: Plano
   )
 }
 
-// ——— StickyCTA (mobile) ———
+// ——— StickyCTA: barra branca fixa com explicação do Media Kit e botão ———
 export function StickyCTA({
   primaryLabel,
   primarySubtext,
+  explanation,
   onPrimary,
   secondaryLabel,
   onSecondary,
   visible,
+  isMobile,
 }: {
   primaryLabel: string
-  primarySubtext: string
+  primarySubtext?: string
+  /** Texto explicando o que é um Media Kit */
+  explanation?: string
   onPrimary: () => void
   secondaryLabel?: string
   onSecondary?: () => void
   visible: boolean
+  /** Em mobile: esconde a descrição e mostra só o botão */
+  isMobile?: boolean
 }) {
   if (!visible) return null
+  const defaultExplanation = 'Seu Media Kit organiza seus dados, comprova sua performance e aumenta sua credibilidade na hora de negociar com marcas'
+  const text = explanation ?? defaultExplanation
+  const layout = t.layout as { maxWidth: number; contentPadding: number; contentPaddingMobile: number }
+  const paddingH = isMobile ? layout.contentPaddingMobile : layout.contentPadding
   return (
-    <div className="report-sticky-cta" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: s.md, background: c.glassBg, backdropFilter: 'blur(12px)', borderTop: `1px solid ${c.borderLight}`, zIndex: 100, boxShadow: 'var(--app-shadow-top)' }}>
-      <div style={{ width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: s.sm }}>
-        <Button type="primary" size="large" icon={<RocketOutlined />} block style={{ borderRadius: r.md, background: c.gold, borderColor: c.gold, color: 'var(--brand-white)', minHeight: 52 }} onClick={onPrimary}>{primaryLabel}</Button>
-        <div style={{ ...typ.caption, color: c.textMuted, textAlign: 'center' }}>{primarySubtext}</div>
-        {secondaryLabel && onSecondary ? <Button type="default" size="large" icon={<MessageOutlined />} block style={{ borderRadius: r.md, minHeight: 48 }} onClick={onSecondary}>{secondaryLabel}</Button> : null}
+    <div
+      className="report-sticky-cta"
+      style={{
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        background: 'var(--app-primary)',
+        borderTop: '2px solid rgba(255,255,255,0.2)',
+        boxShadow: '0 -4px 24px rgba(0,0,0,0.2), 0 -1px 0 rgba(255,255,255,0.08)',
+        zIndex: 10000,
+        display: 'flex',
+        justifyContent: 'center',
+        boxSizing: 'border-box',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: layout.maxWidth,
+          minHeight: isMobile ? 56 : 72,
+          padding: `${isMobile ? s.md : s.lg}px ${paddingH}px calc(${isMobile ? s.md : s.lg}px + env(safe-area-inset-bottom, 0px))`,
+          display: 'flex',
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: isMobile ? 'center' : 'space-between',
+          gap: s.md,
+          boxSizing: 'border-box',
+        }}
+      >
+        {!isMobile && (
+          <div style={{ flex: '1 1 200px', minWidth: 0, ...typ.caption, fontSize: 14, color: 'rgba(255,255,255,0.95)', lineHeight: 1.35 }}>
+            {text}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', flexShrink: 0 }}>
+          <Button
+            type="primary"
+            className="report-sticky-cta__btn"
+            size="large"
+            icon={<RocketOutlined />}
+            style={{
+              borderRadius: r.md,
+              background: 'var(--app-accent)',
+              borderColor: 'var(--app-accent)',
+              color: 'var(--app-text)',
+              minHeight: 44,
+              paddingLeft: s.md,
+              paddingRight: s.md,
+              fontWeight: 600,
+            }}
+            onClick={onPrimary}
+          >
+            {primaryLabel}
+          </Button>
+          {secondaryLabel && onSecondary ? (
+            <Button type="default" size="large" icon={<MessageOutlined />} style={{ borderRadius: r.md, minHeight: 44, borderColor: 'rgba(255,255,255,0.5)', color: '#fff' }} onClick={onSecondary}>{secondaryLabel}</Button>
+          ) : null}
+        </div>
+        {!isMobile && primarySubtext ? (
+          <span style={{ ...typ.caption, fontSize: 11, color: c.textMuted ?? '#999', flex: '1 1 100%', textAlign: 'center' }}>{primarySubtext}</span>
+        ) : null}
       </div>
     </div>
   )

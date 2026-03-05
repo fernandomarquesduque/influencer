@@ -30,7 +30,7 @@ function getFollowersCount(profile: ProfileItem | null | undefined): number {
   return 0
 }
 
-function getPostTimestamp(p: PostItem): number | null {
+export function getPostTimestamp(p: PostItem): number | null {
   const takenAt = p.post?.taken_at
   if (takenAt != null && typeof takenAt === 'number') return takenAt
   const captionAt = p.content?.caption_created_at
@@ -41,6 +41,34 @@ function getPostTimestamp(p: PostItem): number | null {
     return Number.isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000)
   }
   return null
+}
+
+/** Conta posts por dia da semana (0=Dom .. 6=Sáb) usando TODOS os posts, sem filtrar por período. */
+export function getPostsPerWeekdayAllTime(posts: PostItem[]): number[] {
+  const counts = [0, 0, 0, 0, 0, 0, 0]
+  for (const p of posts) {
+    const ts = getPostTimestamp(p)
+    if (ts != null) {
+      const day = new Date(ts * 1000).getDay()
+      counts[day] = (counts[day] ?? 0) + 1
+    }
+  }
+  return counts
+}
+
+/** Soma engajamento (curtidas + comentários) por dia da semana (0=Dom .. 6=Sáb) usando TODOS os posts. */
+export function getEngagementPerWeekdayAllTime(posts: PostItem[]): number[] {
+  const totals = [0, 0, 0, 0, 0, 0, 0]
+  for (const p of posts) {
+    const ts = getPostTimestamp(p)
+    if (ts != null) {
+      const day = new Date(ts * 1000).getDay()
+      const likes = toNum(p.metrics?.likes ?? (p as { like_count?: number }).like_count)
+      const comments = toNum(p.metrics?.comments ?? (p as { comment_count?: number }).comment_count)
+      totals[day] = (totals[day] ?? 0) + likes + comments
+    }
+  }
+  return totals
 }
 
 /** Pilares do Score 0–100 (cada um 0–100, média ponderada). */
@@ -173,7 +201,7 @@ export function getDiagnosticoIA(
   }
 
   const fazBem = er >= 4
-    ? `Seu engajamento de ${er.toFixed(2)}% está acima da média e mostra conexão com a audiência.`
+    ? `O engajamento de ${er.toFixed(2)}% está acima da média e mostra conexão com a audiência.`
     : `Você mantém presença no feed; há espaço para crescer o engajamento.`
   const trava = postsPerWeek < 1
     ? `A baixa frequência (${postsPerWeek.toFixed(1)} posts/semana) limita alcance e oportunidades.`
@@ -599,7 +627,7 @@ export function getPatamarProximo(followersCount: number, er?: number): {
 
   let insightErProximo: string | null = null
   if (er != null && proximoRow && er >= proximoRow.erMid) {
-    insightErProximo = `Seu engajamento já bateria a maioria dos criadores no patamar ${proximoRow.label}. Você só precisa de alcance.`
+    insightErProximo = `O engajamento já bateria a maioria dos criadores no patamar ${proximoRow.label}. Você só precisa de alcance.`
   }
 
   return {
@@ -655,9 +683,9 @@ export function getBenchmark(engagement: EngagementStats, followersCount: number
   const percentilLabel = percentil >= 70 ? 'Acima da média' : percentil >= 40 ? 'Na média' : 'Abaixo da média'
   const status: 'acima' | 'media' | 'abaixo' = percentil >= 60 ? 'acima' : percentil >= 35 ? 'media' : 'abaixo'
   const texto = status === 'acima'
-    ? `Seu engajamento (${er.toFixed(2)}%) está no topo da faixa ${label}. Parabéns!`
+    ? `O engajamento (${er.toFixed(2)}%) está no topo da faixa ${label}. Parabéns!`
     : status === 'media'
-      ? `Seu engajamento está na média para ${label}. Há espaço para subir.`
+      ? `O engajamento está na média para ${label}. Há espaço para subir.`
       : `Para a faixa ${label}, o típico é ${erMin}%–${erMax}%. Você está em ${er.toFixed(2)}%.`
   const tierErRange = `${erMin.toFixed(1).replace('.', ',')}%–${erMax}%`
   return { tier: label, percentil: Math.round(percentil), percentilLabel, status, texto, tierErAvg: erMid, tierErRange }
@@ -842,7 +870,7 @@ export interface CreatorTypeInsight {
 export function getCreatorType(
   conversation: ConversationInsight,
   strategicMetrics: { viralDependenceIndex: number; conversionPotentialScore: number; reachMultiplier: { max: number | null } },
-  engagement: EngagementStats
+  _engagement: EngagementStats
 ): CreatorTypeInsight {
   const convRate = conversation.rate ?? 0
   const viralDep = strategicMetrics.viralDependenceIndex
@@ -983,6 +1011,8 @@ export interface DiagnosticoBI {
   }
   /** Onde perde: apenas impacto (alcance) — sem sugestões */
   ondePerdeAlcance: string[]
+  /** Insight positivo de alcance (ex.: feed engaja mais que reels) — exibido em "O que está bom" */
+  alcancePositivo?: string
   /** Onde perde: apenas impacto (monetização) — sem sugestões */
   ondePerdeMonetizacao: string[]
   /** Forças do perfil (benchmark + itens positivos + potencial comercial) */
@@ -1050,7 +1080,8 @@ export function getDiagnosticoBI(
   const ondePerdeAlcance: string[] = []
   if (opHashtags) ondePerdeAlcance.push('Você está perdendo alcance por não usar hashtags segmentadas')
   if (postsPerWeek < 1) ondePerdeAlcance.push('Sua frequência irregular limita o alcance orgânico')
-  // Feed vs reels: se o feed engaja mais que reels, sugerir investir em fotos/carrossel (exibido em "O que melhorar")
+  // Feed vs reels: se o feed engaja mais que reels → insight positivo em "O que está bom"
+  let alcancePositivo: string | undefined
   const feedPosts = _posts.filter((p) => ct(p) === 'post')
   const reelsPosts = _posts.filter((p) => ct(p) === 'reel')
   if (feedPosts.length >= 1 && reelsPosts.length >= 1) {
@@ -1061,7 +1092,7 @@ export function getDiagnosticoBI(
     if (erReel > 0 && erFeed > 0) {
       const ratio = erReel / erFeed
       if (ratio <= 0.6) {
-        ondePerdeAlcance.push(`Seu feed engaja mais que reels (${(erFeed / erReel).toFixed(1).replace('.', ',')}×). Invista em fotos/carrossel.`)
+        alcancePositivo = `Seu feed engaja mais que reels (${(erFeed / erReel).toFixed(1).replace('.', ',')}×). Invista em fotos/carrossel.`
       }
     }
   }
@@ -1122,14 +1153,6 @@ export function getDiagnosticoBI(
     alcance: pillars.alcance,
     estruturaComercial: Math.round((pillars.autoridade + pillars.consistencia) / 2),
   }
-  const labels: Record<'engajamento' | 'alcance' | 'estruturaComercial', string> = {
-    engajamento: 'engajamento',
-    alcance: 'alcance potencial',
-    estruturaComercial: 'estrutura comercial',
-  }
-  const entries = (['engajamento', 'alcance', 'estruturaComercial'] as const).map((k) => ({ k, v: scoreNarrativo[k] }))
-  const maxEntry = entries.reduce((a, b) => (a.v >= b.v ? a : b))
-  const minEntry = entries.reduce((a, b) => (a.v <= b.v ? a : b))
   const scoreNarrativaFrase = null
 
   // Projeção de meses: ritmo atual (causa explícita: posts/semana) vs. 3 posts/semana
@@ -1159,6 +1182,7 @@ export function getDiagnosticoBI(
     insightPatamar: insightPatamarFull,
     eixos: { engajamento, descoberta, estrutura },
     ondePerdeAlcance,
+    alcancePositivo,
     ondePerdeMonetizacao,
     forcas,
     proximoPassoTop3: top3,
@@ -1222,15 +1246,17 @@ export interface StrategicMetrics {
   audienceStabilityScore: number
 }
 
+/** posts = apenas post+reel (para todas as regras). allPosts = opcional, usado só para taggedDependency informativo. */
 export function getStrategicMetrics(
   profile: ProfileItem | null,
   posts: PostItem[],
-  engagement: EngagementStats
+  engagement: EngagementStats,
+  allPosts?: PostItem[]
 ): StrategicMetrics {
   const followersCount = getFollowersCount(profile)
   const feedPosts = posts.filter((p) => ct(p) === 'post')
   const reelsPosts = posts.filter((p) => ct(p) === 'reel')
-  const taggedPosts = posts.filter((p) => ct(p) === 'tagged')
+  const taggedPosts = (allPosts ?? []).filter((p) => ct(p) === 'tagged')
 
   const feedEng = computeEngagementFromPosts(feedPosts, followersCount)
   const reelsEng = computeEngagementFromPosts(reelsPosts, followersCount)
@@ -1243,7 +1269,7 @@ export function getStrategicMetrics(
   let erByTypeNarrative: string | null = null
   if (erReel > 0 && erFeed > 0 && reelsPosts.length >= 1 && feedPosts.length >= 1) {
     const ratio = erReel / erFeed
-    if (ratio >= 1.5) erByTypeNarrative = `Seu engajamento em reels é ${ratio.toFixed(1).replace('.', ',')}× maior que no feed. Reels valem mais para marcas.`
+    if (ratio >= 1.5) erByTypeNarrative = `O engajamento em reels é ${ratio.toFixed(1).replace('.', ',')}× maior que no feed. Reels valem mais para marcas.`
     else if (ratio <= 0.6) erByTypeNarrative = `Seu feed engaja mais que reels (${(erFeed / erReel).toFixed(1)}×). Invista em fotos/carrossel.`
   } else if (erTagged > 0 && (erFeed > 0 || erReel > 0)) {
     const erOwn = (feedEng.total_likes + feedEng.total_comments + reelsEng.total_likes + reelsEng.total_comments) /
@@ -1290,21 +1316,38 @@ export function getStrategicMetrics(
   }
 
   const mediaType = (p: PostItem) => (p.post?.media_type ?? (p as { media_type?: number }).media_type ?? 1) as number
+  // Usar lista completa (allPosts) para distribuição de formato, para bater com o Media Kit e não depender da ordem dos primeiros 25
+  const listForDistribution = allPosts && allPosts.length > 0 ? allPosts : posts
   let countReels = 0
   let countCarousel = 0
   let countPhoto = 0
-  for (const p of posts) {
+  for (const p of listForDistribution) {
     const mt = mediaType(p)
     const isReel = ct(p) === 'reel' || (p as { product_type?: string }).product_type === 'clips'
     if (isReel || mt === 2) countReels++
     else if (mt === 8) countCarousel++
     else countPhoto++
   }
-  const n = posts.length
+  const n = listForDistribution.length
+  let pctReels = n > 0 ? Math.round((countReels / n) * 100) : 0
+  let pctCarousel = n > 0 ? Math.round((countCarousel / n) * 100) : 0
+  let pctPhoto = n > 0 ? Math.round((countPhoto / n) * 100) : 0
+  // Garantir que a soma seja exatamente 100% (arredondamentos podem dar 99% ou 101%)
+  if (n > 0) {
+    const sum = pctReels + pctCarousel + pctPhoto
+    const diff = 100 - sum
+    if (diff !== 0) {
+      const byCount = [{ pct: pctReels, count: countReels }, { pct: pctCarousel, count: countCarousel }, { pct: pctPhoto, count: countPhoto }]
+      const idx = byCount.reduce((best, cur, i) => (cur.count > byCount[best].count ? i : best), 0)
+      if (idx === 0) pctReels = Math.max(0, pctReels + diff)
+      else if (idx === 1) pctCarousel = Math.max(0, pctCarousel + diff)
+      else pctPhoto = Math.max(0, pctPhoto + diff)
+    }
+  }
   const contentTypeDistribution = {
-    pctReels: n > 0 ? Math.round((countReels / n) * 100) : 0,
-    pctCarousel: n > 0 ? Math.round((countCarousel / n) * 100) : 0,
-    pctPhoto: n > 0 ? Math.round((countPhoto / n) * 100) : 0,
+    pctReels,
+    pctCarousel,
+    pctPhoto,
     countReels,
     countCarousel,
     countPhoto,
@@ -1452,10 +1495,11 @@ export function getStrategicMetrics(
   const interactionsFeed = feedEng.total_likes + feedEng.total_comments
   const interactionsReels = reelsEng.total_likes + reelsEng.total_comments
   const interactionsTagged = taggedEng.total_likes + taggedEng.total_comments
+  const totalComTudo = totalInteractions + interactionsTagged
   const interactionDistribution = {
     pctFromFeed: totalInteractions > 0 ? Math.round((interactionsFeed / totalInteractions) * 1000) / 10 : 0,
     pctFromReels: totalInteractions > 0 ? Math.round((interactionsReels / totalInteractions) * 1000) / 10 : 0,
-    pctFromTagged: totalInteractions > 0 ? Math.round((interactionsTagged / totalInteractions) * 1000) / 10 : 0,
+    pctFromTagged: totalComTudo > 0 ? Math.round((interactionsTagged / totalComTudo) * 1000) / 10 : 0,
   }
 
   let viralDependencePct = 0
@@ -1520,12 +1564,13 @@ export function getStrategicMetrics(
   }
 }
 
-/** Monta todos os insights do relatório (usar com posts já limitados a REPORT_POSTS_LIMIT). */
+/** Monta todos os insights do relatório (usar com posts já limitados a REPORT_POSTS_LIMIT). Marcados não entram em nenhum cálculo, só em exibição informativa. */
 export function buildReportInsights(
   profile: ProfileItem | null,
   posts: PostItem[]
 ) {
-  const limited = posts.slice(0, REPORT_POSTS_LIMIT)
+  const ownPosts = posts.filter((p) => ct(p) !== 'tagged')
+  const limited = ownPosts.slice(0, REPORT_POSTS_LIMIT)
   const followersCount = getFollowersCount(profile)
   const engagement = computeEngagementFromPosts(limited, followersCount)
   const score = computeInfluencerScore(profile, limited, engagement)
@@ -1544,7 +1589,7 @@ export function buildReportInsights(
   const locationString = locParts.length > 0 ? locParts.join(', ') : '—'
   const matchMarca = getMatchMarca(locationString, nicho, consistency, topPosts)
   const diagnosticoBI = getDiagnosticoBI(profile, limited, engagement, benchmark, score, profissionalismo, oportunidades, consistency, diagnostico, matchMarca)
-  const strategicMetrics = getStrategicMetrics(profile, limited, engagement)
+  const strategicMetrics = getStrategicMetrics(profile, limited, engagement, posts)
   const freqNorm = Math.min(100, (engagement.posts_per_week ?? 0) * 25)
   const monetizationReadinessScore = Math.round(
     (score.pillars.autoridade + score.pillars.consistencia + score.pillars.comunidade + freqNorm) / 4
@@ -1576,6 +1621,7 @@ export function buildReportInsights(
     profile
   )
   const cpmCpe = getCpmCpe(valorEstimado, engagement)
+  const engagementPerWeekday = getEngagementPerWeekdayAllTime(ownPosts)
 
   return {
     engagement,
@@ -1599,5 +1645,7 @@ export function buildReportInsights(
     creatorType,
     cpmCpe,
     postsForReport: limited,
+    engagementPerWeekday,
+    followersCount,
   }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Spin,
@@ -7,8 +7,6 @@ import {
   Descriptions,
   Tag,
   Card,
-  Row,
-  Col,
   Typography,
   Tooltip,
   Collapse,
@@ -17,18 +15,12 @@ import {
 } from 'antd'
 import {
   EditOutlined,
-  FileImageOutlined,
-  FileTextOutlined,
-  HeartOutlined,
-  CommentOutlined,
-  RiseOutlined,
   SafetyOutlined,
   MessageOutlined,
   SyncOutlined,
   VideoCameraOutlined,
   FacebookOutlined,
   LinkedinOutlined,
-  RocketOutlined,
   TwitterOutlined,
   LockOutlined,
 } from '@ant-design/icons'
@@ -36,7 +28,7 @@ import { Link } from 'react-router-dom'
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { buildReportInsights, getWeekdayName } from '../utils/reportInsights'
-import { CONTENT_TYPE_LABELS, CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
+import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 import { PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
 import { DETAIL_SECTION_ORDER, type DetailSectionId } from '../constants/detailLayout'
@@ -47,16 +39,17 @@ import {
   ScoreOverview,
   DiagnosticoBISection,
   EngajamentoPorTipoSection,
+  MetricasMediakitSection,
   ValorEpublicoSection,
   StrategicMetricsSection,
   StickyCTA,
   ReportSkeleton,
 } from './InfluencerDetailReport'
 import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
+import { AlcanceSection } from '../components/AlcanceSection'
 import { PostAnalysisSection } from '../components/PostAnalysisSection'
 import { ReelsAnalysisSection } from '../components/ReelsAnalysisSection'
 import { TaggedAnalysisSection } from '../components/TaggedAnalysisSection'
-import { HighlightsAnalysisSection } from '../components/HighlightsAnalysisSection'
 
 const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh, typography: typ, layout: lay } = t
@@ -108,58 +101,6 @@ function getPostLink(post: PostItem): string {
 }
 
 const sectionGap = (t.spacing.xl as number)
-const cardBgStrategic = t.colors.cardBgStrategic as string
-const cardBgAnalytical = t.colors.cardBgAnalytical as string
-const cardBgHighlight = t.colors.cardBgHighlight as string
-const shadowStrong = t.shadowStrong as string
-const radiusLarge = t.radiusLarge as number
-const gold = t.colors.gold as string
-const typH2 = t.typography.h2 as { fontSize: number; fontWeight: number }
-const typH3 = t.typography.h3 as { fontSize: number; fontWeight: number }
-
-// ——— Componentes internos do relatório ———
-function ReportSection({
-  title,
-  children,
-  className,
-  sectionTitle = true,
-  variant = 'strategic',
-  style: styleProp,
-}: {
-  title?: React.ReactNode
-  children: React.ReactNode
-  className?: string
-  sectionTitle?: boolean
-  variant?: 'strategic' | 'analytical' | 'highlight'
-  style?: React.CSSProperties
-}) {
-  const bg =
-    variant === 'highlight' ? cardBgHighlight : variant === 'analytical' ? cardBgAnalytical : cardBgStrategic
-  const useBorder = variant === 'analytical'
-  return (
-    <Card
-      size="small"
-      className={`report-card report-card--hover ${className ?? ''}`}
-      style={{
-        borderRadius: r,
-        border: useBorder ? `1px solid ${c.border}` : 'none',
-        boxShadow: variant === 'highlight' ? shadowStrong : sh,
-        padding: variant === 'highlight' ? s.xl : s.lg,
-        background: bg,
-        transition: 'box-shadow 0.2s ease, transform 0.2s ease',
-        ...styleProp,
-      }}
-    >
-      {title && (
-        <div style={{ marginBottom: s.md, ...(sectionTitle ? typ.h3 : {}), ...(sectionTitle ? { color: c.text } : {}) }}>
-          {title}
-        </div>
-      )}
-      {children}
-    </Card>
-  )
-}
-
 interface InfluencerDetailProps {
   overrideHandle?: string
 }
@@ -186,19 +127,14 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       navigate('/login', { state: { from: { pathname: mediaKitPath } } })
     }
   }
-  const mediaKitCtaLabel = mustCompleteCadastro
-    ? 'Finalize seu cadastro para gerar Media Kit'
-    : user
-      ? 'Transformar em proposta comercial agora'
-      : 'Faça login para gerar Media Kit'
-  const mediaKitCtaShortLabel = mustCompleteCadastro ? 'Ativar e Gerar MediaKit' : user ? 'Gerar MediaKit' : 'Entrar'
+  const mediaKitCtaShortLabel = mustCompleteCadastro ? 'Gerar MediaKit' : user ? 'Gerar MediaKit' : 'Entrar'
   const isLimitedView = !user || isPublic
   const [profileLoading, setProfileLoading] = useState(true)
   const [postsLoading, setPostsLoading] = useState(true)
   const [profile, setProfile] = useState<ProfileItem | null>(null)
   const [activation, setActivation] = useState<ProfileActivation | null>(null)
   const [posts, setPosts] = useState<PostItem[]>([])
-  const [postsTotal, setPostsTotal] = useState(0)
+  const [, setPostsTotal] = useState(0)
   const [dataRedacted, setDataRedacted] = useState(false)
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
@@ -306,40 +242,48 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     }
   }, [])
 
-  // Mostrar painel de ativação apenas quando o scroll chegar no elemento com blur (Análise de Feed).
-  // Esconder só quando o blur sair por baixo (viewport acima do blur); threshold 0 garante callback quando sair totalmente.
+  // Mostrar painel de ativação assim que o scroll chegar na seção Métricas.
+  // Esconder só quando o scroll estiver acima de Métricas (seção ficou abaixo da viewport — usuário rolou para cima).
   useEffect(() => {
     if (isLimitedView) return
     let cancelled = false
-    const setupObserver = () => {
-      const el = document.getElementById('blur-feed-analysis')
-      if (!el || cancelled) return
-      const observer = new IntersectionObserver(
-        ([entry]) => {
-          if (!entry) return
-          if (entry.isIntersecting) {
-            setShowActivationCta(true)
-            return
-          }
-          const rect = entry.boundingClientRect
-          const viewportHeight = entry.rootBounds?.height ?? window.innerHeight
-          // Só esconde quando o blur está totalmente abaixo da viewport (rolamos para cima)
-          if (rect.top >= viewportHeight) setShowActivationCta(false)
-        },
-        { rootMargin: '0px', threshold: [0, 0.1] }
-      )
-      observer.observe(el)
-      return () => observer.disconnect()
+    let observer: IntersectionObserver | null = null
+
+    const isAboveMetricas = (rect: DOMRect) => rect.top >= window.innerHeight
+
+    const observerCallback: IntersectionObserverCallback = ([entry]) => {
+      if (cancelled || !entry) return
+      if (entry.isIntersecting) {
+        setShowActivationCta(true)
+        return
+      }
+      if (isAboveMetricas(entry.boundingClientRect)) setShowActivationCta(false)
     }
-    let cleanup: (() => void) | undefined
+
+    const onScroll = () => {
+      if (cancelled) return
+      const target = document.getElementById('secao-metricas-mediakit')
+      if (!target) return
+      const rect = target.getBoundingClientRect()
+      if (isAboveMetricas(rect)) setShowActivationCta(false)
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true })
+
     const raf = requestAnimationFrame(() => {
       if (cancelled) return
-      cleanup = setupObserver()
+      const el = document.getElementById('secao-metricas-mediakit')
+      if (el) {
+        observer = new IntersectionObserver(observerCallback, { root: null, rootMargin: '0px', threshold: [0, 0.01, 0.1, 1] })
+        observer.observe(el)
+      }
     })
+
     return () => {
       cancelled = true
       cancelAnimationFrame(raf)
-      cleanup?.()
+      observer?.disconnect()
+      window.removeEventListener('scroll', onScroll)
     }
   }, [isLimitedView, profileLoading, postsLoading])
 
@@ -350,9 +294,13 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     ? profile.followers_count
     : (typeof userData?.follower_count === 'number' ? userData.follower_count : 0)
   const categories = (Array.isArray(profile?.categories) ? profile.categories : []) as string[]
+  const ownPosts = useMemo(() => {
+    const ct = (p: PostItem) => (p.content_type || 'post') as string
+    return posts.filter((p) => ct(p) !== 'tagged')
+  }, [posts])
   const engagement = useMemo(
-    () => computeEngagementFromPosts(posts, followersCount),
-    [posts, followersCount]
+    () => computeEngagementFromPosts(ownPosts, followersCount),
+    [ownPosts, followersCount]
   )
 
   const reportInsights = useMemo(
@@ -461,7 +409,6 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     !!reportInsights &&
     hasList(reportInsights.topPosts?.byInteractions) &&
     reportInsights.topPosts!.byInteractions.length >= 1
-  const showInlineCtas = !isMobile
   const layout = {
     showPrice: 'top' as const,
     showMainCta: 'final' as const,
@@ -517,17 +464,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
           <>
             {/* Ações da tela: acima do perfil */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', justifyContent: 'center', marginBottom: s.md, paddingLeft: isMobile ? 0 : 0, paddingRight: isMobile ? 0 : 0 }}>
-              <Tooltip title={mediaKitCtaLabel}>
-                <Button
-                  type="primary"
-                  size="large"
-                  icon={<RocketOutlined />}
-                  onClick={goToMediaKitOrLogin}
-                  style={{ borderRadius: r, background: c.gold ?? 'var(--app-gold)', borderColor: c.gold ?? 'var(--app-gold)', color: 'var(--brand-white)', fontWeight: 600, minHeight: 44 }}
-                >
-                  {mediaKitCtaShortLabel}
-                </Button>
-              </Tooltip>
+
               {user && (isAdm || user.scope === 'assinante') && handle && (
                 <Button
                   type="default"
@@ -576,7 +513,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               badgeLabel={!reportInsights ? tierLabel : undefined}
               highlights={[
                 { label: 'Seguidores', value: formatShortNum(followersCount) },
-                { label: 'ER médio (últ. 25)', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
+                { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
                 { label: 'Posts/sem', value: reportInsights?.consistency?.postsPerWeekByWeek?.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
               ]}
               onBack={() => navigate(-1)}
@@ -601,7 +538,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                   scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
                   statPills={layout.showScorePills ? [
                     { label: 'Seguidores', value: formatShortNum(followersCount) },
-                    { label: 'ER médio (últ. 25)', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
+                    { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
                     { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
                   ] : []}
                   postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
@@ -702,6 +639,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                         benchmarkTier={reportInsights.diagnosticoBI.benchmarkTier}
                         forcas={reportInsights.diagnosticoBI.forcas}
                         ondePerdeAlcance={reportInsights.diagnosticoBI.ondePerdeAlcance}
+                        alcancePositivo={reportInsights.diagnosticoBI.alcancePositivo}
                         ondePerdeMonetizacao={reportInsights.diagnosticoBI.ondePerdeMonetizacao}
                         proximoPassoTop3={reportInsights.diagnosticoBI.proximoPassoTop3}
                         nichoLabel={reportInsights.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas].join(', ') : undefined}
@@ -735,14 +673,146 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                     />
                   </div>
                 )
+              case 'alcance':
+                return reportInsights?.strategicMetrics?.contentTypeDistribution ? (
+                  <div key="alcance" id="secao-alcance" style={{ marginBottom: gap }}>
+                    <AlcanceSection distribution={reportInsights.strategicMetrics.contentTypeDistribution} gutter={rowGutter} />
+                  </div>
+                ) : null
+              case 'metricasMediakit':
+                return reportInsights ? (
+                  <div key="metricasMediakit" id="secao-metricas-mediakit" style={{ marginBottom: gap }}>
+                    {!hasActivationData && (
+                      <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                        Métricas
+                      </h2>
+                    )}
+                    <div
+                      style={{
+                        position: 'relative',
+                        overflow: 'hidden',
+                        ...(!hasActivationData && { borderRadius: t.radius.lg, minHeight: 80 }),
+                      }}
+                    >
+                      <div
+                        style={{
+                          ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                        }}
+                      >
+                        <MetricasMediakitSection
+                          formatShortNum={formatShortNum}
+                          followersCount={followersCount}
+                          engagement={engagement}
+                          conversationRate={reportInsights.conversation?.rate ?? 0}
+                          conversationLabel={reportInsights.conversation?.label}
+                          bestDay={getWeekdayName(reportInsights.consistency?.bestWeekday ?? 0)}
+                          bestHour={reportInsights.consistency?.bestHour}
+                          engagementPerWeekday={reportInsights.engagementPerWeekday ?? [0, 0, 0, 0, 0, 0, 0]}
+                          maxEr={Math.max(
+                            engagement.engagement_rate ?? 0,
+                            ...(reportInsights.topPosts?.byInteractions?.map((t) => t.erPost) ?? [])
+                          )}
+                          cpmCpe={reportInsights.cpmCpe ?? { cpmEstimate: null, cpeEstimate: null }}
+                          strategicMetrics={reportInsights.strategicMetrics ?? null}
+                          rowGutter={rowGutter}
+                        />
+                      </div>
+                      {!hasActivationData && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            background: 'rgba(0,0,0,0.4)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: s.sm,
+                            pointerEvents: 'auto',
+                            padding: s.lg,
+                          }}
+                        >
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<LockOutlined />}
+                            onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
+                            style={{
+                              borderRadius: t.radius.md,
+                              fontWeight: 600,
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                            }}
+                          >
+                            Desbloquear análise completa
+                          </Button>
+                          <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                            Dados e resultados para sua marca contratar.
+                          </Text>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null
               case 'metricasEstrategicas':
                 return reportInsights?.strategicMetrics ? (
                   <div key="metricasEstrategicas" id="metricas-estrategicas" style={{ marginBottom: gap }}>
-                    <StrategicMetricsSection
-                      metrics={reportInsights.strategicMetrics}
-                      monetizationReadinessScore={reportInsights.monetizationReadinessScore}
-                      nicheAuthorityScore={reportInsights.nicheAuthorityScore}
-                    />
+                    {!hasActivationData && (
+                      <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                        Métricas que marcas olham
+                      </h2>
+                    )}
+                    <div
+                      style={{
+                        position: 'relative',
+                        overflow: 'hidden',
+                        ...(!hasActivationData && { borderRadius: t.radius.lg, minHeight: 80 }),
+                      }}
+                    >
+                      <div
+                        style={{
+                          ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                        }}
+                      >
+                        <StrategicMetricsSection
+                          metrics={reportInsights.strategicMetrics}
+                          monetizationReadinessScore={reportInsights.monetizationReadinessScore}
+                          nicheAuthorityScore={reportInsights.nicheAuthorityScore}
+                        />
+                      </div>
+                      {!hasActivationData && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            background: 'rgba(0,0,0,0.4)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: s.sm,
+                            pointerEvents: 'auto',
+                            padding: s.lg,
+                          }}
+                        >
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<LockOutlined />}
+                            onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
+                            style={{
+                              borderRadius: t.radius.md,
+                              fontWeight: 600,
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                            }}
+                          >
+                            Desbloquear análise completa
+                          </Button>
+                          <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                            Dados e resultados para sua marca contratar.
+                          </Text>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : null
               case 'valorEpublico':
@@ -814,30 +884,11 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                     <div style={{ textAlign: 'center', padding: s.xl }}><Spin /></div>
                   </Card>
                 ) : null
-              case 'destaques':
-                return (
-                  <div key="destaques" id="secao-destaques">
-                    {postsLoading ? (
-                      <Card size="small" style={{ ...cardStyle, marginBottom: gap }}>
-                        <Skeleton active paragraph={{ rows: 2 }} title={{ width: 120 }} />
-                      </Card>
-                    ) : (
-                      <HighlightsAnalysisSection
-                        highlights={mediaByType.highlights}
-                        failedPostImages={failedPostImages}
-                        getPostImageUrl={getPostImageUrl}
-                        getPostLink={getPostLink}
-                        proxyImageUrl={proxyImageUrl}
-                        gap={gap}
-                      />
-                    )}
-                  </div>
-                )
               case 'conteudoPerforma':
                 return (
                   <div key="conteudoPerforma" id="secao-conteudo-performa" ref={feedSectionRef} style={{ marginBottom: gap }}>
                     {!hasActivationData && canEdit && handle && showActivationCta && (
-                      <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={gap} />
+                      <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={gap} scrollAnchorId="secao-metricas-mediakit" />
                     )}
                     {postsLoading ? (
                       <Card size="small" style={{ ...cardStyle, marginBottom: gap }}>
@@ -865,7 +916,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
                             }}
                           >
-                            <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={posts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} proxyImageUrl={proxyImageUrl} gap={gap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
+                            <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={ownPosts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} proxyImageUrl={proxyImageUrl} gap={gap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
                           </div>
                           {!hasActivationData && (
                             <div
@@ -1034,11 +1085,11 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         })}
 
         <StickyCTA
-          visible={isMobile && !isRedacted}
+          visible={!isRedacted}
+          isMobile={isMobile}
           primaryLabel={mediaKitCtaShortLabel}
-          primarySubtext="Pronto em 30s · PDF bonito · Envie para marcas"
           onPrimary={goToMediaKitOrLogin}
-          secondaryLabel={user && (isAdm || user.scope === 'assinante') && handle ? 'Mensagem' : undefined}
+          secondaryLabel={undefined}
           onSecondary={user && (isAdm || user.scope === 'assinante') && handle ? () => navigate(`/app/influencer/${encodeURIComponent(handle!)}/send-message`) : undefined}
         />
 
@@ -1063,6 +1114,16 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         .report-hero-inner { position: relative; }
         .proof-thumb:hover .proof-overlay { opacity: 1 !important; }
         .report-sticky-cta { safe-area-inset-bottom: env(safe-area-inset-bottom, 0); }
+        .report-sticky-cta__btn.ant-btn-primary {
+          background: var(--app-accent) !important;
+          border-color: var(--app-accent) !important;
+          color: var(--app-text) !important;
+        }
+        .report-sticky-cta__btn.ant-btn-primary:hover {
+          background: var(--app-warning-accent, #b45309) !important;
+          border-color: var(--app-warning-accent, #b45309) !important;
+          color: var(--app-text) !important;
+        }
         .section-h2 { letter-spacing: -0.02em; }
         .stat-pill { display: inline-flex; align-items: center; }
         @media print {

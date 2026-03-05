@@ -4,9 +4,12 @@
  */
 export const DETAIL_SECTION_ORDER = [
   'engajamentoPorTipo', // ER por Feed, Reel, Marcado
-  'diagnostico',      // Score 3 eixos, Patamar, O que está bom/melhorar
-  'valorEpublico',    // Valor estimado (Feed, Reels, Story, Destaque) — acima de Análise de Feed
-  'conteudoPerforma', // Posts (Análise de Feed), Reels, Marcados
+  'alcance',            // % posts por formato (Reels, Carrossel, Foto)
+  'diagnostico',        // Score 3 eixos, Patamar, O que está bom/melhorar
+  'metricasMediakit',   // Métricas (blur como preços) — logo acima de valorEpublico
+  'valorEpublico',      // Valor estimado (Feed, Reels, Story, Destaque) — preços
+  'conteudoPerforma',   // Posts (Análise de Feed), Reels, Marcados
+  'metricasEstrategicas',
 ] as const
 
 export type DetailSectionId = typeof DETAIL_SECTION_ORDER[number]

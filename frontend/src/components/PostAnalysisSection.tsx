@@ -3,16 +3,15 @@
  * posts por semana, conteúdo analisado e hashtags.
  */
 import React, { useState } from 'react'
-import { Card, Row, Col, Tooltip, Spin, Tag, Space, Typography, Modal } from 'antd'
+import { Card, Row, Col, Tooltip, Spin, Modal } from 'antd'
 import { HeartOutlined, CommentOutlined, RiseOutlined, RocketOutlined, FileImageOutlined } from '@ant-design/icons'
 import { reportTokens as t } from '../pages/reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
-import { buildReportInsights, REPORT_POSTS_LIMIT, getWeekdayName } from '../utils/reportInsights'
+import { buildReportInsights, REPORT_POSTS_LIMIT } from '../utils/reportInsights'
 import { ProofCarousel } from '../pages/InfluencerDetailReport'
 import type { EngagementStats } from '../api'
 import type { PostItem } from '../api'
 
-const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, typography: typ } = t
 const typH2 = t.typography.h2 as { fontSize: number; fontWeight: number }
 const typH3 = t.typography.h3 as { fontSize: number; fontWeight: number }
@@ -58,8 +57,8 @@ export function PostAnalysisSection({
   postsCount,
   postsLoading,
   canShowProof,
-  categories,
-  allHashtags,
+  categories: _categories,
+  allHashtags: _allHashtags,
   failedPostImages,
   formatShortNum,
   getPostImageUrl,
@@ -82,14 +81,6 @@ export function PostAnalysisSection({
 
   if (!canShowProof && !reportInsights) return null
 
-  const hasWeekData = reportInsights?.consistency && reportInsights.consistency.postsPerWeekByWeek.length > 0
-  const hasHashtagData =
-    (reportInsights?.nicho &&
-      (reportInsights.nicho.topHashtags.length > 0 || reportInsights.nicho.performingHashtags.length > 0)) ||
-    categories.length > 0 ||
-    allHashtags.length > 0
-  const showSecondaryCard = reportInsights && (hasWeekData || hasHashtagData)
-
   return (
     <>
       {canShowProof && (
@@ -104,10 +95,10 @@ export function PostAnalysisSection({
               style={{
                 display: 'flex',
                 flexWrap: 'wrap',
-                gap: s.md,
+                gap: s.sm,
                 alignItems: 'stretch',
                 justifyContent: 'center',
-                marginBottom: s.xl,
+                marginBottom: s.lg,
               }}
             >
               <Tooltip title={METRIC_TOOLTIPS.totalCurtidas} placement="top">
@@ -115,21 +106,21 @@ export function PostAnalysisSection({
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                     cursor: 'help',
-                    padding: `${s.sm}px ${s.lg}px`,
+                    padding: '6px 10px',
                     background: c.cardBgSoft,
-                    borderRadius: 12,
+                    borderRadius: 8,
                     border: `1px solid ${c.borderLight}`,
-                    boxShadow: 'var(--app-shadow-lg)',
+                    boxShadow: 'var(--app-shadow-sm)',
                   }}
                 >
-                  <HeartOutlined style={{ fontSize: 20, color: 'var(--app-icon-heart)' }} />
+                  <HeartOutlined style={{ fontSize: 16, color: 'var(--app-icon-heart)' }} />
                   <span>
-                    <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>
+                    <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
                       {formatShortNum(engagement.total_likes)}
                     </strong>{' '}
-                    <span style={{ color: c.textSecondary, fontSize: 13 }}>curtidas</span>
+                    <span style={{ color: c.textSecondary, fontSize: 12 }}>curtidas</span>
                   </span>
                 </div>
               </Tooltip>
@@ -138,21 +129,21 @@ export function PostAnalysisSection({
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                     cursor: 'help',
-                    padding: `${s.sm}px ${s.lg}px`,
+                    padding: '6px 10px',
                     background: c.cardBgSoft,
-                    borderRadius: 12,
+                    borderRadius: 8,
                     border: `1px solid ${c.borderLight}`,
-                    boxShadow: 'var(--app-shadow-lg)',
+                    boxShadow: 'var(--app-shadow-sm)',
                   }}
                 >
-                  <CommentOutlined style={{ fontSize: 20, color: 'var(--app-icon-comment)' }} />
+                  <CommentOutlined style={{ fontSize: 16, color: 'var(--app-icon-comment)' }} />
                   <span>
-                    <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>
+                    <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
                       {formatShortNum(engagement.total_comments)}
                     </strong>{' '}
-                    <span style={{ color: c.textSecondary, fontSize: 13 }}>comentários</span>
+                    <span style={{ color: c.textSecondary, fontSize: 12 }}>comentários</span>
                   </span>
                 </div>
               </Tooltip>
@@ -161,21 +152,21 @@ export function PostAnalysisSection({
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                     cursor: 'help',
-                    padding: `${s.sm}px ${s.lg}px`,
+                    padding: '6px 10px',
                     background: c.cardBgSoft,
-                    borderRadius: 12,
+                    borderRadius: 8,
                     border: `1px solid ${c.borderLight}`,
-                    boxShadow: 'var(--app-shadow-lg)',
+                    boxShadow: 'var(--app-shadow-sm)',
                   }}
                 >
-                  <RocketOutlined style={{ fontSize: 20, color: c.primary }} />
+                  <RocketOutlined style={{ fontSize: 16, color: c.primary }} />
                   <span>
-                    <strong style={{ ...typ.body, fontSize: 15, color: c.primary }}>
+                    <strong style={{ ...typ.body, fontSize: 13, color: c.primary }}>
                       {(engagement.engagement_rate ?? 0).toFixed(2)}%
                     </strong>{' '}
-                    <span style={{ color: c.textSecondary, fontSize: 13 }}>ER médio (feed)</span>
+                    <span style={{ color: c.textSecondary, fontSize: 12 }}>ER médio (feed)</span>
                   </span>
                 </div>
               </Tooltip>
@@ -184,21 +175,21 @@ export function PostAnalysisSection({
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                     cursor: 'help',
-                    padding: `${s.sm}px ${s.lg}px`,
+                    padding: '6px 10px',
                     background: c.cardBgSoft,
-                    borderRadius: 12,
+                    borderRadius: 8,
                     border: `1px solid ${c.borderLight}`,
-                    boxShadow: 'var(--app-shadow-lg)',
+                    boxShadow: 'var(--app-shadow-sm)',
                   }}
                 >
-                  <RiseOutlined style={{ fontSize: 20, color: c.primary }} />
+                  <RiseOutlined style={{ fontSize: 16, color: c.primary }} />
                   <span>
-                    <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>
+                    <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>
                       {engagement.avg_likes.toLocaleString('pt-BR')}
                     </strong>{' '}
-                    <span style={{ color: c.textSecondary, fontSize: 13 }}>média likes (feed)</span>
+                    <span style={{ color: c.textSecondary, fontSize: 12 }}>média likes (feed)</span>
                   </span>
                 </div>
               </Tooltip>
@@ -207,19 +198,19 @@ export function PostAnalysisSection({
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                     cursor: 'help',
-                    padding: `${s.sm}px ${s.lg}px`,
+                    padding: '6px 10px',
                     background: c.cardBgSoft,
-                    borderRadius: 12,
+                    borderRadius: 8,
                     border: `1px solid ${c.borderLight}`,
-                    boxShadow: 'var(--app-shadow-lg)',
+                    boxShadow: 'var(--app-shadow-sm)',
                   }}
                 >
-                  <FileImageOutlined style={{ fontSize: 20, color: 'var(--app-icon-image)' }} />
+                  <FileImageOutlined style={{ fontSize: 16, color: 'var(--app-icon-image)' }} />
                   <span>
-                    <strong style={{ ...typ.body, fontSize: 15, color: c.text }}>{engagement.posts_count}</strong>{' '}
-                    <span style={{ color: c.textSecondary, fontSize: 13 }}>itens (feed)</span>
+                    <strong style={{ ...typ.body, fontSize: 13, color: c.text }}>{engagement.posts_count}</strong>{' '}
+                    <span style={{ color: c.textSecondary, fontSize: 12 }}>itens (feed)</span>
                   </span>
                 </div>
               </Tooltip>
@@ -292,181 +283,6 @@ export function PostAnalysisSection({
         </div>
       )}
 
-      {showSecondaryCard && (() => {
-        const weekData = reportInsights!.consistency?.postsPerWeekByWeek ?? []
-        const maxBar = Math.max(1, ...weekData)
-        const bestDay = reportInsights!.consistency ? getWeekdayName(reportInsights.consistency.bestWeekday) : ''
-        const bestHour = reportInsights!.consistency?.bestHour ?? 0
-        return (
-          <div style={{ marginBottom: gap }}>
-            <Card size="small" style={cardStyle}>
-              {hasWeekData && (
-                <>
-                  <Tooltip title={METRIC_TOOLTIPS.postsPorSemanaUltimas8} placement="top">
-                    <div
-                      style={{
-                        ...typ.caption,
-                        color: c.primary,
-                        fontWeight: 600,
-                        marginBottom: 8,
-                        cursor: 'help',
-                        display: 'inline-block',
-                      }}
-                    >
-                      Feed por semana (últimas 8)
-                    </div>
-                  </Tooltip>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 40, width: '100%' }}>
-                    {weekData.map((n, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          height: Math.max(8, (n / maxBar) * 34),
-                          background: 'var(--app-chart-bar-gradient)',
-                          borderRadius: 6,
-                          boxShadow: 'var(--app-chart-bar-shadow)',
-                        }}
-                        title={`${n} itens no feed`}
-                      />
-                    ))}
-                  </div>
-                  <Tooltip title={METRIC_TOOLTIPS.melhorDiaHora} placement="top">
-                    <div
-                      style={{
-                        ...typ.caption,
-                        color: c.textSecondary,
-                        marginTop: 10,
-                        marginBottom: hasHashtagData ? s.lg : 0,
-                        fontWeight: 500,
-                        cursor: 'help',
-                        display: 'inline-block',
-                      }}
-                    >
-                      🕐 Melhor: {bestDay} às {bestHour}h
-                    </div>
-                  </Tooltip>
-                </>
-              )}
-              {hasHashtagData && (
-                <>
-                  {hasWeekData && (
-                    <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg, marginTop: 0 }} />
-                  )}
-                  <div
-                    style={{
-                      ...typ.caption,
-                      color: c.textMuted,
-                      marginBottom: s.md,
-                      fontWeight: 600,
-                    }}
-                  >
-                    Conteúdo analisado — assinatura de conteúdo
-                  </div>
-                  {reportInsights?.nicho &&
-                    (reportInsights.nicho.topHashtags.length > 0 ||
-                      reportInsights.nicho.performingHashtags.length > 0) &&
-                    (() => {
-                      const byTag = new Map<string, { count: number; avgEr: number | null }>()
-                      for (const { tag, count } of reportInsights.nicho.topHashtags) {
-                        byTag.set(tag, { count, avgEr: null })
-                      }
-                      for (const { tag, avgEr, count: perfCount } of reportInsights.nicho.performingHashtags) {
-                        const cur = byTag.get(tag)
-                        byTag.set(tag, { count: cur?.count ?? perfCount, avgEr })
-                      }
-                      const rows = Array.from(byTag.entries())
-                        .map(([tag, { count, avgEr }]) => ({ tag, count, avgEr }))
-                        .sort((a, b) => b.count - a.count || (b.avgEr ?? 0) - (a.avgEr ?? 0))
-                        .slice(0, 15)
-                      return (
-                        <div style={{ marginBottom: categories.length > 0 ? s.lg : 0 }}>
-                          <Tooltip title={METRIC_TOOLTIPS.hashtagsMaisUsadas} placement="top">
-                            <div
-                              style={{
-                                ...typ.caption,
-                                color: c.textSecondary,
-                                marginBottom: 8,
-                                cursor: 'help',
-                                display: 'inline-block',
-                              }}
-                            >
-                              Hashtags · últimos {REPORT_POSTS_LIMIT} do feed
-                            </div>
-                          </Tooltip>
-                          <div
-                            style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              gap: 6,
-                            }}
-                          >
-                            {rows.map(({ tag, count, avgEr }) => (
-                              <div
-                                key={tag}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 8,
-                                  padding: '8px 10px',
-                                  background: c.cardBgSoft,
-                                  borderRadius: 8,
-                                  border: `1px solid ${c.borderLight}`,
-                                  width: 'fit-content',
-                                }}
-                              >
-                                <span style={{ ...typ.bodySmall, fontWeight: 600, color: c.primary }}>#{tag}</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                                  <Tooltip title={METRIC_TOOLTIPS.hashtagsMaisUsadas} placement="top">
-                                    <span style={{ ...typ.caption, color: c.textMuted, cursor: 'help' }}>
-                                      {count}×
-                                    </span>
-                                  </Tooltip>
-                                  {avgEr != null ? (
-                                    <Tooltip title={METRIC_TOOLTIPS.hashtagsPerformam} placement="top">
-                                      <span
-                                        style={{
-                                          ...typ.caption,
-                                          fontWeight: 600,
-                                          color: c.success,
-                                          cursor: 'help',
-                                          whiteSpace: 'nowrap',
-                                        }}
-                                      >
-                                        {avgEr.toFixed(1)}%
-                                      </span>
-                                    </Tooltip>
-                                  ) : (
-                                    <span style={{ ...typ.caption, color: c.textMuted }}>—</span>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })()}
-                  {categories.length > 0 && (
-                    <div>
-                      <Text strong style={{ ...typ.caption, display: 'block', marginBottom: s.xs, color: c.textSecondary }}>
-                        Temas
-                      </Text>
-                      <Space wrap size={[6, 6]}>
-                        {categories.map((cat) => (
-                          <Tag key={cat} style={{ borderRadius: 6 }}>
-                            {cat}
-                          </Tag>
-                        ))}
-                      </Space>
-                    </div>
-                  )}
-                </>
-              )}
-            </Card>
-          </div>
-        )
-      })()}
     </>
   )
 }

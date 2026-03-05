@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Row, Col, Typography } from 'antd'
 import { RocketOutlined } from '@ant-design/icons'
@@ -10,25 +11,59 @@ export interface ActivationCtaPanelProps {
   handle: string
   isMobile: boolean
   marginBottom?: number
+  /** Id do elemento âncora (ex.: secao-metricas-mediakit). O painel só aparece quando essa seção estiver pelo menos 50% visível (meio da seção). */
+  scrollAnchorId?: string
 }
 
 const CONTENT_MAX_WIDTH = 1120
 const PAGE_PADDING_DESKTOP = 24
 const PAGE_PADDING_MOBILE = 16
 
+const VISIBILITY_THRESHOLD = 0.5
+
 export function ActivationCtaPanel({
   handle,
   isMobile,
-  marginBottom = 40,
+  marginBottom = 90,
+  scrollAnchorId,
 }: ActivationCtaPanelProps) {
   const navigate = useNavigate()
+  const [showPanel, setShowPanel] = useState(!scrollAnchorId)
+  const hasReachedMetricasRef = useRef(false)
+
+  useEffect(() => {
+    if (!scrollAnchorId) return
+    const el = document.getElementById(scrollAnchorId)
+    if (!el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [e] = entries
+        if (!e) return
+        const rect = e.boundingClientRect
+        const inView = e.intersectionRatio >= VISIBILITY_THRESHOLD
+        const pastSection = rect.bottom < 0
+        const aboveSection = rect.top >= (typeof window !== 'undefined' ? window.innerHeight : 0)
+
+        if (inView || pastSection) hasReachedMetricasRef.current = true
+        if (aboveSection) hasReachedMetricasRef.current = false
+
+        // Mostra a partir do meio da seção; some só quando rolar de volta e ficar acima de métricas
+        setShowPanel(hasReachedMetricasRef.current && !aboveSection)
+      },
+      { threshold: [0, VISIBILITY_THRESHOLD], rootMargin: '0px' }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [scrollAnchorId])
 
   const headline = 'Marcas perto de você estão procurando criadores agora.'
   const subline = 'Ao ativar, você entra na busca comercial e passa a ser considerado por marcas que procuram criadores na sua região.'
-  const buttonLabel = 'Ativar e Gerar MediaKit'
-  const disclaimer = 'Seu Media Kit organiza seus dados, comprova sua performance e aumenta sua credibilidade na hora de negociar com marcas.'
+  const buttonLabel = 'Ativar Cadastro'
+  const disclaimer = 'Monetize seus posts e transforme sua reputação em lucro.'
 
   const horizontalPadding = isMobile ? PAGE_PADDING_MOBILE : PAGE_PADDING_DESKTOP
+
+  if (!showPanel) return null
 
   return (
     <>
@@ -41,7 +76,7 @@ export function ActivationCtaPanel({
           zIndex: 1000,
           paddingLeft: horizontalPadding,
           paddingRight: horizontalPadding,
-          paddingBottom: marginBottom,
+          paddingBottom: marginBottom + 65,
           boxSizing: 'border-box',
           pointerEvents: 'none',
         }}
@@ -53,8 +88,8 @@ export function ActivationCtaPanel({
             margin: '0 auto',
             maxHeight: '85vh',
             overflowY: 'auto',
-            background: 'var(--app-primary)',
-            border: '2px solid var(--brand-white)',
+            background: 'color-mix(in srgb, var(--app-card-bg-soft) 92%, transparent)',
+            border: '2px solid var(--app-primary)',
             borderRadius: t.radius.lg,
             padding: isMobile ? s.lg : s.xl,
             paddingBottom: `max(${s.xl}px, env(safe-area-inset-bottom))`,
@@ -70,8 +105,8 @@ export function ActivationCtaPanel({
                       width: 48,
                       height: 48,
                       borderRadius: 14,
-                      background: 'var(--brand-white)',
-                      border: '2px solid var(--app-border)',
+                      background: 'var(--app-primary-muted)',
+                      border: '1px solid var(--app-border)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -85,7 +120,7 @@ export function ActivationCtaPanel({
                       strong
                       style={{
                         fontSize: isMobile ? typ.h2.fontSize : typ.h1.fontSize,
-                        color: 'var(--brand-white)',
+                        color: 'var(--app-text)',
                         letterSpacing: '-0.02em',
                         lineHeight: 1.3,
                         display: 'block',
@@ -98,7 +133,7 @@ export function ActivationCtaPanel({
                     <Text
                       style={{
                         fontSize: typ.body.fontSize,
-                        color: 'var(--brand-white)',
+                        color: 'var(--app-text-secondary)',
                         lineHeight: 1.5,
                         display: 'block',
                         marginTop: 8,
@@ -114,18 +149,18 @@ export function ActivationCtaPanel({
             </Col>
 
             <Col xs={24} md={10}>
-              <div style={{ ...(isMobile && { marginTop: s.md }), display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: s.md }}>
+              <div style={{ ...(isMobile && { marginTop: s.md }), textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: s.md }}>
                 <Button
-                  type="primary"
+                  type="default"
                   size="large"
                   icon={<RocketOutlined />}
                   onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
                   className="activation-cta-btn"
                   style={{
                     borderRadius: t.radius.md,
-                    background: 'var(--app-warning)',
-                    borderColor: 'transparent',
-                    color: 'var(--app-text)',
+                    background: 'var(--app-primary)',
+                    borderColor: 'var(--app-primary)',
+                    color: 'var(--brand-white)',
                     fontWeight: 700,
                     minHeight: 48,
                   }}
@@ -135,7 +170,7 @@ export function ActivationCtaPanel({
                 <Text
                   style={{
                     fontSize: typ.caption.fontSize,
-                    color: 'var(--brand-white)',
+                    color: 'var(--app-text-secondary)',
                     lineHeight: 1.5,
                     display: 'block',
                     maxWidth: 420,

@@ -167,6 +167,7 @@ export default function Activate() {
         city: act.city ?? '',
         state: act.state ?? '',
         neighborhoods: neighborhoodsList,
+        informar_endereco_completo: act.allow_gifts,
         whatsapp: act.whatsapp ?? '',
         tiktok: act.tiktok ?? '',
         facebook: act.facebook ?? '',

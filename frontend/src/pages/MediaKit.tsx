@@ -9,8 +9,9 @@ import { CheckCircleFilled, LoadingOutlined } from '@ant-design/icons'
 import { pdf } from '@react-pdf/renderer'
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, authHeaders } from '../api'
 import type { PostItem } from '../api'
-import { buildReportInsights, REPORT_POSTS_LIMIT } from '../utils/reportInsights'
+import { buildReportInsights, getTopPosts, REPORT_POSTS_LIMIT } from '../utils/reportInsights'
 import type { ProfileItem, ProfileActivation, PostsResponse } from '../api'
+import QRCode from 'qrcode'
 import { MediaKitDocument } from './MediaKitDocument'
 import { reportTokens as t } from './reportTokens'
 import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
@@ -218,10 +219,21 @@ export default function MediaKit() {
         }
         return urls
       }
-      // Só os 4 posts usados no PDF: capa (post 0) + 4 destaques
-      const topPostsForImages = (reportInsights?.topPosts?.byInteractions ?? [])
-        .slice(0, 4)
-        .map((t) => t.post)
+      // Posts para carregar imagens: 4 destaques gerais + top 2 feed, top 2 reels, top 2 marcados (dedupe por key)
+      const fc = profile?.followers_count ?? 0
+      const topGlobal = (reportInsights?.topPosts?.byInteractions ?? []).slice(0, 4).map((t) => t.post)
+      const topFeed = getTopPosts(posts, fc).byInteractions.slice(0, 2).map((t) => t.post)
+      const topReels = getTopPosts(reels, fc).byInteractions.slice(0, 2).map((t) => t.post)
+      const topTagged = getTopPosts(tagged, fc).byInteractions.slice(0, 2).map((t) => t.post)
+      const seen = new Set<string>()
+      const topPostsForImages: PostItem[] = []
+      for (const post of [...topGlobal, ...topFeed, ...topReels, ...topTagged]) {
+        const k = (post as { key?: string }).key ?? (post as { id?: string }).id ?? (post?.post as { shortcode?: string })?.shortcode ?? ''
+        if (k && !seen.has(k)) {
+          seen.add(k)
+          topPostsForImages.push(post)
+        }
+      }
       const postImageDataUrls: Record<string, string> = {}
 
       function setPostImageDataUrl(post: PostItem, dataUrl: string) {
@@ -261,7 +273,7 @@ export default function MediaKit() {
       const loadOne = (post: PostItem | undefined) =>
         post && !getPostImageByKeys(post, postImageDataUrls) ? tryLoadPostImage(post) : Promise.resolve(false)
       await Promise.race([
-        Promise.all(topPostsForImages.slice(0, 4).map((post) => loadOne(post))),
+        Promise.all(topPostsForImages.slice(0, 12).map((post) => loadOne(post))),
         new Promise<void>((resolve) => setTimeout(resolve, POST_IMAGES_PHASE_MAX_MS)),
       ])
 
@@ -287,6 +299,7 @@ export default function MediaKit() {
         }
         return ''
       }
+      // Ordenado: primeiros 4 são os destaques gerais (página de destaques do conteúdo)
       for (let i = 0; i < 4; i++) {
         postImageDataUrlsOrdered.push(getPostImageByKeys(topPostsForImages[i], postImageDataUrls))
       }
@@ -334,18 +347,20 @@ export default function MediaKit() {
     setProgress('Gerando PDF...')
     try {
       const themeToUse = themeRef.current
+      const instagramUrl = `https://www.instagram.com/${h}/`
+      const qrCodeDataUrl = await QRCode.toDataURL(instagramUrl, { width: 200, margin: 1 })
       const doc = (
         <MediaKitDocument
           profile={cached.profile}
           posts={cached.posts}
           reels={cached.reels ?? []}
-          tagged={cached.tagged ?? []}
           highlights={cached.highlights ?? []}
           activation={cached.activation}
           reportInsights={cached.reportInsights}
           profilePicDataUrl={cached.profilePicDataUrl}
           postImageDataUrls={cached.postImageDataUrls}
           postImageDataUrlsOrdered={cached.postImageDataUrlsOrdered}
+          qrCodeDataUrl={qrCodeDataUrl}
           theme={themeToUse}
         />
       )

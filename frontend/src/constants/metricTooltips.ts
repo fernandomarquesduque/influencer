@@ -41,7 +41,7 @@ export const METRIC_TOOLTIPS = {
     'Engajamento daquele post: curtidas e comentários em % dos seguidores. Mostra se aquele post bombou ou passou batido.',
 
   hashtagsMaisUsadas:
-    'Quantas vezes cada hashtag apareceu nos últimos 25 posts. Dá para ver o que a pessoa mais usa.',
+    'Quantas vezes cada hashtag apareceu nos posts. Dá para ver o que a pessoa mais usa.',
 
   hashtagsPerformam:
     'Engajamento médio dos posts em que a hashtag aparece. Assim você vê quais hashtags estão ligadas a posts que bombam.',

@@ -50,7 +50,7 @@ export function ReelsAnalysisSection({
   getPostLink,
   proxyImageUrl,
   gap = s.xl,
-  cardStyle = { borderRadius: r, border: 'none', boxShadow: t.shadowLegacy, padding: s.lg, background: c.cardBg },
+  cardStyle: _cardStyle = { borderRadius: r, border: 'none', boxShadow: t.shadowLegacy, padding: s.lg, background: c.cardBg },
   lastReelAmplificationLabel,
   contentOnly = false,
 }: ReelsAnalysisSectionProps) {
@@ -178,7 +178,7 @@ export function ReelsAnalysisSection({
                 alignItems: 'center',
                 gap: 6,
                 padding: '6px 10px',
-                background: c.primaryBg ?? `${c.primary}15`,
+                background: c.cardBgHighlight ?? `${c.primary}15`,
                 borderRadius: 8,
                 border: `1px solid ${c.primary}40`,
                 width: '100%',

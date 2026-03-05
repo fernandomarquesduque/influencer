@@ -159,7 +159,7 @@ export async function getFollowersAndMinimalProfile(
     if (options?.skipGoto) {
       await page.waitForTimeout(800);
       const followers = capturedBody != null ? getFollowersFromEntity(capturedBody) : await readFollowersFromCurrentPage(page);
-      return { followers: followers > 0 ? followers : null, minimalProfile: capturedBody };
+      return { followers: followers != null && followers > 0 ? followers : null, minimalProfile: capturedBody };
     }
     if (options?.doNavigate) {
       await options.doNavigate();
@@ -169,7 +169,7 @@ export async function getFollowersAndMinimalProfile(
     await page.waitForTimeout(2500);
     const fromApi = capturedBody != null ? getFollowersFromEntity(capturedBody) : 0;
     const followers = fromApi > 0 ? fromApi : await readFollowersFromCurrentPage(page);
-    return { followers: followers > 0 ? followers : null, minimalProfile: capturedBody };
+    return { followers: followers != null && followers > 0 ? followers : null, minimalProfile: capturedBody };
   } finally {
     page.off('response', onResponse);
   }
@@ -891,7 +891,7 @@ export async function extractProfile(
                   return { itemCount: itemCount, weeksAgo: weeksAgo, dateIso: dateIso };
                 })();
               `;
-              const domMeta = await page.evaluate(highlightCountScript).catch(() => ({ itemCount: 0, weeksAgo: null, dateIso: null }));
+              const domMeta = await page.evaluate(highlightCountScript).catch(() => ({ itemCount: 0, weeksAgo: null, dateIso: null })) as { itemCount: number; weeksAgo: number | null; dateIso: string | null };
               if (domMeta.itemCount > 0 || domMeta.dateIso || domMeta.weeksAgo != null) {
                 highlightMetaById.set(highlightId, { itemCount: domMeta.itemCount, weeksAgo: domMeta.weeksAgo, dateIso: domMeta.dateIso });
                 logStep(`[highlights] destaque ${highlightId} fallback DOM: itemCount=${domMeta.itemCount} dateIso=${domMeta.dateIso ?? 'null'}`);
