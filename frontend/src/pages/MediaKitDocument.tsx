@@ -1158,6 +1158,7 @@ function CtaPage({
   const displayName = fullName ? sanitizeText(fullName) : safeHandle
   const fullAddress = [
     activation?.address,
+    activation?.address_number,
     activation?.neighborhood,
     activation?.city,
     activation?.state,
@@ -1320,7 +1321,7 @@ function CtaPage({
             ) : null}
           </Card>
         ) : hasValorEstimado && valorRows.length > 0 ? (
-          <Card title="Tabela de valores" style={{ marginBottom: 8 }}>
+          <Card title="Tabela de valores (a partir de)" style={{ marginBottom: 8 }}>
             {valorRows.map((row, i) => (
               <View
                 key={row.label}
@@ -1335,11 +1336,18 @@ function CtaPage({
               >
                 <Text style={{ fontSize: 12, color: pal.text }}>{row.label}</Text>
                 <Text style={{ fontSize: 13, fontWeight: 'bold', color: pal.brand }}>
-                  R$ {row.min.toLocaleString('pt-BR')}–{row.max.toLocaleString('pt-BR')}
+                  {row.min === 0 && row.max === 0 ? 'Incluído' : `R$ ${row.min.toLocaleString('pt-BR')}–${row.max.toLocaleString('pt-BR')}`}
                 </Text>
               </View>
             ))}
-            <Text style={{ fontSize: typo.caption, color: pal.textMuted, marginTop: 4 }}>Upgrade 30 dias: +10% a +25% do Story.</Text>
+            {valorEstimadoPorTipo != null ? (
+              <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: pal.borderLight }}>
+                <Text style={{ fontSize: 8, color: pal.textMuted, marginBottom: 4 }}>Sugestão automática (média da faixa, com base em seguidores, engajamento e alcance):</Text>
+                <Text style={{ fontSize: 10, fontWeight: '600', color: pal.text }}>
+                  Feed R$ {Math.round((valorEstimadoPorTipo.post.min + valorEstimadoPorTipo.post.max) / 2).toLocaleString('pt-BR')} · Reels R$ {Math.round((valorEstimadoPorTipo.reels.min + valorEstimadoPorTipo.reels.max) / 2).toLocaleString('pt-BR')} · Stories R$ {Math.round((valorEstimadoPorTipo.stories.min + valorEstimadoPorTipo.stories.max) / 2).toLocaleString('pt-BR')}
+                </Text>
+              </View>
+            ) : null}
           </Card>
         ) : (
           <Card title="Tabela de valores" style={{ marginBottom: 8 }}>

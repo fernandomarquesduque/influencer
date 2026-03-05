@@ -1907,6 +1907,7 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
     }
     sqlite.saveActivation(handle, {
       address: typeof body.address === 'string' ? body.address : undefined,
+      address_number: typeof body.address_number === 'string' ? body.address_number.trim() || undefined : undefined,
       zip_code: typeof body.zip_code === 'string' ? body.zip_code.trim() || undefined : undefined,
       city: city || undefined,
       state: state || undefined,
@@ -2425,8 +2426,18 @@ app.get('/api-docs', (_req: Request, res: Response) => {
 (async () => {
   console.log('Aquecendo cache de busca (perfis + posts)...');
   const t0 = Date.now();
-  await warmSearchCache(db);
-  console.log(`Cache de busca aquecido em ${((Date.now() - t0) / 1000).toFixed(1)}s.`);
+  try {
+    await warmSearchCache(db);
+    console.log(`Cache de busca aquecido em ${((Date.now() - t0) / 1000).toFixed(1)}s.`);
+  } catch (err: unknown) {
+    const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: string }).code : undefined;
+    const causeCode = err instanceof Error && err.cause && typeof err.cause === 'object' && 'code' in err.cause ? (err.cause as { code?: string }).code : undefined;
+    if (code === 'LEVEL_DATABASE_NOT_OPEN' || causeCode === 'LEVEL_LOCKED') {
+      console.warn('Cache de busca não carregado (banco em uso por outro processo?). API sobe sem cache; buscas podem ser mais lentas.');
+    } else {
+      throw err;
+    }
+  }
   app.listen(PORT, () => {
     console.log(`API: http://localhost:${PORT}`);
     console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);

@@ -26,7 +26,7 @@ export const METRIC_TOOLTIPS = {
     'Quanto o mercado costuma pagar por um post no feed. A base leva em conta seguidores e engajamento; aí entram bônus (perfil verificado, conta pro, audiência que comenta) e o alcance. A faixa é uma estimativa para você ter uma ideia.',
 
   valorEstimadoDestaque:
-    'Destaque (Highlights) não é formato principal: é aquele catálogo fixo no perfil. O mercado usa como bônus (tipo +10% a +25% do story por 30 dias) ou inclui no pacote. Quem vê é quem já entra no perfil. Em nichos tipo restaurante e clínica pode valer um pouco mais.',
+    'Destaque (Highlights) é o catálogo fixo no perfil por 30 dias. O valor sugerido é um adicional de 10% a 25% sobre o Reels contratado, conforme negociação.',
 
   postsPorSemanaUltimas8:
     'Quantos posts saíram em cada uma das últimas 8 semanas. Assim você vê se a pessoa está postando de verdade ou sumida.',

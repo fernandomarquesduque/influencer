@@ -163,6 +163,7 @@ export default function Activate() {
         typeof profileBio === 'string' && profileBio.trim() ? profileBio.trim() : ''
       const formValuesFromAct = {
         address: act.address ?? '',
+        address_number: act.address_number ?? '',
         zip_code: act.zip_code ?? '',
         city: act.city ?? '',
         state: act.state ?? '',
@@ -249,6 +250,7 @@ export default function Activate() {
       neighborhoodsArr.length > 0 ? neighborhoodsArr.join(', ') : undefined
     return {
       address: values.informar_endereco_completo === true && typeof values.address === 'string' ? values.address?.trim() || undefined : undefined,
+      address_number: values.informar_endereco_completo === true && typeof values.address_number === 'string' ? values.address_number?.trim() || undefined : undefined,
       zip_code: typeof values.zip_code === 'string' ? values.zip_code?.trim() || undefined : undefined,
       city: typeof values.city === 'string' ? values.city?.trim() || undefined : undefined,
       state: typeof values.state === 'string' ? values.state?.trim() || undefined : undefined,
@@ -290,12 +292,18 @@ export default function Activate() {
     } else if (step === 1) {
       const informar = form.getFieldValue('informar_endereco_completo')
       const address = form.getFieldValue('address')
+      const addressNumber = form.getFieldValue('address_number')
       if (informar === true && (!address || !String(address).trim())) {
         form.setFields([{ name: 'address', errors: ['Coloca o endereço completo.'] }])
         scrollToFirstError()
         return
       }
-      form.validateFields(['zip_code', 'informar_endereco_completo']).then(() => setStep((s) => s + 1)).catch(onError)
+      if (informar === true && (!addressNumber || !String(addressNumber).trim())) {
+        form.setFields([{ name: 'address_number', errors: ['Coloca o número e complemento.'] }])
+        scrollToFirstError()
+        return
+      }
+      form.validateFields(['zip_code', 'informar_endereco_completo', 'address', 'address_number']).then(() => setStep((s) => s + 1)).catch(onError)
     } else if (step === 2) {
       form.validateFields(['whatsapp']).then(() => setStep((s) => s + 1)).catch(onError)
     }
@@ -614,24 +622,48 @@ export default function Activate() {
                   </Col>
                 </Row>
                 {informarEnderecoCompleto === true && (
-                  <>
-                    <Form.Item
-                      name="address"
-                      label="Endereço completo"
-                      required={informarEnderecoCompleto === true}
-                      rules={[
-                        {
-                          validator: (_, v) => {
-                            if (form.getFieldValue('informar_endereco_completo') !== true) return Promise.resolve()
-                            if (!v || !String(v).trim()) return Promise.reject(new Error('Coloca o endereço completo.'))
-                            return Promise.resolve()
+                  <Row gutter={[16, 0]}>
+                    <Col xs={24} md={14}>
+                      <Form.Item
+                        name="address"
+                        label="Endereço completo"
+                        required={informarEnderecoCompleto === true}
+                        rules={[
+                          {
+                            validator: (_, v) => {
+                              if (form.getFieldValue('informar_endereco_completo') !== true) return Promise.resolve()
+                              if (!v || !String(v).trim()) return Promise.reject(new Error('Coloca o endereço completo.'))
+                              return Promise.resolve()
+                            },
                           },
-                        },
-                      ]}
-                    >
-                      <Input placeholder="Rua, número, complemento" />
-                    </Form.Item>
-                  </>
+                        ]}
+                      >
+                        <Input placeholder="Rua Doutor Miguel Vieira Ferreira" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} md={10}>
+                      <Form.Item
+                        name="address_number"
+                        label="Número (complemento)"
+                        required={informarEnderecoCompleto === true}
+                        rules={[
+                          {
+                            required: informarEnderecoCompleto === true,
+                            message: 'Coloca o número e complemento.',
+                          },
+                          {
+                            validator: (_, v) => {
+                              if (form.getFieldValue('informar_endereco_completo') !== true) return Promise.resolve()
+                              if (!v || !String(v).trim()) return Promise.reject(new Error('Coloca o número e complemento.'))
+                              return Promise.resolve()
+                            },
+                          },
+                        ]}
+                      >
+                        <Input placeholder="Ex.: 123, apto 45" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
                 )}
               </>
             </div>

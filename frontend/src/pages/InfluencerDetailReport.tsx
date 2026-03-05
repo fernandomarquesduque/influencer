@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons'
 import { reportTokens as t } from './reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
+import { ERGaugeChart, ER_QUALIDADE_BANDAS, erBandaRangeLabel } from '../components/ERGaugeChart'
 import type { StrategicMetrics, ExecutiveSummaryForBrands, BenchmarkInsight } from '../utils/reportInsights'
 
 const s = t.spacing
@@ -82,7 +83,7 @@ export function ReportHero({
   isMobile = false,
   extraContent,
   score: scoreValue,
-  scoreTooltip,
+  scoreTooltip: _scoreTooltip,
   typesTags,
 }: ReportHeroProps) {
   const atHandle = handleProp ? `@${handleProp.replace(/^@/, '')}` : ''
@@ -103,9 +104,6 @@ export function ReportHero({
     }
   }, [profilePic])
 
-  const progressGradient = scoreValue != null
-    ? (scoreValue >= 70 ? `linear-gradient(90deg, ${c.success} 0%, var(--app-success-accent) 100%)` : scoreValue >= 40 ? `linear-gradient(90deg, ${c.primary} 0%, var(--app-primary-dark) 100%)` : `linear-gradient(90deg, ${c.warning} 0%, var(--app-warning-accent) 100%)`)
-    : undefined
   const hasRightBadge = tierLabelProp != null && (percentil != null || scoreSelo)
   return (
     <section className="report-hero" style={{ position: 'relative', width: '100%', padding: `${pad}px`, boxSizing: 'border-box' }} aria-label="Cabeçalho do relatório">
@@ -257,24 +255,6 @@ export function ReportHero({
                   {secondaryMetrics}
                 </div>
               )}
-              {scoreValue != null && progressGradient && (() => {
-                const bar = (
-                  <div style={{ marginBottom: 4, width: '100%', maxWidth: 360, marginLeft: isMobile ? 'auto' : undefined, marginRight: isMobile ? 'auto' : undefined }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: s.xs, cursor: scoreTooltip ? 'help' : undefined }}>
-                      <Progress
-                        percent={scoreValue}
-                        showInfo={false}
-                        strokeColor={progressGradient}
-                        trailColor={c.progressTrail}
-                        size={isMobile ? 12 : 14}
-                        style={{ flex: 1, marginBottom: 0 }}
-                      />
-                      <span style={{ ...typ.caption, fontWeight: 700, color: c.text, flexShrink: 0, fontSize: 12 }}>SCORE {scoreValue}/100</span>
-                    </div>
-                  </div>
-                )
-                return scoreTooltip ? <Tooltip title={scoreTooltip} placement="top">{bar}</Tooltip> : bar
-              })()}
             </div>
           </div>
           {/* Coluna direita: badge + percentil + tipos */}
@@ -599,6 +579,89 @@ export function ScoreOverview({
   )
 }
 
+// ——— PatamarCardSection (card "% do patamar atual" em linha inteira; exibir acima do endereço) ———
+export interface PatamarCardSectionProps {
+  benchmarkTier: string
+  proximoPatamar?: string | null
+  faltaParaProximo?: number
+  percentualNoPatamar?: number
+  insightPatamar: string
+  projecaoProximoPatamar?: { min: number; max: number; label: string; texto: string } | null
+  comparacaoLocal?: string | null
+  proximoPassoConcreto?: string | null
+  growthProjectionNote?: string | null
+}
+
+export function PatamarCardSection({
+  benchmarkTier,
+  proximoPatamar,
+  faltaParaProximo = 0,
+  percentualNoPatamar = 0,
+  insightPatamar,
+  projecaoProximoPatamar,
+  comparacaoLocal,
+  proximoPassoConcreto,
+  growthProjectionNote,
+}: PatamarCardSectionProps) {
+  const cardStyle: React.CSSProperties = {
+    ...cardBaseStyle,
+    padding: s.xl,
+    cursor: 'default',
+  }
+  return (
+    <Row gutter={[s.lg, s.lg]} style={{ marginBottom: s.lg }}>
+      <Col xs={24}>
+        <Card size="small" className="report-card report-card--hover" style={cardStyle}>
+          <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: s.sm, flexWrap: 'wrap', marginBottom: 8 }}>
+              <span style={{ fontSize: 28, fontWeight: 800, color: c.primary, letterSpacing: '-0.02em' }}>{benchmarkTier}</span>
+              {proximoPatamar && (
+                <span style={{ fontSize: 13, color: c.textSecondary }}>
+                  → <strong style={{ color: c.primary }}>{proximoPatamar}</strong>
+                  {faltaParaProximo > 0 && (
+                    <span style={{ marginLeft: 4, color: c.textMuted }}>
+                      (faltam {faltaParaProximo.toLocaleString('pt-BR')})
+                    </span>
+                  )}
+                </span>
+              )}
+            </div>
+            {proximoPatamar && faltaParaProximo > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ height: 6, background: c.borderLight, borderRadius: 3, overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${Math.min(100, percentualNoPatamar)}%`,
+                      background: `linear-gradient(90deg, ${c.primary}, ${c.success})`,
+                      borderRadius: 3,
+                      transition: 'width 0.4s ease',
+                    }}
+                  />
+                </div>
+                <div style={{ fontSize: 11, color: c.textMuted, marginTop: 4 }}>{percentualNoPatamar}% do patamar atual</div>
+              </div>
+            )}
+            <div style={{ ...typ.bodySmall, color: c.text, lineHeight: 1.5, marginBottom: comparacaoLocal || projecaoProximoPatamar ? 8 : 0 }}>{insightPatamar}</div>
+            {projecaoProximoPatamar && (
+              <div style={{ ...typ.bodySmall, color: c.primary, fontWeight: 600, lineHeight: 1.4, marginBottom: comparacaoLocal ? 6 : 0 }}>{projecaoProximoPatamar.texto}</div>
+            )}
+            {comparacaoLocal && (
+              <div style={{ ...typ.bodySmall, color: c.textSecondary, lineHeight: 1.4, marginBottom: proximoPassoConcreto ? 8 : 0 }}>{comparacaoLocal}</div>
+            )}
+            {proximoPassoConcreto && (
+              <div style={{ ...typ.bodySmall, color: c.primary, lineHeight: 1.4, marginTop: 8, fontWeight: 500 }}>{proximoPassoConcreto}</div>
+            )}
+            {growthProjectionNote && (
+              <div style={{ ...typ.caption, color: c.textMuted, marginTop: 6 }}>{growthProjectionNote}</div>
+            )}
+          </div>
+        </Card>
+      </Col>
+    </Row>
+  )
+}
+
 // ——— DiagnosticoBISection (2 colunas: O que está bom | O que melhorar) ———
 export interface DiagnosticoBIProps {
   erPct: number
@@ -664,15 +727,15 @@ export function DiagnosticoBISection({
   performingHashtags: _performingHashtags = [],
   conversationHashtags = [],
   scoreInfo,
-  proximoPatamar,
-  faltaParaProximo = 0,
-  percentualNoPatamar = 0,
-  insightPatamar,
-  projecaoProximoPatamar,
-  comparacaoLocal,
+  proximoPatamar: _proximoPatamar,
+  faltaParaProximo: _faltaParaProximo = 0,
+  percentualNoPatamar: _percentualNoPatamar = 0,
+  insightPatamar: _insightPatamar,
+  projecaoProximoPatamar: _projecaoProximoPatamar,
+  comparacaoLocal: _comparacaoLocal,
   hashtagsSugeridas: _hashtagsSugeridas = [],
-  proximoPassoConcreto,
-  growthProjectionNote,
+  proximoPassoConcreto: _proximoPassoConcreto,
+  growthProjectionNote: _growthProjectionNote,
   semana1Items = [],
   conversationCard,
 }: DiagnosticoBIProps) {
@@ -688,64 +751,10 @@ export function DiagnosticoBISection({
   }
   const erStr = erPct.toFixed(2).replace('.', ',')
   const temMelhorar = ondePerdeAlcance.length > 0 || ondePerdeMonetizacao.length > 0 || proximoPassoTop3.length > 0
-  const temPatamar = Boolean(insightPatamar)
 
   return (
     <div className="diagnostico-bi-section">
       {scoreInfo && <div style={{ marginBottom: s.xl }}>{scoreInfo}</div>}
-      {/* Card de patamar (Nano → Micro) em linha inteira */}
-      {temPatamar && (
-        <Row gutter={[s.lg, s.lg]} style={{ marginBottom: s.lg }}>
-          <Col xs={24}>
-            <Card size="small" className="report-card report-card--hover" style={cardStyle}>
-              <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: s.sm, flexWrap: 'wrap', marginBottom: 8 }}>
-                  <span style={{ fontSize: 28, fontWeight: 800, color: c.primary, letterSpacing: '-0.02em' }}>{benchmarkTier}</span>
-                  {proximoPatamar && (
-                    <span style={{ fontSize: 13, color: c.textSecondary }}>
-                      → <strong style={{ color: c.primary }}>{proximoPatamar}</strong>
-                      {faltaParaProximo > 0 && (
-                        <span style={{ marginLeft: 4, color: c.textMuted }}>
-                          (faltam {faltaParaProximo.toLocaleString('pt-BR')})
-                        </span>
-                      )}
-                    </span>
-                  )}
-                </div>
-                {proximoPatamar && faltaParaProximo > 0 && (
-                  <div style={{ marginBottom: 12 }}>
-                    <div style={{ height: 6, background: c.borderLight, borderRadius: 3, overflow: 'hidden' }}>
-                      <div
-                        style={{
-                          height: '100%',
-                          width: `${Math.min(100, percentualNoPatamar)}%`,
-                          background: `linear-gradient(90deg, ${c.primary}, ${c.success})`,
-                          borderRadius: 3,
-                          transition: 'width 0.4s ease',
-                        }}
-                      />
-                    </div>
-                    <div style={{ fontSize: 11, color: c.textMuted, marginTop: 4 }}>{percentualNoPatamar}% do patamar atual</div>
-                  </div>
-                )}
-                <div style={{ ...typ.bodySmall, color: c.text, lineHeight: 1.5, marginBottom: comparacaoLocal || projecaoProximoPatamar ? 8 : 0 }}>{insightPatamar}</div>
-                {projecaoProximoPatamar && (
-                  <div style={{ ...typ.bodySmall, color: c.primary, fontWeight: 600, lineHeight: 1.4, marginBottom: comparacaoLocal ? 6 : 0 }}>{projecaoProximoPatamar.texto}</div>
-                )}
-                {comparacaoLocal && (
-                  <div style={{ ...typ.bodySmall, color: c.textSecondary, lineHeight: 1.4, marginBottom: proximoPassoConcreto ? 8 : 0 }}>{comparacaoLocal}</div>
-                )}
-                {proximoPassoConcreto && (
-                  <div style={{ ...typ.bodySmall, color: c.primary, lineHeight: 1.4, marginTop: 8, fontWeight: 500 }}>{proximoPassoConcreto}</div>
-                )}
-                {growthProjectionNote && (
-                  <div style={{ ...typ.caption, color: c.textMuted, marginTop: 6 }}>{growthProjectionNote}</div>
-                )}
-              </div>
-            </Card>
-          </Col>
-        </Row>
-      )}
       {/* O que está bom (esquerda) | O que melhorar (meio) | Plano de Ação (direita) */}
       <Row gutter={[s.lg, s.lg]} align="stretch">
         <Col xs={24} md={7} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -977,18 +986,25 @@ export interface EngajamentoPorTipoSectionProps {
   erByTypeNarrative?: string | null
 }
 
-const ER_EXPLICACAO = 'ER (Engagement Rate) é a taxa de engajamento: o percentual de interações (curtidas + comentários) em relação aos seguidores. Quanto maior o ER, mais a audiência reage ao conteúdo — um indicador importante para marcas avaliarem o potencial de alcance e conexão.'
+const ER_EXPLICACAO =
+  'ER (Engagement Rate) é a taxa de engajamento: o percentual de seus seguidores que interagem com o conteúdo. A conta é: (curtidas + comentários) ÷ número de seguidores × 100. Assim, um ER de 5% significa que, em média, 5% da sua audiência reage a cada post. Quanto maior o ER, mais a audiência está envolvida — e mais atrativo o perfil para marcas, que usam essa métrica para avaliar alcance real e conexão com o público.'
+
+const ER_ESCALA_EXPLICACAO =
+  'Usamos uma escala de 0% a 6%+ para classificar a qualidade do engajamento em quatro faixas. Abaixo de 2% o engajamento é considerado baixo; entre 2% e 4% é bom; entre 4% e 6% é excelente; acima de 6% entramos na faixa viral, em que a audiência reage muito ao conteúdo.'
 
 export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg, s.lg], erByTypeNarrative }: EngajamentoPorTipoSectionProps) {
-  const cardStyle = {
+  const getErBandaColor = (value: number) =>
+    ER_QUALIDADE_BANDAS.find((b) => value >= b.min && value < b.max)?.color ?? ER_QUALIDADE_BANDAS[0].color
+
+  const cardStyleByEr = (erValue: number) => ({
     padding: s.sm,
-    background: c.cardBgSoft,
+    background: `${getErBandaColor(erValue)}14`,
     borderRadius: r.md,
-    border: `1px solid ${c.borderLight}`,
+    border: `1px solid ${getErBandaColor(erValue)}40`,
     boxShadow: 'none',
     height: '100%',
     cursor: 'help' as const,
-  }
+  })
   const cardOQueEr = {
     padding: s.sm,
     background: c.cardBgSoft,
@@ -1002,32 +1018,32 @@ export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg,
       <Row gutter={rowGutter} style={{ marginBottom: rowGutter[1] ?? s.lg }}>
         <Col xs={24}>
           <div style={cardOQueEr}>
-            <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginBottom: 4 }}>O que é ER?</div>
-            <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, lineHeight: 1.45 }}>{ER_EXPLICACAO}</div>
+            <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginBottom: 6 }}>O que é ER?</div>
+            <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, lineHeight: 1.5, marginBottom: 10 }}>{ER_EXPLICACAO}</div>
+            <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, lineHeight: 1.5, marginBottom: 8 }}>{ER_ESCALA_EXPLICACAO}</div>
           </div>
         </Col>
       </Row>
       <Row gutter={rowGutter}>
         <Col xs={24} sm={12}>
-          <Tooltip title={METRIC_TOOLTIPS.er} placement="top">
-            <div style={cardStyle}>
-              <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 2, fontSize: 11 }}>ER médio por Feed</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: c.primary, margin: 0 }}>{engagementByType.posts.er.toFixed(2)}%</div>
-              <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted }}>{engagementByType.posts.count} itens</div>
+          <Tooltip title={`${METRIC_TOOLTIPS.er} Qualidade: ${ER_QUALIDADE_BANDAS.map((b) => `${erBandaRangeLabel(b)} ${b.label}`).join(' · ')}`} placement="top">
+            <div style={{ ...cardStyleByEr(engagementByType.posts.er), padding: `${s.sm}px ${s.lg}px` }}>
+              <ERGaugeChart
+                value={engagementByType.posts.er}
+                count={engagementByType.posts.count}
+                title="ER médio por Feed"
+              />
             </div>
           </Tooltip>
         </Col>
         <Col xs={24} sm={12}>
-          <Tooltip title={engagementByType.reels.erByViews != null ? METRIC_TOOLTIPS.erPorSeguidoresEViews : METRIC_TOOLTIPS.er} placement="top">
-            <div style={cardStyle}>
-              <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 2, fontSize: 11 }}>ER médio por Reel</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: c.success, margin: 0 }}>{engagementByType.reels.er.toFixed(2)}%</div>
-              <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted }}>
-                {engagementByType.reels.count} itens
-                {engagementByType.reels.erByViews != null && (
-                  <span style={{ marginLeft: 4 }}>({engagementByType.reels.erByViews.toFixed(1)}% views)</span>
-                )}
-              </div>
+          <Tooltip title={engagementByType.reels.erByViews != null ? METRIC_TOOLTIPS.erPorSeguidoresEViews : `${METRIC_TOOLTIPS.er} Qualidade: ${ER_QUALIDADE_BANDAS.map((b) => `${erBandaRangeLabel(b)} ${b.label}`).join(' · ')}`} placement="top">
+            <div style={{ ...cardStyleByEr(engagementByType.reels.er), padding: `${s.sm}px ${s.lg}px` }}>
+              <ERGaugeChart
+                value={engagementByType.reels.er}
+                count={engagementByType.reels.count}
+                title="ER médio por Reel"
+              />
             </div>
           </Tooltip>
         </Col>
@@ -1095,10 +1111,11 @@ export function MetricasMediakitSection({
   ]
   const metrics = metricsBase
   const metricsColSpan = metrics.length === 2 ? 12 : 8 // 2 cards em uma linha (12+12), 3 cards (8+8+8)
+  const picoErBanda = maxEr > 0 ? (ER_QUALIDADE_BANDAS.find((b) => maxEr >= b.min && maxEr < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]) : null
   const converteQuadrants = [
     { value: `${er.toFixed(1)}%`, label: 'Engajamento', desc: 'Interações (curtidas + comentários) em % dos seguidores.', bg: c.cardBgStrategic ?? c.primary + '18', accent: c.primary },
     { value: `${Math.round(conversationRate)}%`, label: conversationLabel ?? 'Taxa comentários', desc: '% de comentários no total de interações; mais comentários costumam indicar maior conexão.', bg: c.successBg ?? c.success + '20', accent: c.success },
-    { value: maxEr > 0 ? `${maxEr.toFixed(1)}%` : '—', label: 'Pico de ER', desc: 'Maior ER em um único post; indica potencial de alcance quando o conteúdo viraliza.', bg: c.warningBg ?? c.warning + '25', accent: c.warning },
+    { value: maxEr > 0 ? `${maxEr.toFixed(1)}%` : '—', label: 'Pico Viral', desc: 'Maior ER em um único post; indica potencial de alcance quando o conteúdo viraliza.', bg: picoErBanda ? `${picoErBanda.color}14` : (c.warningBg ?? c.warning + '25'), accent: picoErBanda?.color ?? c.warning, qualityLabel: picoErBanda?.label },
   ]
 
   return (
@@ -1147,7 +1164,11 @@ export function MetricasMediakitSection({
             <Col xs={24} sm={8} key={q.label}>
               <div style={{ ...metricasCardBase, background: q.bg, border: `2px solid ${q.accent}40`, textAlign: 'center' }}>
                 <div style={{ fontSize: 20, fontWeight: 800, color: q.accent }}>{q.value}</div>
-                <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, marginTop: 6 }}>{q.label}</div>
+                {'qualityLabel' in q && q.qualityLabel ? (
+                  <div style={{ ...typ.bodySmall, fontWeight: 600, color: q.accent, marginTop: 6 }}>Pico {q.qualityLabel}</div>
+                ) : (
+                  <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, marginTop: 6 }}>{q.label}</div>
+                )}
                 <div style={{ ...typ.caption, color: c.textMuted, marginTop: 6 }}>{q.desc}</div>
               </div>
             </Col>
@@ -1193,7 +1214,15 @@ export function MetricasMediakitSection({
                   )}
                 </div>
                 <div style={{ ...typ.caption, fontWeight: isBestEng ? 700 : 500, color: isBestEng ? (c.gold ?? '#b8860b') : c.text, marginTop: 8 }}>{label}</div>
-                {erDay > 0 && <div style={{ ...typ.caption, fontSize: 11, color: c.textSecondary, marginTop: 2 }}>ER {erDay.toFixed(1)}%</div>}
+                {erDay > 0 && (
+                  <>
+                    <div style={{ ...typ.caption, fontSize: 11, color: c.textSecondary, marginTop: 2 }}>ER {erDay.toFixed(1)}%</div>
+                    {(() => {
+                      const banda = ER_QUALIDADE_BANDAS.find((b) => erDay >= b.min && erDay < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]
+                      return <div style={{ ...typ.caption, fontSize: 10, fontWeight: 600, color: banda.color, marginTop: 2 }}>{banda.label}</div>
+                    })()}
+                  </>
+                )}
               </div>
             )
           })}
@@ -1429,7 +1458,9 @@ export function PricingHighlight({ variant, title = 'Valor estimado por feed', m
         </div>
         {tooltip ? <Tooltip title={tooltip} placement="top">{titleEl}</Tooltip> : titleEl}
       </div>
-      <div style={{ fontSize: 20, fontWeight: 700, color: theme.valueColor, marginBottom: 4, lineHeight: 1.2 }}>R$ {min.toLocaleString('pt-BR')} – R$ {max.toLocaleString('pt-BR')}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: theme.valueColor, marginBottom: 4, lineHeight: 1.2 }}>
+        {min === 0 && max === 0 ? 'Incluído' : `R$ ${min.toLocaleString('pt-BR')} – R$ ${max.toLocaleString('pt-BR')}`}
+      </div>
       <p style={{ ...typ.bodySmall, color: c.textSecondary, margin: 0, marginBottom: hideCta ? 0 : s.md, lineHeight: 1.35, fontSize: 12 }}>{porque}</p>
       {!hideCta && onCta && <Button type="primary" size="large" icon={<RocketOutlined />} block style={{ borderRadius: r.md, background: theme.accent, borderColor: theme.accent, color: '#fff', minHeight: 44 }} onClick={onCta}>{ctaLabel}</Button>}
     </div>

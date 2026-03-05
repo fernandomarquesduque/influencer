@@ -745,25 +745,21 @@ function computeBaseValor(
 ): { base: number; porqueParts: string[] } {
   const userData = profile?.data?.user as Record<string, unknown> | undefined
   const followers = getFollowersCount(profile)
-  const er = engagement.engagement_rate ?? 0
-  const hasViews = (engagement.total_views ?? 0) > 0
-  const avgViews = engagement.avg_views ?? 0
   const isVerified = Boolean(profile?.is_verified ?? userData?.is_verified)
   const accountType = (userData?.account_type ?? (profile as Record<string, unknown>)?.account_type) as number | undefined
   const isPro = accountType === 2 || accountType === 3
 
-  let base = (followers / 1000) * (er / 2)
-  if (base < 20) base = 20
-  if (hasViews && avgViews > 0) base *= 1 + Math.min(0.5, avgViews / (followers * 2))
-  if (isVerified) base *= 1.2
-  if (isPro) base *= 1.1
+  // Mercado BR: base por seguidores (R$ 0,015 por seguidor → ~R$ 2.800 para 187k). Sem usar ER no valor para evitar distorção.
+  let base = followers * 0.015
+  if (base < 50) base = 50
+  if (isVerified) base *= 1.1
+  if (isPro) base *= 1.05
   const conversationRatio = (engagement.total_likes + engagement.total_comments) > 0
     ? engagement.total_comments / (engagement.total_likes + engagement.total_comments)
     : 0
-  if (conversationRatio >= 0.12) base *= 1.15
+  if (conversationRatio >= 0.12) base *= 1.05
   const porqueParts = [
-    'baseado em seguidores e taxa de engajamento',
-    hasViews ? 'ajustado por alcance (views)' : '',
+    'baseado em seguidores (referência de mercado)',
     isVerified ? 'bônus por perfil verificado' : '',
     conversationRatio >= 0.12 ? 'bônus por audiência que comenta' : '',
   ].filter(Boolean)
@@ -789,41 +785,41 @@ export function getValorEstimadoPorTipoRocksDB(
   const { base, porqueParts } = computeBaseValor(profile, engagement)
   const basePorque = porqueParts.join(', ')
 
-  const postMin = Math.round(base * 0.7)
-  const postMax = Math.round(base * 1.5)
+  const postMin = Math.round(base * 0.8)
+  const postMax = Math.round(base * 1.15)
   const post = {
     min: Math.max(50, postMin),
     max: Math.max(postMin + 50, postMax),
     porque: basePorque,
   }
 
-  const reelsMultiplier = 1.25
+  const reelsMultiplier = 1.3
   const reelsBase = base * reelsMultiplier
-  const reelsMin = Math.round(reelsBase * 0.7)
-  const reelsMax = Math.round(reelsBase * 1.5)
+  const reelsMin = Math.round(reelsBase * 0.8)
+  const reelsMax = Math.round(reelsBase * 1.35)
   const reels = {
     min: Math.max(50, reelsMin),
     max: Math.max(reelsMin + 50, reelsMax),
     porque: [basePorque, 'reels com maior alcance (descoberta)'].filter(Boolean).join(', '),
   }
 
-  const storiesMultiplier = 0.6
+  const storiesMultiplier = 0.35
   const storiesBase = base * storiesMultiplier
-  const storiesMin = Math.round(storiesBase * 0.7)
-  const storiesMax = Math.round(storiesBase * 1.5)
+  const storiesMin = Math.round(storiesBase * 0.75)
+  const storiesMax = Math.round(storiesBase * 1.4)
   const stories = {
-    min: Math.max(25, storiesMin),
-    max: Math.max(storiesMin + 25, storiesMax),
+    min: Math.max(80, storiesMin),
+    max: Math.max(storiesMin + 80, storiesMax),
     porque: [basePorque, 'story 24h (formato efêmero)'].filter(Boolean).join(', '),
   }
 
-  // Destaque (Highlights): upgrade de permanência 30 dias — +10% a +25% do valor do story (até 30% em nichos vitrine)
-  const destaqueMin = Math.round(stories.min * 0.1)
-  const destaqueMax = Math.round(stories.max * 0.25)
+  // Destaque: adicional de 10% a 25% sobre o valor de Reels contratado (upgrade de permanência 30 dias).
+  const destaqueMin = Math.round(reels.min * 0.1)
+  const destaqueMax = Math.round(reels.max * 0.25)
   const destaque = {
-    min: Math.max(5, destaqueMin),
-    max: Math.max(destaqueMin + 5, destaqueMax),
-    porque: 'upgrade 30 dias: +10% a +25% do story · bônus em pacote ou taxa de permanência.',
+    min: Math.max(1, destaqueMin),
+    max: Math.max(destaqueMin + 1, destaqueMax),
+    porque: 'Adicional de 10% a 25% sobre o valor de Reels contratado (permanência 30 dias no perfil).',
   }
 
   return { post, reels, stories, destaque }

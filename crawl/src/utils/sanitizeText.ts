@@ -10,7 +10,8 @@ export function normalizeFancyUnicode(input: string): string {
     // Mathematical Bold (a-z)
     '𝐚': 'a', '𝐛': 'b', '𝐜': 'c', '𝐝': 'd', '𝐞': 'e', '𝐟': 'f', '𝐠': 'g', '𝐡': 'h', '𝐢': 'i', '𝐣': 'j', '𝐤': 'k', '𝐥': 'l', '𝐦': 'm', '𝐧': 'n', '𝐨': 'o', '𝐩': 'p', '𝐪': 'q', '𝐫': 'r', '𝐬': 's', '𝐭': 't', '𝐮': 'u', '𝐯': 'v', '𝐰': 'w', '𝐱': 'x', '𝐲': 'y', '𝐳': 'z',
   };
-  return input.replace(/[𝐀-𝐙𝐚-𝐳]/g, (ch) => map[ch] ?? ch);
+  // U+1D400–1D419 = Mathematical Bold A–Z, 1D41A–1D433 = a–z (evita "Range out of order" com literais)
+  return input.replace(/[\u{1D400}-\u{1D419}\u{1D41A}-\u{1D433}]/gu, (ch) => map[ch] ?? ch);
 }
 
 /**

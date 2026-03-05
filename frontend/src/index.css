@@ -67,6 +67,25 @@ body {
   }
 }
 
+/* ER Gauge Chart: em mobile quebra para linhas (gauge em cima, textos abaixo) */
+@media (max-width: 576px) {
+  .er-gauge-chart__row {
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 12px !important;
+  }
+  .er-gauge-chart__row > div:last-child {
+    width: 100%;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+  .er-gauge-chart__row > div:last-child > div {
+    text-align: center !important;
+    align-items: center !important;
+  }
+}
+
 /* Cards no estilo landing */
 .app-card {
   background: var(--app-card-bg);

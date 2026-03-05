@@ -37,6 +37,7 @@ import { reportTokens as t } from './reportTokens'
 import {
   ReportHero,
   ScoreOverview,
+  PatamarCardSection,
   DiagnosticoBISection,
   EngajamentoPorTipoSection,
   MetricasMediakitSection,
@@ -524,97 +525,126 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                   startRefreshPolling.current(handle)
                 }
               }}
-              extraContent={!isLimitedView && reportInsights ? (
-                <ScoreOverview
-                  embedded
-                  tierInHero
-                  hidePostsPerWeek
-                  hideExplanationInEmbedded
-                  score={engagementScore}
-                  tierLabel={tierLabel}
-                  scoreSelo={scoreSelo}
-                  percentil={reportInsights.benchmark?.percentil ?? null}
-                  explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
-                  scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
-                  statPills={layout.showScorePills ? [
-                    { label: 'Seguidores', value: formatShortNum(followersCount) },
-                    { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
-                    { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
-                  ] : []}
-                  postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
-                  bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
-                  bestHour={reportInsights.consistency.bestHour}
-                />
-              ) : null}
+              extraContent={
+                !isLimitedView ? (
+                  <>
+                    {reportInsights ? (
+                      <ScoreOverview
+                        embedded
+                        tierInHero
+                        hidePostsPerWeek
+                        hideExplanationInEmbedded
+                        score={engagementScore}
+                        tierLabel={tierLabel}
+                        scoreSelo={scoreSelo}
+                        percentil={reportInsights.benchmark?.percentil ?? null}
+                        explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
+                        scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
+                        statPills={layout.showScorePills ? [
+                          { label: 'Seguidores', value: formatShortNum(followersCount) },
+                          { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
+                          { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
+                        ] : []}
+                        postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
+                        bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
+                        bestHour={reportInsights.consistency.bestHour}
+                      />
+                    ) : null}
+                    {!isRedacted && hasActivationData && activation ? (
+                      <div>
+                        <Collapse
+                          defaultActiveKey={[]}
+                          items={[{
+                            key: 'contato',
+                            label: (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
+                                <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />{[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || 'Localização'}</span>
+                                {canEdit && handle && (
+                                  <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
+                                    Editar
+                                  </Button>
+                                )}
+                              </div>
+                            ),
+                            children: (
+                              <>
+                                {activation.pricing && (() => {
+                                  const costTier = getCostTier(activation.pricing)
+                                  const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
+                                    const val = activation.pricing![key as keyof typeof activation.pricing]
+                                    return val !== undefined && val !== null && String(val).trim() !== ''
+                                  })
+                                  if (!hasAnyPricing) return null
+                                  return (
+                                    <>
+                                      <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
+                                      <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
+                                        {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
+                                        {PRICING_FIELD_KEYS.map((key) => {
+                                          const val = activation.pricing![key as keyof typeof activation.pricing]
+                                          if (val === undefined || val === null || String(val).trim() === '') return null
+                                          const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
+                                          return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
+                                        })}
+                                      </Descriptions>
+                                    </>
+                                  )
+                                })()}
+                                <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
+                                  <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Contato e informações</div>
+                                  <Descriptions column={1} bordered size="small">
+                                    {(activation.city || activation.state || activation.neighborhood || activation.country) && (
+                                      <Descriptions.Item label="Localização">
+                                        {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
+                                      </Descriptions.Item>
+                                    )}
+                                    {activation.address && (
+                                      <Descriptions.Item label="Endereço">
+                                        {[activation.address, activation.address_number].filter(Boolean).join(', ')}
+                                      </Descriptions.Item>
+                                    )}
+                                    {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
+                                    {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
+                                    {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
+                                    {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
+                                    {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
+                                    {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
+                                    {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
+                                    {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
+                                    {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
+                                    {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
+                                  </Descriptions>
+                                </div>
+                              </>
+                            ),
+                          }]}
+                          style={{ borderRadius: r, overflow: 'hidden', border: 'none' }}
+                        />
+                      </div>
+                    ) : null}
+                  </>
+                ) : null
+              }
             />
           </>
         )}
 
-        {!isLimitedView && !isRedacted && hasActivationData && activation && (
+        {!isLimitedView && !isRedacted && reportInsights?.diagnosticoBI?.insightPatamar && (
           <div style={{ marginBottom: gap }}>
-            <Collapse
-              defaultActiveKey={[]}
-              items={[{
-                key: 'contato',
-                label: (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
-                    <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />{[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || 'Localização'}</span>
-                    {canEdit && handle && (
-                      <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
-                        Editar
-                      </Button>
-                    )}
-                  </div>
-                ),
-                children: (
-                  <>
-                    {activation.pricing && (() => {
-                      const costTier = getCostTier(activation.pricing)
-                      const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
-                        const val = activation.pricing![key as keyof typeof activation.pricing]
-                        return val !== undefined && val !== null && String(val).trim() !== ''
-                      })
-                      if (!hasAnyPricing) return null
-                      return (
-                        <>
-                          <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
-                          <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
-                            {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
-                            {PRICING_FIELD_KEYS.map((key) => {
-                              const val = activation.pricing![key as keyof typeof activation.pricing]
-                              if (val === undefined || val === null || String(val).trim() === '') return null
-                              const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
-                              return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
-                            })}
-                          </Descriptions>
-                        </>
-                      )
-                    })()}
-                    <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
-                      <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Contato e informações</div>
-                      <Descriptions column={1} bordered size="small">
-                        {(activation.city || activation.state || activation.neighborhood || activation.country) && (
-                          <Descriptions.Item label="Localização">
-                            {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
-                          </Descriptions.Item>
-                        )}
-                        {activation.address && <Descriptions.Item label="Endereço">{activation.address}</Descriptions.Item>}
-                        {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
-                        {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
-                        {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
-                        {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
-                        {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
-                        {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
-                        {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
-                        {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
-                        {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
-                        {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
-                      </Descriptions>
-                    </div>
-                  </>
-                ),
-              }]}
-              style={{ borderRadius: r, overflow: 'hidden', border: 'none', boxShadow: sh }}
+            <PatamarCardSection
+              benchmarkTier={reportInsights.diagnosticoBI.benchmarkTier}
+              proximoPatamar={reportInsights.diagnosticoBI.proximoPatamar}
+              faltaParaProximo={reportInsights.diagnosticoBI.faltaParaProximo ?? 0}
+              percentualNoPatamar={reportInsights.diagnosticoBI.percentualNoPatamar ?? 0}
+              insightPatamar={reportInsights.diagnosticoBI.insightPatamar}
+              projecaoProximoPatamar={reportInsights.diagnosticoBI.projecaoProximoPatamar ?? null}
+              comparacaoLocal={
+                activation?.city && reportInsights.benchmark?.percentil != null
+                  ? `Você está entre os ${Math.max(1, Math.min(99, 100 - reportInsights.benchmark.percentil))}% com maior engajamento em ${activation.city}.`
+                  : reportInsights.diagnosticoBI.comparacaoLocal ?? undefined
+              }
+              proximoPassoConcreto={reportInsights.diagnosticoBI.proximoPassoConcreto ?? null}
+              growthProjectionNote={reportInsights?.strategicMetrics?.growthProjectionNote ?? undefined}
             />
           </div>
         )}

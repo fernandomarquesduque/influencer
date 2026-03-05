@@ -783,6 +783,8 @@ export interface PricingData {
 /** Dados de ativação do perfil na plataforma (cadastro completo do influenciador). */
 export interface ProfileActivation {
   address?: string
+  /** Número e complemento do endereço (obrigatório quando allow_gifts). */
+  address_number?: string
   zip_code?: string
   city?: string
   state?: string
