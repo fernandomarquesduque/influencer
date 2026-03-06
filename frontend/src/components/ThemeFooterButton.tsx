@@ -45,11 +45,13 @@ export default function ThemeFooterButton() {
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.opacity = '1'
-          e.currentTarget.style.background = 'var(--app-primary-muted)'
+          e.currentTarget.style.background = 'var(--app-card-bg)'
+          e.currentTarget.style.boxShadow = 'var(--app-shadow-md)'
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.opacity = '0.75'
           e.currentTarget.style.background = 'var(--app-card-bg)'
+          e.currentTarget.style.boxShadow = 'var(--app-shadow-sm)'
         }}
       >
         <BgColorsOutlined style={{ fontSize: 18 }} />

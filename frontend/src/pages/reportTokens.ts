@@ -62,8 +62,8 @@ export const reportTokens = {
     xs: 6,
     sm: 10,
     md: 16,
-    lg: 24,
-    xl: 32,
+    lg: 20,
+    xl: 20,
     section: 56,
   },
   typography: {

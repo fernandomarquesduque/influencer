@@ -16,6 +16,7 @@ import {
 import { reportTokens as t } from './reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { ERGaugeChart, ER_QUALIDADE_BANDAS, erBandaRangeLabel, getErBanda } from '../components/ERGaugeChart'
+import { TierProgressGameBar } from '../components/TierProgressGameBar'
 import type { StrategicMetrics, ExecutiveSummaryForBrands, BenchmarkInsight } from '../utils/reportInsights'
 
 const s = t.spacing
@@ -106,7 +107,7 @@ export function ReportHero({
 
   const hasRightBadge = tierLabelProp != null && (percentil != null || scoreSelo)
   return (
-    <section className="report-hero" style={{ position: 'relative', width: '100%', padding: `${pad}px`, boxSizing: 'border-box' }} aria-label="Cabeçalho do relatório">
+    <section className="report-hero" style={{ position: 'relative', width: '100%', boxSizing: 'border-box', paddingBottom: isMobile ? s.md : s.xl }} aria-label="Cabeçalho do relatório">
       <div
         className="report-hero-inner"
         style={{
@@ -597,66 +598,34 @@ export function PatamarCardSection({
   proximoPatamar,
   faltaParaProximo = 0,
   percentualNoPatamar = 0,
-  insightPatamar,
-  projecaoProximoPatamar,
-  comparacaoLocal,
-  proximoPassoConcreto,
-  growthProjectionNote,
+  insightPatamar: _insightPatamar,
+  projecaoProximoPatamar: _projecaoProximoPatamar,
+  comparacaoLocal: _comparacaoLocal,
+  proximoPassoConcreto: _proximoPassoConcreto,
+  growthProjectionNote: _growthProjectionNote,
 }: PatamarCardSectionProps) {
-  const cardStyle: React.CSSProperties = {
-    ...cardBaseStyle,
-    padding: s.xl,
-    cursor: 'default',
-  }
   return (
     <Row gutter={[s.lg, s.lg]} style={{ marginBottom: s.lg }}>
       <Col xs={24}>
-        <Card size="small" className="report-card report-card--hover" style={cardStyle}>
-          <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
+        <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
+          {proximoPatamar && faltaParaProximo > 0 ? (
+            <TierProgressGameBar
+              currentTier={benchmarkTier}
+              nextTier={proximoPatamar}
+              remainingFollowers={faltaParaProximo}
+              progress={percentualNoPatamar / 100}
+            />
+          ) : (
             <div style={{ display: 'flex', alignItems: 'baseline', gap: s.sm, flexWrap: 'wrap', marginBottom: 8 }}>
               <span style={{ fontSize: 28, fontWeight: 800, color: c.primary, letterSpacing: '-0.02em' }}>{benchmarkTier}</span>
               {proximoPatamar && (
                 <span style={{ fontSize: 13, color: c.textSecondary }}>
                   → <strong style={{ color: c.primary }}>{proximoPatamar}</strong>
-                  {faltaParaProximo > 0 && (
-                    <span style={{ marginLeft: 4, color: c.textMuted }}>
-                      (faltam {faltaParaProximo.toLocaleString('pt-BR')})
-                    </span>
-                  )}
                 </span>
               )}
             </div>
-            {proximoPatamar && faltaParaProximo > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ height: 6, background: c.borderLight, borderRadius: 3, overflow: 'hidden' }}>
-                  <div
-                    style={{
-                      height: '100%',
-                      width: `${Math.min(100, percentualNoPatamar)}%`,
-                      background: `linear-gradient(90deg, ${c.primary}, ${c.success})`,
-                      borderRadius: 3,
-                      transition: 'width 0.4s ease',
-                    }}
-                  />
-                </div>
-                <div style={{ fontSize: 11, color: c.textMuted, marginTop: 4 }}>{percentualNoPatamar}% do patamar atual</div>
-              </div>
-            )}
-            <div style={{ ...typ.bodySmall, color: c.text, lineHeight: 1.5, marginBottom: comparacaoLocal || projecaoProximoPatamar ? 8 : 0 }}>{insightPatamar}</div>
-            {projecaoProximoPatamar && (
-              <div style={{ ...typ.bodySmall, color: c.primary, fontWeight: 600, lineHeight: 1.4, marginBottom: comparacaoLocal ? 6 : 0 }}>{projecaoProximoPatamar.texto}</div>
-            )}
-            {comparacaoLocal && (
-              <div style={{ ...typ.bodySmall, color: c.textSecondary, lineHeight: 1.4, marginBottom: proximoPassoConcreto ? 8 : 0 }}>{comparacaoLocal}</div>
-            )}
-            {proximoPassoConcreto && (
-              <div style={{ ...typ.bodySmall, color: c.primary, lineHeight: 1.4, marginTop: 8, fontWeight: 500 }}>{proximoPassoConcreto}</div>
-            )}
-            {growthProjectionNote && (
-              <div style={{ ...typ.caption, color: c.textMuted, marginTop: 6 }}>{growthProjectionNote}</div>
-            )}
-          </div>
-        </Card>
+          )}
+        </div>
       </Col>
     </Row>
   )
@@ -1433,35 +1402,35 @@ export function ConsistencyMiniChart({ data, bestDay, bestHour }: { data: number
   )
 }
 
-// ——— Temas por tipo de conteúdo (Post = âmbar, Reels = azul, Story = violeta) ———
+// ——— Temas por tipo de conteúdo: só variáveis já existentes no tema (Feed=warning, Reels=primary, Story=gold, Destaque=success) ———
 const PRICING_VARIANT_STYLES: Record<'post' | 'reels' | 'story' | 'destaque', { bg: string; border: string; iconBg: string; accent: string; valueColor: string }> = {
   post: {
-    bg: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
-    border: '#f59e0b',
-    iconBg: 'rgba(245, 158, 11, 0.2)',
-    accent: '#b45309',
-    valueColor: '#92400e',
+    bg: 'var(--app-warning-bg)',
+    border: 'var(--app-warning-border)',
+    iconBg: 'var(--app-warning-icon-bg)',
+    accent: 'var(--app-warning-accent)',
+    valueColor: 'var(--app-warning-accent)',
   },
   reels: {
-    bg: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-    border: '#3b82f6',
-    iconBg: 'rgba(59, 130, 246, 0.2)',
-    accent: '#2563eb',
-    valueColor: '#1e40af',
+    bg: 'var(--app-primary-muted)',
+    border: 'var(--app-primary)',
+    iconBg: 'var(--app-primary-muted)',
+    accent: 'var(--app-primary)',
+    valueColor: 'var(--app-primary-dark)',
   },
   story: {
-    bg: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
-    border: '#8b5cf6',
-    iconBg: 'rgba(139, 92, 246, 0.2)',
-    accent: '#7c3aed',
-    valueColor: '#5b21b6',
+    bg: 'var(--app-gold-light)',
+    border: 'var(--app-gold-border)',
+    iconBg: 'var(--app-gold-light)',
+    accent: 'var(--app-gold)',
+    valueColor: 'var(--app-text)',
   },
   destaque: {
-    bg: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
-    border: '#10b981',
-    iconBg: 'rgba(16, 185, 129, 0.2)',
-    accent: '#059669',
-    valueColor: '#047857',
+    bg: 'var(--app-success-bg)',
+    border: 'var(--app-success-border)',
+    iconBg: 'var(--app-success-icon-bg)',
+    accent: 'var(--app-success-accent)',
+    valueColor: 'var(--app-success-accent)',
   },
 }
 
@@ -1475,10 +1444,10 @@ export function PricingHighlight({ variant, title = 'Valor estimado por feed', m
       style={{
         borderRadius: r.lg,
         border: `2px solid ${theme.border}`,
-        boxShadow: variant ? `0 4px 14px ${theme.border}20` : sh.sm,
+        boxShadow: variant ? 'var(--app-shadow-md)' : sh.sm,
         padding: s.md,
         background: theme.bg,
-        minHeight: '100%',
+        minHeight: variant ? 220 : '100%',
         transition: 'transform 0.2s ease, box-shadow 0.2s ease',
         ...styleProp,
       }}

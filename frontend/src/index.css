@@ -67,6 +67,223 @@ body {
   }
 }
 
+/* ========== TierProgressGameBar — fundo escuro, borda gradiente gold/primary ========== */
+.tier-progress-game-bar--gamified .tier-progress-game-bar__quest-card {
+  position: relative;
+  background: var(--app-surface-dark);
+  border: 2px solid transparent;
+  border-radius: 16px;
+  padding: 18px 20px 16px;
+  box-shadow: var(--app-shadow-md);
+  background-clip: padding-box;
+}
+
+.tier-progress-game-bar--gamified .tier-progress-game-bar__quest-card::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 18px;
+  padding: 2px;
+  background: linear-gradient(135deg, var(--app-gold) 0%, var(--app-primary) 50%, var(--app-gold) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.tier-progress-game-bar__ribbon {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--app-gold);
+  color: var(--app-text);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  padding: 4px 14px;
+  border-radius: 6px;
+  box-shadow: var(--app-shadow-sm);
+}
+
+.tier-progress-game-bar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tier-progress-game-bar__title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: linear-gradient(90deg, var(--app-gold), var(--app-primary));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tier-progress-game-bar__counter {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--app-text);
+  background: var(--app-gold);
+  padding: 5px 12px;
+  border-radius: 9999px;
+  box-shadow: var(--app-shadow-sm);
+  border: 1px solid var(--app-gold-border);
+}
+
+.tier-progress-game-bar__bar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tier-progress-game-bar__tier-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--app-text-secondary);
+  flex-shrink: 0;
+}
+
+.tier-progress-game-bar--gamified .tier-progress-game-bar__tier-label {
+  color: var(--app-on-dark-muted);
+}
+
+.tier-progress-game-bar__track-container {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+.tier-progress-game-bar__track {
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--app-progress-trail);
+  position: relative;
+  overflow: visible;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.tier-progress-game-bar--gamified .tier-progress-game-bar__track {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.tier-progress-game-bar__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, var(--app-gold) 0%, var(--app-primary) 100%);
+  transition: width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  max-width: 100%;
+}
+
+.tier-progress-game-bar__checkpoint {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--app-border);
+  z-index: 2;
+  transition: color 0.3s ease;
+}
+
+.tier-progress-game-bar--gamified .tier-progress-game-bar__checkpoint {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.tier-progress-game-bar__checkpoint--reached {
+  color: var(--app-gold);
+}
+
+.tier-progress-game-bar__badge {
+  position: absolute;
+  top: -12px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--app-text);
+  background: linear-gradient(180deg, var(--app-card-bg) 0%, var(--app-gold) 100%);
+  padding: 4px 12px;
+  border-radius: 9999px;
+  box-shadow: var(--app-shadow-sm);
+  z-index: 3;
+  border: 1px solid var(--app-gold-border);
+}
+
+.tier-progress-game-bar__milestone-labels {
+  position: relative;
+  height: 16px;
+  margin-top: 4px;
+}
+
+.tier-progress-game-bar__milestone-label {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--app-text-tertiary);
+}
+
+.tier-progress-game-bar--gamified .tier-progress-game-bar__milestone-label {
+  color: var(--app-on-dark-muted);
+}
+
+.tier-progress-game-bar__tier-next {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tier-progress-game-bar__trophy {
+  font-size: 16px;
+  color: var(--app-gold);
+}
+
+@media print {
+  .tier-progress-game-bar--gamified .tier-progress-game-bar__fill {
+    box-shadow: none;
+  }
+  .tier-progress-game-bar--gamified .tier-progress-game-bar__quest-card {
+    background: var(--app-surface-dark);
+    box-shadow: none;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .tier-progress-game-bar--gamified .tier-progress-game-bar__quest-card::before {
+    display: none;
+  }
+  .tier-progress-game-bar__ribbon {
+    background: var(--app-gold);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+/* TierProgressGameBar: em mobile esconder checkpoints e labels 25/50/75 */
+@media (max-width: 576px) {
+  .tier-progress-game-bar__checkpoint,
+  .tier-progress-game-bar__milestone-labels,
+  .tier-progress-game-bar__milestone-label {
+    display: none !important;
+  }
+}
+
 /* ER Gauge Chart: em mobile quebra para linhas (gauge em cima, textos abaixo) */
 @media (max-width: 576px) {
   .er-gauge-chart__row {
@@ -74,13 +291,15 @@ body {
     align-items: center !important;
     gap: 12px !important;
   }
-  .er-gauge-chart__row > div:last-child {
+
+  .er-gauge-chart__row>div:last-child {
     width: 100%;
     flex-direction: column !important;
     align-items: center !important;
     gap: 8px !important;
   }
-  .er-gauge-chart__row > div:last-child > div {
+
+  .er-gauge-chart__row>div:last-child>div {
     text-align: center !important;
     align-items: center !important;
   }
@@ -98,6 +317,7 @@ body {
 .ant-progress-line .ant-progress-outer {
   width: 100% !important;
 }
+
 .ant-progress-line {
   flex: 1;
   min-width: 0;
@@ -127,6 +347,7 @@ body {
   color: var(--app-text) !important;
   border-color: transparent !important;
 }
+
 .activation-cta-btn.ant-btn-primary:hover {
   background: var(--app-warning-accent) !important;
   color: var(--app-text) !important;
@@ -176,22 +397,27 @@ select,
   border-color: var(--app-border) !important;
   color: var(--app-text) !important;
 }
+
 .app-filters-aside .ant-select-selection-placeholder,
 .app-filters-aside .ant-select-selection-search input,
 .app-filters-aside .ant-input::placeholder {
   color: var(--app-text-tertiary) !important;
 }
+
 .app-filters-aside .ant-collapse {
   background: transparent !important;
   border-color: var(--app-border) !important;
 }
+
 .app-filters-aside .ant-collapse-item {
   border-color: var(--app-border) !important;
 }
+
 .app-filters-aside .ant-collapse-header,
 .app-filters-aside .ant-collapse-content {
   color: var(--app-text) !important;
 }
+
 .app-filters-aside .ant-typography {
   color: inherit;
 }

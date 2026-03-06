@@ -18,24 +18,25 @@ export interface ContentTypeDistribution {
   countPhoto?: number
 }
 
+/** Cores dos cards vêm do tema (theme.css: --app-alcance-*). */
 const CARD_STYLES = {
   reels: {
-    bg: '#EBE8F9',
-    border: '#a78bfa',
-    titleColor: '#5b21b6',
-    descColor: '#4b5563',
+    bg: 'var(--app-alcance-reels-bg)',
+    border: 'var(--app-alcance-reels-border)',
+    titleColor: 'var(--app-alcance-reels)',
+    descColor: 'var(--app-text-secondary)',
   },
   carousel: {
-    bg: '#F9E8F0',
-    border: '#e879f9',
-    titleColor: '#9d174d',
-    descColor: '#4b5563',
+    bg: 'var(--app-alcance-carousel-bg)',
+    border: 'var(--app-alcance-carousel-border)',
+    titleColor: 'var(--app-alcance-carousel)',
+    descColor: 'var(--app-text-secondary)',
   },
   photo: {
-    bg: '#f0f0f0',
-    border: '#a1a1aa',
-    titleColor: '#18181b',
-    descColor: '#4b5563',
+    bg: 'var(--app-alcance-photo-bg)',
+    border: 'var(--app-alcance-photo-border)',
+    titleColor: 'var(--app-alcance-photo)',
+    descColor: 'var(--app-text-secondary)',
   },
 } as const
 
@@ -58,10 +59,13 @@ export function AlcanceSection({
   const hasAny = pctReels > 0 || pctCarousel > 0 || pctPhoto > 0
   if (!hasAny) return null
 
+  /** Altura fixa para os três cartões ficarem iguais. */
+  const CARD_HEIGHT = 140
   const cardBase = {
     borderRadius: r,
     padding: s.md,
-    minHeight: 88,
+    height: CARD_HEIGHT,
+    minHeight: CARD_HEIGHT,
     display: 'flex',
     flexDirection: 'column' as const,
     justifyContent: 'center',
@@ -70,14 +74,13 @@ export function AlcanceSection({
 
   return (
     <div style={style}>
-
-
       <Row gutter={Array.isArray(gutter) ? gutter : [gutter, gutter]}>
         {pctReels >= 0 && (
-          <Col xs={24} sm={8}>
+          <Col xs={24} sm={8} style={{ display: 'flex' }}>
             <div
               style={{
                 ...cardBase,
+                flex: 1,
                 backgroundColor: CARD_STYLES.reels.bg,
                 border: `1px solid ${CARD_STYLES.reels.border}`,
               }}
@@ -102,10 +105,11 @@ export function AlcanceSection({
           </Col>
         )}
         {pctCarousel >= 0 && (
-          <Col xs={24} sm={8}>
+          <Col xs={24} sm={8} style={{ display: 'flex' }}>
             <div
               style={{
                 ...cardBase,
+                flex: 1,
                 backgroundColor: CARD_STYLES.carousel.bg,
                 border: `1px solid ${CARD_STYLES.carousel.border}`,
               }}
@@ -130,10 +134,11 @@ export function AlcanceSection({
           </Col>
         )}
         {pctPhoto >= 0 && (
-          <Col xs={24} sm={8}>
+          <Col xs={24} sm={8} style={{ display: 'flex' }}>
             <div
               style={{
                 ...cardBase,
+                flex: 1,
                 backgroundColor: CARD_STYLES.photo.bg,
                 border: `1px solid ${CARD_STYLES.photo.border}`,
               }}

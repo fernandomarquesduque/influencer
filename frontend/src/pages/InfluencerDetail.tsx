@@ -551,8 +551,9 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                       />
                     ) : null}
                     {!isRedacted && hasActivationData && activation ? (
-                      <div>
+                      <div className="collapse-endereco-transparent">
                         <Collapse
+                          ghost
                           defaultActiveKey={[]}
                           items={[{
                             key: 'contato',
@@ -618,7 +619,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               </>
                             ),
                           }]}
-                          style={{ borderRadius: r, overflow: 'hidden', border: 'none' }}
+                          style={{ borderRadius: r, overflow: 'hidden', border: 'none', background: 'transparent' }}
                         />
                       </div>
                     ) : null}

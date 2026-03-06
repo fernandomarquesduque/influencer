@@ -148,7 +148,7 @@ export function TaggedAnalysisSection({
               <strong style={{ ...typ.body, fontSize: 13, color: c.primary }}>
                 {(engagement.engagement_rate ?? 0).toFixed(2)}%
               </strong>{' '}
-              <span style={{ color: c.textSecondary, fontSize: 12 }}>ER médio (marcados)</span>
+              <span style={{ color: c.textSecondary, fontSize: 12 }}>ER médio</span>
             </span>
             {(() => {
               const er = engagement.engagement_rate ?? 0

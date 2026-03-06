@@ -142,6 +142,17 @@
   /* === Painel de filtros (sidebar) === */
   --aside-bg: var(--app-card-bg-soft);
   --aside-border: var(--app-border);
+
+  /* === Alcance: Reels (roxo), Carrossel (rosa), Foto (neutro) === */
+  --app-alcance-reels: var(--app-primary);
+  --app-alcance-reels-bg: #EBE8F9;
+  --app-alcance-reels-border: #a78bfa;
+  --app-alcance-carousel: #9d174d;
+  --app-alcance-carousel-bg: #FCE7F3;
+  --app-alcance-carousel-border: #f472b6;
+  --app-alcance-photo: var(--app-text);
+  --app-alcance-photo-bg: var(--app-card-bg-soft);
+  --app-alcance-photo-border: var(--app-border);
 }
 
 /* Tema Escuro */
@@ -224,6 +235,17 @@
   /* Painel de filtros: fundo e borda no tema escuro para contraste */
   --aside-bg: var(--app-card-bg);
   --aside-border: var(--app-border);
+
+  /* Alcance: escala do tema escuro */
+  --app-alcance-reels: var(--app-primary);
+  --app-alcance-reels-bg: rgba(0, 180, 216, 0.12);
+  --app-alcance-reels-border: rgba(0, 180, 216, 0.5);
+  --app-alcance-carousel: #f472b6;
+  --app-alcance-carousel-bg: rgba(244, 114, 182, 0.12);
+  --app-alcance-carousel-border: rgba(244, 114, 182, 0.4);
+  --app-alcance-photo: var(--app-text-secondary);
+  --app-alcance-photo-bg: var(--app-card-bg-soft);
+  --app-alcance-photo-border: var(--app-border);
 }
 
 /* Tema Sépia */
@@ -299,6 +321,17 @@
   --app-logo-on-dark-accent: #e8b84c;
   --aside-bg: var(--app-card-bg-soft);
   --aside-border: var(--app-border);
+
+  /* Alcance: escala sépia */
+  --app-alcance-reels: var(--app-primary);
+  --app-alcance-reels-bg: rgba(139, 69, 19, 0.12);
+  --app-alcance-reels-border: rgba(139, 69, 19, 0.4);
+  --app-alcance-carousel: #a0522d;
+  --app-alcance-carousel-bg: rgba(160, 82, 45, 0.12);
+  --app-alcance-carousel-border: rgba(160, 82, 45, 0.4);
+  --app-alcance-photo: var(--app-text-secondary);
+  --app-alcance-photo-bg: var(--app-card-bg-soft);
+  --app-alcance-photo-border: var(--app-border);
 }
 
 /* Tema Oceano */
@@ -374,6 +407,17 @@
   --app-logo-on-dark-accent: #90e0ef;
   --aside-bg: var(--app-card-bg-soft);
   --aside-border: var(--app-border);
+
+  /* Alcance: escala oceano */
+  --app-alcance-reels: var(--app-primary);
+  --app-alcance-reels-bg: rgba(0, 119, 182, 0.15);
+  --app-alcance-reels-border: rgba(0, 119, 182, 0.5);
+  --app-alcance-carousel: #03045e;
+  --app-alcance-carousel-bg: rgba(3, 4, 94, 0.12);
+  --app-alcance-carousel-border: rgba(3, 4, 94, 0.4);
+  --app-alcance-photo: var(--app-text-secondary);
+  --app-alcance-photo-bg: var(--app-card-bg-soft);
+  --app-alcance-photo-border: var(--app-border);
 }
 
 /* Tema Alto contraste */
@@ -450,6 +494,17 @@
   --app-logo-on-dark-accent: #ffc107;
   --aside-bg: var(--app-card-bg-soft);
   --aside-border: var(--app-border);
+
+  /* Alcance: escala alto contraste */
+  --app-alcance-reels: var(--app-primary);
+  --app-alcance-reels-bg: rgba(0, 0, 0, 0.08);
+  --app-alcance-reels-border: var(--app-border);
+  --app-alcance-carousel: #1a1a1a;
+  --app-alcance-carousel-bg: rgba(0, 0, 0, 0.06);
+  --app-alcance-carousel-border: var(--app-border);
+  --app-alcance-photo: var(--app-text);
+  --app-alcance-photo-bg: var(--app-card-bg-soft);
+  --app-alcance-photo-border: var(--app-border);
 }
 
 /* Logo em fundo escuro */
@@ -542,6 +597,7 @@
     opacity: 0;
     transform: translateY(12px) scale(0.98);
   }
+
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
