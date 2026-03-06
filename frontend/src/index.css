@@ -118,26 +118,181 @@ body {
   box-shadow: 0 0 0 2px rgba(104, 39, 143, 0.15);
 }
 
-/* Mobile: login em cima, marketing embaixo */
+/* Mobile: apenas login em tela cheia, painel esquerdo oculto */
 @media (max-width: 900px) {
+  .login-page {
+    min-height: 100dvh;
+    min-height: 100vh;
+    width: 100%;
+    overflow-x: hidden;
+  }
+
   .login-two-columns {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
-    grid-template-areas: 'right' 'left';
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr !important;
+    grid-template-areas: 'right' !important;
+    width: 100% !important;
+    min-width: 0;
+    flex: 1 !important;
+    min-height: 0;
   }
 
   .login-left-panel {
-    grid-area: left;
-    border-right: none;
-    border-top: 1px solid var(--app-border);
-    padding: 40px 24px !important;
-    min-height: auto;
+    display: none !important;
   }
 
   .login-right-panel {
-    grid-area: right;
-    padding: 32px 24px !important;
+    grid-area: right !important;
+    width: 100% !important;
+    max-width: 100% !important;
     min-height: 0;
+    padding: 24px 24px !important;
+    padding-left: max(24px, env(safe-area-inset-left)) !important;
+    padding-right: max(24px, env(safe-area-inset-right)) !important;
+    box-sizing: border-box;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    padding-top: max(24px, env(safe-area-inset-top)) !important;
+    padding-bottom: max(24px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .login-right-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    flex: 1 1 0 !important;
+    box-sizing: border-box;
+  }
+
+  .login-right-panel .ant-typography-title {
+    font-size: 20px !important;
+  }
+
+  .login-tab {
+    padding: 12px 12px !important;
+    font-size: 13px !important;
+  }
+
+  .login-right-panel .ant-divider {
+    margin: 0 0 24px !important;
+  }
+
+  .login-header {
+    margin-bottom: 24px !important;
+  }
+
+  .login-tabs {
+    margin-bottom: 24px !important;
+  }
+
+  .login-right-panel .ant-input,
+  .login-right-panel .ant-input-affix-wrapper {
+    min-width: 0 !important;
+  }
+
+  .login-right-panel .ant-form-item {
+    margin-bottom: 20px !important;
+  }
+}
+
+/* Tablets pequenos e celulares */
+@media (max-width: 576px) {
+  .login-right-panel {
+    padding: 20px 20px !important;
+    padding-left: max(20px, env(safe-area-inset-left)) !important;
+    padding-right: max(20px, env(safe-area-inset-right)) !important;
+    padding-top: max(20px, env(safe-area-inset-top)) !important;
+    padding-bottom: max(20px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .login-right-content {
+    padding: 0 !important;
+  }
+
+  .login-right-content .ant-form-item {
+    margin-bottom: 20px !important;
+  }
+
+  .login-right-content .ant-space {
+    gap: 16px !important;
+  }
+
+  .login-right-panel .ant-typography-title {
+    font-size: 18px !important;
+  }
+
+  .login-tab {
+    padding: 10px 8px !important;
+    font-size: 12px !important;
+  }
+
+  .login-right-panel .ant-input-affix-wrapper,
+  .login-right-panel .ant-input {
+    font-size: 16px !important; /* evita zoom no iOS */
+  }
+
+  .login-right-panel .ant-btn-lg {
+    height: 48px !important;
+  }
+
+  .login-header .login-logo {
+    transform: scale(0.9);
+    transform-origin: center;
+  }
+}
+
+/* Celulares pequenos */
+@media (max-width: 480px) {
+  .login-right-panel {
+    padding: 20px 20px !important;
+    padding-left: max(20px, env(safe-area-inset-left)) !important;
+    padding-right: max(20px, env(safe-area-inset-right)) !important;
+    padding-top: max(20px, env(safe-area-inset-top)) !important;
+    padding-bottom: max(20px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .login-right-content {
+    padding: 0 !important;
+  }
+
+  .login-tab span:not(.anticon) {
+    display: inline; /* permite quebra de linha se necessário */
+  }
+
+  /* Área segura para notches (iPhone X+) */
+  .login-two-columns {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+}
+
+/* Telas muito pequenas */
+@media (max-width: 380px) {
+  .login-right-panel {
+    padding: 16px 16px !important;
+    padding-left: max(16px, env(safe-area-inset-left)) !important;
+    padding-right: max(16px, env(safe-area-inset-right)) !important;
+    padding-top: max(16px, env(safe-area-inset-top)) !important;
+    padding-bottom: max(16px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .login-right-content {
+    padding: 0 !important;
+  }
+
+  .login-tabs {
+    flex-direction: column !important;
+  }
+
+  .login-tabs .login-tab {
+    width: 100%;
+    padding: 10px 12px !important;
+    font-size: 13px !important;
+  }
+
+  .login-header .login-logo {
+    transform: scale(0.85);
+    transform-origin: center;
   }
 }
 

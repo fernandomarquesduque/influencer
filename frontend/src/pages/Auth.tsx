@@ -3,7 +3,7 @@ import { Form, Input, Button, Card, message, Collapse } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
 import { requestCodeWithExtract, verifyProfile, type ExtractProfileResult } from '../api'
-import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, InstagramOutlined, ReloadOutlined, EditOutlined, ArrowRightOutlined } from '@ant-design/icons'
+import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, InstagramOutlined, ReloadOutlined, EditOutlined, ArrowRightOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
   nao_segue_perfil: '', // tratado por bloco especial no RejectionFullScreen
@@ -97,7 +97,7 @@ function RejectionFullScreen({
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
-        background: 'linear-gradient(160deg, #f8f4ff 0%, #fff9f0 40%, #f5f0ff 100%)',
+        background: 'linear-gradient(160deg, var(--app-card-bg-soft) 0%, var(--app-warning-bg) 40%, var(--app-primary-muted) 100%)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -112,12 +112,12 @@ function RejectionFullScreen({
         style={{
           width: '100%',
           maxWidth: 480,
-          background: 'rgba(255, 255, 255, 0.92)',
+          background: 'var(--app-glass-bg)',
           backdropFilter: 'blur(14px)',
-          borderRadius: 24,
+          borderRadius: 'var(--app-card-radius)',
           padding: '32px 28px 28px',
-          boxShadow: '0 20px 50px rgba(104, 39, 143, 0.12), 0 8px 24px rgba(0,0,0,0.06)',
-          border: '1px solid rgba(255, 255, 255, 0.9)',
+          boxShadow: 'var(--app-shadow-lg)',
+          border: '1px solid var(--app-glass-border)',
           marginBottom: 16,
         }}
       >
@@ -130,14 +130,14 @@ function RejectionFullScreen({
                   height: 72,
                   margin: '0 auto 20px',
                   borderRadius: 20,
-                  background: 'linear-gradient(135deg, #833AB4 0%, #FD1D1D 50%, #F77737 100%)',
+                  background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark) 50%, var(--app-accent) 100%)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: '0 12px 28px rgba(131, 58, 180, 0.35)',
+                  boxShadow: 'var(--app-shadow-lg)',
                 }}
               >
-                <InstagramOutlined style={{ fontSize: 32, color: '#fff' }} />
+                <InstagramOutlined style={{ fontSize: 32, color: 'var(--brand-white)' }} />
               </div>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--app-text)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>
                 Quase! Só falta um passo
@@ -158,8 +158,8 @@ function RejectionFullScreen({
                 style={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                   padding: '12px 20px', borderRadius: 14,
-                  background: 'linear-gradient(135deg, #833AB4 0%, #FD1D1D 50%, #F77737 100%)',
-                  color: '#fff', fontWeight: 600, fontSize: 14, textDecoration: 'none',
+                  background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-accent) 100%)',
+                  color: 'var(--brand-white)', fontWeight: 600, fontSize: 14, textDecoration: 'none',
                 }}
               >
                 <InstagramOutlined style={{ fontSize: 16 }} />
@@ -188,8 +188,8 @@ function RejectionFullScreen({
                   height: 64,
                   margin: '0 auto 16px',
                   borderRadius: 20,
-                  background: 'linear-gradient(135deg, rgba(234, 179, 8, 0.15) 0%, rgba(232, 186, 0, 0.08) 100%)',
-                  border: '1px solid rgba(234, 179, 8, 0.35)',
+                  background: 'var(--app-warning-bg)',
+                  border: '1px solid var(--app-warning-border)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -209,8 +209,8 @@ function RejectionFullScreen({
 
             <div
               style={{
-                background: 'rgba(220, 38, 38, 0.06)',
-                border: '1px solid rgba(220, 38, 38, 0.2)',
+                background: 'var(--app-alert-danger-bg)',
+                border: '1px solid var(--app-alert-danger-border)',
                 borderRadius: 12,
                 padding: '12px 16px',
                 marginBottom: 24,
@@ -259,7 +259,7 @@ function RejectionFullScreen({
         <Collapse
 
           size="small"
-          style={{ marginTop: '20px', background: 'rgba(104, 39, 143, 0.04)', border: '1px solid var(--app-border)', borderRadius: 14 }}
+          style={{ marginTop: '20px', background: 'var(--app-primary-muted)', border: '1px solid var(--app-border)', borderRadius: 14 }}
           items={[
             {
               key: 'regras',
@@ -317,7 +317,7 @@ function InstallationLoader() {
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
-        background: 'linear-gradient(135deg, #f8f4ff 0%, #fff9e6 35%, #f0ebff 70%, #fdf6e8 100%)',
+        background: 'linear-gradient(135deg, var(--app-card-bg-soft) 0%, var(--app-warning-bg) 35%, var(--app-primary-muted) 70%, var(--app-warning-bg) 100%)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -334,7 +334,7 @@ function InstallationLoader() {
           width: 320,
           height: 320,
           borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(104, 39, 143, 0.12) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, var(--app-primary-muted) 0%, transparent 70%)',
           top: '-10%',
           left: '-5%',
           animation: 'install-blob-float 8s ease-in-out infinite',
@@ -346,7 +346,7 @@ function InstallationLoader() {
           width: 280,
           height: 280,
           borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(232, 186, 0, 0.15) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, var(--app-warning-bg) 0%, transparent 70%)',
           bottom: '-8%',
           right: '-5%',
           animation: 'install-blob-float 10s ease-in-out infinite reverse',
@@ -359,7 +359,7 @@ function InstallationLoader() {
           width: 180,
           height: 180,
           borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(89, 128, 228, 0.12) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, var(--app-bg-blob1) 0%, transparent 70%)',
           top: '40%',
           right: '15%',
           animation: 'install-blob-float 12s ease-in-out infinite',
@@ -379,12 +379,12 @@ function InstallationLoader() {
         {/* Card com vidro */}
         <div
           style={{
-            background: 'rgba(255, 255, 255, 0.85)',
+            background: 'var(--app-glass-bg)',
             backdropFilter: 'blur(12px)',
-            borderRadius: 24,
+            borderRadius: 'var(--app-card-radius)',
             padding: '40px 32px 36px',
-            boxShadow: '0 8px 32px rgba(104, 39, 143, 0.08), 0 2px 12px rgba(232, 186, 0, 0.06)',
-            border: '1px solid rgba(255, 255, 255, 0.9)',
+            boxShadow: 'var(--app-shadow-lg)',
+            border: '1px solid var(--app-glass-border)',
           }}
         >
           {/* Ícone com anel e animação */}
@@ -394,18 +394,18 @@ function InstallationLoader() {
               height: 88,
               margin: '0 auto 28px',
               borderRadius: '50%',
-              background: 'linear-gradient(145deg, #68278f 0%, #8b3db5 50%, #5980e4 100%)',
+              background: 'linear-gradient(145deg, var(--app-primary) 0%, var(--app-primary-dark) 50%, var(--app-chart-bar-top) 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 12px 28px rgba(104, 39, 143, 0.35), 0 0 0 4px rgba(232, 186, 0, 0.2)',
+              boxShadow: 'var(--app-shadow-lg)',
               animation: 'install-rocket-pulse 2.5s ease-in-out infinite',
             }}
           >
             <RocketOutlined
               style={{
                 fontSize: 40,
-                color: '#fff',
+                color: 'var(--brand-white)',
                 filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))',
               }}
             />
@@ -413,7 +413,7 @@ function InstallationLoader() {
 
           <h2
             style={{
-              color: '#2d1b4e',
+              color: 'var(--app-text)',
               fontSize: 22,
               fontWeight: 700,
               marginBottom: 12,
@@ -424,7 +424,7 @@ function InstallationLoader() {
           </h2>
           <p
             style={{
-              background: 'linear-gradient(90deg, #68278f, #8b3db5, #e8ba00)',
+              background: 'linear-gradient(90deg, var(--app-primary), var(--app-primary-dark), var(--app-accent))',
               backgroundClip: 'text',
               WebkitBackgroundClip: 'text',
               color: 'transparent',
@@ -442,7 +442,7 @@ function InstallationLoader() {
           <div
             style={{
               height: 10,
-              background: 'linear-gradient(90deg, rgba(104, 39, 143, 0.12), rgba(232, 186, 0, 0.15))',
+              background: 'linear-gradient(90deg, var(--app-primary-muted), var(--app-warning-bg))',
               borderRadius: 10,
               overflow: 'hidden',
               marginBottom: 12,
@@ -453,16 +453,16 @@ function InstallationLoader() {
               style={{
                 height: '100%',
                 width: `${progress}%`,
-                background: 'linear-gradient(90deg, #68278f 0%, #8b3db5 50%, #e8ba00 100%)',
+                background: 'linear-gradient(90deg, var(--app-primary) 0%, var(--app-primary-dark) 50%, var(--app-accent) 100%)',
                 borderRadius: 10,
                 transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
-                boxShadow: '0 0 12px rgba(104, 39, 143, 0.4)',
+                boxShadow: 'var(--app-shadow-md)',
               }}
             />
           </div>
           <p
             style={{
-              color: '#6b5b7a',
+              color: 'var(--app-text-secondary)',
               fontSize: 13,
               fontWeight: 600,
               letterSpacing: '0.05em',
@@ -479,8 +479,8 @@ function InstallationLoader() {
           50% { transform: translate(12px, -12px) scale(1.05); opacity: 1; }
         }
         @keyframes install-rocket-pulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 12px 28px rgba(104, 39, 143, 0.35), 0 0 0 4px rgba(232, 186, 0, 0.2); }
-          50% { transform: scale(1.03); box-shadow: 0 14px 32px rgba(104, 39, 143, 0.45), 0 0 0 6px rgba(232, 186, 0, 0.15); }
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.03); }
         }
       `}</style>
     </div>
@@ -623,175 +623,338 @@ export default function Auth() {
         <RejectionFullScreen result={rejectionInfo} onUnderstood={startOver} onRetry={retryRequestCode} />
       )}
 
-      <div
-        style={{
-          minHeight: '100vh',
-          padding: '40px 16px 48px',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-        }}
-      >
-        <div style={{ maxWidth: 440, width: '100%' }}>
-          {/* Hero para primeiro passo */}
-          {step === 'nickname' && (
-            <div style={{ textAlign: 'center', marginBottom: 28 }}>
-              <div
-                style={{
-                  width: 64,
-                  height: 64,
-                  margin: '0 auto 16px',
-                  borderRadius: 16,
-                  background: 'var(--app-primary)',
+      {!showInstallLoader && !rejectionInfo && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+            padding: '24px 16px',
+            background: 'linear-gradient(135deg, var(--app-card-bg-soft) 0%, var(--app-warning-bg) 25%, var(--app-primary-muted) 50%, var(--app-gold-light) 75%, var(--app-primary-muted) 100%)',
+            backgroundAttachment: 'fixed',
+            fontFamily: "'Segoe UI', system-ui, sans-serif",
+          }}
+        >
+          {/* Blobs decorativos de fundo */}
+          <div
+            style={{
+              position: 'absolute',
+              width: 400,
+              height: 400,
+              borderRadius: '50%',
+              background: 'radial-gradient(circle, var(--app-primary-muted) 0%, transparent 70%)',
+              top: '-15%',
+              right: '-10%',
+              animation: 'auth-blob-float 12s ease-in-out infinite',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              width: 320,
+              height: 320,
+              borderRadius: '50%',
+              background: 'radial-gradient(circle, var(--app-warning-bg) 0%, transparent 70%)',
+              bottom: '10%',
+              left: '-8%',
+              animation: 'auth-blob-float 10s ease-in-out infinite reverse',
+              animationDelay: '2s',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              width: 200,
+              height: 200,
+              borderRadius: '50%',
+              background: 'radial-gradient(circle, var(--app-gold-light) 0%, transparent 70%)',
+              top: '45%',
+              left: '20%',
+              animation: 'auth-blob-float 8s ease-in-out infinite',
+              animationDelay: '1s',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              width: 180,
+              height: 180,
+              borderRadius: '50%',
+              background: 'radial-gradient(circle, var(--app-bg-blob1) 0%, transparent 70%)',
+              bottom: '25%',
+              right: '25%',
+              animation: 'auth-blob-float 11s ease-in-out infinite',
+              animationDelay: '0.5s',
+            }}
+          />
+
+          <style>{`
+          @keyframes auth-blob-float {
+            0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.85; }
+            50% { transform: translate(15px, -15px) scale(1.08); opacity: 1; }
+          }
+        `}</style>
+
+          <div style={{ maxWidth: 440, width: '100%', position: 'relative', zIndex: 1, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {/* Hero para primeiro passo */}
+            {step === 'nickname' && (
+              <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                <div
+                  style={{
+                    width: 72,
+                    height: 72,
+                    margin: '0 auto 16px',
+                    borderRadius: 24,
+                    background: 'linear-gradient(145deg, var(--app-primary) 0%, var(--app-primary-dark) 40%, var(--app-accent) 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: 'var(--app-shadow-lg)',
+                    animation: 'auth-hero-pulse 3s ease-in-out infinite',
+                  }}
+                >
+                  <RocketOutlined style={{ fontSize: 34, color: 'var(--brand-white)', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }} />
+                </div>
+                <style>{`
+                @keyframes auth-hero-pulse {
+                  0%, 100% { transform: scale(1); }
+                  50% { transform: scale(1.04); }
+                }
+              `}</style>
+                <h1
+                  style={{
+                    fontSize: 24,
+                    fontWeight: 800,
+                    margin: 0,
+                    lineHeight: 1.3,
+                    letterSpacing: '-0.02em',
+                    color: 'var(--app-text)',
+                    textShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                  }}
+                >
+                  Entra pro programa de influenciadores
+                </h1>
+                <p
+                  style={{
+                    fontSize: 14,
+                    color: 'var(--app-text-secondary)',
+                    marginTop: 8,
+                    lineHeight: 1.5,
+                    maxWidth: 340,
+                    margin: '8px auto 0',
+                  }}
+                >
+                  Valida teu perfil em poucos cliques e começa a receber proposta de marca.
+                </p>
+              </div>
+            )}
+
+            <Card
+              title={
+                step === 'nickname' ? (
+                  <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--app-text)' }}>
+                    <UserOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
+                    {user?.profile_handle ? 'Perfil validado' : 'Começar cadastro'}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--app-text)' }}>
+                    <SafetyCertificateOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
+                    Validar perfil no Instagram
+                  </span>
+                )
+              }
+              style={{
+                overflow: 'hidden',
+                background: 'var(--app-glass-bg)',
+                backdropFilter: 'blur(12px)',
+                borderRadius: 'var(--app-card-radius)',
+                border: '1px solid var(--app-glass-border)',
+                boxShadow: 'var(--app-shadow-lg)',
+              }}
+              styles={{
+                header: { borderBottom: '1px solid var(--app-border)', padding: '20px 24px' },
+                body: {
+                  padding: step === 'nickname'
+                    ? (user?.profile_handle ? '24px 24px 28px' : '16px 24px 24px')
+                    : '24px 24px 28px',
+                },
+              }}
+            >
+              {user?.profile_handle && step === 'nickname' && (
+                <div style={{
                   display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: 'var(--app-shadow-cta)',
-                }}
-              >
-                <RocketOutlined style={{ fontSize: 28, color: 'var(--brand-white)' }} />
-              </div>
-              <h1
-                style={{
-                  fontSize: 26,
-                  fontWeight: 700,
-                  color: 'var(--app-text)',
-                  margin: 0,
-                  lineHeight: 1.3,
-                  letterSpacing: '-0.02em',
-                }}
-              >
-                Entra pro programa de influenciadores
-              </h1>
-              <p
-                style={{
-                  fontSize: 16,
-                  color: 'var(--app-text-secondary)',
-                  marginTop: 12,
-                  lineHeight: 1.5,
-                }}
-              >
-                Valida teu perfil em poucos cliques e começa a receber proposta de marca.
-              </p>
-            </div>
-          )}
-
-          <Card
-            title={
-              step === 'nickname' ? (
-                <span style={{ fontSize: 16, fontWeight: 600 }}>
-                  <UserOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
-                  Começar cadastro
-                </span>
-              ) : (
-                <span>
-                  <SafetyCertificateOutlined style={{ marginRight: 8 }} />
-                  Validar perfil no Instagram
-                </span>
-              )
-            }
-            style={{ overflow: 'hidden' }}
-            styles={{ body: { paddingTop: step === 'nickname' ? 8 : 24 } }}
-          >
-            {user?.profile_handle && step === 'nickname' && (
-              <div style={{ marginBottom: 16, padding: 12, background: 'var(--app-alert-success-bg)', border: '1px solid var(--app-alert-success-border)', borderRadius: 12 }}>
-                <p style={{ margin: 0, color: 'var(--app-alert-success-text)' }}>
-                  Você já validou o <strong>@{user.profile_handle}</strong>.
-                </p>
-                <div style={{ marginTop: 8 }}>
-                  <Button type="primary" size="small" onClick={() => navigate(`/activate/${user.profile_handle}`)}>
-                    Continuar
-                  </Button>
-                  <Button type="link" size="small" onClick={validateAnotherProfile} style={{ marginLeft: 8 }}>
-                    Validar outro perfil
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {!user?.profile_handle && step === 'nickname' && (
-              <>
-                <p style={{ color: 'var(--app-text-secondary)', marginBottom: 20, fontSize: 14, lineHeight: 1.5 }}>
-                  Coloca teu <strong>@</strong>. A gente manda um código no <strong>Direct do Instagram</strong>.
-                </p>
-                <Form form={form} name="request-code" onFinish={onRequestCode} layout="vertical" requiredMark={false}>
-                  <Form.Item name="nickname" label="Seu @ no Instagram" rules={[{ required: true, message: 'Coloca teu @ do Instagram.' }]}>
-                    <Input
-                      prefix={<UserOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
-                      placeholder="ex: seu_usuario"
-                      size="large"
-                      autoComplete="username"
-                      style={{ borderRadius: 10 }}
-                      autoFocus
-                    />
-                  </Form.Item>
-                  <Form.Item style={{ marginBottom: 0 }}>
+                  flexDirection: 'column',
+                  gap: 20,
+                  alignItems: 'stretch',
+                }}>
+                  <div style={{
+                    padding: '20px 20px',
+                    background: 'var(--app-alert-success-bg)',
+                    border: '1px solid var(--app-alert-success-border)',
+                    borderRadius: 16,
+                    textAlign: 'center',
+                  }}>
+                    <p style={{ margin: 0, color: 'var(--app-alert-success-text)', fontSize: 15, lineHeight: 1.6 }}>
+                      Você já validou o <strong style={{ color: 'var(--app-success-accent)' }}>@{user.profile_handle}</strong>.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     <Button
                       type="primary"
-                      htmlType="submit"
-                      loading={loading && !showInstallLoader}
-                      block
                       size="large"
-                      icon={<MessageOutlined />}
-                      style={{ height: 48, borderRadius: 10, fontWeight: 600 }}
+                      onClick={() => navigate(`/activate/${user.profile_handle}`)}
+                      style={{
+                        height: 48,
+                        borderRadius: 14,
+                        fontWeight: 600,
+                        background: 'linear-gradient(90deg, var(--app-primary) 0%, var(--app-accent) 100%)',
+                        border: 'none',
+                        boxShadow: 'var(--app-shadow-md)',
+                      }}
                     >
-                      Pedir código no Instagram
+                      Continuar
                     </Button>
-                  </Form.Item>
-                </Form>
-              </>
-            )}
+                    <Button
+                      type="text"
+                      size="large"
+                      onClick={validateAnotherProfile}
+                      block
+                      style={{ color: 'var(--app-primary)', fontWeight: 600, height: 44 }}
+                    >
+                      Validar outro perfil
+                    </Button>
+                  </div>
+                </div>
+              )}
 
-            {step === 'code' && (
-              <>
-                <div style={{ marginBottom: 16, padding: 14, background: 'var(--app-info-bg)', border: '1px solid var(--app-info-border)', borderRadius: 12 }}>
-                  <p style={{ margin: 0, color: 'var(--app-info-text)', fontSize: 14 }}>
-                    Mandamos um código de 6 números no <strong style={{ color: 'var(--app-info-text-accent)' }}>Direct</strong> para <strong style={{ color: 'var(--app-info-text-accent)' }}>@{nickname}</strong>. Olha a DM e cola aqui.
+              {!user?.profile_handle && step === 'nickname' && (
+                <>
+                  <p style={{ color: 'var(--app-text-secondary)', marginBottom: 24, fontSize: 14, lineHeight: 1.6 }}>
+                    Coloca teu <strong style={{ color: 'var(--app-primary)' }}>@</strong>. A gente manda um código no <strong style={{ color: 'var(--app-primary)' }}>Direct do Instagram</strong>.
                   </p>
-                </div>
-                <Form form={form} name="verify" onFinish={onVerify} layout="vertical" requiredMark={false}>
-                  <Form.Item label="Nickname">
-                    <Input value={`@${nickname}`} disabled size="large" style={{ borderRadius: 10 }} />
-                  </Form.Item>
-                  <Form.Item
-                    name="code"
-                    label="Código de 6 dígitos"
-                    rules={[{ required: true, message: 'Coloca o código de 6 números.' }, { len: 6, message: 'Coloca o código de 6 números.' }]}
-                  >
-                    <Input
-                      placeholder="000000"
-                      size="large"
-                      type="number"
-                      maxLength={6}
-                      autoComplete="one-time-code"
-                      style={{ letterSpacing: 8, textAlign: 'center', fontSize: 18, borderRadius: 10 }}
-                      autoFocus
-                    />
-                  </Form.Item>
-                  <Form.Item>
-                    <Button
-                      type="primary"
-                      htmlType="submit"
-                      loading={loading}
-                      block
-                      size="large"
-                      icon={<SafetyCertificateOutlined />}
-                      style={{ height: 48, borderRadius: 10, fontWeight: 600 }}
+                  <Form form={form} name="request-code" onFinish={onRequestCode} layout="vertical" requiredMark={false}>
+                    <Form.Item name="nickname" label={<span style={{ fontWeight: 600, color: 'var(--app-text)' }}>Seu @ no Instagram</span>} rules={[{ required: true, message: 'Coloca teu @ do Instagram.' }]}>
+                      <Input
+                        prefix={<UserOutlined style={{ color: 'var(--app-primary)' }} />}
+                        placeholder="ex: seu_usuario"
+                        size="large"
+                        autoComplete="username"
+                        style={{ borderRadius: 12, borderColor: 'var(--app-border)' }}
+                        autoFocus
+                      />
+                    </Form.Item>
+                    <Form.Item style={{ marginBottom: 0 }}>
+                      <Button
+                        type="primary"
+                        htmlType="submit"
+                        loading={loading && !showInstallLoader}
+                        block
+                        size="large"
+                        icon={<MessageOutlined />}
+                        style={{
+                          height: 52,
+                          borderRadius: 14,
+                          fontWeight: 700,
+                          fontSize: 15,
+                          background: 'linear-gradient(90deg, var(--app-primary) 0%, var(--app-accent) 100%)',
+                          border: 'none',
+                          boxShadow: 'var(--app-shadow-md)',
+                        }}
+                      >
+                        Pedir código no Instagram
+                      </Button>
+                    </Form.Item>
+                  </Form>
+                </>
+              )}
+
+              {step === 'code' && (
+                <>
+                  <div style={{
+                    marginBottom: 24,
+                    padding: 20,
+                    background: 'var(--app-info-bg)',
+                    border: '1px solid var(--app-info-border)',
+                    borderRadius: 16,
+                    boxShadow: 'var(--app-shadow-sm)',
+                  }}>
+                    <p style={{ margin: 0, color: 'var(--app-info-text)', fontSize: 14, lineHeight: 1.5 }}>
+                      Mandamos um código de 6 números no <strong style={{ color: 'var(--app-info-text-accent)', fontWeight: 700 }}>Direct</strong> para <strong style={{ color: 'var(--app-info-text-accent)', fontWeight: 700 }}>@{nickname}</strong>. Olha a DM e cola aqui.
+                    </p>
+                  </div>
+                  <Form form={form} name="verify" onFinish={onVerify} layout="vertical" requiredMark={false}>
+                    <Form.Item label={<span style={{ fontWeight: 600, color: 'var(--app-text)' }}>Nickname</span>}>
+                      <Input value={`@${nickname}`} disabled size="large" style={{ borderRadius: 12, borderColor: 'var(--app-border)' }} />
+                    </Form.Item>
+                    <Form.Item
+                      name="code"
+                      label={<span style={{ fontWeight: 600, color: 'var(--app-text)' }}>Código de 6 dígitos</span>}
+                      rules={[{ required: true, message: 'Coloca o código de 6 números.' }, { len: 6, message: 'Coloca o código de 6 números.' }]}
                     >
-                      Validar e continuar
-                    </Button>
-                  </Form.Item>
-                  <Form.Item style={{ marginBottom: 0 }}>
-                    <Button type="link" block onClick={startOver} style={{ padding: 0 }}>
-                      Usar outro @
-                    </Button>
-                  </Form.Item>
-                </Form>
-              </>
-            )}
-          </Card>
+                      <Input
+                        placeholder="000000"
+                        size="large"
+                        type="number"
+                        maxLength={6}
+                        autoComplete="one-time-code"
+                        style={{ letterSpacing: 10, textAlign: 'center', fontSize: 20, fontWeight: 600, borderRadius: 12, borderColor: 'var(--app-border)' }}
+                        autoFocus
+                      />
+                    </Form.Item>
+                    <Form.Item>
+                      <Button
+                        type="primary"
+                        htmlType="submit"
+                        loading={loading}
+                        block
+                        size="large"
+                        icon={<SafetyCertificateOutlined />}
+                        style={{
+                          height: 52,
+                          borderRadius: 14,
+                          fontWeight: 700,
+                          fontSize: 15,
+                          background: 'linear-gradient(90deg, var(--app-primary) 0%, var(--app-accent) 100%)',
+                          border: 'none',
+                          boxShadow: 'var(--app-shadow-md)',
+                        }}
+                      >
+                        Validar e continuar
+                      </Button>
+                    </Form.Item>
+                    <Form.Item style={{ marginTop: 8, marginBottom: 0 }}>
+                      <Button type="link" block onClick={startOver} style={{ padding: 0, color: 'var(--app-primary)', fontWeight: 600 }}>
+                        Usar outro @
+                      </Button>
+                    </Form.Item>
+                  </Form>
+                </>
+              )}
+            </Card>
+
+            <Button
+              type="text"
+              onClick={() => window.location.href = '/'}
+              style={{
+                marginTop: 24,
+                height: 40,
+                padding: '0 20px',
+                borderRadius: 12,
+                fontWeight: 500,
+                fontSize: 13,
+                color: 'var(--app-text-tertiary)',
+              }}
+              icon={<ArrowLeftOutlined />}
+            >
+              Voltar
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </>
   )
 }

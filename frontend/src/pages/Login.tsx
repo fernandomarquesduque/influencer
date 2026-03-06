@@ -58,9 +58,9 @@ function Login() {
 
   return (
     <div
+      className="login-page"
       style={{
-        minHeight: '100vh',
-        maxHeight: '100dvh',
+        minHeight: '100dvh',
         overflow: 'auto',
         display: 'flex',
         flexDirection: 'column',
@@ -87,7 +87,7 @@ function Login() {
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '56px 48px',
+            padding: 'clamp(24px, 5vw, 56px) clamp(24px, 4vw, 48px)',
             borderRight: '1px solid var(--app-border)',
             background: 'linear-gradient(135deg, #f7f3ff 0%, #f1ebff 100%)',
           }}
@@ -102,7 +102,7 @@ function Login() {
                     marginBottom: 16,
                     fontSize: 36,
                     fontWeight: 700,
-                    color: 'var(--app-text)',
+                    color: '#1a1a2e',
                     lineHeight: 1.25,
                   }}
                 >
@@ -112,7 +112,7 @@ function Login() {
                   style={{
                     fontSize: 18,
                     lineHeight: 1.6,
-                    color: '#555',
+                    color: '#374151',
                     display: 'block',
                   }}
                 >
@@ -128,32 +128,12 @@ function Login() {
                 ].map((item) => (
                   <div key={item} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <CheckOutlined style={{ color: 'var(--app-success)', fontSize: 16, flexShrink: 0 }} />
-                    <Text style={{ fontSize: 16, color: 'var(--app-text-secondary)' }}>{item}</Text>
+                    <Text style={{ fontSize: 16, color: '#4b5563' }}>{item}</Text>
                   </div>
                 ))}
               </Space>
 
-              {/* Mockup de métricas */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
-                  gap: 16,
-                }}
-              >
-                <div style={{ textAlign: 'center' }}>
-                  <Text style={{ display: 'block', fontSize: 20, fontWeight: 700, color: 'var(--app-primary)' }}>12,4%</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>Engajamento</Text>
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <Text style={{ display: 'block', fontSize: 20, fontWeight: 700, color: 'var(--app-primary)' }}>42,3k</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>Seguidores</Text>
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <Text style={{ display: 'block', fontSize: 20, fontWeight: 700, color: 'var(--app-primary)' }}>8</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>Parcerias</Text>
-                </div>
-              </div>
+
 
               <Button
                 type="default"
@@ -185,7 +165,7 @@ function Login() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: 48,
+            padding: 'clamp(16px, 4vw, 48px)',
             overflow: 'auto',
             minWidth: 0,
             background: 'var(--app-bg)',
@@ -196,12 +176,13 @@ function Login() {
             style={{
               width: '100%',
               maxWidth: 420,
-              padding: '40px 40px 32px',
+              minWidth: 0,
+              padding: 'clamp(16px, 4vw, 40px) clamp(16px, 4vw, 40px) clamp(20px, 3vw, 32px)',
             }}
           >
             {/* Header */}
-            <Space direction="vertical" size={20} style={{ width: '100%', marginBottom: 28 }} align="center">
-              <Logo height={52} alt="Relatório de Influencer" />
+            <Space direction="vertical" size={20} style={{ width: '100%', marginBottom: 28 }} align="center" className="login-header">
+              <Logo height={52} alt="Relatório de Influencer" className="login-logo" />
               <Space direction="vertical" size={6} align="center" style={{ width: '100%' }}>
                 <Title level={3} style={{ margin: 0, fontWeight: 700, fontSize: 22 }}>
                   Bem vindo de volta!
@@ -213,6 +194,7 @@ function Login() {
 
             {/* Tabs: Senha ou DM */}
             <div
+              className="login-tabs"
               style={{
                 display: 'flex',
                 gap: 0,
