@@ -67,6 +67,80 @@ body {
   }
 }
 
+/* Login: layout split-screen premium (estilo Stripe/Notion/Linear) */
+.login-two-columns {
+  gap: 0;
+}
+
+.login-left-panel {
+  transition: all 0.2s ease;
+}
+
+.login-right-panel {
+  transition: all 0.2s ease;
+}
+
+.login-card {
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+}
+
+.login-tab {
+  transition: all 0.2s ease;
+}
+
+.login-tab:hover {
+  opacity: 0.9;
+}
+
+.login-btn-primary {
+  background: linear-gradient(90deg, var(--app-primary), var(--app-gold)) !important;
+  border: none !important;
+  transition: all 0.2s ease !important;
+}
+
+.login-btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.login-btn-primary:focus {
+  filter: brightness(1.05);
+}
+
+.login-input,
+.login-input input {
+  transition: all 0.2s ease;
+}
+
+.login-input:focus-within {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 2px rgba(104, 39, 143, 0.15);
+}
+
+/* Mobile: login em cima, marketing embaixo */
+@media (max-width: 900px) {
+  .login-two-columns {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    grid-template-areas: 'right' 'left';
+  }
+
+  .login-left-panel {
+    grid-area: left;
+    border-right: none;
+    border-top: 1px solid var(--app-border);
+    padding: 40px 24px !important;
+    min-height: auto;
+  }
+
+  .login-right-panel {
+    grid-area: right;
+    padding: 32px 24px !important;
+    min-height: 0;
+  }
+}
+
 /* ========== TierProgressGameBar — fundo escuro, borda gradiente gold/primary ========== */
 .tier-progress-game-bar--gamified .tier-progress-game-bar__quest-card {
   position: relative;

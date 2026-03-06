@@ -626,7 +626,6 @@ export default function Auth() {
       <div
         style={{
           minHeight: '100vh',
-          background: 'var(--app-bg)',
           padding: '40px 16px 48px',
           display: 'flex',
           flexDirection: 'column',

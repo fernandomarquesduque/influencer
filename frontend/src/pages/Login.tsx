@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { App, Form, Input, Button, Card, Typography, Space, Divider } from 'antd'
+import { App, Form, Input, Button, Typography, Space, Divider } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { UserOutlined, LockOutlined, LoginOutlined, MessageOutlined } from '@ant-design/icons'
+import { UserOutlined, LockOutlined, LoginOutlined, MessageOutlined, UserAddOutlined, CheckOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import Logo from '../components/Logo'
 
@@ -59,238 +59,352 @@ function Login() {
   return (
     <div
       style={{
-        height: '100vh',
+        minHeight: '100vh',
         maxHeight: '100dvh',
-        overflow: 'hidden',
+        overflow: 'auto',
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'var(--app-bg)',
-        backgroundImage: `
-          var(--app-hero-gradient),
-          radial-gradient(circle at 20% 80%, var(--app-bg-blob1) 0%, transparent 50%),
-          radial-gradient(circle at 80% 20%, var(--app-bg-blob2) 0%, transparent 50%)
-        `,
-        padding: 24,
+        flexDirection: 'column',
         boxSizing: 'border-box',
       }}
     >
-      <div style={{ width: '100%', maxWidth: 440 }}>
-        <Card
-          variant="borderless"
+      {/* Split screen: esquerda = produto | direita = login */}
+      <div
+        className="login-two-columns"
+        style={{
+          flex: 1,
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gridTemplateRows: '1fr',
+          minHeight: 0,
+          alignItems: 'stretch',
+        }}
+      >
+        {/* Painel esquerdo: apresentação do produto */}
+        <div
+          className="login-left-panel"
           style={{
-            borderRadius: 18,
-            boxShadow: 'var(--app-shadow-xl)',
-            overflow: 'hidden',
-          }}
-          styles={{
-            body: { padding: '32px 36px 28px' },
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '56px 48px',
+            borderRight: '1px solid var(--app-border)',
+            background: 'linear-gradient(135deg, #f7f3ff 0%, #f1ebff 100%)',
           }}
         >
-          {/* Header */}
-          <Space direction="vertical" size={16} style={{ width: '100%', marginBottom: 24 }} align="center">
-            <Logo height={48} alt="Relatório de Influencer" />
-            <Space direction="vertical" size={4} align="center" style={{ width: '100%' }}>
-              <Title level={3} style={{ margin: 0, fontWeight: 600 }}>
-                E aí, de volta?
-              </Title>
-              <Text type="secondary" style={{ fontSize: 14 }}>
-                Entra aí e continua de onde parou.
-              </Text>
-            </Space>
-          </Space>
-          <Divider style={{ margin: '0 0 24px' }} />
-
-          {/* Escolha: Senha ou DM */}
-          <div
-            style={{
-              display: 'flex',
-              gap: 0,
-              marginBottom: 24,
-              padding: 4,
-              borderRadius: 12,
-              background: 'var(--app-border-light)',
-              border: '1px solid var(--app-border)',
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setAccessMode('password')}
-              style={{
-                flex: 1,
-                padding: '12px 16px',
-                borderRadius: 10,
-                border: 'none',
-                background: accessMode === 'password' ? 'var(--app-primary)' : 'transparent',
-                color: accessMode === 'password' ? 'var(--brand-white)' : 'var(--app-text-secondary)',
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-            >
-              <LockOutlined />
-              Entrar com senha
-            </button>
-            <button
-              type="button"
-              onClick={() => setAccessMode('dm')}
-              style={{
-                flex: 1,
-                padding: '12px 16px',
-                borderRadius: 10,
-                border: 'none',
-                background: accessMode === 'dm' ? 'var(--app-primary)' : 'transparent',
-                color: accessMode === 'dm' ? 'var(--brand-white)' : 'var(--app-text-secondary)',
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-            >
-              <MessageOutlined />
-              Entrar por DM
-            </button>
-          </div>
-
-          {/* Nickname compartilhado pelas duas abas */}
-          <div style={{ marginBottom: accessMode === 'password' ? 12 : 16 }}>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: 4,
-                fontSize: 14,
-                fontWeight: 500,
-                color: 'var(--app-text)',
-              }}
-            >
-              {accessMode === 'password' ? 'Seu @ ou usuário' : 'Seu @ do Instagram'}
-            </label>
-            <Input
-              prefix={<UserOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
-              placeholder={accessMode === 'password' ? 'ex: seu_usuario' : 'ex: seu_usuario'}
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value.replace(/^\s*@/, '').trimStart())}
-              onPressEnter={accessMode === 'dm' ? goToDmAccess : () => form.submit()}
-              size="large"
-              autoComplete="username"
-              style={{ borderRadius: 10 }}
-            />
-          </div>
-
-          {accessMode === 'password' && (
-            <Form
-              form={form}
-              name="login"
-              onFinish={onFinish}
-              layout="vertical"
-              requiredMark={false}
-              size="large"
-            >
-              <Form.Item
-                name="password"
-                label="Senha"
-                rules={[{ required: true, message: 'Preenche a senha.' }]}
-                style={{ marginBottom: 28 }}
-              >
-                <Input.Password
-                  prefix={<LockOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
-                  placeholder="Digite sua senha"
-                  autoComplete="current-password"
-                  visibilityToggle
-                />
-              </Form.Item>
-              <Form.Item style={{ marginBottom: failedAttempts >= 1 ? 12 : 24 }}>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  loading={loading}
-                  block
-                  size="large"
-                  icon={<LoginOutlined />}
-                  style={{ height: 48, fontWeight: 500 }}
-                >
-                  Entrar
-                </Button>
-              </Form.Item>
-              {failedAttempts >= 1 && (
-                <div
+          <div style={{ maxWidth: 420, width: '100%' }}>
+            <Space direction="vertical" size={32} style={{ width: '100%' }}>
+              <div>
+                <Title
+                  level={1}
                   style={{
-                    padding: '12px 14px',
-                    borderRadius: 10,
-                    background: 'var(--app-info-bg)',
-                    border: '1px solid var(--app-info-border)',
-                    marginBottom: 24,
+                    margin: 0,
+                    marginBottom: 16,
+                    fontSize: 36,
+                    fontWeight: 700,
+                    color: 'var(--app-text)',
+                    lineHeight: 1.25,
                   }}
                 >
-                  <Text style={{ fontSize: 13, color: 'var(--app-text-secondary)', marginRight: 8 }}>
-                    Esqueceu a senha?
-                  </Text>
-                  <Button
-                    type="link"
-                    size="small"
-                    onClick={() => setAccessMode('dm')}
-                    style={{ padding: 0, height: 'auto', fontWeight: 600, fontSize: 13 }}
-                  >
-                    Tenta entrar por DM
-                  </Button>
-                </div>
-              )}
-            </Form>
-          )}
+                  Transforme seu perfil em oportunidades de parceria
+                </Title>
+                <Text
+                  style={{
+                    fontSize: 18,
+                    lineHeight: 1.6,
+                    color: '#555',
+                    display: 'block',
+                  }}
+                >
+                  Descubra métricas do seu Instagram, gere seu Media Kit automaticamente e entre no radar de marcas da sua região.
+                </Text>
+              </div>
 
-          {accessMode === 'dm' && (
-            <div style={{ padding: '4px 0' }}>
-              <Text
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                {[
+                  'Descubra seu engajamento real',
+                  'Gere Media Kit profissional',
+                  'Seja encontrado por marcas da sua região',
+                ].map((item) => (
+                  <div key={item} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <CheckOutlined style={{ color: 'var(--app-success)', fontSize: 16, flexShrink: 0 }} />
+                    <Text style={{ fontSize: 16, color: 'var(--app-text-secondary)' }}>{item}</Text>
+                  </div>
+                ))}
+              </Space>
+
+              {/* Mockup de métricas */}
+              <div
                 style={{
-                  display: 'block',
-                  fontSize: 14,
-                  color: 'var(--app-text-secondary)',
-                  marginBottom: 16,
-                  lineHeight: 1.5,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gap: 16,
                 }}
               >
-                A gente manda um código no Direct do Instagram. Cola aí e segue.
-              </Text>
+                <div style={{ textAlign: 'center' }}>
+                  <Text style={{ display: 'block', fontSize: 20, fontWeight: 700, color: 'var(--app-primary)' }}>12,4%</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Engajamento</Text>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <Text style={{ display: 'block', fontSize: 20, fontWeight: 700, color: 'var(--app-primary)' }}>42,3k</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Seguidores</Text>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <Text style={{ display: 'block', fontSize: 20, fontWeight: 700, color: 'var(--app-primary)' }}>8</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Parcerias</Text>
+                </div>
+              </div>
+
               <Button
-                type="primary"
+                type="default"
                 size="large"
-                icon={<MessageOutlined />}
-                onClick={goToDmAccess}
-                block
+                icon={<UserAddOutlined />}
+                onClick={() => navigate('/app/create')}
+                className="login-tab"
                 style={{
                   height: 48,
-                  borderRadius: 10,
-                  fontWeight: 500,
-                  background: 'var(--app-primary)',
+                  borderRadius: 12,
+                  fontWeight: 600,
+                  fontSize: 15,
+                  width: '100%',
+                  maxWidth: 260,
                   borderColor: 'var(--app-primary)',
+                  color: 'var(--app-primary)',
                 }}
               >
-                Continuar
+                Cadastrar
               </Button>
-            </div>
-          )}
+            </Space>
+          </div>
+        </div>
 
-          <Divider style={{ margin: '16px 0' }} />
-          <Space direction="vertical" size={8} style={{ width: '100%' }} align="center">
-            <Text
-              type="secondary"
-              style={{ fontSize: 12, cursor: 'pointer' }}
-              onClick={() => window.location.href = '/'}
+        {/* Painel direito: login */}
+        <div
+          className="login-right-panel"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 48,
+            overflow: 'auto',
+            minWidth: 0,
+            background: 'var(--app-bg)',
+          }}
+        >
+          <div
+            className="login-right-content"
+            style={{
+              width: '100%',
+              maxWidth: 420,
+              padding: '40px 40px 32px',
+            }}
+          >
+            {/* Header */}
+            <Space direction="vertical" size={20} style={{ width: '100%', marginBottom: 28 }} align="center">
+              <Logo height={52} alt="Relatório de Influencer" />
+              <Space direction="vertical" size={6} align="center" style={{ width: '100%' }}>
+                <Title level={3} style={{ margin: 0, fontWeight: 700, fontSize: 22 }}>
+                  Bem vindo de volta!
+                </Title>
+
+              </Space>
+            </Space>
+            <Divider style={{ margin: '0 0 28px' }} />
+
+            {/* Tabs: Senha ou DM */}
+            <div
+              style={{
+                display: 'flex',
+                gap: 0,
+                marginBottom: 28,
+                padding: 4,
+                borderRadius: 12,
+                background: 'var(--app-card-bg-soft)',
+                border: '1px solid var(--app-border)',
+              }}
             >
-              Voltar ao site
-            </Text>
-            <Text type="secondary" style={{ fontSize: 11 }}>
-              Seus dados ficam seguros com a gente.
-            </Text>
-          </Space>
-        </Card>
+              <button
+                type="button"
+                className="login-tab"
+                onClick={() => setAccessMode('password')}
+                style={{
+                  flex: 1,
+                  padding: '14px 18px',
+                  borderRadius: 10,
+                  border: 'none',
+                  background: accessMode === 'password' ? 'var(--app-primary)' : 'transparent',
+                  color: accessMode === 'password' ? 'var(--brand-white)' : 'var(--app-text-secondary)',
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                <LockOutlined />
+                Entrar com senha
+              </button>
+              <button
+                type="button"
+                className="login-tab"
+                onClick={() => setAccessMode('dm')}
+                style={{
+                  flex: 1,
+                  padding: '14px 18px',
+                  borderRadius: 10,
+                  border: 'none',
+                  background: accessMode === 'dm' ? 'var(--app-primary)' : 'transparent',
+                  color: accessMode === 'dm' ? 'var(--brand-white)' : 'var(--app-text-secondary)',
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                <MessageOutlined />
+                Entrar por DM
+              </button>
+            </div>
+
+            {/* Nickname compartilhado pelas duas abas */}
+            <div style={{ marginBottom: accessMode === 'password' ? 12 : 16 }}>
+              <label
+                style={{
+                  display: 'block',
+                  marginBottom: 4,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  color: 'var(--app-text)',
+                }}
+              >
+                {accessMode === 'password' ? 'Seu @ ou usuário' : 'Seu @ do Instagram'}
+              </label>
+              <Input
+                className="login-input"
+                prefix={<UserOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
+                placeholder={accessMode === 'password' ? 'ex: seu_usuario' : 'ex: seu_usuario'}
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value.replace(/^\s*@/, '').trimStart())}
+                onPressEnter={accessMode === 'dm' ? goToDmAccess : () => form.submit()}
+                size="large"
+                autoComplete="username"
+                style={{ borderRadius: 12 }}
+              />
+            </div>
+
+            {accessMode === 'password' && (
+              <Form
+                form={form}
+                name="login"
+                onFinish={onFinish}
+                layout="vertical"
+                requiredMark={false}
+                size="large"
+              >
+                <Form.Item
+                  name="password"
+                  label="Senha"
+                  rules={[{ required: true, message: 'Preenche a senha.' }]}
+                  style={{ marginBottom: 28 }}
+                >
+                  <Input.Password
+                    className="login-input"
+                    prefix={<LockOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
+                    placeholder="Digite sua senha"
+                    autoComplete="current-password"
+                    visibilityToggle
+                    style={{ borderRadius: 12 }}
+                  />
+                </Form.Item>
+                <Form.Item style={{ marginBottom: failedAttempts >= 1 ? 12 : 24 }}>
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    loading={loading}
+                    block
+                    size="large"
+                    icon={<LoginOutlined />}
+                    className="login-btn-primary"
+                    style={{ height: 52, fontWeight: 600, borderRadius: 12 }}
+                  >
+                    Entrar
+                  </Button>
+                </Form.Item>
+                {failedAttempts >= 1 && (
+                  <div
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      background: 'var(--app-info-bg)',
+                      border: '1px solid var(--app-info-border)',
+                      marginBottom: 24,
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, color: 'var(--app-text-secondary)', marginRight: 8 }}>
+                      Esqueceu a senha?
+                    </Text>
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => setAccessMode('dm')}
+                      style={{ padding: 0, height: 'auto', fontWeight: 600, fontSize: 13 }}
+                    >
+                      Tenta entrar por DM
+                    </Button>
+                  </div>
+                )}
+              </Form>
+            )}
+
+            {accessMode === 'dm' && (
+              <div style={{ padding: '4px 0' }}>
+                <Text
+                  style={{
+                    display: 'block',
+                    fontSize: 14,
+                    color: 'var(--app-text-secondary)',
+                    marginBottom: 16,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  A gente manda um código no Direct do Instagram. Cola aí e segue.
+                </Text>
+                <Button
+                  type="primary"
+                  size="large"
+                  icon={<MessageOutlined />}
+                  onClick={goToDmAccess}
+                  block
+                  className="login-btn-primary"
+                  style={{
+                    height: 52,
+                    borderRadius: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  Continuar
+                </Button>
+              </div>
+            )}
+
+            <Divider style={{ margin: '16px 0' }} />
+            <Space direction="vertical" size={8} style={{ width: '100%' }} align="center">
+              <Text
+                type="secondary"
+                style={{ fontSize: 12, cursor: 'pointer' }}
+                onClick={() => window.location.href = '/'}
+              >
+                Voltar ao site
+              </Text>
+
+            </Space>
+          </div>
+        </div>
       </div>
     </div>
   )
