@@ -102,6 +102,8 @@ export interface EngagementStats {
   engagement_rate_max_viral?: number
   /** Nota quando ER médio > 100%: explica viralização. */
   engagement_rate_note?: string
+  /** Número de posts que têm view_count > 0 (reels/vídeos). Usado no CPM para não diluir views pelo total de posts. */
+  posts_with_views_count?: number
 }
 
 /** Item da listagem com filtros (endpoint /api/profiles/search). */

@@ -10,17 +10,17 @@ const typ = t.typography
 
 export type ERQualidadeBanda = { min: number; max: number; label: string; color: string }
 
-/** Faixas de qualidade do ER para o Gauge — escala 0–6%, cores: ruim → bom */
+/** Faixas de qualidade do ER para o Gauge — escala 0–6% (acima de 6% = Viral). Viral sem teto. */
 export const ER_QUALIDADE_BANDAS: ERQualidadeBanda[] = [
   { min: 0, max: 2, label: 'Baixo', color: '#dc2626' },
   { min: 2, max: 4, label: 'Bom', color: '#fa8c16' },
   { min: 4, max: 6, label: 'Excelente', color: '#0891b2' },
-  { min: 6, max: 10, label: 'Viral', color: '#22c55e' },
+  { min: 6, max: 100, label: 'Viral', color: '#22c55e' },
 ]
 
 export function erBandaRangeLabel(b: ERQualidadeBanda): string {
   if (b.min === 0) return '< 2%'
-  if (b.max >= 10) return `> ${b.min}%`
+  if (b.max >= 100) return `> ${b.min}%`
   return `${b.min}% – ${b.max}%`
 }
 
@@ -29,7 +29,6 @@ export function getErBanda(er: number): ERQualidadeBanda {
   return ER_QUALIDADE_BANDAS.find((b) => er >= b.min && er < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]
 }
 
-const ER_GAUGE_MAX = 7
 const ER_GAUGE_R = 52
 const ER_GAUGE_STROKE = 18
 const ER_GAUGE_CX = 80
@@ -39,11 +38,28 @@ const ER_GAUGE_VIEW_HEIGHT = 88
 const ER_GAUGE_VIEW_Y_OFFSET = 12
 const ER_GAUGE_TICK_OFFSET = 12
 const ER_GAUGE_PCT_INSIDE_R = 35
-const ER_GAUGE_PCT_TICKS = [0, 2, 4, 6]
+/** Escala padrão do gauge (0–7%). Acima disso usamos escala dinâmica para a agulha refletir o valor. */
+const ER_GAUGE_MAX_DEFAULT = 7
 
-function erToAngle(er: number): number {
-  const v = Math.min(ER_GAUGE_MAX, Math.max(0, er))
-  return 180 - (v / ER_GAUGE_MAX) * 180
+function erToAngle(er: number, scaleMax: number): number {
+  const v = Math.min(scaleMax, Math.max(0, er))
+  return 180 - (v / scaleMax) * 180
+}
+
+/** Escala máxima do gauge: até 7% fixo; acima disso estende para o valor caber (agulha proporcional). */
+function getGaugeScaleMax(value: number): number {
+  if (value <= ER_GAUGE_MAX_DEFAULT) return ER_GAUGE_MAX_DEFAULT
+  return Math.min(50, Math.max(ER_GAUGE_MAX_DEFAULT, Math.ceil(value * 1.15)))
+}
+
+/** Ticks em % para o gauge: 0,2,4,6 na escala padrão; múltiplos de 5 na escala estendida. */
+function getGaugeTicks(scaleMax: number): number[] {
+  if (scaleMax <= 7) return [0, 2, 4, 6]
+  const step = scaleMax <= 20 ? 5 : 10
+  const ticks: number[] = [0]
+  for (let t = step; t < scaleMax; t += step) ticks.push(t)
+  ticks.push(scaleMax)
+  return ticks
 }
 
 export interface ERGaugeChartProps {
@@ -53,11 +69,13 @@ export interface ERGaugeChartProps {
 }
 
 export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
-  const angle = erToAngle(value)
+  const scaleMax = getGaugeScaleMax(value)
+  const ticks = getGaugeTicks(scaleMax)
+  const angle = erToAngle(value, scaleMax)
   const rad = (angle * Math.PI) / 180
   const needleX = ER_GAUGE_CX + (ER_GAUGE_R - 2) * Math.cos(rad)
   const needleY = ER_GAUGE_CY - (ER_GAUGE_R - 2) * Math.sin(rad)
-  const bandaAtual = ER_QUALIDADE_BANDAS.find((b) => value >= b.min && value < b.max) ?? ER_QUALIDADE_BANDAS[0]
+  const bandaAtual = ER_QUALIDADE_BANDAS.find((b) => value >= b.min && value < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]
 
   return (
     <div className="er-gauge-chart" style={{ display: 'flex', flexDirection: 'column', gap: 0, width: '100%' }}>
@@ -73,9 +91,9 @@ export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
                 strokeLinecap="butt"
               />
               {ER_QUALIDADE_BANDAS.map((b, i) => {
-                const arcEnd = Math.min(b.max, ER_GAUGE_MAX)
-                const a0 = erToAngle(b.min)
-                const a1 = erToAngle(arcEnd)
+                const arcEnd = Math.min(b.max, scaleMax)
+                const a0 = erToAngle(b.min, scaleMax)
+                const a1 = erToAngle(arcEnd, scaleMax)
                 const r0 = (a0 * Math.PI) / 180
                 const r1 = (a1 * Math.PI) / 180
                 const x0 = ER_GAUGE_CX + ER_GAUGE_R * Math.cos(r0)
@@ -96,8 +114,8 @@ export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
               })}
               <line x1={ER_GAUGE_CX} y1={ER_GAUGE_CY} x2={needleX} y2={needleY} stroke={c.text} strokeWidth={3} strokeLinecap="round" />
               <circle cx={ER_GAUGE_CX} cy={ER_GAUGE_CY} r={5} fill={c.text} />
-              {ER_GAUGE_PCT_TICKS.map((pct) => {
-                const a = erToAngle(pct)
+              {ticks.map((pct) => {
+                const a = erToAngle(pct, scaleMax)
                 const rRad = (a * Math.PI) / 180
                 const x = ER_GAUGE_CX + ER_GAUGE_PCT_INSIDE_R * Math.cos(rRad)
                 const y = ER_GAUGE_CY - ER_GAUGE_PCT_INSIDE_R * Math.sin(rRad)

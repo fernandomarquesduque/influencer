@@ -709,15 +709,23 @@ export function getCpmCpe(
   const n = engagement.posts_count || 1
   const totalViews = engagement.total_views ?? 0
   const totalInteractions = (engagement.total_likes ?? 0) + (engagement.total_comments ?? 0)
-  const avgViews = totalViews / n
+  // CPM = (valor_post / alcance_post) × 1000 — usar só posts que têm views (reels/vídeos) no denominador,
+  // senão mistura feed (sem views) com reels e o CPM explode (ex.: 401 views / 20 posts = 20 avg → CPM absurdamente alto).
+  const nWithViews = (engagement.posts_with_views_count != null && engagement.posts_with_views_count > 0)
+    ? engagement.posts_with_views_count
+    : n
+  const avgViews = nWithViews > 0 ? totalViews / nWithViews : 0
   const avgInteractions = totalInteractions / n
 
-  const cpmEstimate = avgViews > 0 ? (avgValor / avgViews) * 1000 : null
+  const rawCpm = avgViews > 0 ? (avgValor / avgViews) * 1000 : null
+  // CPM de influenciador no BR: nano/micro R$15–R$120, macro até ~R$400; acima de 1500 indica base de views pequena/incorreta.
+  const CPM_MAX_PLAUSIBLE = 1500
+  const cpmEstimate = rawCpm != null && rawCpm <= CPM_MAX_PLAUSIBLE ? Math.round(rawCpm * 100) / 100 : null
   const cpeEstimate = avgInteractions > 0 ? avgValor / avgInteractions : null
   const costPer1000Interactions = avgInteractions > 0 ? (avgValor / avgInteractions) * 1000 : null
 
   return {
-    cpmEstimate: cpmEstimate != null ? Math.round(cpmEstimate * 100) / 100 : null,
+    cpmEstimate,
     cpeEstimate: cpeEstimate != null ? Math.round(cpeEstimate * 100) / 100 : null,
     costPer1000Interactions: costPer1000Interactions != null ? Math.round(costPer1000Interactions * 100) / 100 : null,
   }
