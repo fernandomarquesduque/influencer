@@ -535,14 +535,15 @@ function CoverPage(props: CoverPageProps) {
 
   const cpeValue = cpmCpe.cpeEstimate != null && cpmCpe.cpeEstimate > 0 ? `R$ ${cpmCpe.cpeEstimate.toFixed(2)}` : '—'
   const cpmValue = cpmCpe.cpmEstimate != null && cpmCpe.cpmEstimate > 0 ? `R$ ${cpmCpe.cpmEstimate.toFixed(1)}` : null
-  // Views omitido quando API não fornece; layout em uma linha (2 cards = 50% cada, 3 = 33.33%)
+  // Views só em reels/vídeos; curtidas e comentários de todos os posts (evita confusão "likes > views").
   const metricsBase = [
-    { label: 'Curtidas', value: formatShortNum(totalLikes), desc: 'Total de curtidas nos posts analisados' },
-    { label: 'Comentários', value: formatShortNum(totalComments), desc: 'Total de comentários nos posts' },
-    ...(totalViews > 0 ? [{ label: 'Views', value: formatShortNum(totalViews), desc: 'Total de visualizações nos posts analisados' }] : []),
+    { label: 'Curtidas', value: formatShortNum(totalLikes), desc: 'Total de curtidas (feed + reels)' },
+    { label: 'Comentários', value: formatShortNum(totalComments), desc: 'Total de comentários (feed + reels)' },
+    ...(totalViews > 0 ? [{ label: 'Views (reels)', value: formatShortNum(totalViews), desc: 'Visualizações apenas em reels/vídeos' }] : []),
   ]
   const metrics = metricsBase
   const metricCardWidth = metrics.length === 2 ? '50%' : '33.33%'
+  const showViewsNote = totalViews > 0 && totalViews < totalLikes
 
   const converteQuadrants = [
     { value: `${(er || 0).toFixed(1)}%`, label: 'Engajamento' },
@@ -576,7 +577,7 @@ function CoverPage(props: CoverPageProps) {
           </Text>
         </View>
 
-        {/* KPIs — Curtidas | Comentários (Views omitido quando API não fornece) */}
+        {/* KPIs — Curtidas | Comentários | Views (reels); descrição deixa claro que views = só reels */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
           {metrics.map((k, i) => {
             const cardBg = i === 0 ? pal.brandSoft : pal.cardAlt
@@ -602,6 +603,11 @@ function CoverPage(props: CoverPageProps) {
             )
           })}
         </View>
+        {showViewsNote && (
+          <Text style={{ fontSize: 7, color: pal.textMuted, fontStyle: 'italic', marginBottom: 8 }}>
+            Nota: views só em reels/vídeos; curtidas e comentários incluem feed e reels.
+          </Text>
+        )}
 
         {/* CPE e CPM — CPM omitido quando não há views (API não fornece) */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 13 }}>

@@ -1087,13 +1087,14 @@ export function MetricasMediakitSection({
   const picoDayLabel = bestDayByErIndex >= 0 ? WEEKDAY_LABELS[bestDayByErIndex] : bestDay
   const cpeValue = cpmCpe.cpeEstimate != null && cpmCpe.cpeEstimate > 0 ? `R$ ${cpmCpe.cpeEstimate.toFixed(2)}` : '—'
   const cpmValue = cpmCpe.cpmEstimate != null && cpmCpe.cpmEstimate > 0 ? `R$ ${cpmCpe.cpmEstimate.toFixed(1)}` : null
-  // Primeira linha: Curtidas | Comentários | Views (Views omitido quando API não fornece)
+  // Primeira linha: Curtidas | Comentários | Views — Views só em reels/vídeos; curtidas/comentários de todos os posts (evita confusão "likes > views").
   const metricsBase = [
-    { label: 'Curtidas', value: formatShortNum(totalLikes), desc: 'Total de curtidas nos posts analisados', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary },
-    { label: 'Comentários', value: formatShortNum(totalComments), desc: 'Total de comentários nos posts', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.success },
-    ...(totalViews > 0 ? [{ label: 'Views', value: formatShortNum(totalViews), desc: 'Total de visualizações nos posts analisados', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary }] : []),
+    { label: 'Curtidas', value: formatShortNum(totalLikes), desc: 'Total de curtidas (feed + reels)', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary },
+    { label: 'Comentários', value: formatShortNum(totalComments), desc: 'Total de comentários (feed + reels)', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.success },
+    ...(totalViews > 0 ? [{ label: 'Views (reels)', value: formatShortNum(totalViews), desc: 'Visualizações apenas em reels/vídeos. Curtidas e comentários acima são de todos os posts.', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary }] : []),
   ]
   const metrics = metricsBase
+  const showViewsNote = totalViews > 0 && totalViews < totalLikes
   const metricsColSpan = metrics.length === 2 ? 12 : 8 // 2 cards em uma linha (12+12), 3 cards (8+8+8)
   const picoErBanda = maxEr > 0 ? (ER_QUALIDADE_BANDAS.find((b) => maxEr >= b.min && maxEr < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]) : null
   const converteQuadrants = [
@@ -1107,7 +1108,7 @@ export function MetricasMediakitSection({
 
 
 
-      {/* KPIs: Curtidas | Comentários (Views omitido quando API não fornece) */}
+      {/* KPIs: Curtidas | Comentários | Views (reels) — descrição deixa claro que views = só reels, curtidas = todos os posts */}
       <Row gutter={rowGutter} style={{ marginBottom: s.lg }}>
         {metrics.map((k) => (
           <Col xs={24} sm={metricsColSpan} key={k.label}>
@@ -1119,6 +1120,11 @@ export function MetricasMediakitSection({
           </Col>
         ))}
       </Row>
+      {showViewsNote && (
+        <div style={{ ...typ.caption, color: c.textMuted, marginBottom: s.lg, fontStyle: 'italic' }}>
+          Nota: views só em reels/vídeos; curtidas e comentários incluem feed e reels — por isso curtidas podem ser maiores que views.
+        </div>
+      )}
 
       {/* CPE e CPM — CPM omitido quando não há views (API não fornece) */}
       <Row gutter={rowGutter} style={{ marginBottom: s.lg }}>
@@ -1447,7 +1453,7 @@ export function PricingHighlight({ variant, title = 'Valor estimado por feed', m
         boxShadow: variant ? 'var(--app-shadow-md)' : sh.sm,
         padding: s.md,
         background: theme.bg,
-        minHeight: variant ? 220 : '100%',
+        minHeight: '100%',
         transition: 'transform 0.2s ease, box-shadow 0.2s ease',
         ...styleProp,
       }}

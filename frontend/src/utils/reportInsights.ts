@@ -801,24 +801,24 @@ export function getValorEstimadoPorTipoRocksDB(
     porque: basePorque,
   }
 
-  const reelsMultiplier = 1.3
+  // Reels costumam pagar mais que feed (alcance/descoberta); range um pouco acima do feed.
+  const reelsMultiplier = 1.35
   const reelsBase = base * reelsMultiplier
-  const reelsMin = Math.round(reelsBase * 0.8)
-  const reelsMax = Math.round(reelsBase * 1.35)
+  const reelsMin = Math.round(reelsBase * 0.82)
+  const reelsMax = Math.round(reelsBase * 1.55)
   const reels = {
     min: Math.max(50, reelsMin),
     max: Math.max(reelsMin + 50, reelsMax),
     porque: [basePorque, 'reels com maior alcance (descoberta)'].filter(Boolean).join(', '),
   }
 
-  const storiesMultiplier = 0.35
-  const storiesBase = base * storiesMultiplier
-  const storiesMin = Math.round(storiesBase * 0.75)
-  const storiesMax = Math.round(storiesBase * 1.4)
+  // Story no mercado BR costuma ser 30–50% do valor do feed (formato efêmero 24h).
+  const storyMin = Math.max(15, Math.round(post.min * 0.3))
+  const storyMax = Math.max(storyMin + 20, Math.round(post.max * 0.5))
   const stories = {
-    min: Math.max(80, storiesMin),
-    max: Math.max(storiesMin + 80, storiesMax),
-    porque: [basePorque, 'story 24h (formato efêmero)'].filter(Boolean).join(', '),
+    min: storyMin,
+    max: storyMax,
+    porque: [basePorque, 'story 24h (formato efêmero, ~30–50% do feed)'].filter(Boolean).join(', '),
   }
 
   // Destaque: adicional de 10% a 25% sobre o valor de Reels contratado (upgrade de permanência 30 dias).

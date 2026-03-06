@@ -74,7 +74,7 @@ export const METRIC_TOOLTIPS = {
     'Views do último reel dividido pelos seguidores. Mostra se o vídeo estourou além da sua base.',
 
   totalViewsReels:
-    'Soma de todas as visualizações nos reels analisados.',
+    'Visualizações apenas em reels/vídeos. Curtidas e comentários são de todos os posts (feed + reels); por isso curtidas podem ser maiores que views.',
 
   mediaViewsReel:
     'Média de views por reel. Dá para ver se os vídeos costumam performar.',
