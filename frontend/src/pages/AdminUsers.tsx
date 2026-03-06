@@ -213,7 +213,7 @@ export default function AdminUsers() {
           <Form.Item>
             <Space>
               <Button type="primary" htmlType="submit">
-                {editing ? 'Salvar' : 'Criar'}
+                {editing ? 'Salvar' : 'Cadastrar'}
               </Button>
               <Button onClick={() => setModalOpen(false)}>Cancelar</Button>
             </Space>

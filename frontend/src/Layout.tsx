@@ -305,7 +305,7 @@ export default function Layout() {
                             fontWeight: 600,
                           }}
                         >
-                          Criar
+                          Cadastrar
                         </Link>
                       </>
                     )}
@@ -400,7 +400,7 @@ export default function Layout() {
                   }}
                   onClick={() => setMobileMenuOpen(false)}
                 >
-                  Criar conta
+                  Cadastrar conta
                 </Link>
               )}
             </div>

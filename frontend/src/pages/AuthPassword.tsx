@@ -35,7 +35,7 @@ export default function AuthPassword() {
 
   return (
     <div style={{ maxWidth: 420, margin: '0 auto' }}>
-      <Card title="Criar sua senha">
+      <Card title="Cadastrar sua senha">
         <p style={{ marginBottom: 16, color: 'var(--app-text-secondary)' }}>
           <strong>@{handle}</strong> validado. Cria uma senha pra acessar quando quiser.
         </p>

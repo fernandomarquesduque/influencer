@@ -46,7 +46,7 @@
 ## Ações recomendadas (ordem)
 
 1. Reutilizar context no `InstagramClient` (cache + reset só em relogin).
-2. Criar fila global na API com concorrência 1 (um worker).
+2. Cadastrar fila global na API com concorrência 1 (um worker).
 3. Adicionar delay/cooldown no fluxo da API (ou no worker).
 4. Propagar política de 429/challenge para o worker (backoff + abort).
 5. Opcional: headful por default em produção do crawler.

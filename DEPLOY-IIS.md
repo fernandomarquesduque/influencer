@@ -52,7 +52,7 @@ Se fizer manualmente: na pasta **frontend** rode `npm ci` e `npm run build`; na 
      Se não tiver permissão para `--with-deps`, use só `npx playwright install chromium` e instale manualmente o [Visual C++ Redistributable x64](https://aka.ms/vs/17/release/vc_redist.x64.exe).
    - Os binários são instalados em `%LOCALAPPDATA%\ms-playwright` desse usuário. Se o pool rodar com outra conta, rode o comando uma vez como essa conta (ou configure o pool para usar a conta que já executou o install).
 
-3. **Criar o site no IIS**
+3. **Cadastrar o site no IIS**
    - **IIS Manager** → Sites → **Add Website**.
    - **Site name**: ex. `Influencer`.
    - **Physical path**: pasta que contém o **frontend** (raiz do publish), ex. `C:\inetpub\wwwroot\influencer`.

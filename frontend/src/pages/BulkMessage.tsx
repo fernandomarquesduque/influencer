@@ -603,7 +603,7 @@ export default function BulkMessage() {
         open={modalTemplate}
         onCancel={() => { setModalTemplate(false); setNewRejectHashes([]); }}
         onOk={handleAddTemplate}
-        okText="Criar"
+        okText="Cadastrar"
       >
         <Space direction="vertical" style={{ width: '100%' }} size="small">
           <div>

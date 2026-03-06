@@ -2049,7 +2049,7 @@ app.get('/api/posts', rateLimitDataApi, async (req: RequestWithAuth, res: Respon
   }
 });
 
-/** Projetos para influenciadores (estilo Workana). Lista e detalhe: usuário logado. Criar: adm. Candidatar: influenciador. */
+/** Projetos para influenciadores (estilo Workana). Lista e detalhe: usuário logado. Cadastrar: adm. Candidatar: influenciador. */
 app.get('/api/projects', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
     if (!req.user) {
