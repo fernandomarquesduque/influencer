@@ -2,7 +2,6 @@
  * Gauge de ER (Engagement Rate) — reutilizável em relatório, media kit e outras telas.
  * Escala 0–6% (arco até 7% para o segmento Excelente ser visível), 4 faixas de qualidade.
  */
-import React from 'react'
 import { reportTokens as t } from '../pages/reportTokens'
 
 const s = t.spacing

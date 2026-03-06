@@ -2,15 +2,9 @@
  * Barra de progresso gamificada: nível atual → alvo.
  * Visual tipo "level up" / quest: fundo escuro, bordas douradas.
  */
-import React from 'react'
 import { TrophyOutlined, StarFilled } from '@ant-design/icons'
-import { reportTokens as t } from '../pages/reportTokens'
-
-const c = t.colors
-const typ = t.typography
 
 const MILESTONES = [0.25, 0.5, 0.75] as const
-const BAR_HEIGHT = 16
 
 export interface TierProgressGameBarProps {
   currentTier: string
@@ -42,7 +36,7 @@ export function TierProgressGameBar({
             {currentTier} → {nextTier}
           </span>
           <span className="tier-progress-game-bar__counter">
-            Faltam {remainingFollowers.toLocaleString('pt-BR')}
+            Faltam {remainingFollowers.toLocaleString('pt-BR')} Seguidores
           </span>
         </div>
 

@@ -120,7 +120,7 @@ body {
   font-size: 20px;
   font-weight: 800;
   letter-spacing: -0.02em;
-  background: linear-gradient(90deg, var(--app-gold), var(--app-primary));
+  background: var(--app-gold);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -259,15 +259,18 @@ body {
   .tier-progress-game-bar--gamified .tier-progress-game-bar__fill {
     box-shadow: none;
   }
+
   .tier-progress-game-bar--gamified .tier-progress-game-bar__quest-card {
     background: var(--app-surface-dark);
     box-shadow: none;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+
   .tier-progress-game-bar--gamified .tier-progress-game-bar__quest-card::before {
     display: none;
   }
+
   .tier-progress-game-bar__ribbon {
     background: var(--app-gold);
     -webkit-print-color-adjust: exact;
@@ -277,6 +280,7 @@ body {
 
 /* TierProgressGameBar: em mobile esconder checkpoints e labels 25/50/75 */
 @media (max-width: 576px) {
+
   .tier-progress-game-bar__checkpoint,
   .tier-progress-game-bar__milestone-labels,
   .tier-progress-game-bar__milestone-label {

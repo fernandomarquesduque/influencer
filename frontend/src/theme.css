@@ -133,7 +133,7 @@
   /* === Fundo escuro / texto em escuro (2 níveis) === */
   --app-dark-bg: #0d0d12;
   --app-dark-bg-mid: var(--app-dark-bg);
-  --app-surface-dark: #1e293b;
+  --app-surface-dark: #5a247b;
   --app-on-dark: #e2e8f0;
   --app-on-dark-muted: #94a3b8;
   --app-on-dark-subtle: var(--app-on-dark-muted);
