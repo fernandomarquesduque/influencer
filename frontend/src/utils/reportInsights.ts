@@ -71,6 +71,19 @@ export function getEngagementPerWeekdayAllTime(posts: PostItem[]): number[] {
   return totals
 }
 
+/** Agrupa posts por dia da semana (0=Dom .. 6=Sáb). Retorna array de 7 arrays de PostItem. */
+export function getPostsByWeekday(posts: PostItem[]): PostItem[][] {
+  const byDay: PostItem[][] = [[], [], [], [], [], [], []]
+  for (const p of posts) {
+    const ts = getPostTimestamp(p)
+    if (ts != null) {
+      const day = new Date(ts * 1000).getDay()
+      byDay[day].push(p)
+    }
+  }
+  return byDay
+}
+
 /** Pilares do Score 0–100 (cada um 0–100, média ponderada). */
 export interface ScorePillars {
   comunidade: number      // qualidade do engajamento: % comentários

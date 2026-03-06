@@ -27,7 +27,7 @@ import {
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
-import { buildReportInsights, getWeekdayName } from '../utils/reportInsights'
+import { buildReportInsights, getWeekdayName, getPostsByWeekday } from '../utils/reportInsights'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 import { PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
@@ -746,6 +746,11 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                           cpmCpe={reportInsights.cpmCpe ?? { cpmEstimate: null, cpeEstimate: null }}
                           strategicMetrics={reportInsights.strategicMetrics ?? null}
                           rowGutter={rowGutter}
+                          postsByWeekday={getPostsByWeekday(ownPosts)}
+                          getPostImageUrl={getPostImageUrl}
+                          getPostLink={getPostLink}
+                          proxyImageUrl={proxyImageUrl}
+                          failedPostImages={failedPostImages}
                         />
                       </div>
                       {!hasActivationData && (

@@ -2,7 +2,7 @@
  * Subcomponentes do relatório premium (ReportHero, ScoreOverview, DiagnosticoBISection, etc.)
  */
 import React, { useState, useEffect } from 'react'
-import { Button, Card, Tag, Avatar, Progress, Skeleton, Tabs, Tooltip, Spin, Row, Col } from 'antd'
+import { Button, Card, Tag, Avatar, Progress, Skeleton, Tabs, Tooltip, Spin, Row, Col, Modal } from 'antd'
 import {
   UserOutlined,
   CheckCircleFilled,
@@ -18,6 +18,7 @@ import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { ERGaugeChart, ER_QUALIDADE_BANDAS, erBandaRangeLabel, getErBanda } from '../components/ERGaugeChart'
 import { TierProgressGameBar } from '../components/TierProgressGameBar'
 import type { StrategicMetrics, ExecutiveSummaryForBrands, BenchmarkInsight } from '../utils/reportInsights'
+import type { PostItem } from '../api'
 
 const s = t.spacing
 const c = t.colors
@@ -1059,6 +1060,27 @@ export interface MetricasMediakitSectionProps {
   cpmCpe: { cpmEstimate: number | null; cpeEstimate: number | null }
   strategicMetrics: StrategicMetrics | null
   rowGutter?: [number, number]
+  /** Quando informado, os dias da semana ficam clicáveis e abrem modal com os posts do dia. */
+  postsByWeekday?: PostItem[][]
+  getPostImageUrl?: (post: PostItem) => string | undefined
+  getPostLink?: (post: PostItem) => string
+  proxyImageUrl?: (url: string | undefined) => string | undefined
+  failedPostImages?: Set<string>
+}
+
+function postInteractions(p: PostItem): number {
+  const likes = typeof (p.metrics?.likes ?? (p as { like_count?: number }).like_count) === 'number'
+    ? (p.metrics?.likes ?? (p as { like_count?: number }).like_count)!
+    : 0
+  const comments = typeof (p.metrics?.comments ?? (p as { comment_count?: number }).comment_count) === 'number'
+    ? (p.metrics?.comments ?? (p as { comment_count?: number }).comment_count)!
+    : 0
+  return likes + comments
+}
+
+function postEr(p: PostItem, followersCount: number): number {
+  if (followersCount <= 0) return 0
+  return (postInteractions(p) / followersCount) * 100
 }
 
 export function MetricasMediakitSection({
@@ -1074,7 +1096,19 @@ export function MetricasMediakitSection({
   cpmCpe,
   strategicMetrics,
   rowGutter = [s.lg, s.lg],
+  postsByWeekday,
+  getPostImageUrl,
+  getPostLink,
+  proxyImageUrl,
+  failedPostImages = new Set(),
 }: MetricasMediakitSectionProps) {
+  const [selectedWeekday, setSelectedWeekday] = useState<number | null>(null)
+  const canOpenModal = Boolean(
+    postsByWeekday && getPostImageUrl && getPostLink && proxyImageUrl
+  )
+  const postsForModal = selectedWeekday != null && postsByWeekday
+    ? postsByWeekday[selectedWeekday] ?? []
+    : []
   const totalLikes = engagement.total_likes ?? 0
   const totalComments = engagement.total_comments ?? 0
   const totalViews = engagement.total_views ?? 0
@@ -1185,8 +1219,10 @@ export function MetricasMediakitSection({
             const pct = maxErDay > 0 ? (erDay / maxErDay) * 100 : 0
             const isBestEng = maxErDay > 0 && erDay >= maxErDay - 1e-6
             const barHeight = erDay > 0 ? Math.max(14, Math.round((pct / 100) * 52)) : 0
-            return (
-              <div key={label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}>
+            const dayPosts = postsByWeekday?.[d] ?? []
+            const isClickable = canOpenModal
+            const content = (
+              <>
                 <div style={{ width: '100%', height: 56, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
                   {barHeight > 0 && (
                     <div
@@ -1229,11 +1265,103 @@ export function MetricasMediakitSection({
                     })()}
                   </>
                 )}
+              </>
+            )
+            return (
+              <div
+                key={label}
+                role={isClickable ? 'button' : undefined}
+                tabIndex={isClickable ? 0 : undefined}
+                onClick={isClickable ? () => setSelectedWeekday(d) : undefined}
+                onKeyDown={isClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedWeekday(d) } } : undefined}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  minWidth: 0,
+                  cursor: isClickable ? 'pointer' : undefined,
+                  borderRadius: r.md,
+                  padding: isClickable ? 4 : 0,
+                  margin: isClickable ? -4 : 0,
+                  transition: 'background 0.15s ease',
+                }}
+                aria-label={isClickable ? `Posts de ${label} (${dayPosts.length} post${dayPosts.length !== 1 ? 's' : ''})` : undefined}
+              >
+                {content}
               </div>
             )
           })}
         </div>
       </Card>
+
+      {/* Modal: posts do dia da semana */}
+      {canOpenModal && (
+        <Modal
+          title={selectedWeekday != null ? `Posts — ${WEEKDAY_LABELS[selectedWeekday]}` : ''}
+          open={selectedWeekday != null}
+          onCancel={() => setSelectedWeekday(null)}
+          footer={null}
+          width={640}
+          styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        >
+          {postsForModal.length === 0 ? (
+            <div style={{ ...typ.bodySmall, color: c.textMuted, padding: s.lg, textAlign: 'center' }}>
+              Nenhum post neste dia da semana.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: s.md }}>
+              {postsForModal.map((post) => {
+                const key = post.key ?? ((post.post?.id ?? post.post?.shortcode ?? '') || String(Math.random()))
+                const imgUrl = getPostImageUrl!(post)
+                const link = getPostLink!(post)
+                const failed = failedPostImages.has(key)
+                const interactions = postInteractions(post)
+                const er = postEr(post, followersCount)
+                return (
+                  <a
+                    key={key}
+                    href={link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="proof-thumb report-card--hover"
+                    style={{ display: 'block', borderRadius: r.lg, overflow: 'hidden', boxShadow: sh.md, background: c.cardBg, minWidth: 0 }}
+                  >
+                    <div style={{ position: 'relative', aspectRatio: '1', background: c.borderLight }}>
+                      {imgUrl && !failed ? (
+                        <img src={(proxyImageUrl!(imgUrl) ?? imgUrl) ?? ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
+                      ) : (
+                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <FileImageOutlined style={{ fontSize: 32, color: c.textMuted }} aria-hidden />
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ padding: s.sm }}>
+                      <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text }}>{formatShortNum(interactions)} interações</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ ...typ.caption, color: c.textMuted }}>ER {er.toFixed(1)}%</span>
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 600,
+                            padding: '1px 4px',
+                            borderRadius: 3,
+                            background: `${getErBanda(er).color}22`,
+                            color: getErBanda(er).color,
+                            border: `1px solid ${getErBanda(er).color}44`,
+                          }}
+                        >
+                          {getErBanda(er).label}
+                        </span>
+                      </div>
+                    </div>
+                  </a>
+                )
+              })}
+            </div>
+          )}
+        </Modal>
+      )}
 
       {/* Reach / Reels — card com bordas coloridas */}
       {(strategicMetrics?.reachMultiplier?.max != null && strategicMetrics.reachMultiplier.max >= 1) || (strategicMetrics?.reelsAmplification != null && strategicMetrics.reelsAmplification >= 1) ? (
