@@ -79,7 +79,11 @@ async function processOneProfileWithTimeout(
     const work = async (): Promise<boolean> => {
       try {
         if (existingHandles.has(ref.handle.toLowerCase())) return false;
-        const result = await extractProfile(page, ref.handle, discoveredBy, discoveredValue, config, { pageAlreadyOnProfile: useDiscoveryPage });
+        const result = await extractProfile(page, ref.handle, discoveredBy, discoveredValue, config, {
+          pageAlreadyOnProfile: useDiscoveryPage,
+          client,
+          storage: typeof storage.saveMedia === 'function' ? storage : undefined,
+        });
         if (!result) {
           logProfileOutcome(ref.handle, false, 'falha ao extrair');
           return false;

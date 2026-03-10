@@ -245,7 +245,7 @@ async function runOneExtract(
     );
     try {
       result = await Promise.race([
-        extractSingleProfileWithPage(page, handle, db, config, { forRefresh, fastMode: fromExtractProfileApi }),
+        extractSingleProfileWithPage(page, handle, db, config, { forRefresh, fastMode: fromExtractProfileApi, client }),
         timeoutPromise,
       ]);
       console.log(`[runOneExtract] @${handle} extração concluída, fechando página...`);
@@ -573,7 +573,11 @@ async function performRequestCodeFlow(
           try {
             const config = buildConfigFromEnv();
             const tExtract = Date.now();
-            const extracted = await extractProfile(page, nickname, 'seed', '', config, { fastMode: true });
+            const extracted = await extractProfile(page, nickname, 'seed', '', config, {
+              fastMode: true,
+              client,
+              storage: typeof db.saveMedia === 'function' ? db : undefined,
+            });
             logStep(`extractProfile concluído em ${Date.now() - tExtract}ms.`);
             logStep('Verificando perfil (username, segue oficial)...');
             if (!extracted) {
@@ -589,13 +593,16 @@ async function performRequestCodeFlow(
               return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
             }
             logStep('Perfil OK.');
-            // Seguir de volta: influenciador nos segue → seguimos ele antes de enviar o código
+            // Seguir de volta em background (não bloqueia envio do código)
             const followBackEnabled = process.env.FOLLOW_BACK_ENABLED !== 'false';
             if (followBackEnabled) {
-              const followResult = await followUserFromCurrentPage(page);
-              if (!followResult.ok) logStep(`Follow-back falhou (não bloqueia envio): ${followResult.error ?? 'erro'}`);
-              else if (followResult.alreadyFollowing) logStep('Follow-back: já estávamos seguindo.');
-              else logStep('Follow-back: seguimos o influenciador.');
+              void followUser(client, nickname)
+                .then((followResult) => {
+                  if (!followResult.ok) logStep(`Follow-back (em background) falhou: ${followResult.error ?? 'erro'}`);
+                  else if (followResult.alreadyFollowing) logStep('Follow-back (em background): já estávamos seguindo.');
+                  else logStep('Follow-back (em background): seguimos o influenciador.');
+                })
+                .catch((err) => logStep(`Follow-back em background falhou: ${err instanceof Error ? err.message : String(err)}`));
             }
           } finally {
             // Fechar página em background para não travar o fluxo (page.close() pode demorar)
@@ -605,7 +612,7 @@ async function performRequestCodeFlow(
         }
       }
 
-      // Quando usamos cache (segue perfil) e follow-back está ativo: abrir perfil só para seguir de volta
+      // Quando usamos cache (segue perfil) e follow-back está ativo: seguir de volta em background (não bloqueia envio do código)
       const followBackEnabled = process.env.FOLLOW_BACK_ENABLED !== 'false';
       if (followBackEnabled && requiredProfile && requiredProfile.length > 0) {
         const followsFromExtract = (() => {
@@ -615,10 +622,13 @@ async function performRequestCodeFlow(
             : undefined;
         })();
         if (followsFromExtract === true) {
-          const followResult = await followUser(client, nickname);
-          if (!followResult.ok) logStep(`Follow-back (cache) falhou (não bloqueia envio): ${followResult.error ?? 'erro'}`);
-          else if (followResult.alreadyFollowing) logStep('Follow-back (cache): já estávamos seguindo.');
-          else logStep('Follow-back (cache): seguimos o influenciador.');
+          void followUser(client, nickname)
+            .then((followResult) => {
+              if (!followResult.ok) logStep(`Follow-back (cache, em background) falhou: ${followResult.error ?? 'erro'}`);
+              else if (followResult.alreadyFollowing) logStep('Follow-back (cache, em background): já estávamos seguindo.');
+              else logStep('Follow-back (cache, em background): seguimos o influenciador.');
+            })
+            .catch((err) => logStep(`Follow-back (cache) em background falhou: ${err instanceof Error ? err.message : String(err)}`));
         }
       }
 

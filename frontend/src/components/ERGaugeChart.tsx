@@ -1,6 +1,6 @@
 /**
  * Gauge de ER (Engagement Rate) — reutilizável em relatório, media kit e outras telas.
- * Escala 0–6% (arco até 7% para o segmento Excelente ser visível), 4 faixas de qualidade.
+ * Escala 0–8%, 4 faixas de qualidade (Baixo, Bom, Excelente, Viral).
  */
 import { reportTokens as t } from '../pages/reportTokens'
 
@@ -38,28 +38,17 @@ const ER_GAUGE_VIEW_HEIGHT = 88
 const ER_GAUGE_VIEW_Y_OFFSET = 12
 const ER_GAUGE_TICK_OFFSET = 12
 const ER_GAUGE_PCT_INSIDE_R = 35
-/** Escala padrão do gauge (0–7%). Acima disso usamos escala dinâmica para a agulha refletir o valor. */
-const ER_GAUGE_MAX_DEFAULT = 7
+/** Escala fixa do gauge (0–8%). Valores acima de 8% mostram a agulha no máximo. */
+const ER_GAUGE_MAX = 8
 
 function erToAngle(er: number, scaleMax: number): number {
   const v = Math.min(scaleMax, Math.max(0, er))
   return 180 - (v / scaleMax) * 180
 }
 
-/** Escala máxima do gauge: até 7% fixo; acima disso estende para o valor caber (agulha proporcional). */
-function getGaugeScaleMax(value: number): number {
-  if (value <= ER_GAUGE_MAX_DEFAULT) return ER_GAUGE_MAX_DEFAULT
-  return Math.min(50, Math.max(ER_GAUGE_MAX_DEFAULT, Math.ceil(value * 1.15)))
-}
-
-/** Ticks em % para o gauge: 0,2,4,6 na escala padrão; múltiplos de 5 na escala estendida. */
-function getGaugeTicks(scaleMax: number): number[] {
-  if (scaleMax <= 7) return [0, 2, 4, 6]
-  const step = scaleMax <= 20 ? 5 : 10
-  const ticks: number[] = [0]
-  for (let t = step; t < scaleMax; t += step) ticks.push(t)
-  ticks.push(scaleMax)
-  return ticks
+/** Ticks em % para o gauge: 0, 2, 4, 6, 8. */
+function getGaugeTicks(): number[] {
+  return [0, 2, 4, 6, 8]
 }
 
 export interface ERGaugeChartProps {
@@ -69,8 +58,8 @@ export interface ERGaugeChartProps {
 }
 
 export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
-  const scaleMax = getGaugeScaleMax(value)
-  const ticks = getGaugeTicks(scaleMax)
+  const scaleMax = ER_GAUGE_MAX
+  const ticks = getGaugeTicks()
   const angle = erToAngle(value, scaleMax)
   const rad = (angle * Math.PI) / 180
   const needleX = ER_GAUGE_CX + (ER_GAUGE_R - 2) * Math.cos(rad)

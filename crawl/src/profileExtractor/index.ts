@@ -546,11 +546,210 @@ function extractPostsFromRawResponse(raw: unknown, collectedAt: string): Entity[
   return extractMediaFromEdges(edges, collectedAt);
 }
 
+/** Storage opcional para salvar highlights em background (evita dependência circular com runCrawl). */
+export interface ExtractProfileStorageForHighlights {
+  saveMedia?(profileHandle: string, mediaKind: 'highlight', items: Entity[], collectedAt: string): Promise<number>;
+}
+
 export interface ExtractProfileOptions {
   /** Quando true, a página já está no perfil (ex.: após getFollowersFromProfile); evita novo goto e reduz scroll/delays. */
   pageAlreadyOnProfile?: boolean;
   /** Quando true, usa delays mínimos (extract-profile API, usuário esperando). */
   fastMode?: boolean;
+  /** Quando fornecido com storage, a coleta de destaques roda em background (não bloqueia o retorno). */
+  client?: InstagramClient;
+  /** Quando fornecido com client, highlights são salvos ao concluir a coleta em background. */
+  storage?: ExtractProfileStorageForHighlights;
+}
+
+/**
+ * Coleta de destaques em background (própria page): obtém IDs (API + abas + DOM se necessário),
+ * abre cada destaque para meta, monta entidades e salva via storage.saveMedia.
+ * Roda sempre que client e storage são passados em options (inclui fast mode).
+ */
+async function collectHighlightsInBackground(
+  client: InstagramClient,
+  handle: string,
+  config: CrawlConfig,
+  fastMode: boolean,
+  storage: ExtractProfileStorageForHighlights,
+  logStep: (msg: string) => void
+): Promise<void> {
+  const profileUrl = InstagramClient.profileUrl(handle);
+  const d = fastMode ? delayMsFast : delayMs;
+  const keyHandle = handle.toLowerCase().replace(/^@/, '');
+  const captured: { url: string; status: number; body?: unknown }[] = [];
+  const highlightMetaById = new Map<string, { itemCount: number; weeksAgo: number | null; dateIso: string | null }>();
+  let pendingHighlightId: string | null = null;
+  let resolveMetaPromise: ((m: { itemCount: number; dateIso: string | null; weeksAgo: number | null } | null) => void) | null = null;
+
+  const page = await client.newPage();
+  const onResponse = async (response: Response) => {
+    const url = response.url();
+    const status = response.status();
+    if (status >= 400 || !RESPONSE_URL_PATTERNS.some((p) => p.test(url)) || captured.length >= MAX_CAPTURED_RESPONSES) return;
+    const ct = response.headers()['content-type'] ?? '';
+    if (!ct.includes('application/json')) return;
+    try {
+      const body = await response.json();
+      if (body != null && typeof body === 'object') {
+        captured.push({ url, status, body });
+        if (pendingHighlightId && resolveMetaPromise) {
+          const meta = parseHighlightMediaFromResponse(body);
+          if (meta && meta.itemCount > 0) {
+            highlightMetaById.set(pendingHighlightId, { itemCount: meta.itemCount, weeksAgo: meta.weeksAgo, dateIso: meta.dateIso });
+            const resolve = resolveMetaPromise;
+            resolveMetaPromise = null;
+            pendingHighlightId = null;
+            resolve(meta);
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  try {
+    page.on('response', onResponse);
+
+    logStep('[highlights bg] abrindo perfil para coleta de destaques...');
+    await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(fastMode ? 600 : 2000);
+
+    let highlightIds = getHighlightIdsFromBodies(captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object'));
+
+    if (highlightIds.length === 0 && !fastMode) {
+      const waitAfterTab = 2500;
+      const tryClickTabByIndex = async (tabIndex: number): Promise<boolean> => {
+        const tabList = page.locator('[role="tablist"]').first();
+        if ((await tabList.count()) === 0) return false;
+        const tabLinks = tabList.locator('a[href]');
+        if (tabIndex >= (await tabLinks.count())) return false;
+        try {
+          await tabLinks.nth(tabIndex).click({ timeout: 5000 });
+          await page.waitForTimeout(waitAfterTab);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      await tryClickTabByIndex(1);
+      await tryClickTabByIndex(3).catch(() => tryClickTabByIndex(2));
+      highlightIds = getHighlightIdsFromBodies(captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object'));
+    }
+
+    if (highlightIds.length === 0) {
+      const scraped = await page
+        .evaluate(() => {
+          const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/stories/highlights/"]'));
+          return links
+            .map((a) => {
+              const m = a.getAttribute('href')?.match(/\/stories\/highlights\/(\d+)/);
+              return m ? m[1]! : null;
+            })
+            .filter((id): id is string => id != null);
+        })
+        .catch(() => []);
+      if (scraped.length > 0) {
+        highlightIds = [...new Set(scraped)];
+        logStep(`[highlights bg] ${highlightIds.length} id(s) do DOM.`);
+      }
+    }
+
+    const bodies = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
+    const collectedAt = new Date().toISOString();
+    const seenIds = new Set<string>();
+    const allHighlights: Entity[] = [];
+
+    for (const body of bodies) {
+      const edges = getHighlightEdgesFromRaw(body);
+      for (const edge of edges) {
+        if (edge == null || typeof edge !== 'object') continue;
+        const node = (edge as Record<string, unknown>).node;
+        if (!isHighlightEdgeNode(node)) continue;
+        const id = String((node as Record<string, unknown>).id ?? (node as Record<string, unknown>).pk);
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+        allHighlights.push(buildHighlightEntityFromNode(node as Record<string, unknown>, collectedAt, highlightMetaById.get(id)));
+      }
+    }
+
+    if (highlightIds.length > 0) {
+      const maxOpen = Math.min(highlightIds.length, 12);
+      logStep(`[highlights bg] abrindo ${maxOpen} destaque(s)...`);
+      for (let i = 0; i < maxOpen; i++) {
+        const highlightId = highlightIds[i]!;
+        try {
+          const link = page.locator(`a[href*="/stories/highlights/${highlightId}"]`).first();
+          if ((await link.count()) === 0) continue;
+          await link.scrollIntoViewIfNeeded().catch(() => null);
+          const metaPromise = new Promise<{ itemCount: number; dateIso: string | null; weeksAgo: number | null } | null>((r) => {
+            resolveMetaPromise = r;
+          });
+          pendingHighlightId = highlightId;
+          await link.click({ timeout: 5000 });
+          await page.waitForSelector('[aria-label="Fechar"]', { timeout: 10000 }).catch(() => null);
+          const meta = await Promise.race([
+            metaPromise,
+            new Promise<null>((resolve) => setTimeout(() => {
+              if (resolveMetaPromise) resolveMetaPromise(null);
+              resolveMetaPromise = null;
+              pendingHighlightId = null;
+              resolve(null);
+            }, 4500)),
+          ]);
+          if (!meta && !highlightMetaById.has(highlightId)) {
+            await page.waitForTimeout(1200);
+            const highlightCountScript = `(function(){
+              var closeEl=document.querySelector('[aria-label="Fechar"]');
+              if(!closeEl) return {itemCount:0,weeksAgo:null,dateIso:null};
+              var bar=closeEl.closest('section')&&document.querySelector('[role="progressbar"]');
+              var n=bar&&bar.children?bar.children.length:0;
+              if(n<1||n>50)n=0;
+              var timeEl=(closeEl.closest('section')||document.body).querySelector('time[datetime]');
+              var dateIso=timeEl&&timeEl.getAttribute('datetime')?new Date(timeEl.getAttribute('datetime')).toISOString().slice(0,10):null;
+              return{itemCount:n,weeksAgo:null,dateIso:dateIso};
+            })();`;
+            const domMeta = await page.evaluate(highlightCountScript).catch(() => ({ itemCount: 0, weeksAgo: null, dateIso: null })) as { itemCount: number; weeksAgo: number | null; dateIso: string | null };
+            if (domMeta.itemCount > 0 || domMeta.dateIso) highlightMetaById.set(highlightId, domMeta);
+          }
+          await page.waitForTimeout(500);
+          const closeBtn = page.locator('[aria-label="Fechar"]').first();
+          if ((await closeBtn.count()) > 0) await closeBtn.click({ timeout: 3000 }).catch(() => null);
+          await page.waitForTimeout(800);
+        } catch (e) {
+          logStep(`[highlights bg] erro destaque ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
+          await page.keyboard.press('Escape').catch(() => null);
+          await page.waitForTimeout(400);
+        }
+      }
+
+      seenIds.clear();
+      allHighlights.length = 0;
+      for (const body of bodies) {
+        const edges = getHighlightEdgesFromRaw(body);
+        for (const edge of edges) {
+          if (edge == null || typeof edge !== 'object') continue;
+          const node = (edge as Record<string, unknown>).node;
+          if (!isHighlightEdgeNode(node)) continue;
+          const id = String((node as Record<string, unknown>).id ?? (node as Record<string, unknown>).pk);
+          if (seenIds.has(id)) continue;
+          seenIds.add(id);
+          allHighlights.push(buildHighlightEntityFromNode(node as Record<string, unknown>, collectedAt, highlightMetaById.get(id)));
+        }
+      }
+    }
+
+    if (allHighlights.length > 0 && typeof storage.saveMedia === 'function') {
+      await storage.saveMedia(keyHandle, 'highlight', allHighlights, collectedAt);
+      logStep(`[highlights bg] salvos ${allHighlights.length} destaque(s).`);
+    } else if (allHighlights.length === 0) {
+      logStep('[highlights bg] nenhum destaque para salvar.');
+    }
+  } finally {
+    page.off('response', onResponse);
+    await page.close().catch(() => null);
+  }
 }
 
 /**
@@ -567,10 +766,12 @@ export async function extractProfile(
 ): Promise<{ profile: Entity & { handle: string }; posts: Entity[]; reels: Entity[]; tagged: Entity[]; highlights: Entity[] } | null> {
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[extractProfile] ${logTimestamp()} @${handle} +${Date.now() - t0}ms ${msg}`);
-  const { pageAlreadyOnProfile = false, fastMode = false } = options;
+  const { pageAlreadyOnProfile = false, fastMode = false, client: optClient, storage: optStorage } = options;
   const profileUrl = InstagramClient.profileUrl(handle);
   const d = fastMode ? delayMsFast : delayMs;
   const humanD = fastMode ? humanDelayFast : humanDelay;
+  /** Quando true, destaques rodam em background e o retorno traz highlights vazio. */
+  let runHighlightsAsync = false;
   /** Metadados + body para debug e limite de memória; só guardamos body quando status ok e JSON. */
   const captured: { url: string; status: number; body?: unknown }[] = [];
   let had429 = false;
@@ -714,13 +915,22 @@ export async function extractProfile(
     logStep('aguardando respostas da API (Polaris)...');
     await page.waitForTimeout(fastMode ? 600 : 2000);
 
-    let highlightIds: string[] = [];
-    if (!fastMode) {
-      const keyHandle = handle.toLowerCase().replace(/^@/, '');
-      const waitAfterTab = 2500;
+    const runHighlightsInBackground = Boolean(optClient && optStorage && typeof optStorage.saveMedia === 'function');
+    if (runHighlightsInBackground) {
+      runHighlightsAsync = true;
+      void collectHighlightsInBackground(optClient!, handle, _config, fastMode, optStorage!, logStep).catch((err) =>
+        logStep(`[highlights] em background falhou: ${err instanceof Error ? err.message : String(err)}`)
+      );
+    }
 
-      // Abas são <a> dentro de [role="tablist"]: índice 0=Posts, 1=Reels, 2=Salvos, 3=Marcados (não usam role="tab").
-      const tryClickTabByIndex = async (tabIndex: number, label: string): Promise<boolean> => {
+    if (!runHighlightsInBackground) {
+      let highlightIds: string[] = [];
+      if (!fastMode) {
+        const keyHandle = handle.toLowerCase().replace(/^@/, '');
+        const waitAfterTab = 2500;
+
+        // Abas são <a> dentro de [role="tablist"]: índice 0=Posts, 1=Reels, 2=Salvos, 3=Marcados (não usam role="tab").
+        const tryClickTabByIndex = async (tabIndex: number, label: string): Promise<boolean> => {
         const tabList = page.locator('[role="tablist"]').first();
         if (await tabList.count() === 0) return false;
         const tabLinks = tabList.locator('a[href]');
@@ -924,6 +1134,7 @@ export async function extractProfile(
         }
       }
       logStep(`${highlightMetaById.size} destaques com itens/data obtidos.`);
+    }
     }
   } finally {
     page.off('response', onResponse);
@@ -1307,7 +1518,7 @@ export async function extractProfile(
     posts: allPosts,
     reels: allReels,
     tagged: allTagged,
-    highlights: allHighlights,
+    highlights: runHighlightsAsync ? [] : allHighlights,
   };
 }
 

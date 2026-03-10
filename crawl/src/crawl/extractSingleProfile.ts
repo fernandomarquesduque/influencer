@@ -68,10 +68,12 @@ export interface ExtractSingleProfileResult {
   postsSaved?: number;
 }
 
-/** Opções para a extração. forRefresh = true pula todas as validações (só reextrai e salva, ex.: renovar imagens). fastMode = true usa delays mínimos (extract-profile API). */
+/** Opções para a extração. forRefresh = true pula todas as validações (só reextrai e salva, ex.: renovar imagens). fastMode = true usa delays mínimos (extract-profile API). client + storage habilitam coleta de destaques em background. */
 export interface ExtractSingleProfileOptions {
   forRefresh?: boolean;
   fastMode?: boolean;
+  /** Quando fornecido com storage, destaques são coletados em background (não bloqueia o retorno). */
+  client?: InstagramClient;
 }
 
 /**
@@ -94,7 +96,8 @@ export async function extractSingleProfileWithPage(
   const minRequired = config.minFollowersToSave > 0 ? Math.max(config.minFollowersToSave, MIN_FOLLOWERS_FLOOR) : 0;
 
   const fastMode = options?.fastMode ?? false;
-  const extracted = await extractProfile(page, cleanHandle, 'seed', '', config, { fastMode });
+  const extractOpts = { fastMode, client: options?.client, storage: options?.client && storage && typeof storage.saveMedia === 'function' ? storage : undefined };
+  const extracted = await extractProfile(page, cleanHandle, 'seed', '', config, extractOpts);
   if (!extracted) {
     return { success: false, handle: cleanHandle, error: 'Falha ao extrair perfil (página ou API)' };
   }
@@ -272,7 +275,7 @@ export async function extractSingleProfile(
     const page = await client.newPage();
     try {
       const result = await Promise.race([
-        extractSingleProfileWithPage(page, cleanHandle, storage, config),
+        extractSingleProfileWithPage(page, cleanHandle, storage, config, { client }),
         timeoutPromise,
       ]);
       return result;

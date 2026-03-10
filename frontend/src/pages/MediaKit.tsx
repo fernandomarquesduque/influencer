@@ -14,7 +14,6 @@ import type { ProfileItem, ProfileActivation, PostsResponse } from '../api'
 import QRCode from 'qrcode'
 import { MediaKitDocument } from './MediaKitDocument'
 import { reportTokens as t } from './reportTokens'
-import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
 import { useTheme } from '../contexts/ThemeContext'
 import type { ThemeMode } from '../contexts/ThemeContext'
 
@@ -33,7 +32,7 @@ const THEME_ORDER: ThemeMode[] = ['light', 'dark', 'sepia', 'ocean', 'contrast']
 const s = t.spacing
 const c = t.colors
 
-type Status = 'loading_data' | 'ready' | 'generating' | 'saving' | 'done' | 'error' | 'not_activated'
+type Status = 'loading_data' | 'ready' | 'generating' | 'saving' | 'done' | 'error'
 
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -126,14 +125,7 @@ export default function MediaKit() {
   const [progress, setProgress] = useState('Carregando perfil...')
   const [savedPath, setSavedPath] = useState<string | null>(null)
   const [validated, setValidated] = useState(false)
-  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const abortRef = useRef(false)
-
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 768)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
 
   const runInBackground = useCallback(async () => {
     if (!handle) {
@@ -150,7 +142,7 @@ export default function MediaKit() {
       if (cached) {
         if (!hasCity(cached.activation)) {
           mediaKitCache.delete(h.toLowerCase())
-          setStatus('not_activated')
+          navigate(`/activate/${encodeURIComponent(h)}`, { replace: true })
           return
         }
         setStatus('ready')
@@ -183,7 +175,7 @@ export default function MediaKit() {
       const activation = (activationRes && typeof activationRes === 'object' ? activationRes : {}) as ProfileActivation
 
       if (!hasCity(activation)) {
-        setStatus('not_activated')
+        navigate(`/activate/${encodeURIComponent(h)}`, { replace: true })
         return
       }
 
@@ -325,7 +317,7 @@ export default function MediaKit() {
       setError(e instanceof Error ? e.message : 'Não deu pra gerar o Media Kit. Tenta de novo.')
       setStatus('error')
     }
-  }, [handle])
+  }, [handle, navigate])
 
   useEffect(() => {
     runInBackground()
@@ -390,17 +382,6 @@ export default function MediaKit() {
       setStatus('error')
     }
   }, [handle])
-
-  if (status === 'not_activated' && handle) {
-    return (
-      <div style={{ padding: s.xl, maxWidth: 640, margin: '0 auto', textAlign: 'left' }}>
-        <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={s.lg} />
-        <div style={{ textAlign: 'center', marginTop: s.lg }}>
-          <Button onClick={() => handle ? navigate(`/app/influencer/${encodeURIComponent(handle)}`) : navigate(-1)}>Voltar</Button>
-        </div>
-      </div>
-    )
-  }
 
   if (status === 'ready') {
     const displayHandle = handle ? `@${handle.replace(/^@/, '')}` : ''
