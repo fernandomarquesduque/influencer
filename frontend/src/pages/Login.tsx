@@ -116,14 +116,14 @@ function Login() {
                     display: 'block',
                   }}
                 >
-                  Descubra métricas do seu Instagram, gere seu Media Kit automaticamente e entre no radar de marcas.
+                  Descubra métricas do seu Instagram, gere seu Mídia Kit automaticamente e entre no radar de marcas.
                 </Text>
               </div>
 
               <Space direction="vertical" size={12} style={{ width: '100%' }}>
                 {[
                   'Seu perfil merece ser visto por quem importa',
-                  'O Media Kit que abre portas para parcerias',
+                  'O Mídia Kit que abre portas para parcerias',
                   'Entre no radar das marcas que você admira',
                 ].map((item) => (
                   <div key={item} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

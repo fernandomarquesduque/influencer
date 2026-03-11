@@ -1903,6 +1903,14 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
       Array.isArray(contentType) ? contentType.filter((x): x is string => typeof x === 'string')
         : typeof contentType === 'string' ? (contentType ? [contentType] : undefined)
           : undefined;
+    const influenceAudienceArr =
+      Array.isArray(body.influence_audience) ? body.influence_audience.filter((x): x is string => typeof x === 'string')
+        : typeof body.influence_audience === 'string' ? (body.influence_audience ? [body.influence_audience] : undefined)
+          : undefined;
+    const influenceAgeRangeArr =
+      Array.isArray(body.influence_age_range) ? body.influence_age_range.filter((x): x is string => typeof x === 'string')
+        : typeof body.influence_age_range === 'string' ? (body.influence_age_range ? [body.influence_age_range] : undefined)
+          : undefined;
     const neighborhoodVal =
       Array.isArray(body.neighborhood)
         ? body.neighborhood.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean).join(', ')
@@ -1935,6 +1943,8 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
       about_topics: typeof body.about_topics === 'string' ? body.about_topics : undefined,
       pricing: pricingObj,
       content_type: contentTypeArr?.length ? contentTypeArr : undefined,
+      influence_audience: influenceAudienceArr?.length ? influenceAudienceArr : undefined,
+      influence_age_range: influenceAgeRangeArr?.length ? influenceAgeRangeArr : undefined,
     });
     const data = sqlite.getActivation(handle);
 

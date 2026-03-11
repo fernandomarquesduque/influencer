@@ -70,6 +70,15 @@ export default function Layout() {
   }, [user?.scope, myHandle, myProfilePath, allowedForInfluencer, navigate])
 
   useEffect(() => {
+    if (user?.scope === 'assinante') {
+      const allowed = location.pathname === '/app' || location.pathname === '/app/'
+      if (!allowed) navigate('/app', { replace: true })
+    }
+  }, [user?.scope, location.pathname, navigate])
+
+  const isAssinante = user?.scope === 'assinante'
+
+  useEffect(() => {
     if (!user) {
       setHeaderProfilePic(null)
       setHeaderProfileName(null)
@@ -179,41 +188,13 @@ export default function Layout() {
                     }}
                   >
                     <Logo
-                      size="small"
+                      size="large"
                       height={36}
                       variant="default"
                       style={{ flexShrink: 0 }}
                       alt="Relatório de Influencer"
                     />
                   </div>
-                  <nav style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {user && (
-                      <>
-
-                        {isAdm && (
-                          <Link to="/app" style={isActive('/app') && location.pathname === '/app' ? navLinkActiveStyle : navLinkStyle}>
-                            Influenciadores
-                          </Link>
-                        )}
-                        {(isAdm) && (
-                          <Link to="/app/projects" style={isActive('/app/projects') ? navLinkActiveStyle : navLinkStyle}>
-                            Anúnciantes
-                          </Link>
-                        )}
-
-                        {isAdm && (
-                          <Link to="/admin/users" style={isActive('/admin') ? navLinkActiveStyle : navLinkStyle}>
-                            Usuários
-                          </Link>
-                        )}
-                        {(isAdm || user?.scope === 'assinante') && (
-                          <Link to="/app/bulk-message" style={isActive('/app/bulk-message') ? navLinkActiveStyle : navLinkStyle}>
-                            Disparo em massa
-                          </Link>
-                        )}
-                      </>
-                    )}
-                  </nav>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
                     {user ? (
                       <>
@@ -223,7 +204,12 @@ export default function Layout() {
                               ...(myProfilePath
                                 ? [{ key: 'profile', label: 'Meu perfil', onClick: () => navigate(myProfilePath) }]
                                 : []),
-
+                              ...(isAssinante ? [{ key: 'home', label: 'Início', onClick: () => navigate('/app') }] : []),
+                              ...(isAdm ? [{ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') }] : []),
+                              ...(isAdm ? [{ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') }] : []),
+                              ...(isAdm ? [{ key: 'users', label: 'Usuários', onClick: () => navigate('/admin/users') }] : []),
+                              ...(isAdm ? [{ key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') }] : []),
+                              { type: 'divider' as const },
                               { key: 'logout', label: 'Sair', onClick: () => logout() },
                             ] as MenuProps['items'],
                           }}
@@ -359,7 +345,7 @@ export default function Layout() {
                       Projetos
                     </Link>
                   )}
-                  {isAdm && (
+                  {(isAdm || isAssinante) && (
                     <Link to="/app" style={{ ...drawerLinkStyle, ...(isActive('/app') && location.pathname === '/app' ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
                       Início
                     </Link>
@@ -374,7 +360,7 @@ export default function Layout() {
                       Usuários
                     </Link>
                   )}
-                  {(isAdm || user?.scope === 'assinante') && (
+                  {isAdm && (
                     <Link to="/app/bulk-message" style={{ ...drawerLinkStyle, ...(isActive('/app/bulk-message') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
                       Disparo em massa
                     </Link>

@@ -51,9 +51,29 @@ const { Title, Text } = Typography
 const GENDER_OPTIONS = [
   { value: 'feminino', label: 'Feminino' },
   { value: 'masculino', label: 'Masculino' },
+  { value: 'mulher_trans', label: 'Mulher trans' },
+  { value: 'homem_trans', label: 'Homem trans' },
   { value: 'nao_binario', label: 'Não binário' },
+  { value: 'agenero', label: 'Agênero' },
+  { value: 'genero_fluido', label: 'Gênero fluido' },
   { value: 'outro', label: 'Outro' },
   { value: 'prefiro_nao_dizer', label: 'Prefiro não dizer' },
+]
+
+const INFLUENCE_AUDIENCE_OPTIONS = [
+  { value: 'A', label: 'A' },
+  { value: 'B', label: 'B' },
+  { value: 'C', label: 'C' },
+  { value: 'D', label: 'D' },
+]
+
+const INFLUENCE_AGE_RANGE_OPTIONS = [
+  { value: '13-17', label: '13 a 17 anos' },
+  { value: '18-24', label: '18 a 24 anos' },
+  { value: '25-34', label: '25 a 34 anos' },
+  { value: '35-44', label: '35 a 44 anos' },
+  { value: '45-54', label: '45 a 54 anos' },
+  { value: '55+', label: '55 anos ou mais' },
 ]
 
 const ACTIVATE_DRAFT_KEY = (h: string) => `activate_draft_${h}`
@@ -178,6 +198,8 @@ export default function Activate() {
         gender: act.gender ?? undefined,
         description: act.description?.trim() || suggestedBio,
         content_type: act.content_type ?? [],
+        influence_audience: act.influence_audience ?? [],
+        influence_age_range: act.influence_age_range ?? [],
         pricing: pricingForm,
       }
       let valuesToSet = formValuesFromAct
@@ -268,6 +290,12 @@ export default function Activate() {
       content_type: Array.isArray(values.content_type) && values.content_type.length
         ? values.content_type.filter((x): x is string => typeof x === 'string')
         : undefined,
+      influence_audience: Array.isArray(values.influence_audience) && values.influence_audience.length
+        ? values.influence_audience.filter((x): x is string => typeof x === 'string')
+        : undefined,
+      influence_age_range: Array.isArray(values.influence_age_range) && values.influence_age_range.length
+        ? values.influence_age_range.filter((x): x is string => typeof x === 'string')
+        : undefined,
       pricing: Object.keys(pricingData).length ? pricingData : undefined,
     }
   }
@@ -288,7 +316,7 @@ export default function Activate() {
       scrollToFirstError()
     }
     if (step === 0) {
-      form.validateFields(['gender', 'content_type', 'description']).then(() => setStep((s) => s + 1)).catch(onError)
+      form.validateFields(['gender', 'content_type', 'influence_audience', 'influence_age_range', 'description']).then(() => setStep((s) => s + 1)).catch(onError)
     } else if (step === 1) {
       const informar = form.getFieldValue('informar_endereco_completo')
       const address = form.getFieldValue('address')
@@ -478,14 +506,14 @@ export default function Activate() {
               <>
                 <Form.Item
                   name="gender"
-                  label="Gênero"
+                  label="Qual o seu gênero?"
                   rules={[{ required: true, message: 'Informe o gênero' }]}
                 >
                   <Select placeholder="Selecione" allowClear options={GENDER_OPTIONS} />
                 </Form.Item>
                 <Form.Item
                   name="content_type"
-                  label="Tipo de conteúdo"
+                  label="Quais os tipos de conteúdo que você cria?"
                   required
                   rules={[{ type: 'array' as const, min: 1, message: 'Selecione pelo menos um tipo de conteúdo' }]}
                 >
@@ -496,6 +524,36 @@ export default function Activate() {
                     showSearch
                     optionFilterProp="label"
                     options={CONTENT_TYPE_OPTIONS}
+                    maxTagCount="responsive"
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="influence_audience"
+                  label="Público que influencia (A, B, C, D)?"
+                  required
+                  extra="Classes socioeconômicas do público que você atinge."
+                  rules={[{ type: 'array' as const, min: 1, message: 'Selecione pelo menos uma classe (A, B, C ou D)' }]}
+                >
+                  <Select
+                    mode="multiple"
+                    placeholder="Selecione as classes"
+                    allowClear
+                    options={INFLUENCE_AUDIENCE_OPTIONS}
+                    maxTagCount="responsive"
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="influence_age_range"
+                  label="Faixa etária que influencia?"
+                  required
+                  extra="Idade do público que você mais atinge."
+                  rules={[{ type: 'array' as const, min: 1, message: 'Selecione pelo menos uma faixa etária' }]}
+                >
+                  <Select
+                    mode="multiple"
+                    placeholder="Selecione as faixas"
+                    allowClear
+                    options={INFLUENCE_AGE_RANGE_OPTIONS}
                     maxTagCount="responsive"
                   />
                 </Form.Item>

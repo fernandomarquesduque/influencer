@@ -46,6 +46,10 @@ export interface ProfileActivationData {
   pricing?: PricingData;
   /** Tipos de conteúdo (ex.: fitness, moda, adulto). */
   content_type?: string[];
+  /** Público que influencia: classes socioeconômicas (A, B, C, D). */
+  influence_audience?: string[];
+  /** Faixa etária que influencia (ex.: 18-24, 25-34). */
+  influence_age_range?: string[];
   activated_at?: string;
   updated_at: string;
 }
@@ -67,9 +71,9 @@ export class SqliteSync {
       INSERT INTO profile_activation (
         profile_handle, address, address_number, zip_code, city, state, neighborhood, country, allow_gifts,
         whatsapp, tiktok, facebook, linkedin, twitter, websites,
-        gender, description, about_topics, pricing, content_type,
+        gender, description, about_topics, pricing, content_type, influence_audience, influence_age_range,
         activated_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(profile_handle) DO UPDATE SET
         address = excluded.address, address_number = excluded.address_number, zip_code = excluded.zip_code, city = excluded.city, state = excluded.state,
         neighborhood = excluded.neighborhood, country = excluded.country, allow_gifts = excluded.allow_gifts,
@@ -77,13 +81,13 @@ export class SqliteSync {
         linkedin = excluded.linkedin, twitter = excluded.twitter, websites = excluded.websites,
         gender = excluded.gender, description = excluded.description,
         about_topics = excluded.about_topics, pricing = excluded.pricing,
-        content_type = excluded.content_type,
+        content_type = excluded.content_type, influence_audience = excluded.influence_audience, influence_age_range = excluded.influence_age_range,
         activated_at = COALESCE(excluded.activated_at, activated_at), updated_at = excluded.updated_at
     `);
     this.getActivationStmt = this.db.prepare(`
       SELECT address, address_number, zip_code, city, state, neighborhood, country, allow_gifts,
              whatsapp, tiktok, facebook, linkedin, twitter, websites,
-             gender, description, about_topics, pricing, content_type,
+             gender, description, about_topics, pricing, content_type, influence_audience, influence_age_range,
              activated_at, updated_at
       FROM profile_activation WHERE profile_handle = ?
     `);
@@ -189,7 +193,7 @@ export class SqliteSync {
   }
 
   private migrateActivationColumns(): void {
-    const columns = ['gender', 'description', 'about_topics', 'pricing', 'content_type', 'zip_code', 'allow_gifts', 'address_number'] as const;
+    const columns = ['gender', 'description', 'about_topics', 'pricing', 'content_type', 'zip_code', 'allow_gifts', 'address_number', 'influence_audience', 'influence_age_range'] as const;
     for (const col of columns) {
       try {
         this.db.exec(`ALTER TABLE profile_activation ADD COLUMN ${col} TEXT`);
@@ -220,6 +224,26 @@ export class SqliteSync {
         content_type = undefined;
       }
     }
+    let influence_audience: string[] | undefined;
+    const audRaw = row.influence_audience;
+    if (typeof audRaw === 'string' && audRaw) {
+      try {
+        const arr = JSON.parse(audRaw);
+        influence_audience = Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : undefined;
+      } catch (_) {
+        influence_audience = undefined;
+      }
+    }
+    let influence_age_range: string[] | undefined;
+    const ageRaw = row.influence_age_range;
+    if (typeof ageRaw === 'string' && ageRaw) {
+      try {
+        const arr = JSON.parse(ageRaw);
+        influence_age_range = Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : undefined;
+      } catch (_) {
+        influence_age_range = undefined;
+      }
+    }
     return {
       address: row.address as string | undefined,
       address_number: row.address_number as string | undefined,
@@ -240,6 +264,8 @@ export class SqliteSync {
       about_topics: row.about_topics as string | undefined,
       pricing,
       content_type,
+      influence_audience,
+      influence_age_range,
       activated_at: row.activated_at as string | undefined,
       updated_at: typeof updated_at === 'string' ? updated_at : new Date().toISOString(),
     };
@@ -278,7 +304,7 @@ export class SqliteSync {
       const stmt = this.db.prepare(`
         SELECT profile_handle, address, address_number, zip_code, city, state, neighborhood, country, allow_gifts,
                whatsapp, tiktok, facebook, linkedin, twitter, websites,
-               gender, description, about_topics, pricing, content_type, activated_at, updated_at
+               gender, description, about_topics, pricing, content_type, influence_audience, influence_age_range, activated_at, updated_at
         FROM profile_activation WHERE profile_handle IN (${placeholders})
       `);
       const rows = stmt.all(...chunk) as Array<Record<string, unknown> & { profile_handle: string }>;
@@ -297,6 +323,8 @@ export class SqliteSync {
     const activated_at = existing ? (data.activated_at ?? existing.activated_at) : (data.activated_at ?? updated_at);
     const pricingStr = data.pricing != null ? JSON.stringify(data.pricing) : null;
     const contentTypeStr = data.content_type?.length ? JSON.stringify(data.content_type) : null;
+    const influenceAudienceStr = data.influence_audience?.length ? JSON.stringify(data.influence_audience) : null;
+    const influenceAgeRangeStr = data.influence_age_range?.length ? JSON.stringify(data.influence_age_range) : null;
     this.upsertActivation.run(
       handle,
       data.address ?? null,
@@ -318,6 +346,8 @@ export class SqliteSync {
       data.about_topics ?? null,
       pricingStr,
       contentTypeStr,
+      influenceAudienceStr,
+      influenceAgeRangeStr,
       activated_at ?? null,
       updated_at
     );

@@ -1042,7 +1042,7 @@ export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg,
   )
 }
 
-// ——— MetricasMediakitSection (espelho da página 2 do Media Kit: Métricas) ———
+// ——— MetricasMediakitSection (espelho da página 2 do Mídia Kit: Métricas) ———
 const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
 const metricasCardBase = { padding: s.md, borderRadius: r.md, border: 'none', boxShadow: sh.sm, height: '100%' as const }
@@ -1839,7 +1839,7 @@ export function PlanoAcao90DiasSection({ semana1Items, style: styleProp }: Plano
           <div>
             <div style={{ ...typ.caption, color: c.primary, fontWeight: 700, marginBottom: 4, fontSize: 11 }}>Mês 3</div>
             <ul style={{ margin: 0, paddingLeft: 18, ...typ.bodySmall, color: c.text, lineHeight: 1.4 }}>
-              <li style={{ marginBottom: 0 }}>Abordar marcas locais com Media Kit</li>
+              <li style={{ marginBottom: 0 }}>Abordar marcas locais com Mídia Kit</li>
             </ul>
           </div>
         </div>
@@ -1848,7 +1848,7 @@ export function PlanoAcao90DiasSection({ semana1Items, style: styleProp }: Plano
   )
 }
 
-// ——— StickyCTA: barra branca fixa com explicação do Media Kit e botão ———
+// ——— StickyCTA: barra branca fixa com explicação do Mídia Kit e botão ———
 export function StickyCTA({
   primaryLabel,
   primarySubtext,
@@ -1861,7 +1861,7 @@ export function StickyCTA({
 }: {
   primaryLabel: string
   primarySubtext?: string
-  /** Texto explicando o que é um Media Kit */
+  /** Texto explicando o que é um Mídia Kit */
   explanation?: string
   onPrimary: () => void
   secondaryLabel?: string
@@ -1871,7 +1871,7 @@ export function StickyCTA({
   isMobile?: boolean
 }) {
   if (!visible) return null
-  const defaultExplanation = 'Seu Media Kit organiza seus dados, comprova sua performance e aumenta sua credibilidade na hora de negociar com marcas'
+  const defaultExplanation = 'Seu Mídia Kit organiza seus dados, comprova sua performance e aumenta sua credibilidade na hora de negociar com marcas'
   const text = explanation ?? defaultExplanation
   const layout = t.layout as { maxWidth: number; contentPadding: number; contentPaddingMobile: number }
   const paddingH = isMobile ? layout.contentPaddingMobile : layout.contentPadding

@@ -1333,7 +1333,7 @@ export function getStrategicMetrics(
   }
 
   const mediaType = (p: PostItem) => (p.post?.media_type ?? (p as { media_type?: number }).media_type ?? 1) as number
-  // Usar lista completa (allPosts) para distribuição de formato, para bater com o Media Kit e não depender da ordem dos primeiros 25
+  // Usar lista completa (allPosts) para distribuição de formato, para bater com o Mídia Kit e não depender da ordem dos primeiros 25
   const listForDistribution = allPosts && allPosts.length > 0 ? allPosts : posts
   let countReels = 0
   let countCarousel = 0

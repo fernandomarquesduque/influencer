@@ -1,5 +1,5 @@
 /**
- * Gauge de ER (Engagement Rate) — reutilizável em relatório, media kit e outras telas.
+ * Gauge de ER (Engagement Rate) — reutilizável em relatório, Mídia Kit e outras telas.
  * Escala 0–8%, 4 faixas de qualidade (Baixo, Bom, Excelente, Viral).
  */
 import { reportTokens as t } from '../pages/reportTokens'

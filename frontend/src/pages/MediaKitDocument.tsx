@@ -1,5 +1,5 @@
 /**
- * Media Kit PDF — design premium, estilo Apple + agência.
+ * Mídia Kit PDF — design premium, estilo Apple + agência.
  * Capa editorial (hero), layout estável em React-PDF (sem % quebrando),
  * header/footer fixos, tratamento de dados faltantes e resolução robusta de imagens.
  * Cores de marca (brand/gold) seguem o tema selecionado na aplicação.
@@ -464,7 +464,7 @@ function PageHeader({
           <Text style={{ fontSize: typo.caption, fontWeight: 'bold', color: pal.brand }}>
             {sanitizeText(tierLabel)}
           </Text>
-          <Text style={{ fontSize: typo.caption, color: pal.textMuted }}>Media Kit</Text>
+          <Text style={{ fontSize: typo.caption, color: pal.textMuted }}>Mídia Kit</Text>
         </View>
       </View>
       <View style={{ height: 1, backgroundColor: pal.border, marginHorizontal: pagePadding }} />

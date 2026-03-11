@@ -805,6 +805,10 @@ export interface ProfileActivation {
   about_topics?: string
   /** Tipos de conteúdo (ex.: fitness, moda, adulto). */
   content_type?: string[]
+  /** Público que influencia: classes socioeconômicas (A, B, C, D). */
+  influence_audience?: string[]
+  /** Faixa etária que influencia (ex.: 18-24, 25-34). */
+  influence_age_range?: string[]
   pricing?: PricingData
   activated_at?: string
   updated_at?: string
