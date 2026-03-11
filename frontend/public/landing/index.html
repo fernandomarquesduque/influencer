@@ -4,9 +4,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Busca Influencer – Descubra seu potencial como influencer | Relatório grátis e Media Kit</title>
+  <title>Busca Influencer – Descubra quanto seu perfil vale | Relatório grátis e Media Kit</title>
   <meta name="description"
-    content="Descubra seu potencial como influencer em 1 minuto. Relatório grátis com seus pontos fortes, métricas e Media Kit em PDF. 100% seguro, sem senha. Entre na vitrine e seja encontrado por marcas.">
+    content="Descubra quanto seu perfil vale. Gere seu media kit grátis em 1 minuto. Métricas reais, valor para publis e vitrine para marcas. Sem senha.">
   <meta name="keywords"
     content="influencer, relatório influencer, media kit, análise perfil Instagram, métricas influencer, vitrine influencer">
   <meta name="robots" content="index, follow">
@@ -16,22 +16,24 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:locale" content="pt_BR">
-  <meta property="og:title" content="Busca Influencer – Descubra seu potencial como influencer">
+  <meta property="og:title" content="Busca Influencer – Descubra quanto seu perfil vale">
   <meta property="og:description"
-    content="Relatório grátis em 1 minuto. Seus pontos fortes, métricas e Media Kit em PDF. 100% seguro. Entre na vitrine para marcas.">
+    content="Gere seu media kit grátis. Métricas reais, valor para publis, vitrine para marcas. Sem senha.">
   <meta property="og:url" content="https://buscainfluencer.com.br/landing/">
   <meta property="og:site_name" content="Busca Influencer">
   <meta property="og:image" content="https://buscainfluencer.com.br/images/influencer.png">
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Busca Influencer – Descubra seu potencial como influencer">
+  <meta name="twitter:title" content="Busca Influencer – Descubra quanto seu perfil vale">
   <meta name="twitter:description"
-    content="Relatório grátis em 1 minuto. Media Kit em PDF. 100% seguro. Vitrine para marcas.">
+    content="Media kit grátis. Métricas reais, valor para publis. Vitrine para marcas. Sem senha.">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    crossorigin="anonymous">
 
   <style>
     :root {
@@ -43,7 +45,6 @@
       --lp-bg: #ffffff;
       --lp-bg-soft: #F9FAFB;
       --lp-border: #E5E7EB;
-      --chart-bar-top: #5980e4;
     }
 
     *,
@@ -255,9 +256,11 @@
     }
 
     .star {
-      color: #e8ba00;
-      font-size: 18px;
+      color: var(--lp-accent);
+      font-size: 16px;
       flex-shrink: 0;
+      width: 1.25em;
+      text-align: center;
     }
 
     .hero-image-wrap {
@@ -280,6 +283,85 @@
       vertical-align: middle;
     }
 
+    /* Preview mock: métricas + imagem */
+    .hero-preview-stack {
+      position: relative;
+      width: min(100%, 380px);
+      margin: 0 auto;
+    }
+
+    .hero-mock-card {
+      position: absolute;
+      background: var(--lp-bg);
+      border-radius: 12px;
+      padding: 12px 16px;
+      box-shadow: 0 4px 20px rgba(104, 39, 143, 0.15);
+      border: 1px solid var(--lp-border);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .hero-mock-card .mock-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--lp-primary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .hero-mock-card .mock-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--lp-text);
+    }
+
+    .hero-mock-score {
+      top: 8%;
+      right: -8%;
+      z-index: 2;
+    }
+
+    .hero-mock-er {
+      bottom: 38%;
+      left: -12%;
+      z-index: 2;
+    }
+
+    .hero-mock-price {
+      bottom: 8%;
+      right: -5%;
+      z-index: 2;
+    }
+
+    .hero-image-box-overlap {
+      position: relative;
+      z-index: 1;
+      margin-top: 24px;
+    }
+
+    @media (max-width: 900px) {
+      .hero-mock-score {
+        right: 0;
+        top: 0;
+      }
+
+      .hero-mock-er {
+        left: 0;
+        bottom: auto;
+        top: 80px;
+      }
+
+      .hero-mock-price {
+        right: 0;
+        bottom: 0;
+      }
+
+      .hero-preview-stack {
+        min-height: 320px;
+      }
+    }
+
     .landing-hero>div {
       min-width: 0;
       overflow-wrap: break-word;
@@ -289,7 +371,7 @@
     /* CTA card */
     .cta-section {
       width: 100%;
-      max-width: 640px;
+      max-width: 720px;
       margin: 0 auto;
       padding: 0 24px 72px;
       position: relative;
@@ -298,11 +380,11 @@
     }
 
     .cta-card {
-      background: var(--chart-bar-top);
-      border: 1px solid var(--lp-border);
+      background: linear-gradient(135deg, var(--lp-primary) 0%, #50206b 100%);
+      border: 1px solid rgba(232, 186, 0, 0.25);
       border-radius: 20px;
       padding: 32px 28px;
-      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+      box-shadow: 0 8px 32px rgba(104, 39, 143, 0.25);
       max-width: 100%;
       box-sizing: border-box;
     }
@@ -350,15 +432,13 @@
     .cta-card input:focus,
     .cta-final .card input:focus {
       border-color: var(--lp-primary);
-      box-shadow: 0 0 0 2px rgba(92, 103, 242, 0.2);
+      box-shadow: 0 0 0 2px rgba(104, 39, 143, 0.25);
     }
 
     .cta-card .btn-submit,
     .cta-final .card .btn-submit {
       width: 100%;
       height: 52px;
-      background: var(--lp-primary);
-      color: #fff;
       border: none;
       border-radius: 12px;
       font-weight: 700;
@@ -370,7 +450,20 @@
       box-sizing: border-box;
     }
 
-    .cta-card .btn-submit:hover,
+    .cta-card .btn-submit {
+      background: var(--lp-accent);
+      color: #1a1a1a;
+    }
+
+    .cta-card .btn-submit:hover {
+      filter: brightness(1.08);
+    }
+
+    .cta-final .card .btn-submit {
+      background: var(--lp-primary);
+      color: #fff;
+    }
+
     .cta-final .card .btn-submit:hover {
       filter: brightness(1.05);
     }
@@ -395,7 +488,9 @@
 
     .cta-list .icon {
       flex-shrink: 0;
-      font-size: 16px;
+      font-size: 14px;
+      width: 1.2em;
+      text-align: center;
     }
 
     .cta-note {
@@ -467,7 +562,8 @@
       align-items: center;
       justify-content: center;
       margin: 0 auto 16px;
-      font-size: 28px;
+      font-size: 24px;
+      color: var(--lp-primary);
     }
 
     .step-card h3 {
@@ -513,7 +609,8 @@
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      font-size: 22px;
+      font-size: 18px;
+      color: var(--lp-primary);
     }
 
     .report-card h3 {
@@ -713,7 +810,7 @@
     "@type": "WebSite",
     "name": "Busca Influencer",
     "url": "https://buscainfluencer.com.br",
-    "description": "Plataforma para descobrir seu potencial como influencer. Relatório grátis, Media Kit em PDF e vitrine para marcas.",
+    "description": "Descubra quanto seu perfil vale. Gere seu media kit grátis. Métricas reais, valor para publis e vitrine para marcas.",
     "inLanguage": "pt-BR",
     "potentialAction": {
       "@type": "SearchAction",
@@ -735,33 +832,46 @@
       </a>
       <nav class="landing-header-nav" aria-label="Menu principal">
         <a href="/blog/artigos.html">Blog</a>
-        <a href="/login">Entrar</a>
-        <a href="/app/create" class="btn-create">Cadastrar</a>
+        <a href="/login" class="btn-create">Entrar</a>
       </nav>
     </header>
 
     <main>
       <section id="hero" class="landing-hero" aria-labelledby="hero-title">
         <div>
-          <h1 id="hero-title">Quer descobrir seu potencial como influencer?</h1>
-          <p class="hero-p">Às vezes, o que falta para você decolar é entender o que os números dizem. <strong>Em 1
-              minuto, a gente te mostra seus pontos fortes</strong> e o que as marcas estão buscando no seu perfil.</p>
-          <h2>Gratuito e feito para te ajudar!</h2>
+          <h1 id="hero-title">Descubra quanto seu perfil vale e gere seu media kit grátis</h1>
+          <p class="hero-p">Métricas reais do seu Instagram, valor sugerido para publis e um PDF profissional para
+            enviar a marcas — <strong>em 1 minuto, sem senha</strong>.</p>
+          <h2>Gratuito e feito para te ajudar</h2>
           <div class="hero-list">
             <div class="hero-list-item">
-              <span class="star" aria-hidden="true">★</span>
-              <span><strong>100% seguro, não pedimos sua senha no processo</strong></span>
+              <span class="star" aria-hidden="true"><i class="fa-solid fa-star"></i></span>
+              <span><strong>Relatório completo + PDF para enviar a marcas</strong></span>
             </div>
             <div class="hero-list-item">
-              <span class="star" aria-hidden="true">★</span>
-              <span><strong>Relatório fácil de ler e cheio de insights</strong></span>
+              <span class="star" aria-hidden="true"><i class="fa-solid fa-star"></i></span>
+              <span><strong>Ative seu perfil e apareça na vitrine para empresas</strong></span>
             </div>
           </div>
         </div>
         <div class="hero-image-wrap">
-          <div class="hero-image-box">
-            <img src="/images/influencer.png" alt="Influenciadora sorrindo com óculos rosa" width="420" height="auto"
-              loading="eager">
+          <div class="hero-preview-stack">
+            <div class="hero-mock-card hero-mock-score">
+              <span class="mock-label">Score</span>
+              <span class="mock-value">87</span>
+            </div>
+            <div class="hero-mock-card hero-mock-er">
+              <span class="mock-label">Engajamento</span>
+              <span class="mock-value">4,2%</span>
+            </div>
+            <div class="hero-mock-card hero-mock-price">
+              <span class="mock-label">Post estimado</span>
+              <span class="mock-value">R$ 1.200</span>
+            </div>
+            <div class="hero-image-box hero-image-box-overlap">
+              <img src="/images/influencer.png" alt="Influenciadora sorrindo com óculos rosa" width="420" height="auto"
+                loading="eager">
+            </div>
           </div>
         </div>
       </section>
@@ -775,40 +885,41 @@
               <input type="text" id="nickname" placeholder="seuusuario" autocomplete="username"
                 aria-label="Usuário do Instagram" maxlength="100">
             </div>
-            <button type="submit" class="btn-submit">Analisar perfil grátis</button>
+            <button type="submit" class="btn-submit">Gerar relatório e media kit grátis</button>
           </form>
           <ul class="cta-list">
-            <li><span class="icon">✓</span> Gratuito e feito para te ajudar!</li>
-            <li><span class="icon">✓</span> Entre na vitrine e seja encontrado por empresas parceiras que buscam
-              influenciadores</li>
-            <li><span class="icon">✓</span> Relatório cheio de insights + Media Kit em PDF para enviar a marcas</li>
+            <li><span class="icon"><i class="fa-solid fa-check"></i></span> Valor sugerido para posts, reels e stories
+            </li>
+            <li><span class="icon"><i class="fa-solid fa-check"></i></span> Vitrine: marcas filtram por cidade, nicho e
+              seguidores</li>
+            <li><span class="icon"><i class="fa-solid fa-check"></i></span> Seu código de validação chegará por DM no
+              Instagram, seus dados estão
+              protegidos</li>
           </ul>
         </div>
-        <p class="cta-note">Cadastre-se grátis, veja seu relatório e ative seu cadastro para entrar na vitrine. Empresas
-          parceiras buscam influenciadores por cidade e nicho — seu perfil pode ser o próximo.</p>
-        <p class="cta-note-small">Processo rápido e seguro.</p>
+        <p class="cta-note">Cadastre-se, veja seu relatório e ative o perfil para entrar na vitrine.</p>
+        <p class="cta-note-small">Sem spam. Sem custo.</p>
       </section>
 
       <section id="como-funciona" class="section section-soft" aria-labelledby="como-funciona-title">
         <h2 id="como-funciona-title">Como funciona?</h2>
         <div class="steps-grid">
           <div class="step-card">
-            <div class="step-icon" aria-hidden="true">🔍</div>
+            <div class="step-icon" aria-hidden="true"><i class="fa-solid fa-magnifying-glass"></i></div>
             <h3>Informe seu @</h3>
-            <p>Coloque seu usuário do Instagram. Você recebe um código na DM, valida e pronto — sem senha, sem
-              formulário enorme.</p>
+            <p>Digite seu usuário. Um código chega na DM do Instagram, você valida e segue — nada de senha nem
+              formulário longo.</p>
           </div>
           <div class="step-card">
-            <div class="step-icon" aria-hidden="true">📊</div>
+            <div class="step-icon" aria-hidden="true"><i class="fa-solid fa-chart-line"></i></div>
             <h3>Veja seu relatório</h3>
-            <p>Score, taxa de engajamento, valor estimado (post, reels, stories) e melhores horários. Gere também um
-              Media Kit em PDF para enviar a marcas.</p>
+            <p>Score, engajamento, faixa de preço e melhores horários. Na mesma tela você gera o PDF para portfólio.</p>
           </div>
           <div class="step-card">
-            <div class="step-icon" aria-hidden="true">🚀</div>
+            <div class="step-icon" aria-hidden="true"><i class="fa-solid fa-rocket"></i></div>
             <h3>Ative e apareça na vitrine</h3>
-            <p>Preencha cidade e contato (ativar cadastro). Assim você entra na vitrine e marcas da sua região podem te
-              encontrar.</p>
+            <p>Com cidade e contato ativados, seu perfil entra na vitrine e empresas da sua região conseguem te achar.
+            </p>
           </div>
         </div>
       </section>
@@ -817,21 +928,21 @@
         <h2 id="o-que-vem-title">O que você vai descobrir no relatório</h2>
         <div class="report-grid">
           <div class="report-card">
-            <div class="report-icon" aria-hidden="true">📈</div>
+            <div class="report-icon" aria-hidden="true"><i class="fa-solid fa-arrow-trend-up"></i></div>
             <div>
               <h3>Crescimento real</h3>
               <p>Entenda como sua audiência está evoluindo e quais tendências o seu perfil está seguindo.</p>
             </div>
           </div>
           <div class="report-card">
-            <div class="report-icon" aria-hidden="true">❤️</div>
+            <div class="report-icon" aria-hidden="true"><i class="fa-solid fa-heart"></i></div>
             <div>
               <h3>Conteúdos que dão match</h3>
               <p>Saiba exatamente quais formatos e temas fazem seus seguidores comentarem e compartilharem mais.</p>
             </div>
           </div>
           <div class="report-card">
-            <div class="report-icon" aria-hidden="true">📊</div>
+            <div class="report-icon" aria-hidden="true"><i class="fa-solid fa-chart-column"></i></div>
             <div>
               <h3>Taxa de engajamento</h3>
               <p>Nada de métricas de vaidade! Calculamos sua interação real para mostrar o quanto seu público é fiel.
@@ -839,14 +950,14 @@
             </div>
           </div>
           <div class="report-card">
-            <div class="report-icon" aria-hidden="true">💰</div>
+            <div class="report-icon" aria-hidden="true"><i class="fa-solid fa-coins"></i></div>
             <div>
               <h3>Valor sugerido para Publis</h3>
               <p>Chega de dúvida na hora de cobrar! Receba uma estimativa de preço para suas parcerias com marcas.</p>
             </div>
           </div>
           <div class="report-card">
-            <div class="report-icon" aria-hidden="true">👥</div>
+            <div class="report-icon" aria-hidden="true"><i class="fa-solid fa-users"></i></div>
             <div>
               <h3>Quem te acompanha</h3>
               <p>Descubra a idade, cidade e os principais interesses de quem te segue para criar posts ainda mais
@@ -854,7 +965,7 @@
             </div>
           </div>
           <div class="report-card">
-            <div class="report-icon" aria-hidden="true">📋</div>
+            <div class="report-icon" aria-hidden="true"><i class="fa-solid fa-clipboard-list"></i></div>
             <div>
               <h3>Guia de melhorias</h3>
               <p>Um checklist prático com pontos que você pode ajustar para deixar seu perfil irresistível para novos
@@ -866,7 +977,7 @@
 
       <section class="cta-final" aria-labelledby="cta-final-title">
         <div class="cta-final-inner">
-          <h2 id="cta-final-title">Quer seu relatório agora?</h2>
+          <h2 id="cta-final-title">Pronto para ver seu relatório?</h2>
           <div class="card">
             <form action="/app/create" method="get" aria-label="Segundo formulário de análise">
               <input type="hidden" name="u" id="u2" value="">
@@ -875,10 +986,10 @@
                 <input type="text" id="nickname2" placeholder="seuusuario" autocomplete="username"
                   aria-label="Usuário do Instagram" maxlength="100">
               </div>
-              <button type="submit" class="btn-submit">Analisar perfil</button>
+              <button type="submit" class="btn-submit">Gerar relatório grátis</button>
             </form>
           </div>
-          <p class="cta-final-note">Sem spam. Sem custo. Só insights.</p>
+          <p class="cta-final-note">Resultado em 1 minuto. Grátis.</p>
         </div>
       </section>
     </main>

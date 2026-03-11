@@ -129,8 +129,11 @@ export default function Layout() {
             >
               {isMobile ? (
                 <>
-                  <Link
-                    to="/"
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => { window.location.href = '/' }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/' } }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -139,6 +142,7 @@ export default function Layout() {
                       color: 'var(--app-header-text)',
                       minWidth: 0,
                       maxWidth: 250,
+                      cursor: 'pointer',
                     }}
                   >
                     <Logo
@@ -148,7 +152,7 @@ export default function Layout() {
                       style={{ flexShrink: 0, maxWidth: '100%' }}
                       alt="Relatório de Influencer"
                     />
-                  </Link>
+                  </div>
                   <Button
                     type="text"
                     icon={<MenuOutlined style={{ fontSize: 22, color: 'var(--app-header-text)' }} />}
@@ -159,8 +163,11 @@ export default function Layout() {
                 </>
               ) : (
                 <>
-                  <Link
-                    to="/"
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => { window.location.href = '/' }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/' } }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -168,6 +175,7 @@ export default function Layout() {
                       textDecoration: 'none',
                       color: 'var(--app-header-text)',
                       minWidth: 0,
+                      cursor: 'pointer',
                     }}
                   >
                     <Logo
@@ -177,7 +185,7 @@ export default function Layout() {
                       style={{ flexShrink: 0 }}
                       alt="Relatório de Influencer"
                     />
-                  </Link>
+                  </div>
                   <nav style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4 }}>
                     {user && (
                       <>
@@ -215,9 +223,7 @@ export default function Layout() {
                               ...(myProfilePath
                                 ? [{ key: 'profile', label: 'Meu perfil', onClick: () => navigate(myProfilePath) }]
                                 : []),
-                              ...(isAdm || user?.scope === 'influencer'
-                                ? [{ key: 'projects', label: 'Projetos', onClick: () => navigate('/app/projects') }]
-                                : []),
+
                               { key: 'logout', label: 'Sair', onClick: () => logout() },
                             ] as MenuProps['items'],
                           }}
