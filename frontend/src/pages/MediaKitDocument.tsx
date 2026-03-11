@@ -18,6 +18,7 @@ import type { ProfileItem, PostItem, ProfileActivation } from '../api'
 import { buildReportInsights, getWeekdayName, getTopPosts, getEngagementPerWeekdayAllTime, type TopPostInfo } from '../utils/reportInsights'
 import { getCostTier } from '../utils/pricing'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
+import { GENDER_LABELS, AUDIENCE_GENDER_LABELS, INFLUENCE_AGE_RANGE_LABELS } from '../constants/activationLabels'
 import {
   PRICING_FIELD_KEYS,
   PRICING_FIELD_LABELS,
@@ -1248,6 +1249,45 @@ function CtaPage({
           ) : null}
         </View>
 
+        {/* Perfil, público e proposta */}
+        {(activation?.gender || activation?.audience_gender || activation?.content_type?.length || activation?.influence_audience?.length || activation?.influence_age_range?.length || activation?.description?.trim() || activation?.brands_worked_with?.trim()) ? (
+          <View style={{ marginBottom: 10 }}>
+            <Card title="Perfil e público" style={{ marginBottom: 0 }}>
+              {activation?.gender ? (
+                <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.35 }}>
+                  Gênero: {GENDER_LABELS[activation.gender] ?? activation.gender}
+                </Text>
+              ) : null}
+              {activation?.audience_gender ? (
+                <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.35, marginTop: activation?.gender ? 4 : 0 }}>
+                  Gênero predominante do público: {AUDIENCE_GENDER_LABELS[activation.audience_gender] ?? activation.audience_gender}
+                </Text>
+              ) : null}
+              {activation?.content_type?.length ? (
+                <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.35, marginTop: (activation?.gender || activation?.audience_gender) ? 4 : 0 }}>
+                  Tipos de conteúdo: {activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}
+                </Text>
+              ) : null}
+              {activation?.influence_audience?.length ? (
+                <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.35, marginTop: (activation?.gender || activation?.audience_gender || activation?.content_type?.length) ? 4 : 0 }}>
+                  Público que influencia (A, B, C, D): {activation.influence_audience.join(', ')}
+                </Text>
+              ) : null}
+              {activation?.influence_age_range?.length ? (
+                <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.35, marginTop: (activation?.gender || activation?.audience_gender || activation?.content_type?.length || activation?.influence_audience?.length) ? 4 : 0 }}>
+                  Faixa etária que influencia: {activation.influence_age_range.map((fa) => INFLUENCE_AGE_RANGE_LABELS[fa] ?? fa).join(', ')}
+                </Text>
+              ) : null}
+
+              {activation?.brands_worked_with?.trim() ? (
+                <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.35, marginTop: (activation?.gender || activation?.audience_gender || activation?.content_type?.length || activation?.influence_audience?.length || activation?.influence_age_range?.length || activation?.description?.trim()) ? 4 : 0 }}>
+                  Marcas que já trabalhou: {sanitizeText(activation.brands_worked_with.trim())}
+                </Text>
+              ) : null}
+            </Card>
+          </View>
+        ) : null}
+
         {/* Endereço, brindes, Tipo de conteúdo */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
           {(fullAddress || cityState || activation?.allow_gifts != null) ? (
@@ -1258,11 +1298,7 @@ function CtaPage({
                     {sanitizeText(fullAddress || cityState)}
                   </Text>
                 ) : null}
-                {activation?.allow_gifts != null && (
-                  <Text style={{ fontSize: typo.body, color: pal.text, lineHeight: 1.35, marginTop: (fullAddress || cityState) ? 4 : 0 }}>
-                    Aceita brindes e amostras no endereço: {activation.allow_gifts ? 'Sim' : 'Não'}
-                  </Text>
-                )}
+
               </Card>
             </View>
           ) : null}

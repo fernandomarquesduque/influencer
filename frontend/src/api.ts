@@ -809,6 +809,10 @@ export interface ProfileActivation {
   influence_audience?: string[]
   /** Faixa etária que influencia (ex.: 18-24, 25-34). */
   influence_age_range?: string[]
+  /** Gênero predominante do público (feminino, masculino, equilibrado, prefiro_nao_definir). */
+  audience_gender?: string
+  /** Marcas com as quais já trabalhou (texto livre, opcional). */
+  brands_worked_with?: string
   pricing?: PricingData
   activated_at?: string
   updated_at?: string

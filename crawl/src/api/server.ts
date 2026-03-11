@@ -1945,6 +1945,8 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
       content_type: contentTypeArr?.length ? contentTypeArr : undefined,
       influence_audience: influenceAudienceArr?.length ? influenceAudienceArr : undefined,
       influence_age_range: influenceAgeRangeArr?.length ? influenceAgeRangeArr : undefined,
+      audience_gender: typeof body.audience_gender === 'string' ? body.audience_gender.trim() || undefined : undefined,
+      brands_worked_with: typeof body.brands_worked_with === 'string' ? body.brands_worked_with.trim() || undefined : undefined,
     });
     const data = sqlite.getActivation(handle);
 

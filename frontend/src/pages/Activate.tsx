@@ -76,6 +76,13 @@ const INFLUENCE_AGE_RANGE_OPTIONS = [
   { value: '55+', label: '55 anos ou mais' },
 ]
 
+const AUDIENCE_GENDER_OPTIONS = [
+  { value: 'majoritariamente_feminino', label: 'Majoritariamente feminino' },
+  { value: 'majoritariamente_masculino', label: 'Majoritariamente masculino' },
+  { value: 'publico_equilibrado', label: 'Público equilibrado' },
+  { value: 'prefiro_nao_definir', label: 'Prefiro não definir' },
+]
+
 const ACTIVATE_DRAFT_KEY = (h: string) => `activate_draft_${h}`
 
 function parseStepFromHash(): number {
@@ -200,6 +207,8 @@ export default function Activate() {
         content_type: act.content_type ?? [],
         influence_audience: act.influence_audience ?? [],
         influence_age_range: act.influence_age_range ?? [],
+        audience_gender: act.audience_gender ?? undefined,
+        brands_worked_with: act.brands_worked_with ?? '',
         pricing: pricingForm,
       }
       let valuesToSet = formValuesFromAct
@@ -296,6 +305,8 @@ export default function Activate() {
       influence_age_range: Array.isArray(values.influence_age_range) && values.influence_age_range.length
         ? values.influence_age_range.filter((x): x is string => typeof x === 'string')
         : undefined,
+      audience_gender: typeof values.audience_gender === 'string' ? values.audience_gender || undefined : undefined,
+      brands_worked_with: typeof values.brands_worked_with === 'string' ? values.brands_worked_with?.trim() || undefined : undefined,
       pricing: Object.keys(pricingData).length ? pricingData : undefined,
     }
   }
@@ -316,7 +327,7 @@ export default function Activate() {
       scrollToFirstError()
     }
     if (step === 0) {
-      form.validateFields(['gender', 'content_type', 'influence_audience', 'influence_age_range', 'description']).then(() => setStep((s) => s + 1)).catch(onError)
+      form.validateFields(['gender', 'audience_gender', 'content_type', 'influence_audience', 'influence_age_range', 'description']).then(() => setStep((s) => s + 1)).catch(onError)
     } else if (step === 1) {
       const informar = form.getFieldValue('informar_endereco_completo')
       const address = form.getFieldValue('address')
@@ -506,10 +517,17 @@ export default function Activate() {
               <>
                 <Form.Item
                   name="gender"
-                  label="Qual o seu gênero?"
+                  label="1. Qual o seu gênero?"
                   rules={[{ required: true, message: 'Informe o gênero' }]}
                 >
                   <Select placeholder="Selecione" allowClear options={GENDER_OPTIONS} />
+                </Form.Item>
+                <Form.Item
+                  name="audience_gender"
+                  label="2. Gênero predominante do seu público"
+                  rules={[{ required: true, message: 'Selecione uma opção' }]}
+                >
+                  <Radio.Group options={AUDIENCE_GENDER_OPTIONS} />
                 </Form.Item>
                 <Form.Item
                   name="content_type"
@@ -561,13 +579,13 @@ export default function Activate() {
                   name="description"
                   label="Fala de você (trajetória e proposta)"
                   required
-                  extra="Em poucas linhas: quem você é e o que oferece. Mín. 100 caracteres."
+                  extra="Em poucas linhas: quem você é e o que oferece. Mín. 50 caracteres."
                   rules={[
-                    { required: true, message: 'Preenche com pelo menos 100 caracteres.' },
+                    { required: true, message: 'Preenche com pelo menos 50 caracteres.' },
                     {
                       validator: (_, v) => {
-                        if (!v || typeof v !== 'string') return Promise.reject(new Error('Preenche com pelo menos 100 caracteres.'))
-                        if (v.trim().length < 100) return Promise.reject(new Error('Preenche com pelo menos 100 caracteres.'))
+                        if (!v || typeof v !== 'string') return Promise.reject(new Error('Preenche com pelo menos 50 caracteres.'))
+                        if (v.trim().length < 50) return Promise.reject(new Error('Preenche com pelo menos 50 caracteres.'))
                         return Promise.resolve()
                       },
                     },
@@ -578,6 +596,18 @@ export default function Activate() {
                     rows={4}
                     showCount
                     maxLength={2000}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="brands_worked_with"
+                  label="Cite marcas que você já trabalhou"
+                  extra="Opcional. Ex.: Nike, Natura, Magazine Luiza..."
+                >
+                  <Input.TextArea
+                    placeholder="Marcas com as quais já fez parcerias"
+                    rows={2}
+                    showCount
+                    maxLength={1000}
                   />
                 </Form.Item>
 

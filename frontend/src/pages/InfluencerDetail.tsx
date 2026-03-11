@@ -29,6 +29,7 @@ import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, pro
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { buildReportInsights, getWeekdayName, getPostsByWeekday } from '../utils/reportInsights'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
+import { GENDER_LABELS, AUDIENCE_GENDER_LABELS, INFLUENCE_AGE_RANGE_LABELS } from '../constants/activationLabels'
 import { getCostTier } from '../utils/pricing'
 import { PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
 import { DETAIL_SECTION_ORDER, type DetailSectionId } from '../constants/detailLayout'
@@ -51,6 +52,7 @@ import { AlcanceSection } from '../components/AlcanceSection'
 import { PostAnalysisSection } from '../components/PostAnalysisSection'
 import { ReelsAnalysisSection } from '../components/ReelsAnalysisSection'
 import { TaggedAnalysisSection } from '../components/TaggedAnalysisSection'
+import { PrivateProfileMessage } from '../components/PrivateProfileMessage'
 
 const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh, typography: typ, layout: lay } = t
@@ -348,8 +350,8 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     }
   }, [mediaByType.posts, mediaByType.reels, mediaByType.tagged, followersCount])
 
-  const loading = profileLoading || postsLoading
-  if (loading && !profile && posts.length === 0) {
+  const showSkeleton = (profileLoading && !profile) || (postsLoading && posts.length === 0)
+  if (showSkeleton) {
     return (
       <div style={{ minHeight: '100vh', paddingBottom: 80 }}>
         <ReportSkeleton />
@@ -357,7 +359,27 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     )
   }
 
-
+  // Perfil privado: lógica e UI encapsuladas em PrivateProfileMessage (is_private + retry + progresso). Exibe quando privado e sem posts.
+  if (profile?.is_private && handle && posts.length === 0) {
+    return (
+      <div style={{ paddingBottom: s.xl, background: c.pageBg, minHeight: '100vh' }}>
+        <div style={{ width: '100%', padding: `0 ${isMobile ? s.sm : 0}px` }}>
+          <PrivateProfileMessage
+            profile={profile}
+            handle={handle}
+            isAdm={isAdm}
+            isMobile={isMobile}
+            onProfileUpdate={(p, posts, dataRedacted: boolean | undefined) => {
+              setProfile(p)
+              setPosts(posts.items)
+              setPostsTotal(posts.total)
+              if (dataRedacted) setDataRedacted(true)
+            }}
+          />
+        </div>
+      </div>
+    )
+  }
 
   const profilePic = proxyImageUrl(getProfilePicUrl(profile))
 
@@ -592,8 +614,29 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                                   )
                                 })()}
                                 <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
-                                  <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Contato e informações</div>
+
                                   <Descriptions column={1} bordered size="small">
+                                    {activation.gender && (
+                                      <Descriptions.Item label="Gênero">{GENDER_LABELS[activation.gender] ?? activation.gender}</Descriptions.Item>
+                                    )}
+                                    {activation.audience_gender && (
+                                      <Descriptions.Item label="Gênero predominante do público">{AUDIENCE_GENDER_LABELS[activation.audience_gender] ?? activation.audience_gender}</Descriptions.Item>
+                                    )}
+                                    {activation.content_type?.length ? (
+                                      <Descriptions.Item label="Tipos de conteúdo">{activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}</Descriptions.Item>
+                                    ) : null}
+                                    {activation.influence_audience?.length ? (
+                                      <Descriptions.Item label="Público que influencia (A, B, C, D)">{activation.influence_audience.join(', ')}</Descriptions.Item>
+                                    ) : null}
+                                    {activation.influence_age_range?.length ? (
+                                      <Descriptions.Item label="Faixa etária que influencia">{activation.influence_age_range.map((fa) => INFLUENCE_AGE_RANGE_LABELS[fa] ?? fa).join(', ')}</Descriptions.Item>
+                                    ) : null}
+                                    {activation.description?.trim() && (
+                                      <Descriptions.Item label="Fala de você (trajetória e proposta)"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.description.trim()}</Text></Descriptions.Item>
+                                    )}
+                                    {activation.brands_worked_with?.trim() && (
+                                      <Descriptions.Item label="Marcas que já trabalhou"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.brands_worked_with.trim()}</Text></Descriptions.Item>
+                                    )}
                                     {(activation.city || activation.state || activation.neighborhood || activation.country) && (
                                       <Descriptions.Item label="Localização">
                                         {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
