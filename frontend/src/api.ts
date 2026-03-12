@@ -155,6 +155,10 @@ export interface ProfilesSearchQuery {
   neighborhoods?: string[]
   socialNetworks?: string[]
   categories?: string | string[]
+  /** Excluir perfis privados. */
+  excludePrivate?: boolean
+  /** Tipo de conta (1=pessoal, 2=criador, 3=empresa). */
+  accountTypeFilter?: number[]
   /** Tipo de conteúdo (perfis ativados). */
   contentTypes?: string[]
   /** Faixas de preço por formato (valores em reais: 0, 500, 1000, 2500, 5000, 15000). */
@@ -240,6 +244,8 @@ export async function fetchProfilesSearch(
   if (query.categories != null) {
     params.set('categories', Array.isArray(query.categories) ? query.categories.join(',') : String(query.categories))
   }
+  if (query.excludePrivate) params.set('excludePrivate', 'true')
+  if (query.accountTypeFilter?.length) params.set('accountTypeFilter', query.accountTypeFilter.join(','))
   if (query.contentTypes?.length) params.set('contentTypes', query.contentTypes.join(','))
   if (query.pricingPostUnique?.length) params.set('pricingPostUnique', query.pricingPostUnique.join(','))
   if (query.pricingStories?.length) params.set('pricingStories', query.pricingStories.join(','))

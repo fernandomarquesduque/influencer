@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
-import { useNavigate, useSearchParams, useParams, Link, Navigate } from 'react-router-dom'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { useNavigate, useLocation, useParams, Link, Navigate } from 'react-router-dom'
 import {
   Row,
   Col,
@@ -23,9 +23,91 @@ import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
 import { useAuth } from '../contexts/AuthContext'
 import { useListCache } from '../contexts/ListCacheContext'
-import Logo from '../components/Logo'
+import SearchWizard from '../components/SearchWizard/SearchWizard'
+import ReportDashboard from '../components/ReportDashboard/ReportDashboard'
 
 const { Text } = Typography
+
+const LIST_VIEW_PARAM = 'view'
+
+/** Serializa query para URL (filtros iniciais + avançados). */
+function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
+  const params: Record<string, string> = {}
+  if (query.q) params.q = query.q
+  if (query.categories != null) {
+    params.categories = Array.isArray(query.categories) ? query.categories.join(',') : String(query.categories)
+  }
+  if (query.minFollowers != null) params.minFollowers = String(query.minFollowers)
+  if (query.maxFollowers != null) params.maxFollowers = String(query.maxFollowers)
+  if (query.engagementRateBuckets?.length) params.engagement = query.engagementRateBuckets.join(',')
+  if (query.excludePrivate) params.excludePrivate = '1'
+  if (query.accountTypeFilter?.length) params.accountType = query.accountTypeFilter.join(',')
+  if (query.avgLikesBuckets?.length) params.avgLikes = query.avgLikesBuckets.join(',')
+  if (query.postsCountBuckets?.length) params.postsCount = query.postsCountBuckets.join(',')
+  if (query.activationFilter?.length) params.activation = query.activationFilter.join(',')
+  if (query.cities?.length) params.cities = query.cities.join(',')
+  if (query.states?.length) params.states = query.states.join(',')
+  if (query.neighborhoods?.length) params.neighborhoods = query.neighborhoods.join(',')
+  if (query.socialNetworks?.length) params.social = query.socialNetworks.join(',')
+  if (query.contentTypes?.length) params.contentTypes = query.contentTypes.join(',')
+  if (query.pricingPostUnique?.length) params.pricingPostUnique = query.pricingPostUnique.join(',')
+  if (query.pricingStories?.length) params.pricingStories = query.pricingStories.join(',')
+  if (query.pricingPackageMonthly?.length) params.pricingPackageMonthly = query.pricingPackageMonthly.join(',')
+  if (query.pricingCommission?.length) params.pricingCommission = query.pricingCommission.join(',')
+  if (query.pricingPermuta?.length) params.pricingPermuta = query.pricingPermuta.join(',')
+  if (query.pricingImageRights?.length) params.pricingImageRights = query.pricingImageRights.join(',')
+  if (query.pricingContentDelivery?.length) params.pricingContentDelivery = query.pricingContentDelivery.join(',')
+  if (query.pricingLaunch?.length) params.pricingLaunch = query.pricingLaunch.join(',')
+  if (query.sort) params.sort = query.sort
+  if (query.offset != null && query.offset > 0) params.offset = String(query.offset)
+  return params
+}
+
+const WIZARD_DONE_PARAM = 'done'
+
+/** Deserializa URL para query. Listagem só aparece se tiver q e done=1 (wizard completo). Categories é opcional (busca só por termo). */
+function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery> & { hasMandatory: boolean } {
+  const q = params.get('q')?.trim()
+  const categoriesRaw = params.get('categories')
+  const categories = categoriesRaw
+    ? categoriesRaw.split(',').map((c) => c.trim()).filter(Boolean)
+    : undefined
+  const done = params.get(WIZARD_DONE_PARAM) === '1'
+  const hasMandatory = !!(q && q.length >= 3 && done)
+  const parseNumList = (s: string | null): number[] | undefined => {
+    if (!s) return undefined
+    const arr = s.split(',').map((x) => Number(x.trim())).filter(Number.isFinite)
+    return arr.length ? arr : undefined
+  }
+  return {
+    hasMandatory,
+    q: q || undefined,
+    categories,
+    minFollowers: params.has('minFollowers') ? Number(params.get('minFollowers')) : undefined,
+    maxFollowers: params.has('maxFollowers') ? Number(params.get('maxFollowers')) : undefined,
+    engagementRateBuckets: parseNumList(params.get('engagement')),
+    excludePrivate: params.get('excludePrivate') === '1',
+    accountTypeFilter: parseNumList(params.get('accountType')),
+    avgLikesBuckets: parseNumList(params.get('avgLikes')),
+    postsCountBuckets: parseNumList(params.get('postsCount')),
+    activationFilter: params.get('activation')?.split(',').map((x) => x.trim()).filter(Boolean),
+    cities: params.get('cities')?.split(',').map((x) => x.trim()).filter(Boolean),
+    states: params.get('states')?.split(',').map((x) => x.trim()).filter(Boolean),
+    neighborhoods: params.get('neighborhoods')?.split(',').map((x) => x.trim()).filter(Boolean),
+    socialNetworks: params.get('social')?.split(',').map((x) => x.trim()).filter(Boolean),
+    contentTypes: params.get('contentTypes')?.split(',').map((x) => x.trim()).filter(Boolean),
+    pricingPostUnique: parseNumList(params.get('pricingPostUnique')),
+    pricingStories: parseNumList(params.get('pricingStories')),
+    pricingPackageMonthly: parseNumList(params.get('pricingPackageMonthly')),
+    pricingCommission: parseNumList(params.get('pricingCommission')),
+    pricingPermuta: parseNumList(params.get('pricingPermuta')),
+    pricingImageRights: parseNumList(params.get('pricingImageRights')),
+    pricingContentDelivery: parseNumList(params.get('pricingContentDelivery')),
+    pricingLaunch: parseNumList(params.get('pricingLaunch')),
+    sort: (params.get('sort') as ProfilesSort) || undefined,
+    offset: params.has('offset') ? Number(params.get('offset')) : undefined,
+  }
+}
 
 const PRICING_FILTER_KEYS = [
   'pricingPostUnique',
@@ -65,26 +147,98 @@ const PAGE_SIZE = 12
 
 const PUBLIC_LIMIT_CODES = ['PUBLIC_PAGE_LIMIT', 'PUBLIC_FILTERS_NOT_ALLOWED', 'PUBLIC_SEARCH_LIMIT']
 
+/** Lê params da hash (#q=moda&categories=...) e retorna URLSearchParams. */
+function getParamsFromHash(location: { hash: string }): URLSearchParams {
+  const hash = location.hash?.trim().replace(/^#/, '') || ''
+  if (!hash) return new URLSearchParams()
+  return new URLSearchParams(hash)
+}
+
 export default function InfluencerList() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { handle: urlHandle } = useParams<{ handle?: string }>()
   const { user, isPublic } = useAuth()
   const { getCache, saveCache } = useListCache()
   const isLimitedView = !user || isPublic
-  const [searchParams, setSearchParams] = useSearchParams()
-  const qFromUrl = searchParams.get('q') ?? ''
+  const hashParams = useMemo(() => getParamsFromHash(location), [location.hash])
+  const parsedUrl = useMemo(() => urlParamsToQuery(hashParams), [hashParams])
+  const hasMandatoryFilters = parsedUrl.hasMandatory
+
+  const setFilterParams = useCallback(
+    (params: Record<string, string> | URLSearchParams) => {
+      const str = params instanceof URLSearchParams ? params.toString() : new URLSearchParams(params).toString()
+      const newHash = str ? `#${str}` : ''
+      navigate({ pathname: location.pathname, search: location.search, hash: newHash }, { replace: true })
+    },
+    [navigate, location.pathname, location.search]
+  )
+
+  const handleWizardFiltersChange = useCallback(
+    (query: Partial<ProfilesSearchQuery>) => {
+      const params = queryToUrlParams({ ...query, limit: PAGE_SIZE, offset: 0, sort: 'relevance_desc' })
+      setFilterParams(new URLSearchParams(params))
+    },
+    [setFilterParams]
+  )
+
+  const handleWizardEstimate = useCallback(async (query: Partial<ProfilesSearchQuery>) => {
+    const res = await fetchProfilesSearch({
+      ...query,
+      limit: 1,
+      offset: 0,
+      sort: 'relevance_desc',
+    })
+    return { total: res.total, facets: res.facets ?? null }
+  }, [])
+
+  const handleWizardComplete = useCallback(
+    (payload: Partial<ProfilesSearchQuery>) => {
+      const q = payload.q?.trim() || (payload.categories?.[0] ?? 'criadores')
+      const categories = payload.categories?.length ? payload.categories : undefined
+      const fullPayload = {
+        ...payload,
+        q,
+        categories,
+        limit: PAGE_SIZE,
+        offset: 0,
+        sort: 'relevance_desc' as const,
+      }
+      const params = queryToUrlParams(fullPayload)
+      params[WIZARD_DONE_PARAM] = '1'
+      params[LIST_VIEW_PARAM] = 'dashboard'
+      setFilterParams(new URLSearchParams(params))
+    },
+    [setFilterParams]
+  )
+
+  const handleWizardSearchTermChange = useCallback(
+    (q: string) => {
+      if (q.length >= 3) {
+        setFilterParams({ q })
+      } else if (!q) {
+        setFilterParams({})
+      }
+    },
+    [setFilterParams]
+  )
+
+  const fullQueryFromUrl = hasMandatoryFilters
+    ? (() => {
+        const { hasMandatory: _hm, ...rest } = parsedUrl
+        return { ...rest, limit: PAGE_SIZE, offset: rest.offset ?? 0, sort: (rest.sort as ProfilesSort) ?? 'relevance_desc' }
+      })()
+    : null
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [data, setData] = useState<ProfileListItem[]>([])
   const [total, setTotal] = useState(0)
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
-  const [searchInput, setSearchInput] = useState(qFromUrl)
-  const defaultSort = qFromUrl.trim() ? 'relevance_desc' : 'engagement_desc'
+  const [searchInput, setSearchInput] = useState(parsedUrl.q ?? '')
   const [query, setQuery] = useState<ProfilesSearchQuery>({
-    q: qFromUrl || undefined,
     limit: PAGE_SIZE,
     offset: 0,
-    sort: defaultSort as ProfilesSort,
+    sort: 'engagement_desc' as ProfilesSort,
   })
   const [limitReachedCode, setLimitReachedCode] = useState<string | null>(null)
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false)
@@ -223,16 +377,17 @@ export default function InfluencerList() {
   }
 
   useEffect(() => {
-    if (!qFromUrl.trim()) {
-      setSearchInput('')
+    if (!hasMandatoryFilters) {
+      setSearchInput(parsedUrl.q ?? '')
       setData([])
       setTotal(0)
       setFacets(null)
       setQuery({ limit: PAGE_SIZE, offset: 0, sort: 'engagement_desc' as ProfilesSort })
       return
     }
+    const fullQuery = fullQueryFromUrl!
     const cached = getCache()
-    if (cached && cached.q === qFromUrl.trim()) {
+    if (cached && cached.q === fullQuery.q?.trim()) {
       setData(cached.data)
       setTotal(cached.total)
       setFacets(cached.facets)
@@ -241,21 +396,17 @@ export default function InfluencerList() {
       if (cached.scrollPosition != null) scrollToRestoreRef.current = cached.scrollPosition
       return
     }
-    setSearchInput(qFromUrl)
-    const base = { q: qFromUrl || undefined, offset: 0, limit: PAGE_SIZE, sort: 'relevance_desc' as ProfilesSort }
-    setQuery((prev) => (isLimitedView ? { ...base } : { ...prev, ...base }))
+    setSearchInput(fullQuery.q ?? '')
+    setQuery(fullQuery)
     const controller = new AbortController()
-    load(
-      isLimitedView ? { q: qFromUrl.trim() || undefined, offset: 0, sort: 'relevance_desc' } : { q: qFromUrl.trim() || undefined, offset: 0, sort: 'relevance_desc' },
-      controller.signal
-    )
+    load(fullQuery, controller.signal)
     return () => controller.abort()
-  }, [qFromUrl, isLimitedView])
+  }, [hasMandatoryFilters, location.hash, setFilterParams])
 
   useEffect(() => {
-    if (!loading && !loadingMore && qFromUrl.trim() && (data.length > 0 || total > 0 || facets != null)) {
+    if (!loading && !loadingMore && hasMandatoryFilters && query.q?.trim() && (data.length > 0 || total > 0 || facets != null)) {
       saveCache({
-        q: qFromUrl.trim(),
+        q: query.q.trim(),
         data,
         total,
         facets,
@@ -264,7 +415,7 @@ export default function InfluencerList() {
         scrollPosition: typeof window !== 'undefined' ? window.scrollY : 0,
       })
     }
-  }, [loading, loadingMore, qFromUrl, data, total, facets, query, searchInput, saveCache])
+  }, [loading, loadingMore, hasMandatoryFilters, query, data, total, facets, searchInput, saveCache])
 
   useEffect(() => {
     if (scrollToRestoreRef.current != null) {
@@ -286,7 +437,16 @@ export default function InfluencerList() {
 
   const runSearch = () => {
     const q = searchInput.trim()
-    setSearchParams(q ? { q } : {})
+    if (!q) {
+      setFilterParams({})
+      return
+    }
+    const newQuery = { ...query, q, offset: 0 }
+    setQuery(newQuery)
+    const params = queryToUrlParams(newQuery)
+    params[WIZARD_DONE_PARAM] = '1'
+    setFilterParams(new URLSearchParams(params))
+    load(newQuery)
   }
 
   const openDetail = (handleOrKey: string) => {
@@ -294,16 +454,6 @@ export default function InfluencerList() {
     const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
     window.open(url, '_blank', 'noopener,noreferrer')
   }
-
-  /** Categorias e engajamento vêm da sumarização da API (facets), não dos itens da página atual */
-  const categoryFacets = facets?.categories ?? []
-  const engagementFacets = facets
-    ? {
-      engagement_rate: facets.engagement_rate,
-      avg_likes: facets.avg_likes,
-      posts_count: facets.posts_count,
-    }
-    : { engagement_rate: [], avg_likes: [], posts_count: [] }
 
   const selectedCategories = (query.categories ?? []) as string[]
   const selectedEngagementRate = (query.engagementRateBuckets ?? []) as number[]
@@ -315,6 +465,8 @@ export default function InfluencerList() {
   const selectedNeighborhoods = (query.neighborhoods ?? []) as string[]
   const selectedSocial = (query.socialNetworks ?? []) as string[]
   const selectedContentTypes = (query.contentTypes ?? []) as string[]
+  const selectedExcludePrivate = query.excludePrivate === true
+  const selectedAccountType = (query.accountTypeFilter ?? []) as number[]
   const selectedPricingPostUnique = (query.pricingPostUnique ?? []) as number[]
   const selectedPricingStories = (query.pricingStories ?? []) as number[]
   const selectedPricingPackageMonthly = (query.pricingPackageMonthly ?? []) as number[]
@@ -337,6 +489,9 @@ export default function InfluencerList() {
   const updateFilter = (overrides: Partial<ProfilesSearchQuery>) => {
     const newQuery = { ...query, ...overrides, offset: 0 }
     setQuery(newQuery)
+    const params = queryToUrlParams(newQuery)
+    params[WIZARD_DONE_PARAM] = '1'
+    setFilterParams(new URLSearchParams(params))
     load(newQuery)
   }
 
@@ -345,6 +500,8 @@ export default function InfluencerList() {
     selectedEngagementRate.length > 0 ||
     selectedAvgLikes.length > 0 ||
     selectedPostsCount.length > 0 ||
+    selectedExcludePrivate ||
+    selectedAccountType.length > 0 ||
     selectedActivation.length > 0 ||
     selectedCities.length > 0 ||
     selectedStates.length > 0 ||
@@ -356,6 +513,8 @@ export default function InfluencerList() {
   const clearFilters = () => {
     updateFilter({
       categories: undefined,
+      excludePrivate: undefined,
+      accountTypeFilter: undefined,
       engagementRateBuckets: undefined,
       avgLikesBuckets: undefined,
       postsCountBuckets: undefined,
@@ -376,45 +535,71 @@ export default function InfluencerList() {
     })
   }
 
-  const hasSearchQuery = qFromUrl.trim().length > 0
+  const hasSearchQuery = hasMandatoryFilters
+
+  const [wizardInitialFacets, setWizardInitialFacets] = useState<ProfilesSearchFacets | null>(null)
+  useEffect(() => {
+    if (!hasSearchQuery) {
+      fetchProfilesSearch({ limit: 1, offset: 0, sort: 'engagement_desc' })
+        .then((res) => setWizardInitialFacets(res.facets ?? null))
+        .catch(() => setWizardInitialFacets(null))
+    } else {
+      setWizardInitialFacets(null)
+    }
+  }, [hasSearchQuery])
 
   if (!hasSearchQuery) {
     return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: 'calc(100vh - 120px)',
-          padding: 24,
-        }}
-      >
-        <div style={{ marginBottom: 32 }}> <Logo /></div>
-
-        <Space.Compact size="large" style={{ width: '100%', maxWidth: 584 }}>
-          <Input
-            placeholder="Nome, @handle ou categoria"
-            allowClear
-            prefix={<SearchOutlined style={{ color: 'var(--colorTextPlaceholder)' }} />}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onPressEnter={runSearch}
-            style={{ borderRadius: '24px 0 0 24px', fontSize: 16 }}
-            onFocus={(e) => e.target.select?.()}
-          />
-          <Button type="primary" onClick={runSearch} style={{ borderRadius: '0 24px 24px 0' }}>
-            <SearchOutlined /> Buscar
-          </Button>
-        </Space.Compact>
-        <Text type="secondary" style={{ marginTop: 16, fontSize: 13 }}>
-          Digita e dá Enter ou clica em Buscar
-        </Text>
+      <div style={{ padding: '24px 0' }}>
+        <SearchWizard
+          initialFacets={wizardInitialFacets}
+          initialSearchTerm={parsedUrl.q ?? ''}
+          initialFilters={
+            (parsedUrl.q || parsedUrl.categories?.length)
+              ? {
+                  q: parsedUrl.q ?? undefined,
+                  categories: parsedUrl.categories?.length ? (Array.isArray(parsedUrl.categories) ? parsedUrl.categories : [parsedUrl.categories]) : undefined,
+                  minFollowers: parsedUrl.minFollowers,
+                  maxFollowers: parsedUrl.maxFollowers,
+                  engagementRateBuckets: parsedUrl.engagementRateBuckets,
+                  excludePrivate: parsedUrl.excludePrivate,
+                  accountTypeFilter: parsedUrl.accountTypeFilter,
+                  activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
+                }
+              : undefined
+          }
+          onSearchTermChange={handleWizardSearchTermChange}
+          onFiltersChange={handleWizardFiltersChange}
+          onEstimate={handleWizardEstimate}
+          onComplete={handleWizardComplete}
+        />
       </div>
     )
   }
 
-  const showFilters = !!user && (facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter)
+  const listView = hashParams.get(LIST_VIEW_PARAM)
+  const showDashboard = hasMandatoryFilters && listView === 'dashboard'
+
+  if (showDashboard) {
+    return (
+      <div style={{ padding: '24px 0' }}>
+        <ReportDashboard
+          query={query}
+          total={total}
+          facets={facets}
+          sampleItems={data.slice(0, 6)}
+          onViewList={() => {
+            const next = new URLSearchParams(hashParams)
+            next.set(LIST_VIEW_PARAM, 'list')
+            setFilterParams(next)
+          }}
+          loading={loading}
+        />
+      </div>
+    )
+  }
+
+  const showFilters = !!user && (facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedExcludePrivate || selectedAccountType.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter)
 
   const asideStyle: React.CSSProperties = {
     flexShrink: 0,
@@ -501,46 +686,12 @@ export default function InfluencerList() {
                 value={query.sort ?? 'engagement_desc'}
                 options={SORT_OPTIONS}
                 style={{ width: '100%' }}
-                onChange={(value) => {
-                  const newQuery = { ...query, sort: value as ProfilesSort, offset: 0 }
-                  setQuery(newQuery)
-                  load(newQuery)
-                }}
+                onChange={(value) => updateFilter({ sort: value as ProfilesSort })}
               />
             </div>
           )}
 
-          {/* 1. Hashtags (sumarização da API) – autocomplete multiselect, todas sem limite */}
-          <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-            Hashtags
-          </Text>
-          {categoryFacets.length > 0 ? (
-            <Select
-              mode="multiple"
-              size="small"
-              placeholder="Filtrar por hashtag"
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              value={selectedCategories}
-              options={categoryFacets.map(({ name, count }) => ({
-                value: name,
-                label: `${name} (${count})`,
-              }))}
-              onChange={(values) => {
-                const newQuery = { ...query, categories: values.length ? values : undefined, offset: 0 }
-                setQuery(newQuery)
-                load(newQuery)
-              }}
-              style={{ width: '100%', marginBottom: 16 }}
-              maxTagCount="responsive"
-            />
-          ) : (
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 16 }}>
-              Nenhuma hashtag nos resultados.
-            </Text>
-          )}
-
+          {/* Filtros do módulo de ativação */}
           {/* Tipo de conteúdo – só aparece quando a sumarização retorna tipos (dados dos perfis ativados) */}
           {facets?.content_type && facets.content_type.length > 0 && (
             <div style={{ marginTop: 0 }}>
@@ -635,81 +786,6 @@ export default function InfluencerList() {
                           </div>
                         )
                       })}
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          )}
-
-          {/* 2. Engajamento – autocomplete multiselect */}
-          {facets && (
-            <Collapse
-              size="small"
-              style={{ marginBottom: 16 }}
-              items={[
-                {
-                  key: 'metricas',
-                  label: <Text strong style={{ fontSize: 12 }}>Métricas</Text>,
-                  children: (
-                    <div style={{ paddingTop: 4 }}>
-                      <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                        Engajamento %
-                      </Text>
-                      <Select
-                        mode="multiple"
-                        size="small"
-                        placeholder="Escolher faixa"
-                        allowClear
-                        showSearch
-                        optionFilterProp="label"
-                        value={selectedEngagementRate}
-                        options={engagementFacets.engagement_rate.map((b) => ({
-                          value: b.min ?? 0,
-                          label: `${b.label} (${b.count})`,
-                        }))}
-                        onChange={(vals) => updateFilter({ engagementRateBuckets: vals.length ? vals : undefined })}
-                        style={{ width: '100%', marginBottom: 12 }}
-                        maxTagCount="responsive"
-                      />
-                      <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                        Curtidas/post (média)
-                      </Text>
-                      <Select
-                        mode="multiple"
-                        size="small"
-                        placeholder="Escolher faixa"
-                        allowClear
-                        showSearch
-                        optionFilterProp="label"
-                        value={selectedAvgLikes}
-                        options={engagementFacets.avg_likes.map((b) => ({
-                          value: b.min ?? 0,
-                          label: `${b.label} (${b.count})`,
-                        }))}
-                        onChange={(vals) => updateFilter({ avgLikesBuckets: vals.length ? vals : undefined })}
-                        style={{ width: '100%', marginBottom: 12 }}
-                        maxTagCount="responsive"
-                      />
-                      <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-                        Posts na análise
-                      </Text>
-                      <Select
-                        mode="multiple"
-                        size="small"
-                        placeholder="Escolher faixa"
-                        allowClear
-                        showSearch
-                        optionFilterProp="label"
-                        value={selectedPostsCount}
-                        options={engagementFacets.posts_count.map((b) => ({
-                          value: b.min ?? 0,
-                          label: `${b.label} (${b.count})`,
-                        }))}
-                        onChange={(vals) => updateFilter({ postsCountBuckets: vals.length ? vals : undefined })}
-                        style={{ width: '100%', marginBottom: 0 }}
-                        maxTagCount="responsive"
-                      />
                     </div>
                   ),
                 },
@@ -905,38 +981,10 @@ export default function InfluencerList() {
                   value={query.sort ?? 'engagement_desc'}
                   options={SORT_OPTIONS}
                   style={{ width: '100%' }}
-                  onChange={(value) => {
-                    const newQuery = { ...query, sort: value as ProfilesSort, offset: 0 }
-                    setQuery(newQuery)
-                    load(newQuery)
-                  }}
+                  onChange={(value) => updateFilter({ sort: value as ProfilesSort })}
                 />
               </div>
             )}
-            <div>
-              <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Hashtags</Text>
-              {categoryFacets.length > 0 ? (
-                <Select
-                  mode="multiple"
-                  size="small"
-                  placeholder="Filtrar por hashtag"
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  value={selectedCategories}
-                  options={categoryFacets.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                  onChange={(values) => {
-                    const newQuery = { ...query, categories: values.length ? values : undefined, offset: 0 }
-                    setQuery(newQuery)
-                    load(newQuery)
-                  }}
-                  style={{ width: '100%' }}
-                  maxTagCount="responsive"
-                />
-              ) : (
-                <Text type="secondary" style={{ fontSize: 12 }}>Nenhuma hashtag nos resultados.</Text>
-              )}
-            </div>
             {facets?.content_type && facets.content_type.length > 0 && (
               <div>
                 <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Tipo de conteúdo</Text>

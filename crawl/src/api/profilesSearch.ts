@@ -139,6 +139,18 @@ function getBiography(profile: Record<string, unknown>): string {
   return typeof b === 'string' ? b : '';
 }
 
+/** Extrai is_private do perfil. */
+function getIsPrivate(profile: Record<string, unknown>): boolean {
+  const v = profile.is_private ?? getIn(profile, 'data.user.is_private');
+  return v === true;
+}
+
+/** Extrai account_type do perfil (1=pessoal, 2=criador, 3=empresa). */
+function getAccountType(profile: Record<string, unknown>): number | undefined {
+  const v = profile.account_type ?? getIn(profile, 'data.user.account_type');
+  return toNum(v) || undefined;
+}
+
 /** Extrai hashtags do texto (ex.: "#curiosidade #viagem" → ["curiosidade", "viagem"]). */
 function extractHashtagsFromText(text: string | undefined): string[] {
   if (text == null || text.length === 0) return [];
@@ -413,6 +425,10 @@ export interface ProfilesSearchQuery {
   socialNetworks?: string[];
   /** Categorias/hashtags (vírgula ou array); perfil deve ter ao menos uma. */
   categories?: string | string[];
+  /** Excluir perfis privados (default: false = incluir todos). */
+  excludePrivate?: boolean;
+  /** Tipo de conta (1=pessoal, 2=criador, 3=empresa). Multiselect. */
+  accountTypeFilter?: number[];
   /** Tipo de conteúdo (apenas perfis ativados; multiselect). */
   contentTypes?: string | string[];
   /** Faixas de preço por formato (multiselect: valores em reais 0, 500, 1000, 2500, 5000, 15000). */
@@ -579,6 +595,8 @@ export async function searchProfiles(
   const neighborhoodsFilter = parseStringArray(query.neighborhoods).map((s) => s.toLowerCase());
   const socialNetworksFilter = parseStringArray(query.socialNetworks).map((s) => s.toLowerCase());
   const q = (query.q || '').trim().toLowerCase();
+  const excludePrivate = query.excludePrivate === true;
+  const accountTypeFilter = parseNumArray(query.accountTypeFilter).filter((n) => [1, 2, 3].includes(n));
   let categoriesFilter: string[] = [];
   if (query.categories != null) {
     categoriesFilter = Array.isArray(query.categories)
@@ -635,6 +653,11 @@ export async function searchProfiles(
 
     if (minFollowers != null && followersCount < minFollowers) continue;
     if (maxFollowers != null && followersCount > maxFollowers) continue;
+    if (excludePrivate && getIsPrivate(profile)) continue;
+    if (accountTypeFilter.length > 0) {
+      const at = getAccountType(profile);
+      if (at == null || !accountTypeFilter.includes(at)) continue;
+    }
 
     const engagement = computeEngagement(posts, followersCount);
 
@@ -663,8 +686,14 @@ export async function searchProfiles(
     }
 
     if (categoriesFilter.length > 0) {
-      const hasCategory = categoriesFilter.some((fc) => categories.some((c) => c.toLowerCase() === fc));
-      if (!hasCategory) continue;
+      const withNoPerfil = categoriesFilter.includes('no_perfil');
+      const filterCategories = categoriesFilter.filter((c) => c !== 'no_perfil');
+      if (withNoPerfil) {
+        // "No Perfil" selecionado: incluir todos que batem na busca (não filtrar por categoria)
+      } else if (filterCategories.length > 0) {
+        const hasCategory = filterCategories.some((fc) => categories.some((c) => c.toLowerCase() === fc));
+        if (!hasCategory) continue;
+      }
     }
 
     const pic = getProfilePicUrl(profile);

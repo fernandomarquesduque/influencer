@@ -1813,6 +1813,8 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
     const states = req.query.states;
     const neighborhoods = req.query.neighborhoods;
     const socialNetworks = req.query.socialNetworks;
+    const excludePrivate = req.query.excludePrivate === 'true' || req.query.excludePrivate === true;
+    const accountTypeFilter = req.query.accountTypeFilter;
     const sort = (req.query.sort as string) || 'engagement_desc';
     const limitRaw = isPublicOrAnonymous ? PUBLIC_PAGE_SIZE : Math.min(Math.max(0, Number(req.query.limit) || 50), 200);
     const offsetRaw = isPublicOrAnonymous ? 0 : Math.max(0, Number(req.query.offset) || 0);
@@ -1834,6 +1836,8 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       states: Array.isArray(states) ? states.map(String).filter(Boolean) : typeof states === 'string' ? states.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
       neighborhoods: Array.isArray(neighborhoods) ? neighborhoods.map(String).filter(Boolean) : typeof neighborhoods === 'string' ? neighborhoods.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
       socialNetworks: Array.isArray(socialNetworks) ? socialNetworks.map(String).filter(Boolean) : typeof socialNetworks === 'string' ? socialNetworks.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+      excludePrivate,
+      accountTypeFilter: parseNumList(accountTypeFilter)?.filter((n) => [1, 2, 3].includes(n)),
       categories,
       contentTypes: Array.isArray(contentTypes) ? contentTypes.map(String).filter(Boolean) : typeof contentTypes === 'string' ? contentTypes?.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
       pricingPostUnique: parseNumList(req.query.pricingPostUnique),
