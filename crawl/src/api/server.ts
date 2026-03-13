@@ -1988,6 +1988,129 @@ app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
   }
 });
 
+/** Checkout público: cadastra como Assinante e cria pagamento (PIX/Boleto). Body: email, password, name?, credits, billingType. Retorna token + user + dados do pagamento. */
+app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) => {
+  try {
+    if (!asaas.isAsaasConfigured()) {
+      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      return;
+    }
+    const body = req.body as { email?: string; password?: string; name?: string; credits?: number; billingType?: string };
+    const email = (body?.email ?? '').toString().trim().toLowerCase();
+    const password = (body?.password ?? '').toString();
+    const name = (body?.name ?? '').toString().trim() || email;
+    const credits = Number(body?.credits);
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ error: 'E-mail é obrigatório e deve ser válido' });
+      return;
+    }
+    if (!password || password.length < 6) {
+      res.status(400).json({ error: 'A senha deve ter no mínimo 6 caracteres' });
+      return;
+    }
+    if (!Number.isFinite(credits) || credits < 1 || credits > 10000) {
+      res.status(400).json({ error: 'Envie credits (1 a 10000)' });
+      return;
+    }
+    const billingType = (body?.billingType ?? 'PIX').toUpperCase() === 'BOLETO' ? 'BOLETO' : 'PIX';
+
+    const existing = authDb.getByUsername(email);
+    if (existing) {
+      res.status(409).json({ error: 'Já existe uma conta com este e-mail. Faça login e compre em Meus pagamentos.' });
+      return;
+    }
+
+    const passwordHash = hashPassword(password);
+    const userId = authDb.createUser(email, passwordHash, 'assinante' as AuthScope, null);
+    const authUser = authDb.getById(userId);
+    if (!authUser) {
+      res.status(500).json({ error: 'Erro ao criar conta' });
+      return;
+    }
+
+    const amountCents = credits * CREDITS_PRICE_CENTS;
+    const valueBrl = amountCents / 100;
+    const displayName = name || email;
+    const externalRef = `user_${userId}`;
+
+    let asaasCustomerId: string | null = null;
+    const existingCustomer = await asaas.findCustomersByExternalReference(externalRef);
+    if (existingCustomer?.data && existingCustomer.data.length > 0 && existingCustomer.data[0].id) {
+      asaasCustomerId = existingCustomer.data[0].id;
+    } else {
+      const created = await asaas.createCustomer({
+        name: displayName,
+        email,
+        externalReference: externalRef,
+      });
+      asaasCustomerId = created?.id ?? null;
+    }
+    if (!asaasCustomerId) {
+      res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+      return;
+    }
+
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + (billingType === 'BOLETO' ? 3 : 1));
+    const dueStr = dueDate.toISOString().slice(0, 10);
+
+    const paymentPayload = {
+      customer: asaasCustomerId,
+      value: valueBrl,
+      dueDate: dueStr,
+      billingType: billingType as 'PIX' | 'BOLETO',
+      description: `${credits} créditos - Influencer`,
+      externalReference: `credits_${userId}_${Date.now()}`,
+    };
+    const asaasPayment = await asaas.createPayment(paymentPayload);
+    const asaasPaymentId = asaasPayment?.id ?? null;
+    const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
+    const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
+    const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+
+    const paymentId = paymentsDb.createPayment({
+      userId,
+      asaasPaymentId,
+      asaasCustomerId,
+      amountCents,
+      creditsGranted: credits,
+      status: 'PENDING',
+      billingType: billingType as 'PIX' | 'BOLETO',
+      invoiceUrl,
+      bankSlipUrl,
+      pixCopyPaste,
+    });
+
+    const secret = getJwtSecret();
+    const token = signJwt(
+      { sub: String(userId), username: authUser.username, scope: 'assinante' as AuthScope, profile_handle: authUser.profile_handle ?? undefined },
+      secret
+    );
+
+    res.status(201).json({
+      token,
+      user: {
+        id: authUser.id,
+        username: authUser.username,
+        scope: authUser.scope,
+        profile_handle: authUser.profile_handle,
+      },
+      paymentId,
+      asaasPaymentId,
+      status: 'PENDING',
+      credits,
+      amountCents,
+      valueBrl,
+      billingType,
+      invoiceUrl,
+      bankSlipUrl,
+      pixCopyPaste,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 /** Cria pagamento para comprar créditos (PIX ou BOLETO via Asaas). */
 app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
   try {

@@ -25,7 +25,7 @@ export interface EstimateResult {
 
 const STEPS = [
   { key: 'search', icon: SearchOutlined, title: 'O que você busca?', subtitle: 'Digite uma palavra e veja quantos influenciadores foram encontrados' },
-  { key: 'hashtags', icon: TagsOutlined, title: 'Escolha as hashtags', subtitle: 'Selecione uma ou mais hashtags (Opcional)' },
+  { key: 'hashtags', icon: TagsOutlined, title: 'Escolha as hashtags', subtitle: 'Caso queira, especificar uma ou mais hashtags (Opcional)' },
   { key: 'porte', icon: TeamOutlined, title: 'Qual o porte?', subtitle: 'Seleção por quantidade de seguidores' },
   { key: 'accountType', icon: UserOutlined, title: 'Tipo de conta', subtitle: 'Pessoal, Criador ou Empresa' },
   { key: 'engagement', icon: BarChartOutlined, title: 'Nível de engajamento', subtitle: 'Baixo, médio ou alto' },
@@ -45,6 +45,17 @@ const BUBBLE_BASE_COLOR = '#3b0764'
 
 /** Chave usada em state.categories quando o usuário seleciona "No Perfil"; o backend inclui perfis que batem na busca mas não têm as hashtags listadas. */
 export const NO_PERFIL_CATEGORY_KEY = 'no_perfil'
+
+/** Máximo de hashtags a exibir no cloud conforme viewport para evitar scroll vertical. */
+function maxHashtagsByViewport(width: number, height: number): number {
+  const reserved = 400
+  const cloudHeight = Math.max(0, height - reserved)
+  const rowHeight = 46
+  const rows = Math.floor(cloudHeight / rowHeight)
+  const colWidth = 95
+  const cols = Math.max(1, Math.floor(width / colWidth))
+  return Math.min(36, Math.max(6, rows * cols))
+}
 
 const ACCOUNT_TYPE_OPTIONS = [
   { value: undefined as number[] | undefined, label: 'Qualquer' },
@@ -73,10 +84,11 @@ export interface WizardState {
   activationFilter?: string[]
 }
 
-/** Lista de categorias do step 1 (hashtags) filtrada pelo termo; usado para "todos selecionados" e init. */
+/** Lista de categorias do step 1 (hashtags) filtrada pelo termo; usado para "todos selecionados" e init. max exibe no cloud (por viewport). */
 function getStep1CategoryList(
   initialFacets: ProfilesSearchFacets | null | undefined,
-  term: string
+  term: string,
+  max: number = 36
 ): { name: string; count: number }[] {
   if (!term || !initialFacets?.categories?.length) return []
   return (initialFacets.categories ?? [])
@@ -85,7 +97,7 @@ function getStep1CategoryList(
       return c.name.toLowerCase().includes(term) || label.includes(term)
     })
     .sort((a, b) => b.count - a.count)
-    .slice(0, 36)
+    .slice(0, max)
 }
 
 /** Converte estado do wizard em query para a API (igual ao onComplete). q é sempre o termo digitado (state.q); categories vazio quando "todos" selecionados. */
@@ -186,6 +198,20 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
   /** Total quando a busca é só por termo (q), sem categorias; usado no step 1 para o bubble "No Perfil". */
   const totalForQOnlyRef = useRef<number | null>(null)
 
+  const [viewport, setViewport] = useState(() =>
+    typeof window !== 'undefined'
+      ? { w: window.innerWidth, h: window.innerHeight }
+      : { w: 680, h: 800 }
+  )
+  const maxHashtags = Math.min(36, maxHashtagsByViewport(viewport.w, viewport.h))
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight })
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
   useEffect(() => {
     return () => {
       if (searchTermSyncRef.current) clearTimeout(searchTermSyncRef.current)
@@ -204,7 +230,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
     let step1AllNames: string[] | undefined
     if (step === 1 && facetsForStep1?.categories?.length) {
       const term = hashtagSearchWord.trim().toLowerCase()
-      const list = getStep1CategoryList(facetsForStep1, term)
+      const list = getStep1CategoryList(facetsForStep1, term, maxHashtags)
       const sumList = list.reduce((s, c) => s + c.count, 0)
       const restCount = Math.max(0, (totalForQOnlyRef.current ?? estimateCount ?? 0) - sumList)
       step1AllNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
@@ -220,7 +246,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       accountTypeFilter: state.accountTypeFilter?.length ? state.accountTypeFilter : undefined,
     }
     onFiltersChange(query)
-  }, [state, hashtagSearchWord, onFiltersChange, step, facets, initialFacets, estimateCount])
+  }, [state, hashtagSearchWord, onFiltersChange, step, facets, initialFacets, estimateCount, maxHashtags])
 
   const currentStep = STEPS[step]
   const progressPercent = ((step + 1) / STEPS.length) * 100
@@ -249,7 +275,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
     let step1AllNames: string[] | undefined
     if (step === 1 && facetsForStep1?.categories?.length) {
       const term = hashtagSearchWord.trim().toLowerCase()
-      const list = getStep1CategoryList(facetsForStep1, term)
+      const list = getStep1CategoryList(facetsForStep1, term, maxHashtags)
       const sumList = list.reduce((s0, c) => s0 + c.count, 0)
       const restCount = Math.max(0, (totalForQOnlyRef.current ?? estimateCount ?? 0) - sumList)
       step1AllNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
@@ -329,7 +355,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
     let step1AllNames: string[] | undefined
     if (facetsForStep1?.categories?.length) {
       const term = hashtagSearchWord.trim().toLowerCase() || (state.q ?? '').toLowerCase()
-      const list = getStep1CategoryList(facetsForStep1, term)
+      const list = getStep1CategoryList(facetsForStep1, term, maxHashtags)
       const sumList = list.reduce((s0, c) => s0 + c.count, 0)
       const restCount = Math.max(0, (totalForQOnlyRef.current ?? estimateCount ?? 0) - sumList)
       step1AllNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
@@ -430,13 +456,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                   const term = hashtagSearchWord.trim().toLowerCase()
                   const list = !term
                     ? []
-                    : (facetsForStep1!.categories ?? [])
-                      .filter((c) => {
-                        const label = (CONTENT_TYPE_LABELS[c.name] ?? c.name).toLowerCase()
-                        return c.name.toLowerCase().includes(term) || label.includes(term)
-                      })
-                      .sort((a, b) => b.count - a.count)
-                      .slice(0, 36)
+                    : getStep1CategoryList(facetsForStep1!, term, maxHashtags)
                   const sumList = list.reduce((s, c) => s + c.count, 0)
                   const totalForRest = totalForQOnlyRef.current ?? estimateCount ?? 0
                   const restCount = Math.max(0, totalForRest - sumList)

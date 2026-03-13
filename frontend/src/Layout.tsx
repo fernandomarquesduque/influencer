@@ -128,7 +128,7 @@ export default function Layout() {
                 height: user ? (isMobile ? 64 : 56) : 'auto',
                 padding: user
                   ? (isMobile ? '0 56px 0 12px' : '0 24px')
-                  : (isMobile ? '24px 12px' : '28px 24px'),
+                  : (isMobile ? '24px 12px 0px 24px' : '24px 12px 0px 24px'),
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: user ? (isMobile ? 'flex-start' : 'space-between') : 'center',

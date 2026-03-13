@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Card, Button, Typography } from 'antd'
-import { CrownOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import { CrownOutlined, ArrowLeftOutlined, DollarOutlined } from '@ant-design/icons'
 
 const { Title, Paragraph } = Typography
 
@@ -19,9 +19,12 @@ export default function Premium() {
           No grátis você vê só a primeira página e até 10 buscas por dia. Como assinante: mais páginas, filtros e métricas completas.
         </Paragraph>
         <Paragraph style={{ textAlign: 'center', marginBottom: 32 }}>
-          Fala com a gente pra ver os planos.
+          Compre créditos com PIX ou Boleto e use nos relatórios de influenciadores.
         </Paragraph>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Link to="/checkout">
+              <Button type="primary" icon={<DollarOutlined />}>Comprar créditos</Button>
+            </Link>
             <Link to="/app">
               <Button icon={<ArrowLeftOutlined />}>Voltar à busca</Button>
             </Link>

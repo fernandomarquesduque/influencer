@@ -366,6 +366,35 @@ export interface CreatePaymentForCreditsResponse {
   pixCopyPaste: string | null
 }
 
+/** Checkout público: cadastra como Assinante e cria pagamento. Retorna token + user + dados do pagamento (sem auth). */
+export interface RegisterAndCreatePaymentResponse extends CreatePaymentForCreditsResponse {
+  token: string
+  user: { id: number; username: string; scope: string; profile_handle: string | null }
+}
+
+export async function registerAndCreatePayment(
+  params: { email: string; password: string; name?: string; credits: number; billingType: 'PIX' | 'BOLETO' },
+  options?: { signal?: AbortSignal }
+): Promise<RegisterAndCreatePaymentResponse> {
+  const res = await fetch(`${API_BASE}/checkout/register-and-pay`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: params.email.trim().toLowerCase(),
+      password: params.password,
+      name: params.name?.trim() || undefined,
+      credits: params.credits,
+      billingType: params.billingType,
+    }),
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || 'Falha ao criar conta e pagamento')
+  }
+  return data as RegisterAndCreatePaymentResponse
+}
+
 export async function createPaymentForCredits(
   credits: number,
   billingType: 'PIX' | 'BOLETO' = 'PIX',
