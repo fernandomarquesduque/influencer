@@ -4,6 +4,8 @@ import type { JwtPayload, AuthScope } from './types.js';
 
 export interface RequestWithAuth extends Request {
   user?: JwtPayload;
+  /** Preenchido pelo middleware requireProfileOrCampaign quando o acesso foi liberado via campanha. */
+  allowedCampaignId?: string;
 }
 
 /** Extrai JWT do header Authorization: Bearer <token> e define req.user. Se não houver token ou for inválido, req.user fica undefined (acesso público). */

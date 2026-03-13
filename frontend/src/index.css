@@ -18,7 +18,7 @@ body {
   position: relative;
   min-height: calc(100vh - 56px);
   background: var(--app-bg);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .app-layout-content::before,
@@ -57,13 +57,13 @@ body {
 
 @media (max-width: 768px) {
   .app-page {
-    padding: 16px;
+    padding: 30px 16px;
   }
 }
 
 @media (max-width: 480px) {
   .app-page {
-    padding: 12px;
+    padding: 20px 12px;
   }
 }
 
@@ -935,4 +935,43 @@ select,
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* Lista compacta da campanha (modo tabela) */
+.campaign-list-row:hover {
+  background: var(--app-bg-hover, rgba(0, 0, 0, 0.02)) !important;
+}
+
+.campaign-list-table .campaign-list-cell {
+  padding: 0 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.campaign-list-table .campaign-list-cell-border {
+  border-left: 1px solid var(--app-border-light, var(--app-border));
+  padding-left: 6px;
+  padding-right: 7px;
+  /* +1px para compensar border-left e centralizar o texto */
+}
+
+.campaign-list-table .campaign-list-header .campaign-list-cell:first-child {
+  padding-left: 0;
+}
+
+.campaign-list-table .campaign-list-row>div:first-child {
+  padding: 0;
+}
+
+.campaign-list-table .campaign-list-row>div:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
+.campaign-list-table .campaign-list-header>div:nth-child(2).campaign-list-cell {
+  text-align: left;
 }

@@ -38,11 +38,7 @@ import {
 } from '../api'
 import { fetchAddressByCep } from '../utils/viaCep'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
-import {
-  PRICING_FIELD_KEYS,
-  getSuggestedPricingFromFollowers,
-  type PricingFieldKey,
-} from '../constants/pricingBuckets'
+import { PRICING_FIELD_KEYS } from '../constants/pricingBuckets'
 import type { ProfileItem } from '../api'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -89,13 +85,6 @@ function parseStepFromHash(): number {
   const m = window.location.hash.match(/^#step-(\d)$/)
   const n = m ? parseInt(m[1], 10) : 0
   return Number.isFinite(n) && n >= 0 && n <= 2 ? n : 0
-}
-
-function getFollowersFromProfile(profile: ProfileItem | null): number {
-  if (!profile) return 0
-  if (typeof profile.followers_count === 'number' && profile.followers_count >= 0) return profile.followers_count
-  const userData = profile?.data?.user as { follower_count?: number } | undefined
-  return typeof userData?.follower_count === 'number' ? userData.follower_count : 0
 }
 
 function normalizeUrl(value: string | undefined): string {
@@ -171,16 +160,7 @@ export default function Activate() {
           }
         }
       }
-      // Se não tem preços salvos, sugere faixas com base nos seguidores do perfil (valores começam baixos).
-      const hasAnyPricing = Object.keys(pricingForm).some((k) => pricingForm[k] != null)
-      if (!hasAnyPricing && profile) {
-        const followers = getFollowersFromProfile(profile)
-        const suggested = getSuggestedPricingFromFollowers(followers)
-        for (const k of PRICING_FIELD_KEYS) {
-          const v = suggested[k as PricingFieldKey]
-          if (v !== undefined) pricingForm[k] = v
-        }
-      }
+      // Preço sugerido (quando usuário não informou) já vem como default na API (GET activation).
       const neighborhoodsList =
         act.neighborhood?.split(',').map((s) => s.trim()).filter(Boolean) ?? []
       const profileBio =

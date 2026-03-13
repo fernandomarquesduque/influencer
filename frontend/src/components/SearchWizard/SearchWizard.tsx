@@ -3,7 +3,7 @@
  * Afunila o resultado: a cada escolha o usuário vê a quantidade de perfis que os filtros retornam.
  */
 import { useState, useEffect, useRef } from 'react'
-import { Button, Typography, Progress, Space, Spin, Input } from 'antd'
+import { Button, Typography, Progress, Space, Spin, Input, Alert } from 'antd'
 import {
   SearchOutlined,
   TagsOutlined,
@@ -25,7 +25,7 @@ export interface EstimateResult {
 
 const STEPS = [
   { key: 'search', icon: SearchOutlined, title: 'O que você busca?', subtitle: 'Digite uma palavra e veja quantos influenciadores foram encontrados' },
-  { key: 'hashtags', icon: TagsOutlined, title: 'Escolha as hashtags', subtitle: 'Selecione uma ou mais hashtags' },
+  { key: 'hashtags', icon: TagsOutlined, title: 'Escolha as hashtags', subtitle: 'Selecione uma ou mais hashtags (Opcional)' },
   { key: 'porte', icon: TeamOutlined, title: 'Qual o porte?', subtitle: 'Seleção por quantidade de seguidores' },
   { key: 'accountType', icon: UserOutlined, title: 'Tipo de conta', subtitle: 'Pessoal, Criador ou Empresa' },
   { key: 'engagement', icon: BarChartOutlined, title: 'Nível de engajamento', subtitle: 'Baixo, médio ou alto' },
@@ -118,8 +118,8 @@ export interface SearchWizardProps {
   onComplete: (query: Partial<ProfilesSearchQuery>) => void
   /** Facets da busca sem filtros (para contagem no passo 1). Vem do banco. */
   initialFacets?: ProfilesSearchFacets | null
-  /** Chamado quando os filtros mudam; retorna total e facets. Integrado ao banco. */
-  onEstimate?: (query: Partial<ProfilesSearchQuery>) => Promise<EstimateResult>
+  /** Chamado quando os filtros mudam; retorna total e facets. signal para abortar ao avançar. */
+  onEstimate?: (query: Partial<ProfilesSearchQuery>, options?: { signal?: AbortSignal }) => Promise<EstimateResult>
   /** Termo de busca inicial (ex: da URL). */
   initialSearchTerm?: string
   /** Filtros iniciais da URL (evita sobrescrever ao montar quando URL já tem q, categories, etc.). */
@@ -129,8 +129,6 @@ export interface SearchWizardProps {
   /** Callback quando qualquer filtro é selecionado (para sincronizar com URL). */
   onFiltersChange?: (query: Partial<ProfilesSearchQuery>) => void
 }
-
-const ESTIMATE_DEBOUNCE_MS = 400
 
 /** Tamanho do item proporcional à quantidade (min/max na lista). */
 function countToSizeStyle(
@@ -165,7 +163,7 @@ function filtersToWizardState(f: Partial<WizardState> | undefined): WizardState 
   if (!f?.categories?.length && !f?.q) return {}
   return {
     q: f.q,
-    categories: f.categories,
+    categories: undefined,
     minFollowers: f.minFollowers,
     maxFollowers: f.maxFollowers,
     engagementRateBuckets: f.engagementRateBuckets?.length ? f.engagementRateBuckets : undefined,
@@ -182,11 +180,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
   const [estimateCount, setEstimateCount] = useState<number | null>(null)
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
   const [estimateLoading, setEstimateLoading] = useState(false)
-  const [optionCounts, setOptionCounts] = useState<Record<string, number>>({})
-  const [optionCountsLoading, setOptionCountsLoading] = useState(false)
-  const estimateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const estimateRequestIdRef = useRef(0)
-  const optionCountsStepRef = useRef(0)
+  const [step0Error, setStep0Error] = useState<string | null>(null)
   const hasInitializedHashtagsRef = useRef(false)
   const searchTermSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Total quando a busca é só por termo (q), sem categorias; usado no step 1 para o bubble "No Perfil". */
@@ -206,10 +200,11 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       onFiltersChange({})
       return
     }
+    const facetsForStep1 = facets ?? initialFacets
     let step1AllNames: string[] | undefined
-    if (step === 1 && initialFacets?.categories?.length) {
+    if (step === 1 && facetsForStep1?.categories?.length) {
       const term = hashtagSearchWord.trim().toLowerCase()
-      const list = getStep1CategoryList(initialFacets, term)
+      const list = getStep1CategoryList(facetsForStep1, term)
       const sumList = list.reduce((s, c) => s + c.count, 0)
       const restCount = Math.max(0, (totalForQOnlyRef.current ?? estimateCount ?? 0) - sumList)
       step1AllNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
@@ -225,7 +220,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       accountTypeFilter: state.accountTypeFilter?.length ? state.accountTypeFilter : undefined,
     }
     onFiltersChange(query)
-  }, [state, hashtagSearchWord, onFiltersChange, step, initialFacets, estimateCount])
+  }, [state, hashtagSearchWord, onFiltersChange, step, facets, initialFacets, estimateCount])
 
   const currentStep = STEPS[step]
   const progressPercent = ((step + 1) / STEPS.length) * 100
@@ -250,10 +245,11 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       onFiltersChange({})
       return
     }
+    const facetsForStep1 = facets ?? initialFacets
     let step1AllNames: string[] | undefined
-    if (step === 1 && initialFacets?.categories?.length) {
+    if (step === 1 && facetsForStep1?.categories?.length) {
       const term = hashtagSearchWord.trim().toLowerCase()
-      const list = getStep1CategoryList(initialFacets, term)
+      const list = getStep1CategoryList(facetsForStep1, term)
       const sumList = list.reduce((s0, c) => s0 + c.count, 0)
       const restCount = Math.max(0, (totalForQOnlyRef.current ?? estimateCount ?? 0) - sumList)
       step1AllNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
@@ -271,37 +267,49 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
     })
   }
 
-  const nextStep = () => {
-    syncUrl()
-    if (step < STEPS.length - 1) {
-      if (step === 0) {
-        const term = hashtagSearchWord.trim().toLowerCase()
-        const list = term && initialFacets?.categories
-          ? initialFacets.categories.filter((c) => {
+  const nextStep = async () => {
+    if (step === 0) {
+      const term = hashtagSearchWord.trim()
+      if (term.length < 3 || !onEstimate) return
+      setStep0Error(null)
+      setEstimateLoading(true)
+      try {
+        const { total, facets: nextFacets } = await onEstimate({ q: term })
+        setEstimateCount(total)
+        setFacets(nextFacets ?? null)
+        totalForQOnlyRef.current = total
+        if (total === 0) {
+          setStep0Error('Nenhum perfil encontrado para este termo. Tente outra palavra.')
+          return
+        }
+        update({ q: term })
+        syncUrl()
+        const cats = nextFacets?.categories ?? []
+        const list = term && cats.length > 0
+          ? cats.filter((c) => {
             const label = (CONTENT_TYPE_LABELS[c.name] ?? c.name).toLowerCase()
-            return c.name.toLowerCase().includes(term) || label.includes(term)
+            return c.name.toLowerCase().includes(term.toLowerCase()) || label.includes(term.toLowerCase())
           })
           : []
-        const searchTerm = hashtagSearchWord.trim() || undefined
         if (list.length === 0) {
-          update({ q: searchTerm })
           setStep(2)
           return
         }
-        update({ q: searchTerm })
+        setStep(1)
+      } catch {
+        setStep0Error('Erro ao buscar. Tente novamente.')
+      } finally {
+        setEstimateLoading(false)
       }
+      return
+    }
+    syncUrl()
+    if (step < STEPS.length - 1) {
       setStep((s) => s + 1)
     } else finish()
   }
 
   const prevStep = () => {
-    // Se estiver no step 2 mas pulou o de hashtags (tem q sem categories), voltar para o step 0
-    if (step === 2 && state.q && !state.categories?.length) {
-      update({ q: undefined, minFollowers: undefined, maxFollowers: undefined })
-      syncUrl({ ...state, q: undefined, minFollowers: undefined, maxFollowers: undefined })
-      setStep(0)
-      return
-    }
     // Remove o filtro da etapa atual ao voltar
     const patch: Partial<WizardState> =
       step === 1 ? { categories: undefined }
@@ -317,10 +325,11 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
   }
 
   const finish = () => {
+    const facetsForStep1 = facets ?? initialFacets
     let step1AllNames: string[] | undefined
-    if (step === 1 && initialFacets?.categories?.length) {
-      const term = hashtagSearchWord.trim().toLowerCase()
-      const list = getStep1CategoryList(initialFacets, term)
+    if (facetsForStep1?.categories?.length) {
+      const term = hashtagSearchWord.trim().toLowerCase() || (state.q ?? '').toLowerCase()
+      const list = getStep1CategoryList(facetsForStep1, term)
       const sumList = list.reduce((s0, c) => s0 + c.count, 0)
       const restCount = Math.max(0, (totalForQOnlyRef.current ?? estimateCount ?? 0) - sumList)
       step1AllNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
@@ -339,150 +348,11 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
   }
 
   const canAdvance = () => {
-    if (step === 0) return hashtagSearchWord.trim().length >= 3 && !estimateLoading && estimateCount !== null
-    if (step === 1) return (state.categories === undefined || !!state.categories?.length) && !estimateLoading && estimateCount !== null
+    if (step === 0) return hashtagSearchWord.trim().length >= 3 && !estimateLoading
     return true
   }
 
-  /** Contagem exibida no botão Próximo. Steps 2 e 3 usam optionCounts; 0, 1, 4 e 5 usam estimateCount. */
-  const displayCount = (() => {
-    if (step === 0 || step === 1 || step === 4 || step === 5) return estimateCount
-    if (step === 2) {
-      const idx = PORTE_OPTIONS.findIndex(
-        (p) =>
-          (state.minFollowers === p.min || (p.min == null && state.minFollowers == null)) &&
-          (state.maxFollowers === p.max || (p.max == null && state.maxFollowers == null))
-      )
-      return idx >= 0 ? optionCounts[`porte:${idx}`] : null
-    }
-    if (step === 3) {
-      const idx = ACCOUNT_TYPE_OPTIONS.findIndex(
-        (opt) =>
-          (opt.value == null && !state.accountTypeFilter?.length) ||
-          (opt.value != null &&
-            state.accountTypeFilter?.length === opt.value.length &&
-            opt.value.every((v) => state.accountTypeFilter!.includes(v)))
-      )
-      return idx >= 0 ? optionCounts[`accountType:${idx}`] : null
-    }
-    return null
-  })()
-
-  // Afunilamento: busca o total de perfis. Steps 2 e 3 usam optionCounts; 0, 1, 4 e 5 usam estimateCount.
-  const shouldRunMainEstimate = step === 0 || step === 1 || step === 4 || step === 5
-  useEffect(() => {
-    const term = hashtagSearchWord.trim()
-    const hasData = (step === 0 && term.length >= 3) || (step >= 1 && (!!state.categories?.length || !!state.q))
-    const shouldEstimate =
-      onEstimate &&
-      hasData &&
-      shouldRunMainEstimate
-    if (!shouldEstimate) {
-      if (shouldRunMainEstimate && !hasData) setEstimateCount(null)
-      return
-    }
-    if (estimateTimeoutRef.current) {
-      clearTimeout(estimateTimeoutRef.current)
-      estimateTimeoutRef.current = null
-    }
-    estimateTimeoutRef.current = setTimeout(() => {
-      estimateTimeoutRef.current = null
-      let step1AllNames: string[] | undefined
-      if (step === 1 && initialFacets?.categories?.length && term) {
-        const list = getStep1CategoryList(initialFacets, term)
-        const sumList = list.reduce((s0, c) => s0 + c.count, 0)
-        const restCount = Math.max(0, (totalForQOnlyRef.current ?? estimateCount ?? 0) - sumList)
-        step1AllNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
-      }
-      const query =
-        step === 0 && term
-          ? { q: term }
-          : stateToQuery(state, step1AllNames)
-      const isQOnlyRequest = (step === 0 && !!term) || (step >= 1 && (state.categories?.length === 0 || (step1AllNames && state.categories?.length === step1AllNames.length && step1AllNames.every((n) => state.categories!.includes(n)))))
-      const id = ++estimateRequestIdRef.current
-      setEstimateLoading(true)
-      onEstimate(query)
-        .then(({ total, facets: nextFacets }) => {
-          if (id === estimateRequestIdRef.current) {
-            setEstimateCount(total)
-            setFacets(nextFacets)
-            if (isQOnlyRequest) totalForQOnlyRef.current = total
-          }
-        })
-        .catch(() => {
-          if (id === estimateRequestIdRef.current) {
-            setEstimateCount(0)
-            setFacets(null)
-          }
-        })
-        .finally(() => {
-          if (id === estimateRequestIdRef.current) {
-            setEstimateLoading(false)
-          }
-        })
-    }, ESTIMATE_DEBOUNCE_MS)
-    return () => {
-      if (estimateTimeoutRef.current) {
-        clearTimeout(estimateTimeoutRef.current)
-      }
-    }
-  }, [state, onEstimate, step, hashtagSearchWord, shouldRunMainEstimate, initialFacets])
-
-  // Contagens por opção: step 2 = porte; step 3 = tipo de conta (dentro da etapa combinada)
-  useEffect(() => {
-    const hasQuery = !!state.categories?.length || !!state.q
-    if (!onEstimate || step < 2 || !hasQuery) {
-      setOptionCounts({})
-      return
-    }
-    const base = stateToQuery(state)
-    const baseQ = { ...base, limit: 1, offset: 0, sort: 'relevance_desc' as const }
-    const currentStep = step
-    optionCountsStepRef.current = currentStep
-    const fetchCounts = async () => {
-      setOptionCountsLoading(true)
-      const counts: Record<string, number> = {}
-      try {
-        if (step === 2) {
-          await Promise.all(
-            PORTE_OPTIONS.map(async (p, i) => {
-              const res = await onEstimate({
-                ...baseQ,
-                minFollowers: p.min,
-                maxFollowers: p.max,
-              })
-              counts[`porte:${i}`] = res.total
-            })
-          )
-        } else if (step === 3) {
-          await Promise.all(
-            ACCOUNT_TYPE_OPTIONS.map(async (opt, i) => {
-              const query = { ...baseQ } as Partial<ProfilesSearchQuery>
-              if (opt.value != null && opt.value.length > 0) {
-                query.accountTypeFilter = opt.value
-              } else {
-                delete query.accountTypeFilter
-              }
-              const res = await onEstimate(query)
-              counts[`accountType:${i}`] = res.total
-            })
-          )
-        }
-        if (optionCountsStepRef.current === currentStep) {
-          setOptionCounts(counts)
-        }
-      } catch {
-        if (optionCountsStepRef.current === currentStep) {
-          setOptionCounts({})
-        }
-      } finally {
-        if (optionCountsStepRef.current === currentStep) {
-          setOptionCountsLoading(false)
-        }
-      }
-    }
-    fetchCounts()
-  }, [step, state, onEstimate])
+  // Uma única busca (etapa 0) alimenta todo o funil; steps 1–5 usam facets/total dessa resposta.
 
   // Ao entrar no step 1 (hashtags): todos os itens + "No Perfil" (quando restCount > 0) vêm selecionados
   useEffect(() => {
@@ -490,18 +360,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       hasInitializedHashtagsRef.current = false
       return
     }
-    if (!initialFacets?.categories?.length) return
-    const term = hashtagSearchWord.trim().toLowerCase()
-    if (!term) return
-    const list = getStep1CategoryList(initialFacets, term)
-    if (!list.length || hasInitializedHashtagsRef.current) return
-    const sumList = list.reduce((s, c) => s + c.count, 0)
-    const totalForRest = totalForQOnlyRef.current ?? estimateCount ?? 0
-    const restCount = Math.max(0, totalForRest - sumList)
-    const allNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
-    update({ categories: allNames })
-    hasInitializedHashtagsRef.current = true
-  }, [step, initialFacets, hashtagSearchWord, estimateCount])
+  }, [step])
 
   return (
     <div
@@ -510,17 +369,15 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
         maxWidth: 680,
         margin: '0 auto',
         padding: '20px 24px 24px',
-        height: '100%',
         minHeight: 'calc(100vh - 100px)',
-        maxHeight: '100vh',
-        overflow: 'hidden',
+        overflow: 'visible',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
       }}
     >
       {/* Cada etapa em tela separada */}
-      <div style={{ textAlign: 'center', flex: 1, width: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'auto', position: 'relative' }} className="search-wizard-step">
+      <div style={{ textAlign: 'center', flex: 1, width: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'visible', position: 'relative' }} className="search-wizard-step">
         <div key={step} className="search-wizard-stage" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100%', flex: 1 }}>
           <Typography.Title level={2} style={{ marginBottom: 4, fontSize: 22, fontWeight: 600, flexShrink: 0 }}>
             {currentStep.title}
@@ -538,6 +395,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                   onChange={(e) => {
                     const v = e.target.value
                     setHashtagSearchWord(v)
+                    setStep0Error(null)
                     if (onSearchTermChange) {
                       if (searchTermSyncRef.current) clearTimeout(searchTermSyncRef.current)
                       searchTermSyncRef.current = setTimeout(() => {
@@ -551,9 +409,12 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                   style={{ maxWidth: 380, borderRadius: 12, fontSize: 16, height: 44 }}
                   prefix={<SearchOutlined style={{ color: 'var(--colorTextQuaternary)', fontSize: 20 }} />}
                 />
-                {hashtagSearchWord.trim().length < 3 && (
+                {step0Error && (
+                  <Alert type="error" message={step0Error} showIcon style={{ maxWidth: 380, width: '100%' }} />
+                )}
+                {hashtagSearchWord.trim().length < 3 && !step0Error && (
                   <Text type="secondary" style={{ fontSize: 14, lineHeight: 1.5 }}>
-                    Digite pelo menos 3 caracteres para buscar e ver quantos influenciadores foram encontrados.
+                    Digite pelo menos 3 caracteres e clique em Próximo para buscar.
                   </Text>
                 )}
               </div>
@@ -561,16 +422,17 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
 
             {step === 1 && (
               <div className="hashtag-bubble-cloud">
-                {!initialFacets ? (
+                {!(facets ?? initialFacets) ? (
                   <Space size="middle">
                     <Spin size="large" />
-                    <Text type="secondary" style={{ fontSize: 17 }}>Carregando hashtags do banco...</Text>
+                    <Text type="secondary" style={{ fontSize: 17 }}>Carregando hashtags...</Text>
                   </Space>
                 ) : (() => {
+                  const facetsForStep1 = facets ?? initialFacets
                   const term = hashtagSearchWord.trim().toLowerCase()
                   const list = !term
                     ? []
-                    : (initialFacets.categories ?? [])
+                    : (facetsForStep1!.categories ?? [])
                       .filter((c) => {
                         const label = (CONTENT_TYPE_LABELS[c.name] ?? c.name).toLowerCase()
                         return c.name.toLowerCase().includes(term) || label.includes(term)
@@ -581,7 +443,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                   const totalForRest = totalForQOnlyRef.current ?? estimateCount ?? 0
                   const restCount = Math.max(0, totalForRest - sumList)
                   const allNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
-                  const allSelected = !state.categories?.length || (state.categories.length === allNames.length && allNames.every((n) => state.categories!.includes(n)))
+                  const allSelected = !!state.categories?.length && state.categories.length === allNames.length && allNames.every((n) => state.categories!.includes(n))
                   const counts = list.map((c) => c.count)
                   if (restCount > 0) counts.push(restCount)
                   const minC = counts.length ? Math.min(...counts) : 0
@@ -610,7 +472,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                           if (!c) return null
                           const label = CONTENT_TYPE_LABELS[c.name] ?? c.name
                           const sizeStyle = countToSizeStyle(c.count, minC, maxC)
-                          const isSelected = allSelected || !!state.categories?.includes(c.name)
+                          const isSelected = !!state.categories?.includes(c.name)
                           const t = maxC > minC ? (c.count - minC) / (maxC - minC) : 1
                           const whiteMix = Math.round((1 - t) * 10)
                           return (
@@ -640,7 +502,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                           <button
                             key={NO_PERFIL_CATEGORY_KEY}
                             type="button"
-                            className={`hashtag-bubble hashtag-bubble-outros ${allSelected || state.categories?.includes(NO_PERFIL_CATEGORY_KEY) ? 'hashtag-bubble-selected' : ''}`}
+                            className={`hashtag-bubble hashtag-bubble-outros ${state.categories?.includes(NO_PERFIL_CATEGORY_KEY) ? 'hashtag-bubble-selected' : ''}`}
                             onClick={() => {
                               if (allSelected) update({ categories: allNames.filter((n) => n !== NO_PERFIL_CATEGORY_KEY) })
                               else toggleArray('categories', NO_PERFIL_CATEGORY_KEY)
@@ -659,10 +521,10 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                           </button>
                         )}
                       </div>
-                      {term && list.length === 0 && (initialFacets.categories?.length ?? 0) === 0 && (
+                      {term && list.length === 0 && (facetsForStep1!.categories?.length ?? 0) === 0 && (
                         <Text type="secondary" style={{ fontSize: 17 }}>Nenhuma hashtag no banco.</Text>
                       )}
-                      {term && list.length === 0 && (initialFacets.categories?.length ?? 0) > 0 && (
+                      {term && list.length === 0 && (facetsForStep1!.categories?.length ?? 0) > 0 && (
                         <Text type="secondary" style={{ fontSize: 17 }}>Nenhuma hashtag encontrada para &quot;{hashtagSearchWord.trim()}&quot;. Tente outra palavra.</Text>
                       )}
                     </>
@@ -675,7 +537,10 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
               <div style={{ width: '100%', textAlign: 'center' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
                   {PORTE_OPTIONS.map((p, i) => {
-                    const count = optionCounts[`porte:${i}`]
+                    const f = facets ?? initialFacets
+                    const count = i === 0
+                      ? (estimateCount ?? 0)
+                      : (f?.followers_buckets?.[i - 1]?.count ?? 0)
                     if (count === 0) return null
                     const active =
                       (state.minFollowers === p.min || (p.min == null && state.minFollowers == null)) &&
@@ -694,13 +559,9 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                         style={{ borderRadius: 14, fontSize: 15 }}
                       >
                         {p.label}
-                        {count != null ? (
-                          <span style={{ marginLeft: 8, opacity: 0.9 }}>
-                            ({count.toLocaleString('pt-BR')})
-                          </span>
-                        ) : optionCountsLoading ? (
-                          <Spin size="small" style={{ marginLeft: 8 }} />
-                        ) : null}
+                        <span style={{ marginLeft: 8, opacity: 0.9 }}>
+                          ({count.toLocaleString('pt-BR')})
+                        </span>
                       </Button>
                     )
                   })}
@@ -712,7 +573,10 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
               <div style={{ width: '100%', textAlign: 'center' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
                   {ACCOUNT_TYPE_OPTIONS.map((opt, i) => {
-                    const count = optionCounts[`accountType:${i}`]
+                    const f = facets ?? initialFacets
+                    const count = i === 0
+                      ? (estimateCount ?? 0)
+                      : (f?.account_type?.[i - 1]?.count ?? 0)
                     if (count === 0) return null
                     const active =
                       (opt.value == null && !state.accountTypeFilter?.length) ||
@@ -728,13 +592,9 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                         style={{ borderRadius: 14, fontSize: 15 }}
                       >
                         {opt.label}
-                        {count != null ? (
-                          <span style={{ marginLeft: 8, opacity: 0.9 }}>
-                            ({count.toLocaleString('pt-BR')})
-                          </span>
-                        ) : optionCountsLoading ? (
-                          <Spin size="small" style={{ marginLeft: 8 }} />
-                        ) : null}
+                        <span style={{ marginLeft: 8, opacity: 0.9 }}>
+                          ({count.toLocaleString('pt-BR')})
+                        </span>
                       </Button>
                     )
                   })}
@@ -806,21 +666,19 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                             <Spin size="small" style={{ marginLeft: 8 }} />
                           ) : null}
                         </Button>
-                        <Button
-                          type={onlyActive ? 'primary' : 'default'}
-                          size="large"
-                          onClick={() => update({ activationFilter: ['activated'] })}
-                          style={{ borderRadius: 14, fontSize: 15 }}
-                        >
-                          Apenas Segmentados
-                          {act && act.activated >= 0 ? (
+                        {act && act.activated > 0 && (
+                          <Button
+                            type={onlyActive ? 'primary' : 'default'}
+                            size="large"
+                            onClick={() => update({ activationFilter: ['activated'] })}
+                            style={{ borderRadius: 14, fontSize: 15 }}
+                          >
+                            Apenas Segmentados
                             <span style={{ marginLeft: 8, opacity: 0.9 }}>
                               ({act.activated.toLocaleString('pt-BR')})
                             </span>
-                          ) : estimateLoading ? (
-                            <Spin size="small" style={{ marginLeft: 8 }} />
-                          ) : null}
-                        </Button>
+                          </Button>
+                        )}
                       </>
                     )
                   })()}
@@ -855,16 +713,11 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                 size="middle"
                 onClick={nextStep}
                 disabled={!canAdvance()}
-                loading={!!(estimateLoading && shouldRunMainEstimate && ((step === 0 && hashtagSearchWord.trim().length >= 3) || (step >= 1 && (state.categories?.length || state.q))))}
+                loading={step === 0 && !!estimateLoading}
                 icon={step === STEPS.length - 1 ? <RocketOutlined /> : undefined}
                 className="search-wizard-next-btn"
                 style={{ borderRadius: 10, minWidth: 200, height: 40, fontSize: 15 }}
               >
-                {displayCount != null && (
-                  <span style={{ marginRight: 8, opacity: 0.95 }}>
-                    ({displayCount.toLocaleString('pt-BR')} perfil{displayCount !== 1 ? 's' : ''})
-                  </span>
-                )}
                 {step === STEPS.length - 1 ? 'Ver resultados' : 'Próximo'}
               </Button>
             </div>

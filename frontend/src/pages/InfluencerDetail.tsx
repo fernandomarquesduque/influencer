@@ -23,9 +23,11 @@ import {
   LinkedinOutlined,
   TwitterOutlined,
   LockOutlined,
+  HeartOutlined,
+  HeartFilled,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
-import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
+import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { buildReportInsights, getWeekdayName, getPostsByWeekday } from '../utils/reportInsights'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
@@ -103,15 +105,31 @@ function getPostLink(post: PostItem): string {
   return '#'
 }
 
+const CAMPAIGN_ID_GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const sectionGap = (t.spacing.xl as number)
 interface InfluencerDetailProps {
   overrideHandle?: string
+  /** Quando true, exige campaignId na URL (rota campaigns/:campaignId/influencer/:handle) e redireciona se inválido. */
+  requireCampaignId?: boolean
 }
 
-export default function InfluencerDetail({ overrideHandle }: InfluencerDetailProps = {}) {
-  const { handle: paramHandle } = useParams<{ handle: string }>()
-  const handle = overrideHandle ?? paramHandle
+export default function InfluencerDetail({ overrideHandle, requireCampaignId }: InfluencerDetailProps = {}) {
+  const params = useParams<{ handle?: string; campaignId?: string }>()
+  const handle = overrideHandle ?? params.handle
+  const campaignId = params.campaignId != null && CAMPAIGN_ID_GUID_REGEX.test(params.campaignId.trim())
+    ? params.campaignId.trim()
+    : null
   const navigate = useNavigate()
+
+  useEffect(() => {
+    if (requireCampaignId && campaignId == null && params.campaignId != null) {
+      navigate('/app/campaigns', { replace: true })
+    }
+  }, [requireCampaignId, campaignId, params.campaignId, navigate])
+
+  if (requireCampaignId && campaignId == null) {
+    return <ReportSkeleton />
+  }
   const { user, isPublic, canEditProfile, isAdm, loading: authLoading } = useAuth()
 
   const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
@@ -142,6 +160,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const [showActivationCta, setShowActivationCta] = useState(false)
+  const [isFavorite, setIsFavorite] = useState(false)
   const feedSectionRef = useRef<HTMLDivElement>(null)
   const refreshQueuedRef = useRef(false)
   useEffect(() => {
@@ -149,15 +168,42 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+
+  useEffect(() => {
+    if (!user || !handle) {
+      setIsFavorite(false)
+      return
+    }
+    const norm = (h: string) => h.toLowerCase().replace(/^@/, '').trim()
+    fetchFavorites()
+      .then((res) => setIsFavorite((res.handles ?? []).some((h) => norm(h) === norm(handle))))
+      .catch(() => setIsFavorite(false))
+  }, [user, handle])
+
+  const handleFavoriteToggle = async () => {
+    if (!handle) return
+    const prev = isFavorite
+    setIsFavorite(!prev)
+    try {
+      if (prev) await removeFavorite(handle)
+      else await addFavorite(handle)
+    } catch {
+      setIsFavorite(prev)
+    }
+  }
+
   const refreshPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Só busca perfil/ativação/posts depois do auth carregar, para o token já estar em api.ts na primeira carga (evita dados zerados no primeiro acesso).
+  // Só busca perfil/ativação/posts depois do auth carregar. Em rota de campanha usa endpoints da campanha (perfil só se estiver na campanha).
   useEffect(() => {
     if (!handle || authLoading) return
     let cancelled = false
     setProfileLoading(true)
     setDataRedacted(false)
-    fetchProfile(handle)
+    const loadProfile = campaignId
+      ? () => fetchCampaignProfile(campaignId, handle)
+      : () => fetchProfile(handle)
+    loadProfile()
       .then((p) => {
         if (!cancelled) {
           const pr = p as Record<string, unknown> | null
@@ -169,12 +215,15 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         if (!cancelled) setProfileLoading(false)
       })
     return () => { cancelled = true }
-  }, [handle, authLoading])
+  }, [handle, campaignId, authLoading])
 
   useEffect(() => {
     if (!handle || authLoading) return
     let cancelled = false
-    fetchProfileActivation(handle)
+    const loadActivation = campaignId
+      ? () => fetchCampaignProfileActivation(campaignId, handle)
+      : () => fetchProfileActivation(handle)
+    loadActivation()
       .then((a) => {
         if (!cancelled) {
           const ar = a as Record<string, unknown> | undefined
@@ -188,13 +237,13 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       })
       .catch(() => { if (!cancelled) setActivation(null) })
     return () => { cancelled = true }
-  }, [handle, authLoading])
+  }, [handle, campaignId, authLoading])
 
   useEffect(() => {
     if (!handle || authLoading) return
     let cancelled = false
     setPostsLoading(true)
-    fetchPosts(handle, 100, 0)
+    fetchPosts(handle, 100, 0, undefined, campaignId ? { campaignId } : undefined)
       .then((res) => {
         if (!cancelled) {
           const r = res as { items: PostItem[]; total: number; _redacted?: boolean }
@@ -214,14 +263,15 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
     let count = 0
     const REFETCH_INTERVAL_MS = 20_000
     const REFETCH_MAX = 6
+    const loadProfile = campaignId ? () => fetchCampaignProfile(campaignId, h) : () => fetchProfile(h)
     const doRefetch = () => {
       count += 1
-      fetchProfile(h).then((p) => {
+      loadProfile().then((p) => {
         const pr = p as Record<string, unknown> | null
         if (pr?._redacted === true) setDataRedacted(true)
         setProfile(p ?? null)
       }).catch(() => { })
-      fetchPosts(h, 100, 0).then((res) => {
+      fetchPosts(h, 100, 0, undefined, campaignId ? { campaignId } : undefined).then((res) => {
         const r = res as { items: PostItem[]; total: number; _redacted?: boolean }
         if (r._redacted === true) setDataRedacted(true)
         setPosts(r.items ?? [])
@@ -390,6 +440,12 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
       activation.linkedin?.trim() || activation.twitter?.trim() || activation.websites?.trim() ||
       activation.description?.trim() || activation.about_topics?.trim())
 
+  /** Blur das métricas: apenas quando logado como influenciador (vendo perfil de outro) ou quando é o próprio influenciador vendo seu perfil sem ativação. Admin e assinante nunca veem blur. */
+  const isOwnProfileAsInfluencer = user?.scope === 'influencer' && handle && canEditProfile(handle)
+  const showMetricsBlur =
+    (user?.scope === 'influencer' && handle && !canEditProfile(handle)) ||
+    (!hasActivationData && isOwnProfileAsInfluencer)
+
   const isRedacted = dataRedacted && isLimitedView
 
   const tierLabel = followersCount < 10_000 ? 'Nano Influencer' : followersCount < 50_000 ? 'Micro Influencer' : followersCount < 500_000 ? 'Mid Influencer' : 'Macro Influencer'
@@ -408,7 +464,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
         return []
       }
       const all: number[] = []
-      for (const k of ['post_unique', 'stories', 'package_monthly']) {
+      for (const k of ['feed', 'reels', 'story', 'destaque']) {
         all.push(...parseNums(p[k]))
       }
       if (all.length > 0) return { min: Math.min(...all), max: Math.max(...all), porque: 'baseado no seu cadastro de preços' }
@@ -488,6 +544,20 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
             {/* Ações da tela: acima do perfil */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', justifyContent: 'center', marginBottom: s.md, paddingLeft: isMobile ? 0 : 0, paddingRight: isMobile ? 0 : 0 }}>
 
+              {user && handle && (
+                <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
+                  <Button
+                    type="default"
+                    size="large"
+                    icon={isFavorite ? <HeartFilled style={{ color: 'var(--app-primary)' }} /> : <HeartOutlined />}
+                    onClick={handleFavoriteToggle}
+                    style={{ borderRadius: r, minHeight: 44 }}
+                    aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
+                  >
+                    {isFavorite ? 'Favoritado' : 'Favoritar'}
+                  </Button>
+                </Tooltip>
+              )}
               {user && (isAdm || user.scope === 'assinante') && handle && (
                 <Button
                   type="default"
@@ -539,7 +609,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                 { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
                 { label: 'Posts/sem', value: reportInsights?.consistency?.postsPerWeekByWeek?.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
               ]}
-              onBack={() => navigate(-1)}
+              onBack={() => (campaignId ? navigate(`/app/campaigns/${campaignId}`) : navigate(-1))}
               onAvatarError={() => {
                 if (!refreshQueuedRef.current && handle) {
                   refreshQueuedRef.current = true
@@ -673,7 +743,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
           </>
         )}
 
-        {!isLimitedView && !isRedacted && reportInsights?.diagnosticoBI?.insightPatamar && (
+        {!isLimitedView && !isRedacted && isOwnProfileAsInfluencer && reportInsights?.diagnosticoBI?.insightPatamar && (
           <div style={{ marginBottom: gap }}>
             <PatamarCardSection
               benchmarkTier={reportInsights.diagnosticoBI.benchmarkTier}
@@ -697,6 +767,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
           const renderSection = (id: DetailSectionId) => {
             switch (id) {
               case 'diagnostico': {
+                if (!isOwnProfileAsInfluencer) return null
                 const topPercent = reportInsights?.benchmark?.percentil != null
                   ? Math.max(1, Math.min(99, 100 - reportInsights.benchmark.percentil))
                   : null
@@ -756,7 +827,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               case 'metricasMediakit':
                 return reportInsights ? (
                   <div key="metricasMediakit" id="secao-metricas-mediakit" style={{ marginBottom: gap }}>
-                    {!hasActivationData && (
+                    {showMetricsBlur && (
                       <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
                         Métricas
                       </h2>
@@ -765,12 +836,12 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                       style={{
                         position: 'relative',
                         overflow: 'hidden',
-                        ...(!hasActivationData && { borderRadius: t.radius.lg, minHeight: 80 }),
+                        ...(showMetricsBlur && { borderRadius: t.radius.lg, minHeight: 80 }),
                       }}
                     >
                       <div
                         style={{
-                          ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                          ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                         }}
                       >
                         <MetricasMediakitSection
@@ -796,7 +867,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                           failedPostImages={failedPostImages}
                         />
                       </div>
-                      {!hasActivationData && (
+                      {showMetricsBlur && (
                         <div
                           style={{
                             position: 'absolute',
@@ -811,22 +882,30 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                             padding: s.lg,
                           }}
                         >
-                          <Button
-                            type="primary"
-                            size="small"
-                            icon={<LockOutlined />}
-                            onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
-                            style={{
-                              borderRadius: t.radius.md,
-                              fontWeight: 600,
-                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                            }}
-                          >
-                            Desbloquear análise completa
-                          </Button>
-                          <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                            Dados e resultados para sua marca contratar.
-                          </Text>
+                          {handle && canEditProfile(handle) ? (
+                            <>
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={<LockOutlined />}
+                                onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                style={{
+                                  borderRadius: t.radius.md,
+                                  fontWeight: 600,
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                Desbloquear análise completa
+                              </Button>
+                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                Dados e resultados para sua marca contratar.
+                              </Text>
+                            </>
+                          ) : (
+                            <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                              Análise completa disponível apenas para marcas.
+                            </Text>
+                          )}
                         </div>
                       )}
                     </div>
@@ -835,7 +914,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               case 'metricasEstrategicas':
                 return reportInsights?.strategicMetrics ? (
                   <div key="metricasEstrategicas" id="metricas-estrategicas" style={{ marginBottom: gap }}>
-                    {!hasActivationData && (
+                    {showMetricsBlur && (
                       <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
                         Métricas que marcas olham
                       </h2>
@@ -844,12 +923,12 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                       style={{
                         position: 'relative',
                         overflow: 'hidden',
-                        ...(!hasActivationData && { borderRadius: t.radius.lg, minHeight: 80 }),
+                        ...(showMetricsBlur && { borderRadius: t.radius.lg, minHeight: 80 }),
                       }}
                     >
                       <div
                         style={{
-                          ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                          ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                         }}
                       >
                         <StrategicMetricsSection
@@ -858,7 +937,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                           nicheAuthorityScore={reportInsights.nicheAuthorityScore}
                         />
                       </div>
-                      {!hasActivationData && (
+                      {showMetricsBlur && (
                         <div
                           style={{
                             position: 'absolute',
@@ -873,22 +952,30 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                             padding: s.lg,
                           }}
                         >
-                          <Button
-                            type="primary"
-                            size="small"
-                            icon={<LockOutlined />}
-                            onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
-                            style={{
-                              borderRadius: t.radius.md,
-                              fontWeight: 600,
-                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                            }}
-                          >
-                            Desbloquear análise completa
-                          </Button>
-                          <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                            Dados e resultados para sua marca contratar.
-                          </Text>
+                          {handle && canEditProfile(handle) ? (
+                            <>
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={<LockOutlined />}
+                                onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                style={{
+                                  borderRadius: t.radius.md,
+                                  fontWeight: 600,
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                Desbloquear análise completa
+                              </Button>
+                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                Dados e resultados para sua marca contratar.
+                              </Text>
+                            </>
+                          ) : (
+                            <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                              Análise completa disponível apenas para marcas.
+                            </Text>
+                          )}
                         </div>
                       )}
                     </div>
@@ -897,7 +984,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               case 'valorEpublico':
                 return reportInsights ? (
                   <div key="valorEpublico" style={{ marginBottom: gap }}>
-                    {!hasActivationData && (
+                    {showMetricsBlur && (
                       <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
                         Valor estimado das postagens
                       </h2>
@@ -906,12 +993,12 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                       style={{
                         position: 'relative',
                         overflow: 'hidden',
-                        ...(!hasActivationData && { borderRadius: t.radius.lg, minHeight: 80 }),
+                        ...(showMetricsBlur && { borderRadius: t.radius.lg, minHeight: 80 }),
                       }}
                     >
                       <div
                         style={{
-                          ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                          ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                         }}
                       >
                         <ValorEpublicoSection
@@ -923,7 +1010,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                           isMobile={isMobile}
                         />
                       </div>
-                      {!hasActivationData && (
+                      {showMetricsBlur && (
                         <div
                           style={{
                             position: 'absolute',
@@ -938,22 +1025,30 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                             padding: s.lg,
                           }}
                         >
-                          <Button
-                            type="primary"
-                            size="small"
-                            icon={<LockOutlined />}
-                            onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
-                            style={{
-                              borderRadius: t.radius.md,
-                              fontWeight: 600,
-                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                            }}
-                          >
-                            Desbloquear análise completa
-                          </Button>
-                          <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                            Descubra quanto criadores do seu nível estão cobrando na sua cidade.
-                          </Text>
+                          {handle && canEditProfile(handle) ? (
+                            <>
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={<LockOutlined />}
+                                onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                style={{
+                                  borderRadius: t.radius.md,
+                                  fontWeight: 600,
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                Desbloquear análise completa
+                              </Button>
+                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                Descubra quanto criadores do seu nível estão cobrando na sua cidade.
+                              </Text>
+                            </>
+                          ) : (
+                            <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                              Análise completa disponível apenas para marcas.
+                            </Text>
+                          )}
                         </div>
                       )}
                     </div>
@@ -966,7 +1061,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
               case 'conteudoPerforma':
                 return (
                   <div key="conteudoPerforma" id="secao-conteudo-performa" ref={feedSectionRef} style={{ marginBottom: gap }}>
-                    {!hasActivationData && canEdit && handle && showActivationCta && (
+                    {!hasActivationData && user?.scope === 'influencer' && canEdit && handle && showActivationCta && (
                       <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={gap} scrollAnchorId="secao-metricas-mediakit" />
                     )}
                     {postsLoading ? (
@@ -975,7 +1070,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                       </Card>
                     ) : (
                       <>
-                        {!hasActivationData && (
+                        {showMetricsBlur && (
                           <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
                             Análise de Feed
                           </h2>
@@ -987,17 +1082,17 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                             position: 'relative',
                             overflow: 'hidden',
                             borderRadius: t.radius.lg,
-                            minHeight: hasActivationData ? undefined : 80,
+                            minHeight: showMetricsBlur ? 80 : undefined,
                           }}
                         >
                           <div
                             style={{
-                              ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                              ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                             }}
                           >
                             <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={ownPosts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} proxyImageUrl={proxyImageUrl} gap={gap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
                           </div>
-                          {!hasActivationData && (
+                          {showMetricsBlur && (
                             <div
                               style={{
                                 position: 'absolute',
@@ -1012,26 +1107,34 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                                 padding: s.lg,
                               }}
                             >
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<LockOutlined />}
-                                onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
-                                style={{
-                                  borderRadius: t.radius.md,
-                                  fontWeight: 600,
-                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                                }}
-                              >
-                                Desbloquear análise completa
-                              </Button>
-                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                Descubra o padrão que faz seus posts viralizarem.
-                              </Text>
+                              {handle && canEditProfile(handle) ? (
+                                <>
+                                  <Button
+                                    type="primary"
+                                    size="small"
+                                    icon={<LockOutlined />}
+                                    onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                    style={{
+                                      borderRadius: t.radius.md,
+                                      fontWeight: 600,
+                                      boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                    }}
+                                  >
+                                    Desbloquear análise completa
+                                  </Button>
+                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                    Descubra o padrão que faz seus posts viralizarem.
+                                  </Text>
+                                </>
+                              ) : (
+                                <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                  Análise completa disponível apenas para marcas.
+                                </Text>
+                              )}
                             </div>
                           )}
                         </div>
-                        {!hasActivationData && (
+                        {showMetricsBlur && (
                           <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
                             Análise de reels
                           </h2>
@@ -1042,12 +1145,12 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                             position: 'relative',
                             overflow: 'hidden',
                             borderRadius: t.radius.lg,
-                            minHeight: hasActivationData ? undefined : 80,
+                            minHeight: showMetricsBlur ? 80 : undefined,
                           }}
                         >
                           <div
                             style={{
-                              ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                              ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                             }}
                           >
                             <ReelsAnalysisSection
@@ -1064,7 +1167,7 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                               contentOnly={!hasActivationData}
                             />
                           </div>
-                          {!hasActivationData && (
+                          {showMetricsBlur && (
                             <div
                               style={{
                                 position: 'absolute',
@@ -1079,26 +1182,34 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                                 padding: s.lg,
                               }}
                             >
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<LockOutlined />}
-                                onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
-                                style={{
-                                  borderRadius: t.radius.md,
-                                  fontWeight: 600,
-                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                                }}
-                              >
-                                Desbloquear análise completa
-                              </Button>
-                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                Veja qual tipo de reel tem maior potencial de descoberta.
-                              </Text>
+                              {handle && canEditProfile(handle) ? (
+                                <>
+                                  <Button
+                                    type="primary"
+                                    size="small"
+                                    icon={<LockOutlined />}
+                                    onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                    style={{
+                                      borderRadius: t.radius.md,
+                                      fontWeight: 600,
+                                      boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                    }}
+                                  >
+                                    Desbloquear análise completa
+                                  </Button>
+                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                    Veja qual tipo de reel tem maior potencial de descoberta.
+                                  </Text>
+                                </>
+                              ) : (
+                                <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                  Análise completa disponível apenas para marcas.
+                                </Text>
+                              )}
                             </div>
                           )}
                         </div>
-                        {!hasActivationData && (
+                        {showMetricsBlur && (
                           <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
                             Análise de marcados
                           </h2>
@@ -1108,17 +1219,17 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                             position: 'relative',
                             overflow: 'hidden',
                             borderRadius: t.radius.lg,
-                            minHeight: hasActivationData ? undefined : 80,
+                            minHeight: showMetricsBlur ? 80 : undefined,
                           }}
                         >
                           <div
                             style={{
-                              ...(hasActivationData ? {} : { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }),
+                              ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                             }}
                           >
                             <TaggedAnalysisSection tagged={mediaByType.tagged} followersCount={followersCount} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} proxyImageUrl={proxyImageUrl} gap={gap} contentOnly={!hasActivationData} />
                           </div>
-                          {!hasActivationData && (
+                          {showMetricsBlur && (
                             <div
                               style={{
                                 position: 'absolute',
@@ -1133,22 +1244,30 @@ export default function InfluencerDetail({ overrideHandle }: InfluencerDetailPro
                                 padding: s.lg,
                               }}
                             >
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<LockOutlined />}
-                                onClick={() => handle && navigate(`/activate/${encodeURIComponent(handle)}`)}
-                                style={{
-                                  borderRadius: t.radius.md,
-                                  fontWeight: 600,
-                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                                }}
-                              >
-                                Desbloquear análise completa
-                              </Button>
-                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                Veja as marcas que estão buscando criadores na sua região agora.
-                              </Text>
+                              {handle && canEditProfile(handle) ? (
+                                <>
+                                  <Button
+                                    type="primary"
+                                    size="small"
+                                    icon={<LockOutlined />}
+                                    onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                    style={{
+                                      borderRadius: t.radius.md,
+                                      fontWeight: 600,
+                                      boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                    }}
+                                  >
+                                    Desbloquear análise completa
+                                  </Button>
+                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                    Veja as marcas que estão buscando criadores na sua região agora.
+                                  </Text>
+                                </>
+                              ) : (
+                                <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                  Análise completa disponível apenas para marcas.
+                                </Text>
+                              )}
                             </div>
                           )}
                         </div>

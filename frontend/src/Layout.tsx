@@ -5,6 +5,7 @@ import { CaretDownFilled, MenuOutlined, UserOutlined } from '@ant-design/icons'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
+import { useCreditsOptional } from './contexts/CreditsContext'
 import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import Logo from './components/Logo'
@@ -48,6 +49,7 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout, isAdm } = useAuth()
+  const creditsState = useCreditsOptional()
   const { theme, setTheme } = useTheme()
   const screens = useBreakpoint()
   const isMobile = !screens.md
@@ -195,7 +197,7 @@ export default function Layout() {
                       alt="Relatório de Influencer"
                     />
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginLeft: 'auto' }}>
                     {user ? (
                       <>
                         <Dropdown
@@ -206,6 +208,7 @@ export default function Layout() {
                                 : []),
                               ...(isAssinante ? [{ key: 'home', label: 'Início', onClick: () => navigate('/app') }] : []),
                               ...(isAdm ? [{ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') }] : []),
+                              ...(user ? [{ key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') }] : []),
                               ...(isAdm ? [{ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') }] : []),
                               ...(isAdm ? [{ key: 'users', label: 'Usuários', onClick: () => navigate('/admin/users') }] : []),
                               ...(isAdm ? [{ key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') }] : []),
@@ -243,7 +246,7 @@ export default function Layout() {
                                   marginBottom: 2,
                                 }}
                               >
-                                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--app-header-text)', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
+                                <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--app-header-text)', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
                                   {headerProfileName ?? user.username}
                                 </span>
                                 {myHandle && (
@@ -281,6 +284,22 @@ export default function Layout() {
                             <CaretDownFilled style={{ fontSize: 14, color: 'var(--app-header-text)', opacity: 0.95, marginLeft: -6, marginBottom: -2 }} />
                           </button>
                         </Dropdown>
+                        {creditsState != null && (
+                          <span
+                            style={{
+                              fontSize: 15,
+                              fontWeight: 600,
+                              color: 'var(--app-primary)',
+                              background: 'var(--app-primary-muted)',
+                              padding: '6px 12px',
+                              borderRadius: 8,
+                              whiteSpace: 'nowrap',
+                            }}
+                            title="Créditos disponíveis"
+                          >
+                            💰 {creditsState.loading ? '...' : `${creditsState.balance} créditos`}
+                          </span>
+                        )}
                       </>
                     ) : (
                       <>
@@ -350,6 +369,11 @@ export default function Layout() {
                       Início
                     </Link>
                   )}
+                  {user && (
+                    <Link to="/app/campaigns" style={{ ...drawerLinkStyle, ...(isActive('/app/campaigns') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                      Minhas campanhas
+                    </Link>
+                  )}
                   {myHandle && (
                     <Link to={myProfilePath} style={{ ...drawerLinkStyle, ...(isActive(myProfilePath) ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
                       Meu perfil
@@ -399,7 +423,7 @@ export default function Layout() {
           </Drawer>
         </>
       )}
-      <Content className="app-layout-content">
+      <Content className="app-layout-content" style={{ overflow: 'visible' }}>
         <div className="app-page">
           <Outlet />
         </div>

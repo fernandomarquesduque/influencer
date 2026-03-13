@@ -6,6 +6,7 @@
 import type { CompositeStorage } from '../storage/compositeStorage.js';
 import type { ProfileActivationData } from '../storage/sqliteSync.js';
 import { computeInstagramBi, type InstagramBi, type PostForBi } from '../utils/instagramBi.js';
+import { getCostTierFromPricing, getSuggestedPricingFromFollowers, type CostTier } from '../utils/suggestedPricing.js';
 
 /** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: só é substituído quando um novo reaquecimento termina (warmSearchCache ou scheduleSearchCacheRewarm). */
 let searchDataCache: {
@@ -223,17 +224,25 @@ function getAllHashtagsFromPosts(posts: Record<string, unknown>[]): string[] {
   return [...set].sort();
 }
 
-/** Extrai de um post: caption e hashtags para busca. */
+/** Extrai de um post: caption/descrição e hashtags para busca (todas as fontes de texto). */
 function getPostTextForSearch(post: Record<string, unknown>): string {
   const parts: string[] = [];
   const content = post.content as Record<string, unknown> | undefined;
-  if (content?.caption_text && typeof content.caption_text === 'string') {
-    parts.push(content.caption_text);
-  }
+  const captionText =
+    content?.caption_text ??
+    (post as { caption_text?: string }).caption_text ??
+    (() => {
+      const cap = (post.caption ?? content?.caption) as Record<string, unknown> | undefined;
+      return cap && typeof cap.text === 'string' ? (cap.text as string) : undefined;
+    })();
+  if (typeof captionText === 'string' && captionText.trim()) parts.push(captionText.trim());
+  const edgeCaption = post.edge_media_to_caption as { edges?: Array<{ node?: { text?: string } }> } | undefined;
+  const edgeText = edgeCaption?.edges?.[0]?.node?.text;
+  if (typeof edgeText === 'string' && edgeText.trim()) parts.push(edgeText.trim());
   const hashtags = content?.hashtags;
   if (Array.isArray(hashtags)) {
     for (const h of hashtags) {
-      if (typeof h === 'string') parts.push(h.replace(/^#/, ''));
+      if (typeof h === 'string') parts.push(h.replace(/^#/, '').trim());
     }
   }
   return parts.join(' ');
@@ -242,7 +251,7 @@ function getPostTextForSearch(post: Record<string, unknown>): string {
 /** Máximo de posts usados para montar o texto pesquisável (evita custo com perfis com muitos posts). */
 const MAX_POSTS_FOR_SEARCH = 30;
 
-/** Monta um único texto pesquisável do perfil + posts (handle, nome, bio, categorias, hashtags, legendas). */
+/** Monta um único texto pesquisável do perfil + posts (handle, nome, bio, categorias, hashtags, legendas, links e onde houver texto). */
 function getSearchableText(
   profile: Record<string, unknown>,
   key: string,
@@ -254,12 +263,14 @@ function getSearchableText(
   const username = (profile.username ?? getDataUser(profile)?.username ?? '') as string;
   const bio = getBiography(profile);
   const discoveredValue = (profile._discovered_value as string) ?? '';
+  const externalUrl = (profile.external_url ?? getDataUser(profile)?.external_url ?? '') as string;
   const parts = [
     handle,
     fullName,
     username,
     bio,
     discoveredValue,
+    typeof externalUrl === 'string' ? externalUrl : '',
     ...categories,
     ...categories.map((c) => c.replace(/\s+/g, ' ')),
   ];
@@ -312,6 +323,20 @@ function matchesQuery(searchableText: string, q: string): { match: boolean; rele
 
   if (search.includes(qTrim)) return { match: true, relevance: 2 };
   return { match: false, relevance: 0 };
+}
+
+/** Texto pesquisável a partir de um ProfileListItem (para filtro q em cima de lista em cache). Usa _searchable_text se existir (bio + legendas + hashtags + etc.). */
+function getSearchableTextFromItem(item: ProfileListItem): string {
+  const precomputed = (item as Record<string, unknown>)._searchable_text;
+  if (typeof precomputed === 'string' && precomputed.trim()) {
+    return precomputed.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+  const handle = (item.handle ?? item.key ?? '').toLowerCase().replace(/^@/, '');
+  const fullName = (item.full_name ?? '').trim();
+  const bio = (item.biography ?? '').trim();
+  const categories = (item.categories ?? []).map((c) => String(c).trim().toLowerCase()).filter(Boolean);
+  const parts = [handle, fullName, bio, ...categories];
+  return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ');
 }
 
 /** Extrai likes, comentários e views de um post. */
@@ -371,6 +396,12 @@ export interface ProfilesSearchFacets {
   neighborhoods: { name: string; count: number }[];
   /** Contagem por rede social preenchida (apenas ativados). */
   social: { whatsapp: number; tiktok: number; facebook: number; linkedin: number; twitter: number };
+  /** Contagem por faixa de seguidores (porte): nano, micro, médio, macro. */
+  followers_buckets: { key: string; label: string; min: number; max: number | undefined; count: number }[];
+  /** Contagem por tipo de conta (1=pessoal, 2=criador, 3=empresa). */
+  account_type: { value: number; label: string; count: number }[];
+  /** Contagem por faixa de preço (low, medium, high, very_high); só entradas com count > 0. */
+  cost_tier?: { tier: CostTier; count: number }[];
 }
 
 /** Item retornado na listagem (perfil + engajamento + BI quando há posts). */
@@ -431,15 +462,13 @@ export interface ProfilesSearchQuery {
   accountTypeFilter?: number[];
   /** Tipo de conteúdo (apenas perfis ativados; multiselect). */
   contentTypes?: string | string[];
-  /** Faixas de preço por formato (multiselect: valores em reais 0, 500, 1000, 2500, 5000, 15000). */
-  pricingPostUnique?: number[];
-  pricingStories?: number[];
-  pricingPackageMonthly?: number[];
-  pricingCommission?: number[];
-  pricingPermuta?: number[];
-  pricingImageRights?: number[];
-  pricingContentDelivery?: number[];
-  pricingLaunch?: number[];
+  /** Faixas de preço por formato (multiselect: valores em reais 0, 50, 100, 250, 500, 1000, 2500, 5000, 15000). */
+  pricingFeed?: number[];
+  pricingReels?: number[];
+  pricingStory?: number[];
+  pricingDestaque?: number[];
+  /** Filtro por faixa de preço: low = abaixo da média, medium = normal, high | very_high = acima da média. */
+  costTierFilter?: string[];
   /** Ordenação: relevance_desc | engagement_desc | engagement_asc | followers_desc | followers_asc | avg_likes_desc | avg_likes_asc | total_likes_desc | total_likes_asc */
   sort?: string;
   limit?: number;
@@ -573,11 +602,23 @@ function getProfilePicUrl(profile: Record<string, unknown>): string | undefined 
   return hd?.url;
 }
 
+/** Opções extras para busca (ex.: restringir a uma lista de handles para campanha). */
+export interface SearchProfilesOptions {
+  /** Quando definido, só retorna perfis cujo handle está nesta lista (ex.: perfis de uma campanha). */
+  restrictToHandles?: string[];
+  /** Quando definido, usa esta lista em vez de carregar do DB (filtros/ordenação/facets aplicados em cima). */
+  initialItems?: ProfileListItem[];
+}
+
 /** Filtra e ordena perfis; retorna lista com engajamento e facets para sumarização. */
 export async function searchProfiles(
   db: CompositeStorage,
-  query: ProfilesSearchQuery
+  query: ProfilesSearchQuery,
+  options?: SearchProfilesOptions
 ): Promise<{ total: number; items: ProfileListItem[]; facets: ProfilesSearchFacets }> {
+  const restrictToHandles = options?.restrictToHandles?.length
+    ? new Set(options.restrictToHandles.map((h) => String(h).toLowerCase().replace(/^@/, '')))
+    : null;
   const limit = Math.min(Math.max(0, Number(query.limit) || 50), 200);
   const offset = Math.max(0, Number(query.offset) || 0);
   const sort = (query.sort || 'engagement_desc').toLowerCase();
@@ -608,24 +649,35 @@ export async function searchProfiles(
   }
   const contentTypesFilter = parseStringArray(query.contentTypes).map((s) => s.toLowerCase());
   const pricingFilters: Record<string, number[]> = {};
-  const pricingKeys = ['pricingPostUnique', 'pricingStories', 'pricingPackageMonthly', 'pricingCommission', 'pricingPermuta', 'pricingImageRights', 'pricingContentDelivery', 'pricingLaunch'] as const;
-  const pricingActivationKeys = ['post_unique', 'stories', 'package_monthly', 'commission', 'permuta', 'image_rights', 'content_delivery', 'launch'] as const;
+  const pricingKeys = ['pricingFeed', 'pricingReels', 'pricingStory', 'pricingDestaque'] as const;
+  const pricingActivationKeys = ['feed', 'reels', 'story', 'destaque'] as const;
   for (let i = 0; i < pricingKeys.length; i++) {
     const arr = parseNumArray((query as Record<string, unknown>)[pricingKeys[i]]);
     if (arr.length > 0) pricingFilters[pricingActivationKeys[i]] = arr;
   }
+  const costTierFilterRaw = parseStringArray(query.costTierFilter).map((s) => s.toLowerCase());
+  const costTierFilter = costTierFilterRaw.filter((s): s is CostTier =>
+    (['low', 'medium', 'high', 'very_high'] as const).includes(s as CostTier)
+  ) as CostTier[];
+
+  const useInitialItems = options?.initialItems != null && options.initialItems.length > 0;
 
   let profilesRaw: { key: string; value: Record<string, unknown> }[];
   let postsRaw: { key: string; value: Record<string, unknown> }[];
-  if (searchDataCache) {
-    profilesRaw = searchDataCache.profilesRaw;
-    postsRaw = searchDataCache.postsRaw;
+  if (!useInitialItems) {
+    if (searchDataCache) {
+      profilesRaw = searchDataCache.profilesRaw;
+      postsRaw = searchDataCache.postsRaw;
+    } else {
+      [profilesRaw, postsRaw] = await Promise.all([
+        db.getByBucket<Record<string, unknown>>('profile'),
+        db.getByBucket<Record<string, unknown>>('post'),
+      ]);
+      searchDataCache = { profilesRaw, postsRaw };
+    }
   } else {
-    [profilesRaw, postsRaw] = await Promise.all([
-      db.getByBucket<Record<string, unknown>>('profile'),
-      db.getByBucket<Record<string, unknown>>('post'),
-    ]);
-    searchDataCache = { profilesRaw, postsRaw };
+    profilesRaw = [];
+    postsRaw = [];
   }
 
   const postsByHandle = new Map<string, Record<string, unknown>[]>();
@@ -640,9 +692,13 @@ export async function searchProfiles(
   }
 
   let items: ProfileListItem[] = [];
+  if (useInitialItems) {
+    items = [...options!.initialItems!];
+  } else {
   for (const { key, value } of profilesRaw) {
     const profile = value as Record<string, unknown>;
     const handle = getHandle(profile, key).toLowerCase().replace(/^@/, '');
+    if (restrictToHandles && !restrictToHandles.has(handle)) continue;
     const followersCount = getFollowers(profile);
     const fullName = getFullName(profile);
     const baseCategories = getCategories(profile);
@@ -672,7 +728,7 @@ export async function searchProfiles(
     } else if (minPostsCount != null && engagement.posts_count < minPostsCount) continue;
 
     let searchRelevance: number | undefined;
-    if (q) {
+    if (!restrictToHandles && q) {
       const textProfileOnly = getSearchableTextProfileOnly(profile, key, fullName, categories);
       const { match: matchProfile, relevance: relProfile } = matchesQuery(textProfileOnly, q);
       if (matchProfile) {
@@ -685,7 +741,7 @@ export async function searchProfiles(
       }
     }
 
-    if (categoriesFilter.length > 0) {
+    if (!restrictToHandles && categoriesFilter.length > 0) {
       const withNoPerfil = categoriesFilter.includes('no_perfil');
       const filterCategories = categoriesFilter.filter((c) => c !== 'no_perfil');
       if (withNoPerfil) {
@@ -697,6 +753,7 @@ export async function searchProfiles(
     }
 
     const pic = getProfilePicUrl(profile);
+    const at = getAccountType(profile);
     const item: ProfileListItem = {
       key,
       handle,
@@ -710,6 +767,7 @@ export async function searchProfiles(
       ...(searchRelevance != null && { search_relevance: searchRelevance }),
       ...(pic && { profile_pic_url: pic }),
       data: profile.data as Record<string, unknown> | undefined,
+      ...(at != null && { account_type: at }),
     };
     if (posts.length >= 2) {
       try {
@@ -720,7 +778,9 @@ export async function searchProfiles(
     }
     Object.assign(item, profile);
     item.categories = categories;
+    (item as Record<string, unknown>)._searchable_text = getSearchableText(profile, key, fullName, categories, posts);
     items.push(item);
+  }
   }
 
   /** Timestamp (ms) da data de atualização do perfil (_collected_at ISO) para ordenação. */
@@ -759,11 +819,13 @@ export async function searchProfiles(
   };
 
   /** Enriquece cada item com dados de ativação (SQLite) em uma única query em lote. */
-  const handles = items.map((i) => i.handle);
-  const activationsMap = db.getActivationsBatch(handles);
-  for (const item of items) {
-    const act = activationsMap.get(item.handle);
-    if (act) item.activation = act;
+  if (!useInitialItems) {
+    const handles = items.map((i) => i.handle);
+    const activationsMap = db.getActivationsBatch(handles);
+    for (const item of items) {
+      const act = activationsMap.get(item.handle);
+      if (act) item.activation = act;
+    }
   }
 
   /** Filtros por ativação, cidade, estado, bairro e redes (multiselect). */
@@ -825,6 +887,30 @@ export async function searchProfiles(
     });
   }
 
+  if (costTierFilter.length > 0) {
+    const tierSet = new Set(costTierFilter);
+    filteredItems = filteredItems.filter((i) => {
+      let tier = getCostTierFromPricing(i.activation?.pricing as Record<string, unknown> | undefined);
+      if (!tier && Number.isFinite(i.followers_count)) {
+        const suggested = getSuggestedPricingFromFollowers(i.followers_count ?? 0);
+        tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
+      }
+      return tier != null && tierSet.has(tier);
+    });
+  }
+
+  if (q) {
+    filteredItems = filteredItems.filter((i) => {
+      const text = getSearchableTextFromItem(i);
+      const { match, relevance } = matchesQuery(text, q);
+      if (match) {
+        (i as ProfileListItem & { search_relevance?: number }).search_relevance = relevance;
+        return true;
+      }
+      return false;
+    });
+  }
+
   items = filteredItems;
 
   if (order === 'relevance_desc') {
@@ -855,6 +941,17 @@ export async function searchProfiles(
     { key: 'media', label: 'Média', min: 1, count: 0 },
     { key: 'alta', label: 'Alta', min: 5, count: 0 },
   ];
+  const followersBuckets = [
+    { key: 'nano', label: 'Nano (até 10k)', min: 0, max: 10_000 as number | undefined, count: 0 },
+    { key: 'micro', label: 'Micro (10k – 50k)', min: 10_000, max: 50_000 as number | undefined, count: 0 },
+    { key: 'medio', label: 'Médio (50k – 200k)', min: 50_000, max: 200_000 as number | undefined, count: 0 },
+    { key: 'macro', label: 'Macro (200k+)', min: 200_000, max: undefined, count: 0 },
+  ];
+  const accountTypeBuckets = [
+    { value: 1, label: 'Pessoal', count: 0 },
+    { value: 2, label: 'Criador', count: 0 },
+    { value: 3, label: 'Empresa', count: 0 },
+  ];
   const avgLikesBuckets = [
     { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
     { key: 'media', label: 'Média', min: 500, count: 0 },
@@ -867,15 +964,12 @@ export async function searchProfiles(
   ];
 
   const pricingCounts: Record<(typeof pricingActivationKeys)[number], Map<number, number>> = {
-    post_unique: new Map(),
-    stories: new Map(),
-    package_monthly: new Map(),
-    commission: new Map(),
-    permuta: new Map(),
-    image_rights: new Map(),
-    content_delivery: new Map(),
-    launch: new Map(),
+    feed: new Map(),
+    reels: new Map(),
+    story: new Map(),
+    destaque: new Map(),
   };
+  const costTierCount = new Map<CostTier, number>();
 
   for (const item of items) {
     if (item.activation) {
@@ -912,6 +1006,16 @@ export async function searchProfiles(
           map.set(num, (map.get(num) ?? 0) + 1);
         }
       }
+      let tier = getCostTierFromPricing(act.pricing as Record<string, unknown> | undefined);
+      if (!tier) {
+        const suggested = getSuggestedPricingFromFollowers(item.followers_count ?? 0);
+        tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
+      }
+      if (tier) costTierCount.set(tier, (costTierCount.get(tier) ?? 0) + 1);
+    } else {
+      const suggested = getSuggestedPricingFromFollowers(item.followers_count ?? 0);
+      const tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
+      if (tier) costTierCount.set(tier, (costTierCount.get(tier) ?? 0) + 1);
     }
     for (const c of item.categories ?? []) {
       if (c && typeof c === 'string') {
@@ -925,6 +1029,15 @@ export async function searchProfiles(
     if (rate < 1) engagementRateBuckets[0]!.count++;
     else if (rate < 5) engagementRateBuckets[1]!.count++;
     else engagementRateBuckets[2]!.count++;
+    const fc = item.followers_count;
+    if (fc < 10_000) followersBuckets[0]!.count++;
+    else if (fc < 50_000) followersBuckets[1]!.count++;
+    else if (fc < 200_000) followersBuckets[2]!.count++;
+    else followersBuckets[3]!.count++;
+    const at = (item as ProfileListItem & { account_type?: number }).account_type;
+    if (at === 1) accountTypeBuckets[0]!.count++;
+    else if (at === 2) accountTypeBuckets[1]!.count++;
+    else if (at === 3) accountTypeBuckets[2]!.count++;
     if (avgLikes < 500) avgLikesBuckets[0]!.count++;
     else if (avgLikes < 5000) avgLikesBuckets[1]!.count++;
     else avgLikesBuckets[2]!.count++;
@@ -950,6 +1063,8 @@ export async function searchProfiles(
     states: [...stateCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     neighborhoods: [...neighborhoodCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     social: socialCount,
+    followers_buckets: followersBuckets.map(({ key, label, min, max, count }) => ({ key, label, min, max, count })),
+    account_type: accountTypeBuckets.map(({ value, label, count }) => ({ value, label, count })),
     pricing: Object.fromEntries(
       pricingActivationKeys.map((actKey) => [
         actKey,
@@ -959,6 +1074,10 @@ export async function searchProfiles(
           .sort((a, b) => a.value - b.value),
       ])
     ) as Record<(typeof pricingActivationKeys)[number], { value: number; count: number }[]>,
+    cost_tier: [...costTierCount.entries()]
+      .filter(([, count]) => count > 0)
+      .map(([tier, count]) => ({ tier, count }))
+      .sort((a, b) => b.count - a.count),
   };
 
   const slice = items.slice(offset, offset + limit);

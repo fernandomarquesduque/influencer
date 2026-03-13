@@ -13,6 +13,7 @@ import {
   Collapse,
   Drawer,
   Grid,
+  Modal,
 } from 'antd'
 import { SearchOutlined, FilterOutlined, ClearOutlined } from '@ant-design/icons'
 
@@ -25,6 +26,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useListCache } from '../contexts/ListCacheContext'
 import SearchWizard from '../components/SearchWizard/SearchWizard'
 import ReportDashboard from '../components/ReportDashboard/ReportDashboard'
+import CheckoutContent from '../components/CheckoutContent/CheckoutContent'
 
 const { Text } = Typography
 
@@ -34,7 +36,10 @@ const LIST_VIEW_PARAM = 'view'
 function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
   const params: Record<string, string> = {}
   if (query.q) params.q = query.q
-  if (query.categories != null) {
+  const hasCategoriesFilter =
+    query.categories != null &&
+    (Array.isArray(query.categories) ? query.categories.length > 0 : String(query.categories).trim() !== '')
+  if (hasCategoriesFilter) {
     params.categories = Array.isArray(query.categories) ? query.categories.join(',') : String(query.categories)
   }
   if (query.minFollowers != null) params.minFollowers = String(query.minFollowers)
@@ -50,14 +55,10 @@ function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
   if (query.neighborhoods?.length) params.neighborhoods = query.neighborhoods.join(',')
   if (query.socialNetworks?.length) params.social = query.socialNetworks.join(',')
   if (query.contentTypes?.length) params.contentTypes = query.contentTypes.join(',')
-  if (query.pricingPostUnique?.length) params.pricingPostUnique = query.pricingPostUnique.join(',')
-  if (query.pricingStories?.length) params.pricingStories = query.pricingStories.join(',')
-  if (query.pricingPackageMonthly?.length) params.pricingPackageMonthly = query.pricingPackageMonthly.join(',')
-  if (query.pricingCommission?.length) params.pricingCommission = query.pricingCommission.join(',')
-  if (query.pricingPermuta?.length) params.pricingPermuta = query.pricingPermuta.join(',')
-  if (query.pricingImageRights?.length) params.pricingImageRights = query.pricingImageRights.join(',')
-  if (query.pricingContentDelivery?.length) params.pricingContentDelivery = query.pricingContentDelivery.join(',')
-  if (query.pricingLaunch?.length) params.pricingLaunch = query.pricingLaunch.join(',')
+  if (query.pricingFeed?.length) params.pricingFeed = query.pricingFeed.join(',')
+  if (query.pricingReels?.length) params.pricingReels = query.pricingReels.join(',')
+  if (query.pricingStory?.length) params.pricingStory = query.pricingStory.join(',')
+  if (query.pricingDestaque?.length) params.pricingDestaque = query.pricingDestaque.join(',')
   if (query.sort) params.sort = query.sort
   if (query.offset != null && query.offset > 0) params.offset = String(query.offset)
   return params
@@ -96,39 +97,22 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     neighborhoods: params.get('neighborhoods')?.split(',').map((x) => x.trim()).filter(Boolean),
     socialNetworks: params.get('social')?.split(',').map((x) => x.trim()).filter(Boolean),
     contentTypes: params.get('contentTypes')?.split(',').map((x) => x.trim()).filter(Boolean),
-    pricingPostUnique: parseNumList(params.get('pricingPostUnique')),
-    pricingStories: parseNumList(params.get('pricingStories')),
-    pricingPackageMonthly: parseNumList(params.get('pricingPackageMonthly')),
-    pricingCommission: parseNumList(params.get('pricingCommission')),
-    pricingPermuta: parseNumList(params.get('pricingPermuta')),
-    pricingImageRights: parseNumList(params.get('pricingImageRights')),
-    pricingContentDelivery: parseNumList(params.get('pricingContentDelivery')),
-    pricingLaunch: parseNumList(params.get('pricingLaunch')),
+    pricingFeed: parseNumList(params.get('pricingFeed')),
+    pricingReels: parseNumList(params.get('pricingReels')),
+    pricingStory: parseNumList(params.get('pricingStory')),
+    pricingDestaque: parseNumList(params.get('pricingDestaque')),
     sort: (params.get('sort') as ProfilesSort) || undefined,
     offset: params.has('offset') ? Number(params.get('offset')) : undefined,
   }
 }
 
-const PRICING_FILTER_KEYS = [
-  'pricingPostUnique',
-  'pricingStories',
-  'pricingPackageMonthly',
-  'pricingCommission',
-  'pricingPermuta',
-  'pricingImageRights',
-  'pricingContentDelivery',
-  'pricingLaunch',
-] as const
+const PRICING_FILTER_KEYS = ['pricingFeed', 'pricingReels', 'pricingStory', 'pricingDestaque'] as const
 
 const PRICING_FILTER_LABELS: Record<(typeof PRICING_FILTER_KEYS)[number], string> = {
-  pricingPostUnique: 'Preço por Post único',
-  pricingStories: 'Preço por Stories',
-  pricingPackageMonthly: 'Preço por Pacote mensal',
-  pricingCommission: 'Preço por Comissão',
-  pricingPermuta: 'Preço por Permuta',
-  pricingImageRights: 'Preço por Uso de imagem',
-  pricingContentDelivery: 'Preço por Entrega de conteúdo',
-  pricingLaunch: 'Preço por Lançamento',
+  pricingFeed: 'Valor por Feed',
+  pricingReels: 'Valor por Reels',
+  pricingStory: 'Valor por story',
+  pricingDestaque: 'Valor por Destaque',
 }
 
 const SORT_OPTIONS: { value: ProfilesSort; label: string }[] = [
@@ -164,14 +148,16 @@ export default function InfluencerList() {
   const hashParams = useMemo(() => getParamsFromHash(location), [location.hash])
   const parsedUrl = useMemo(() => urlParamsToQuery(hashParams), [hashParams])
   const hasMandatoryFilters = parsedUrl.hasMandatory
+  const listViewFromHash = hashParams.get(LIST_VIEW_PARAM)
 
   const setFilterParams = useCallback(
-    (params: Record<string, string> | URLSearchParams) => {
+    (params: Record<string, string> | URLSearchParams, options?: { replace?: boolean }) => {
       const str = params instanceof URLSearchParams ? params.toString() : new URLSearchParams(params).toString()
       const newHash = str ? `#${str}` : ''
-      navigate({ pathname: location.pathname, search: location.search, hash: newHash }, { replace: true })
+      const replace = options?.replace !== false
+      navigate({ pathname: location.pathname, search: '', hash: newHash }, { replace })
     },
-    [navigate, location.pathname, location.search]
+    [navigate, location.pathname]
   )
 
   const handleWizardFiltersChange = useCallback(
@@ -182,13 +168,16 @@ export default function InfluencerList() {
     [setFilterParams]
   )
 
-  const handleWizardEstimate = useCallback(async (query: Partial<ProfilesSearchQuery>) => {
-    const res = await fetchProfilesSearch({
-      ...query,
-      limit: 1,
-      offset: 0,
-      sort: 'relevance_desc',
-    })
+  const handleWizardEstimate = useCallback(async (query: Partial<ProfilesSearchQuery>, options?: { signal?: AbortSignal }) => {
+    const res = await fetchProfilesSearch(
+      {
+        ...query,
+        limit: 1,
+        offset: 0,
+        sort: 'relevance_desc',
+      },
+      { signal: options?.signal }
+    )
     return { total: res.total, facets: res.facets ?? null }
   }, [])
 
@@ -207,7 +196,7 @@ export default function InfluencerList() {
       const params = queryToUrlParams(fullPayload)
       params[WIZARD_DONE_PARAM] = '1'
       params[LIST_VIEW_PARAM] = 'dashboard'
-      setFilterParams(new URLSearchParams(params))
+      setFilterParams(new URLSearchParams(params), { replace: false })
     },
     [setFilterParams]
   )
@@ -242,10 +231,23 @@ export default function InfluencerList() {
   })
   const [limitReachedCode, setLimitReachedCode] = useState<string | null>(null)
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false)
+  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false)
   const filterDrawerRef = useRef<HTMLDivElement>(null)
   const scrollToRestoreRef = useRef<number | null>(null)
+  const refetchedForZeroRef = useRef(false)
   const screens = useBreakpoint()
   const showFiltersSidebar = screens.lg
+
+  const [wizardInitialFacets, setWizardInitialFacets] = useState<ProfilesSearchFacets | null>(null)
+  useEffect(() => {
+    if (!hasMandatoryFilters) {
+      fetchProfilesSearch({ limit: 1, offset: 0, sort: 'engagement_desc' })
+        .then((res) => setWizardInitialFacets(res.facets ?? null))
+        .catch(() => setWizardInitialFacets(null))
+    } else {
+      setWizardInitialFacets(null)
+    }
+  }, [hasMandatoryFilters])
 
   /** Handles cuja foto falhou e foi enfileirado refresh; atualizamos só esse item na lista quando o perfil voltar com URL nova. */
   const handlesPendingImageRef = useRef<Set<string>>(new Set())
@@ -377,6 +379,10 @@ export default function InfluencerList() {
   }
 
   useEffect(() => {
+    refetchedForZeroRef.current = false
+  }, [location.hash])
+
+  useEffect(() => {
     if (!hasMandatoryFilters) {
       setSearchInput(parsedUrl.q ?? '')
       setData([])
@@ -402,6 +408,13 @@ export default function InfluencerList() {
     load(fullQuery, controller.signal)
     return () => controller.abort()
   }, [hasMandatoryFilters, location.hash, setFilterParams])
+
+  useEffect(() => {
+    if (!(hasMandatoryFilters && listViewFromHash === 'dashboard') || loading || total !== 0 || !query.q?.trim()) return
+    if (refetchedForZeroRef.current) return
+    refetchedForZeroRef.current = true
+    load({ ...query, offset: 0 })
+  }, [hasMandatoryFilters, listViewFromHash, loading, total, query])
 
   useEffect(() => {
     if (!loading && !loadingMore && hasMandatoryFilters && query.q?.trim() && (data.length > 0 || total > 0 || facets != null)) {
@@ -467,24 +480,16 @@ export default function InfluencerList() {
   const selectedContentTypes = (query.contentTypes ?? []) as string[]
   const selectedExcludePrivate = query.excludePrivate === true
   const selectedAccountType = (query.accountTypeFilter ?? []) as number[]
-  const selectedPricingPostUnique = (query.pricingPostUnique ?? []) as number[]
-  const selectedPricingStories = (query.pricingStories ?? []) as number[]
-  const selectedPricingPackageMonthly = (query.pricingPackageMonthly ?? []) as number[]
-  const selectedPricingCommission = (query.pricingCommission ?? []) as number[]
-  const selectedPricingPermuta = (query.pricingPermuta ?? []) as number[]
-  const selectedPricingImageRights = (query.pricingImageRights ?? []) as number[]
-  const selectedPricingContentDelivery = (query.pricingContentDelivery ?? []) as number[]
-  const selectedPricingLaunch = (query.pricingLaunch ?? []) as number[]
+  const selectedPricingFeed = (query.pricingFeed ?? []) as number[]
+  const selectedPricingReels = (query.pricingReels ?? []) as number[]
+  const selectedPricingStory = (query.pricingStory ?? []) as number[]
+  const selectedPricingDestaque = (query.pricingDestaque ?? []) as number[]
 
   const hasPricingFilter =
-    selectedPricingPostUnique.length > 0 ||
-    selectedPricingStories.length > 0 ||
-    selectedPricingPackageMonthly.length > 0 ||
-    selectedPricingCommission.length > 0 ||
-    selectedPricingPermuta.length > 0 ||
-    selectedPricingImageRights.length > 0 ||
-    selectedPricingContentDelivery.length > 0 ||
-    selectedPricingLaunch.length > 0
+    selectedPricingFeed.length > 0 ||
+    selectedPricingReels.length > 0 ||
+    selectedPricingStory.length > 0 ||
+    selectedPricingDestaque.length > 0
 
   const updateFilter = (overrides: Partial<ProfilesSearchQuery>) => {
     const newQuery = { ...query, ...overrides, offset: 0 }
@@ -524,31 +529,14 @@ export default function InfluencerList() {
       neighborhoods: undefined,
       socialNetworks: undefined,
       contentTypes: undefined,
-      pricingPostUnique: undefined,
-      pricingStories: undefined,
-      pricingPackageMonthly: undefined,
-      pricingCommission: undefined,
-      pricingPermuta: undefined,
-      pricingImageRights: undefined,
-      pricingContentDelivery: undefined,
-      pricingLaunch: undefined,
+      pricingFeed: undefined,
+      pricingReels: undefined,
+      pricingStory: undefined,
+      pricingDestaque: undefined,
     })
   }
 
-  const hasSearchQuery = hasMandatoryFilters
-
-  const [wizardInitialFacets, setWizardInitialFacets] = useState<ProfilesSearchFacets | null>(null)
-  useEffect(() => {
-    if (!hasSearchQuery) {
-      fetchProfilesSearch({ limit: 1, offset: 0, sort: 'engagement_desc' })
-        .then((res) => setWizardInitialFacets(res.facets ?? null))
-        .catch(() => setWizardInitialFacets(null))
-    } else {
-      setWizardInitialFacets(null)
-    }
-  }, [hasSearchQuery])
-
-  if (!hasSearchQuery) {
+  if (!hasMandatoryFilters) {
     return (
       <div style={{ padding: '24px 0' }}>
         <SearchWizard
@@ -577,24 +565,60 @@ export default function InfluencerList() {
     )
   }
 
-  const listView = hashParams.get(LIST_VIEW_PARAM)
-  const showDashboard = hasMandatoryFilters && listView === 'dashboard'
+  const showDashboard = hasMandatoryFilters && listViewFromHash === 'dashboard'
 
   if (showDashboard) {
     return (
-      <div style={{ padding: '24px 0' }}>
+      <div style={{ padding: '24px 0', position: 'relative', minHeight: 320 }}>
+        {loading && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 1000,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'var(--app-bg, #fff)',
+              opacity: 0.98,
+            }}
+          >
+            <Spin size="large" />
+            <Text style={{ marginTop: 16, fontSize: 16, color: 'var(--app-text)' }}>
+              O relatório está sendo gerado
+            </Text>
+          </div>
+        )}
         <ReportDashboard
           query={query}
           total={total}
           facets={facets}
           sampleItems={data.slice(0, 6)}
-          onViewList={() => {
-            const next = new URLSearchParams(hashParams)
-            next.set(LIST_VIEW_PARAM, 'list')
-            setFilterParams(next)
-          }}
+          onViewList={() => setCheckoutModalOpen(true)}
           loading={loading}
         />
+        <Modal
+          title="Comprar relatório"
+          open={checkoutModalOpen}
+          onCancel={() => setCheckoutModalOpen(false)}
+          footer={null}
+          width={640}
+          destroyOnClose
+          maskClosable={false}
+          keyboard={false}
+        >
+          <CheckoutContent
+            query={query}
+            total={total}
+            embed
+            onSuccess={(campaignId) => {
+              setCheckoutModalOpen(false)
+              navigate(`/app/campaigns/${campaignId}`)
+            }}
+            onCancel={() => setCheckoutModalOpen(false)}
+          />
+        </Modal>
       </div>
     )
   }
@@ -729,40 +753,17 @@ export default function InfluencerList() {
                   children: (
                     <div style={{ paddingTop: 4 }}>
                       {PRICING_FILTER_KEYS.map((key) => {
-                        const actKey =
-                          key === 'pricingPostUnique'
-                            ? 'post_unique'
-                            : key === 'pricingStories'
-                              ? 'stories'
-                              : key === 'pricingPackageMonthly'
-                                ? 'package_monthly'
-                                : key === 'pricingCommission'
-                                  ? 'commission'
-                                  : key === 'pricingPermuta'
-                                    ? 'permuta'
-                                    : key === 'pricingImageRights'
-                                      ? 'image_rights'
-                                      : key === 'pricingContentDelivery'
-                                        ? 'content_delivery'
-                                        : 'launch'
+                        const actKey = key.slice(7).toLowerCase() as 'feed' | 'reels' | 'story' | 'destaque'
                         const buckets = facets.pricing?.[actKey]
                         if (!buckets || buckets.length === 0) return null
                         const value =
-                          key === 'pricingPostUnique'
-                            ? selectedPricingPostUnique
-                            : key === 'pricingStories'
-                              ? selectedPricingStories
-                              : key === 'pricingPackageMonthly'
-                                ? selectedPricingPackageMonthly
-                                : key === 'pricingCommission'
-                                  ? selectedPricingCommission
-                                  : key === 'pricingPermuta'
-                                    ? selectedPricingPermuta
-                                    : key === 'pricingImageRights'
-                                      ? selectedPricingImageRights
-                                      : key === 'pricingContentDelivery'
-                                        ? selectedPricingContentDelivery
-                                        : selectedPricingLaunch
+                          key === 'pricingFeed'
+                            ? selectedPricingFeed
+                            : key === 'pricingReels'
+                              ? selectedPricingReels
+                              : key === 'pricingStory'
+                                ? selectedPricingStory
+                                : selectedPricingDestaque
                         const options = buckets.map((b) => ({
                           value: b.value,
                           label: `${PRICE_BUCKETS.find((pb) => pb.value === b.value)?.label ?? `R$ ${b.value}`} (${b.count})`,

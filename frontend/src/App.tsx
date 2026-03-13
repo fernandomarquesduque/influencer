@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
+import { CreditsProvider } from './contexts/CreditsContext'
 import { ListCacheProvider } from './contexts/ListCacheContext'
 import { RequireAuth } from './components/RequireAuth'
 import Layout from './Layout'
@@ -38,6 +39,10 @@ import Login from './pages/Login'
 import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
 import ListAndDetailModal from './pages/ListAndDetailModal'
+import Checkout from './pages/Checkout'
+import MyCampaigns from './pages/MyCampaigns'
+import CampaignInfluencers from './pages/CampaignInfluencers'
+import InfluencerDetail from './pages/InfluencerDetail'
 import Projects from './pages/Projects'
 import Extraction from './pages/Extraction'
 import ExtractProfile from './pages/ExtractProfile'
@@ -63,53 +68,60 @@ function RedirectValidarToCreate() {
 export default function App() {
   return (
     <AuthProvider>
-      <FocusScrollHandler />
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/premium" element={<Premium />} />
-        <Route path="/" element={<Home />} />
-        {/* Lista, detalhe e auth: acesso público */}
-        <Route path="/app" element={<ListCacheProvider><Layout /></ListCacheProvider>}>
-          <Route index element={<ListAndDetailModal />} />
-          <Route path="influencer/:handle" element={<ListAndDetailModal />} />
-          <Route path="influencer/:handle/media-kit" element={<RequireAuth requireLogin><MediaKit /></RequireAuth>} />
-          <Route path="influencer/:handle/send-message" element={<RequireAuth requireLogin><SendMessage /></RequireAuth>} />
-          <Route path="bulk-message" element={<RequireAuth requireLogin><BulkMessage /></RequireAuth>} />
-          <Route path="projects" element={<Projects />} />
-          <Route path="projects/new" element={<Projects />} />
-          <Route path="projects/:id" element={<Projects />} />
-          <Route path="create" element={<Auth />} />
-          <Route path="create/password" element={<AuthPassword />} />
-          <Route path="create/rejected" element={<AuthRejected />} />
-        </Route>
-        {/* Compatibilidade: rotas antigas */}
-        <Route path="influencer/:handle" element={<RedirectInfluencerToApp />} />
-        <Route path="validar" element={<RedirectValidarToCreate />} />
-        <Route path="create" element={<Navigate to="/app/create" replace />} />
-        <Route path="create/password" element={<Navigate to="/app/create/password" replace />} />
-        <Route path="create/rejected" element={<Navigate to="/app/create/rejected" replace />} />
-        {/* Rotas que exigem login */}
-        <Route
-          element={
-            <RequireAuth requireLogin>
-              <Layout />
-            </RequireAuth>
-          }
-        >
-          <Route path="/extraction" element={<Extraction />} />
-          <Route path="/extract-profile" element={<ExtractProfile />} />
-          <Route path="/activate/:handle" element={<Activate />} />
+      <CreditsProvider>
+        <FocusScrollHandler />
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/premium" element={<Premium />} />
+          <Route path="/" element={<Home />} />
+          {/* Lista, detalhe e auth: acesso público */}
+          <Route path="/app" element={<ListCacheProvider><Layout /></ListCacheProvider>}>
+            <Route index element={<MyCampaigns />} />
+            <Route path="campaigns/create" element={<ListAndDetailModal />} />
+            <Route path="checkout" element={<Checkout />} />
+            <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
+            <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail requireCampaignId />} />
+            <Route path="campaigns" element={<MyCampaigns />} />
+            <Route path="influencer/:handle" element={<ListAndDetailModal />} />
+            <Route path="influencer/:handle/media-kit" element={<RequireAuth requireLogin><MediaKit /></RequireAuth>} />
+            <Route path="influencer/:handle/send-message" element={<RequireAuth requireLogin><SendMessage /></RequireAuth>} />
+            <Route path="bulk-message" element={<RequireAuth requireLogin><BulkMessage /></RequireAuth>} />
+            <Route path="projects" element={<Projects />} />
+            <Route path="projects/new" element={<Projects />} />
+            <Route path="projects/:id" element={<Projects />} />
+            <Route path="create" element={<Auth />} />
+            <Route path="create/password" element={<AuthPassword />} />
+            <Route path="create/rejected" element={<AuthRejected />} />
+          </Route>
+          {/* Compatibilidade: rotas antigas */}
+          <Route path="influencer/:handle" element={<RedirectInfluencerToApp />} />
+          <Route path="validar" element={<RedirectValidarToCreate />} />
+          <Route path="create" element={<Navigate to="/app/create" replace />} />
+          <Route path="create/password" element={<Navigate to="/app/create/password" replace />} />
+          <Route path="create/rejected" element={<Navigate to="/app/create/rejected" replace />} />
+          {/* Rotas que exigem login */}
           <Route
-            path="/admin/users"
             element={
-              <RequireAuth requireAdm>
-                <AdminUsers />
+              <RequireAuth requireLogin>
+                <Layout />
               </RequireAuth>
             }
-          />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          >
+            <Route path="/extraction" element={<Extraction />} />
+            <Route path="/extract-profile" element={<ExtractProfile />} />
+            <Route path="/activate/:handle" element={<Activate />} />
+            <Route
+              path="/admin/users"
+              element={
+                <RequireAuth requireAdm>
+                  <AdminUsers />
+                </RequireAuth>
+              }
+            />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </CreditsProvider>
     </AuthProvider>
   )
 }

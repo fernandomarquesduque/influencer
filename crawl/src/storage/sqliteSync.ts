@@ -9,16 +9,12 @@ import { dirname } from 'path';
 
 const DEFAULT_PATH = './data/influencer.db';
 
-/** Valores/tarifas (8 tipos de entrega). */
+/** Valores por tipo de conteúdo (4 tipos). */
 export interface PricingData {
-  post_unique?: string;
-  stories?: string;
-  package_monthly?: string;
-  commission?: string;
-  permuta?: string;
-  image_rights?: string;
-  content_delivery?: string;
-  launch?: string;
+  feed?: string;
+  reels?: string;
+  story?: string;
+  destaque?: string;
 }
 
 /** Dados de ativação do perfil na plataforma (cadastro completo do influenciador). */
@@ -167,6 +163,13 @@ export class SqliteSync {
         scheduled_at TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_direct_queue_status ON direct_queue(status);
+      CREATE TABLE IF NOT EXISTS user_favorite (
+        user_id INTEGER NOT NULL,
+        profile_handle TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, profile_handle)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_favorite_user ON user_favorite(user_id);
     `);
     this.migrateActivationColumns();
     this.migrateMessageTemplatesRejectHashes();
@@ -291,6 +294,37 @@ export class SqliteSync {
   deleteActivation(profileHandle: string): void {
     const handle = profileHandle.toLowerCase().replace(/^@/, '');
     this.db.prepare('DELETE FROM profile_activation WHERE profile_handle = ?').run(handle);
+  }
+
+  /** Lista handles favoritados pelo usuário. */
+  getFavoriteHandles(userId: number): string[] {
+    const rows = this.db.prepare('SELECT profile_handle FROM user_favorite WHERE user_id = ? ORDER BY created_at DESC')
+      .all(userId) as { profile_handle: string }[];
+    return rows.map((r) => r.profile_handle);
+  }
+
+  /** Adiciona favorito (idempotente). */
+  addFavorite(userId: number, profileHandle: string): void {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
+    if (!handle) return;
+    this.db.prepare(
+      'INSERT OR IGNORE INTO user_favorite (user_id, profile_handle) VALUES (?, ?)'
+    ).run(userId, handle);
+  }
+
+  /** Remove favorito. */
+  removeFavorite(userId: number, profileHandle: string): void {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
+    this.db.prepare('DELETE FROM user_favorite WHERE user_id = ? AND profile_handle = ?').run(userId, handle);
+  }
+
+  /** Verifica se o usuário favoritou o handle. */
+  isFavorite(userId: number, profileHandle: string): boolean {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
+    const row = this.db.prepare(
+      'SELECT 1 FROM user_favorite WHERE user_id = ? AND profile_handle = ?'
+    ).get(userId, handle);
+    return !!row;
   }
 
   /** Remove candidaturas do perfil em projetos (LGPD: exclusão de conta). */

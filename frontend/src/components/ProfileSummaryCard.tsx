@@ -7,10 +7,12 @@ import {
   Typography,
   Tooltip,
   Spin,
+  Button,
 } from 'antd'
 import {
   UserOutlined,
   HeartOutlined,
+  HeartFilled,
   CommentOutlined,
   EnvironmentOutlined,
   MessageOutlined,
@@ -65,9 +67,13 @@ interface ProfileSummaryCardProps {
   onImageRefreshQueued?: (handle: string) => void
   /** Se false, não exibe métricas (usuário não logado). */
   showMetrics?: boolean
+  /** Se true, exibe o coração preenchido; se false, outline. Só usado quando onFavoriteToggle está definido. */
+  isFavorite?: boolean
+  /** Quando definido, exibe botão de coração para favoritar/desfavoritar. */
+  onFavoriteToggle?: (handle: string) => void
 }
 
-export default function ProfileSummaryCard({ item, variant = 'list', onClick, onImageRefreshQueued, showMetrics = true }: ProfileSummaryCardProps) {
+export default function ProfileSummaryCard({ item, variant = 'list', onClick, onImageRefreshQueued, showMetrics = true, isFavorite = false, onFavoriteToggle }: ProfileSummaryCardProps) {
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
   const name = (item.full_name || item.handle) as string
   const eng = item.engagement
@@ -167,47 +173,63 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
         </div>
       )}
 
-      {/* Ícones de redes fixos no topo à direita */}
-      {item.activation && (item.activation.whatsapp?.trim() || item.activation.tiktok?.trim() || item.activation.facebook?.trim() || item.activation.linkedin?.trim() || item.activation.twitter?.trim()) && (
+      {/* Topo à direita: ícones de redes + botão favoritar (coração) */}
+      {(onFavoriteToggle && variant === 'list' && (item.handle ?? item.key)) || (item.activation && (item.activation.whatsapp?.trim() || item.activation.tiktok?.trim() || item.activation.facebook?.trim() || item.activation.linkedin?.trim() || item.activation.twitter?.trim())) ? (
         <div
           style={{
             position: 'absolute',
             top: 0,
             right: 0,
             display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            gap: 8,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+            flexWrap: 'wrap',
+            justifyContent: 'flex-end',
             zIndex: 1,
           }}
         >
-          {item.activation.whatsapp?.trim() && (
+          {item.activation?.whatsapp?.trim() && (
             <Tooltip title="WhatsApp">
               <MessageOutlined style={{ color: 'var(--app-icon-whatsapp)', fontSize: 18 }} />
             </Tooltip>
           )}
-          {item.activation.tiktok?.trim() && (
+          {item.activation?.tiktok?.trim() && (
             <Tooltip title="TikTok">
               <VideoCameraOutlined style={{ color: 'var(--app-icon-instagram)', fontSize: 18 }} />
             </Tooltip>
           )}
-          {item.activation.facebook?.trim() && (
+          {item.activation?.facebook?.trim() && (
             <Tooltip title="Facebook">
               <FacebookOutlined style={{ color: 'var(--app-icon-facebook)', fontSize: 18 }} />
             </Tooltip>
           )}
-          {item.activation.linkedin?.trim() && (
+          {item.activation?.linkedin?.trim() && (
             <Tooltip title="LinkedIn">
               <LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)', fontSize: 18 }} />
             </Tooltip>
           )}
-          {item.activation.twitter?.trim() && (
+          {item.activation?.twitter?.trim() && (
             <Tooltip title="X / Twitter">
               <TwitterOutlined style={{ color: 'var(--app-icon-twitter)', fontSize: 18 }} />
             </Tooltip>
           )}
+          {onFavoriteToggle && variant === 'list' && (item.handle ?? item.key) && (
+            <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
+              <Button
+                type="text"
+                size="small"
+                icon={isFavorite ? <HeartFilled style={{ color: 'var(--app-primary)' }} /> : <HeartOutlined style={{ color: 'var(--app-text-secondary)', fontSize: 18 }} />}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onFavoriteToggle(item.handle ?? item.key)
+                }}
+                style={{ minWidth: 32, height: 32, padding: 0 }}
+              />
+            </Tooltip>
+          )}
         </div>
-      )}
+      ) : null}
 
       {/* Topo: avatar + nome estilo rede social — loader até a imagem ser resolvida (onLoad) */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 12 }}>
@@ -314,7 +336,12 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
               )
             })()}
           </div>
-          {location && (
+          {variant === 'list' && (item.handle || item.key) && (
+            <div style={{ fontSize: 12, color: 'var(--app-text-secondary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              @{item.handle ?? item.key}
+            </div>
+          )}
+          {(variant === 'list' || location) && (
             <div
               style={{
                 display: 'inline-flex',
@@ -326,7 +353,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
               }}
             >
               <EnvironmentOutlined style={{ fontSize: 12 }} />
-              {location}
+              {location || (variant === 'list' ? '—' : null)}
             </div>
           )}
           {((item.activation?.content_type && item.activation.content_type.length > 0) || categories.length > 0) && (

@@ -11,6 +11,16 @@ export function authHeaders(): Record<string, string> {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {}
 }
 
+/** Header obrigatório no backend para acessar dados de perfil de outro influenciador (em contexto de campanha). */
+const X_CAMPAIGN_ID = 'X-Campaign-Id'
+
+/** Headers de auth com opcional X-Campaign-Id (para rotas que exigem campanha quando não é o próprio perfil). */
+export function authHeadersWithCampaign(campaignId?: string | null): Record<string, string> {
+  const h: Record<string, string> = { ...authHeaders() }
+  if (campaignId && campaignId.trim()) h[X_CAMPAIGN_ID] = campaignId.trim()
+  return h
+}
+
 /** Usa proxy da API para carregar imagem (evita CORS/CORP do CDN do Instagram). Em caso de 403, o backend tenta fallback via proxy público. */
 export function proxyImageUrl(url: string | undefined): string | undefined {
   if (!url || typeof url !== 'string') return undefined
@@ -126,14 +136,24 @@ export interface ProfileListItem {
 
 export type ProfilesSort =
   | 'relevance_desc'
+  | 'name_asc'
+  | 'name_desc'
   | 'engagement_desc'
   | 'engagement_asc'
   | 'followers_desc'
   | 'followers_asc'
+  | 'posts_count_desc'
+  | 'posts_count_asc'
   | 'avg_likes_desc'
   | 'avg_likes_asc'
   | 'total_likes_desc'
   | 'total_likes_asc'
+  | 'total_comments_desc'
+  | 'total_comments_asc'
+  | 'cost_tier_desc'
+  | 'cost_tier_asc'
+  | 'favorite_desc'
+  | 'favorite_asc'
 
 export interface ProfilesSearchQuery {
   q?: string
@@ -161,15 +181,13 @@ export interface ProfilesSearchQuery {
   accountTypeFilter?: number[]
   /** Tipo de conteúdo (perfis ativados). */
   contentTypes?: string[]
-  /** Faixas de preço por formato (valores em reais: 0, 500, 1000, 2500, 5000, 15000). */
-  pricingPostUnique?: number[]
-  pricingStories?: number[]
-  pricingPackageMonthly?: number[]
-  pricingCommission?: number[]
-  pricingPermuta?: number[]
-  pricingImageRights?: number[]
-  pricingContentDelivery?: number[]
-  pricingLaunch?: number[]
+  /** Faixas de preço por formato (valores em reais: 0, 50, 100, 250, 500, 1000, 2500, 5000, 15000). */
+  pricingFeed?: number[]
+  pricingReels?: number[]
+  pricingStory?: number[]
+  pricingDestaque?: number[]
+  /** Faixa de preço: low = abaixo da média, medium = normal, high/very_high = acima da média. */
+  costTierFilter?: string[]
   sort?: ProfilesSort
   limit?: number
   offset?: number
@@ -203,17 +221,19 @@ export interface ProfilesSearchFacets {
   states: { name: string; count: number }[]
   neighborhoods: { name: string; count: number }[]
   social: { whatsapp: number; tiktok: number; facebook: number; linkedin: number; twitter: number }
+  /** Contagem por faixa de seguidores (porte). */
+  followers_buckets?: { key: string; label: string; min: number; max?: number; count: number }[]
+  /** Contagem por tipo de conta (1=pessoal, 2=criador, 3=empresa). */
+  account_type?: { value: number; label: string; count: number }[]
   /** Faixas de preço por formato (resultado da sumarização). */
   pricing?: {
-    post_unique?: PricingFacetBucket[]
-    stories?: PricingFacetBucket[]
-    package_monthly?: PricingFacetBucket[]
-    commission?: PricingFacetBucket[]
-    permuta?: PricingFacetBucket[]
-    image_rights?: PricingFacetBucket[]
-    content_delivery?: PricingFacetBucket[]
-    launch?: PricingFacetBucket[]
+    feed?: PricingFacetBucket[]
+    reels?: PricingFacetBucket[]
+    story?: PricingFacetBucket[]
+    destaque?: PricingFacetBucket[]
   }
+  /** Faixa de preço (low, medium, high, very_high); só entradas com count > 0. */
+  cost_tier?: { tier: string; count: number }[]
 }
 
 export interface ProfilesSearchResponse {
@@ -224,7 +244,7 @@ export interface ProfilesSearchResponse {
 
 export async function fetchProfilesSearch(
   query: ProfilesSearchQuery,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; campaignId?: string | null }
 ): Promise<ProfilesSearchResponse> {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
@@ -247,19 +267,15 @@ export async function fetchProfilesSearch(
   if (query.excludePrivate) params.set('excludePrivate', 'true')
   if (query.accountTypeFilter?.length) params.set('accountTypeFilter', query.accountTypeFilter.join(','))
   if (query.contentTypes?.length) params.set('contentTypes', query.contentTypes.join(','))
-  if (query.pricingPostUnique?.length) params.set('pricingPostUnique', query.pricingPostUnique.join(','))
-  if (query.pricingStories?.length) params.set('pricingStories', query.pricingStories.join(','))
-  if (query.pricingPackageMonthly?.length) params.set('pricingPackageMonthly', query.pricingPackageMonthly.join(','))
-  if (query.pricingCommission?.length) params.set('pricingCommission', query.pricingCommission.join(','))
-  if (query.pricingPermuta?.length) params.set('pricingPermuta', query.pricingPermuta.join(','))
-  if (query.pricingImageRights?.length) params.set('pricingImageRights', query.pricingImageRights.join(','))
-  if (query.pricingContentDelivery?.length) params.set('pricingContentDelivery', query.pricingContentDelivery.join(','))
-  if (query.pricingLaunch?.length) params.set('pricingLaunch', query.pricingLaunch.join(','))
+  if (query.pricingFeed?.length) params.set('pricingFeed', query.pricingFeed.join(','))
+  if (query.pricingReels?.length) params.set('pricingReels', query.pricingReels.join(','))
+  if (query.pricingStory?.length) params.set('pricingStory', query.pricingStory.join(','))
+  if (query.pricingDestaque?.length) params.set('pricingDestaque', query.pricingDestaque.join(','))
   if (query.sort) params.set('sort', query.sort)
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))
   const res = await fetch(`${API_BASE}/profiles/search?${params.toString()}`, {
-    headers: { ...authHeaders() },
+    headers: authHeadersWithCampaign(options?.campaignId),
     signal: options?.signal,
   })
   if (!res.ok) {
@@ -269,6 +285,252 @@ export async function fetchProfilesSearch(
     const e = new Error(msg) as Error & { code?: string }
     e.code = code
     throw e
+  }
+  return res.json()
+}
+
+/** Saldo de créditos do usuário autenticado. */
+export interface CreditsResponse {
+  balance: number
+}
+
+export async function fetchCredits(options?: { signal?: AbortSignal }): Promise<CreditsResponse> {
+  const res = await fetch(`${API_BASE}/me/credits`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao carregar créditos')
+  }
+  return res.json()
+}
+
+/** Lista de handles favoritados pelo usuário. */
+export async function fetchFavorites(options?: { signal?: AbortSignal }): Promise<{ handles: string[] }> {
+  const res = await fetch(`${API_BASE}/me/favorites`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) throw new Error('Falha ao carregar favoritos')
+  return res.json()
+}
+
+/** Adiciona influenciador aos favoritos. */
+export async function addFavorite(handle: string): Promise<void> {
+  const h = handle.replace(/^@/, '').trim()
+  const res = await fetch(`${API_BASE}/me/favorites`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ handle: h }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao favoritar')
+  }
+}
+
+/** Remove influenciador dos favoritos. */
+export async function removeFavorite(handle: string): Promise<void> {
+  const h = handle.replace(/^@/, '').trim()
+  const res = await fetch(`${API_BASE}/me/favorites/${encodeURIComponent(h)}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao desfavoritar')
+  }
+}
+
+/** Cria campanha (compra do relatório) e debita créditos. */
+export interface CreateCampaignResponse {
+  campaignId: string
+  handlesCount: number
+  creditsUsed: number
+}
+
+export interface CreateCampaignError {
+  code?: string
+  required?: number
+  balance?: number
+}
+
+export async function createCampaign(
+  query: ProfilesSearchQuery,
+  options?: { name?: string; maxHandles?: number; signal?: AbortSignal }
+): Promise<CreateCampaignResponse> {
+  const res = await fetch(`${API_BASE}/campaigns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ query, name: options?.name, maxHandles: options?.maxHandles }),
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const e = new Error((data as { error?: string }).error || 'Falha ao comprar relatório') as Error & CreateCampaignError
+    e.code = (data as { code?: string }).code
+    e.required = (data as { required?: number }).required
+    e.balance = (data as { balance?: number }).balance
+    throw e
+  }
+  return data as CreateCampaignResponse
+}
+
+/** Dados da campanha. */
+export interface CampaignInfo {
+  id: string
+  name: string | null
+  handlesCount: number
+  credits_used: number
+  created_at: string
+}
+
+export async function getCampaign(
+  campaignId: string,
+  options?: { signal?: AbortSignal }
+): Promise<CampaignInfo> {
+  const res = await fetch(`${API_BASE}/campaigns/${campaignId}`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Campanha não encontrada')
+  }
+  return res.json()
+}
+
+/** Atualiza o nome da campanha. */
+export async function updateCampaignName(
+  campaignId: string,
+  name: string,
+  options?: { signal?: AbortSignal }
+): Promise<{ ok: boolean; name: string | null }> {
+  const res = await fetch(`${API_BASE}/campaigns/${campaignId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ name: name.trim() }),
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao atualizar nome')
+  }
+  return res.json()
+}
+
+/** Stats agregados da campanha (engagement, likes, views, etc.). */
+export interface MyCampaignStats {
+  totalLikes: number
+  totalComments: number
+  totalViews: number
+  totalFollowers: number
+  postsCount: number
+  avgEngagementRate: number
+  avgLikes: number
+  avgComments: number
+  avgViews: number
+}
+
+/** Perfil de preview para exibir na campanha. */
+export interface MyCampaignPreviewProfile {
+  handle: string
+  profile_pic_url?: string
+  full_name?: string
+  followers_count?: number
+}
+
+export interface MyCampaignItem {
+  id: string
+  name: string | null
+  handlesCount: number
+  creditsUsed: number
+  created_at: string
+  /** Stats de engajamento (preenchido pela API). */
+  stats?: MyCampaignStats | null
+  /** Amostra de perfis para preview com fotos. */
+  previewProfiles?: MyCampaignPreviewProfile[]
+  /** 2 hashtags/categorias mais relevantes da campanha. */
+  topHashtags?: string[]
+}
+
+export interface MyCampaignsResponse {
+  campaigns: MyCampaignItem[]
+}
+
+/** Lista campanhas do usuário logado. */
+export async function fetchMyCampaigns(options?: { signal?: AbortSignal }): Promise<MyCampaignsResponse> {
+  const res = await fetch(`${API_BASE}/me/campaigns`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao carregar campanhas')
+  }
+  return res.json()
+}
+
+/** Admin: adicionar créditos a um usuário. Requer scope adm. */
+export async function adminAddCredits(
+  userId: number,
+  amount: number,
+  options?: { signal?: AbortSignal }
+): Promise<{ balance: number; added: number }> {
+  const res = await fetch(`${API_BASE}/admin/users/${userId}/credits`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ amount }),
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || 'Falha ao adicionar créditos')
+  }
+  return data as { balance: number; added: number }
+}
+
+/** Listagem de perfis de uma campanha (paginação + filtros, mesma query que a busca principal sem q/categories). */
+export async function fetchCampaignProfiles(
+  campaignId: string,
+  query: Partial<ProfilesSearchQuery>,
+  options?: { signal?: AbortSignal }
+): Promise<ProfilesSearchResponse> {
+  const params = new URLSearchParams()
+  if (query.q?.trim()) params.set('q', query.q.trim())
+  if (query.minFollowers != null) params.set('minFollowers', String(query.minFollowers))
+  if (query.maxFollowers != null) params.set('maxFollowers', String(query.maxFollowers))
+  if (query.minEngagementRate != null) params.set('minEngagementRate', String(query.minEngagementRate))
+  if (query.minAvgLikes != null) params.set('minAvgLikes', String(query.minAvgLikes))
+  if (query.minPostsCount != null) params.set('minPostsCount', String(query.minPostsCount))
+  if (query.engagementRateBuckets?.length) params.set('engagementRateBuckets', query.engagementRateBuckets.join(','))
+  if (query.avgLikesBuckets?.length) params.set('avgLikesBuckets', query.avgLikesBuckets.join(','))
+  if (query.postsCountBuckets?.length) params.set('postsCountBuckets', query.postsCountBuckets.join(','))
+  if (query.activationFilter?.length) params.set('activationFilter', query.activationFilter.join(','))
+  if (query.cities?.length) params.set('cities', query.cities.join(','))
+  if (query.states?.length) params.set('states', query.states.join(','))
+  if (query.neighborhoods?.length) params.set('neighborhoods', query.neighborhoods.join(','))
+  if (query.socialNetworks?.length) params.set('socialNetworks', query.socialNetworks.join(','))
+  if (query.excludePrivate) params.set('excludePrivate', 'true')
+  if (query.accountTypeFilter?.length) params.set('accountTypeFilter', query.accountTypeFilter.join(','))
+  if (query.contentTypes?.length) params.set('contentTypes', query.contentTypes.join(','))
+  if (query.pricingFeed?.length) params.set('pricingFeed', query.pricingFeed.join(','))
+  if (query.pricingReels?.length) params.set('pricingReels', query.pricingReels.join(','))
+  if (query.pricingStory?.length) params.set('pricingStory', query.pricingStory.join(','))
+  if (query.pricingDestaque?.length) params.set('pricingDestaque', query.pricingDestaque.join(','))
+  if (query.costTierFilter?.length) params.set('costTierFilter', query.costTierFilter.join(','))
+  if (query.sort) params.set('sort', query.sort)
+  if (query.limit != null) params.set('limit', String(query.limit))
+  if (query.offset != null) params.set('offset', String(query.offset))
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/campaigns/${campaignId}/profiles${qs ? `?${qs}` : ''}`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao carregar perfis da campanha')
   }
   return res.json()
 }
@@ -313,21 +575,26 @@ export interface PostsResponse {
   items: PostItem[]
 }
 
-export async function fetchProfiles(limit = 50, offset = 0, since?: string): Promise<ProfilesResponse> {
+export async function fetchProfiles(
+  limit = 50,
+  offset = 0,
+  since?: string,
+  options?: { campaignId?: string | null }
+): Promise<ProfilesResponse> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (since) params.set('since', since)
   const res = await fetch(`${API_BASE}/profiles?${params.toString()}`, {
-    headers: { ...authHeaders() },
+    headers: authHeadersWithCampaign(options?.campaignId),
   })
   if (res.status === 401) throw new Error('Faça login para acessar a lista de perfis')
   if (!res.ok) throw new Error('Falha ao carregar perfis')
   return res.json()
 }
 
-export async function fetchProfile(handle: string): Promise<ProfileItem | null> {
+export async function fetchProfile(handle: string, options?: { campaignId?: string | null }): Promise<ProfileItem | null> {
   const h = handle.replace(/^@/, '')
   const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}`, {
-    headers: { ...authHeaders() },
+    headers: authHeadersWithCampaign(options?.campaignId),
   })
   if (res.status === 404) return null
   if (res.status === 429) {
@@ -337,6 +604,36 @@ export async function fetchProfile(handle: string): Promise<ProfileItem | null> 
   }
   if (!res.ok) throw new Error('Falha ao carregar perfil')
   return res.json()
+}
+
+/** Perfil de um influenciador dentro de uma campanha. Só retorna dados se o perfil estiver na campanha. */
+export async function fetchCampaignProfile(campaignId: string, handle: string): Promise<ProfileItem | null> {
+  const h = handle.replace(/^@/, '').trim()
+  const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/profiles/${encodeURIComponent(h)}`, {
+    headers: { ...authHeaders() },
+  })
+  if (res.status === 404) return null
+  if (res.status === 429) {
+    const err = await res.json().catch(() => ({}))
+    const msg = (err as { error?: string }).error || 'Muitas requisições. Aguarde um minuto.'
+    throw Object.assign(new Error(msg), { code: 'RATE_LIMIT' })
+  }
+  if (!res.ok) throw new Error('Falha ao carregar perfil da campanha')
+  return res.json()
+}
+
+/** Ativação do perfil dentro de uma campanha. Só retorna dados se o perfil estiver na campanha. */
+export async function fetchCampaignProfileActivation(campaignId: string, handle: string): Promise<ProfileActivation> {
+  const h = handle.replace(/^@/, '').trim()
+  const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/profiles/${encodeURIComponent(h)}/activation`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error('Falha ao carregar ativação do perfil')
+  const data = await res.json()
+  if (!data || typeof data !== 'object' || (data as { _redacted?: boolean })._redacted === true) {
+    return {}
+  }
+  return data as ProfileActivation
 }
 
 /** Resposta ao solicitar código: pode vir rejeição (nao_segue_perfil) para exibir na tela de erro, sem toast. */
@@ -644,12 +941,18 @@ export async function updateDirectQueueServiceInterval(minutes: number): Promise
   if (!res.ok) throw new Error('Falha ao alterar intervalo.')
 }
 
-export async function fetchPosts(profileHandle: string, limit = 50, offset = 0, type?: MediaKind): Promise<PostsResponse> {
+export async function fetchPosts(
+  profileHandle: string,
+  limit = 50,
+  offset = 0,
+  type?: MediaKind,
+  options?: { campaignId?: string | null }
+): Promise<PostsResponse> {
   const h = profileHandle.replace(/^@/, '')
   const params = new URLSearchParams({ profile: h, limit: String(limit), offset: String(offset) })
   if (type) params.set('type', type)
   const res = await fetch(`${API_BASE}/posts?${params.toString()}`, {
-    headers: { ...authHeaders() },
+    headers: authHeadersWithCampaign(options?.campaignId),
   })
   if (res.status === 429) {
     const err = await res.json().catch(() => ({}))
@@ -778,14 +1081,10 @@ export async function queueRefreshProfile(
 
 /** Valores/tarifas (8 tipos de entrega). */
 export interface PricingData {
-  post_unique?: string
-  stories?: string
-  package_monthly?: string
-  commission?: string
-  permuta?: string
-  image_rights?: string
-  content_delivery?: string
-  launch?: string
+  feed?: string
+  reels?: string
+  story?: string
+  destaque?: string
 }
 
 /** Dados de ativação do perfil na plataforma (cadastro completo do influenciador). */
@@ -824,10 +1123,10 @@ export interface ProfileActivation {
   updated_at?: string
 }
 
-export async function fetchProfileActivation(handle: string): Promise<ProfileActivation> {
+export async function fetchProfileActivation(handle: string, options?: { campaignId?: string | null }): Promise<ProfileActivation> {
   const h = handle.replace(/^@/, '')
   const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}/activation`, {
-    headers: { ...authHeaders() },
+    headers: authHeadersWithCampaign(options?.campaignId),
   })
   if (!res.ok) throw new Error('Falha ao carregar ativação')
   const data = await res.json()

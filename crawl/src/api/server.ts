@@ -26,11 +26,18 @@ import {
   buildConfigFromEnv,
   type ExtractSingleProfileResult,
 } from '../crawl/extractSingleProfile.js';
-import { searchProfiles, getProfileSummary, scheduleSearchCacheRewarm, warmSearchCache, type ProfilesSearchQuery } from './profilesSearch.js';
+import { searchProfiles, getProfileSummary, scheduleSearchCacheRewarm, warmSearchCache, type ProfilesSearchQuery, type ProfileListItem } from './profilesSearch.js';
+import { CreditsCampaignsDb, isCampaignIdGuid } from '../storage/creditsCampaignsDb.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { loginWithCredentials } from '../instagramClient/login.js';
 import { profileExtractDelay, profileExtractDelayForApi } from '../utils/delay.js';
 import { logTimestamp } from '../utils/logTimestamp.js';
+import {
+  getSuggestedPricingFromFollowers,
+  suggestedPricingToActivationFormat,
+  getFollowersFromProfile,
+  isPricingEmpty,
+} from '../utils/suggestedPricing.js';
 import { get429BackoffMs, record429 } from '../utils/rateLimit429.js';
 import { sendVerificationCode, sendDirectMessage } from '../instagramClient/sendDirectMessage.js';
 import { followUser, followUserFromCurrentPage } from '../instagramClient/followUser.js';
@@ -77,6 +84,7 @@ const rocks = new RocksDBStorage({ dbPath: rocksPath });
 const sqlite = new SqliteSync(sqlitePath);
 const db = new CompositeStorage(rocks, sqlite, (storage) => scheduleSearchCacheRewarm(storage));
 const authDb = new AuthDb(sqlitePath);
+const creditsCampaignsDb = new CreditsCampaignsDb(sqlitePath);
 
 /** Hash do template usado para convocar perfis aprovados para seleção. */
 const SELECTION_QUEUE_HASH = 'selecao';
@@ -1576,7 +1584,6 @@ app.get('/api/proxy-image', async (req: Request, res: Response) => {
       const done = await tryStream(r);
       if (done) return;
     }
-    console.warn('[API] proxy-image: CDN retornou', r.status, 'para', url.slice(0, 80) + '...');
     if (r.status === 403 || !r.ok) {
       for (const toProxyUrl of FALLBACK_PROXIES) {
         try {
@@ -1586,8 +1593,7 @@ app.get('/api/proxy-image', async (req: Request, res: Response) => {
             const done = await tryStream(r);
             if (done) return;
           }
-        } catch (err) {
-          console.warn('[API] proxy-image fallback falhou:', err instanceof Error ? err.message : err);
+        } catch {
           continue;
         }
       }
@@ -1605,17 +1611,22 @@ app.get('/api/proxy-image', async (req: Request, res: Response) => {
   }
 });
 
-/** Lista bruta de perfis (com dados completos). Apenas autenticados — evita extração pública. */
-app.get('/api/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+/** Lista de perfis restrita a uma campanha. Exige header X-Campaign-Id. */
+app.get('/api/profiles', rateLimitDataApi, requireCampaignIdHeader, async (req: RequestWithAuth, res: Response) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Faça login para acessar a lista de perfis.', code: 'UNAUTHORIZED' });
+    const campaignId = req.allowedCampaignId!;
+    const userId = Number(req.user!.sub);
+    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    if (!handles || handles.length === 0) {
+      res.json({ total: 0, items: [] });
       return;
     }
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Number(req.query.offset) || 0;
     const since = (req.query.since as string)?.trim();
-    let items = await db.getByBucket('profile');
+    const handleSet = new Set(handles.map((h) => normalizeHandle(h)));
+    let items = (await db.getByBucket('profile'))
+      .filter(({ key }) => handleSet.has(key));
     if (since) {
       const sinceTime = new Date(since).getTime();
       if (!Number.isNaN(sinceTime)) {
@@ -1813,7 +1824,7 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
     const states = req.query.states;
     const neighborhoods = req.query.neighborhoods;
     const socialNetworks = req.query.socialNetworks;
-    const excludePrivate = req.query.excludePrivate === 'true' || req.query.excludePrivate === true;
+    const excludePrivate = req.query.excludePrivate === 'true';
     const accountTypeFilter = req.query.accountTypeFilter;
     const sort = (req.query.sort as string) || 'engagement_desc';
     const limitRaw = isPublicOrAnonymous ? PUBLIC_PAGE_SIZE : Math.min(Math.max(0, Number(req.query.limit) || 50), 200);
@@ -1840,20 +1851,35 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       accountTypeFilter: parseNumList(accountTypeFilter)?.filter((n) => [1, 2, 3].includes(n)),
       categories,
       contentTypes: Array.isArray(contentTypes) ? contentTypes.map(String).filter(Boolean) : typeof contentTypes === 'string' ? contentTypes?.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
-      pricingPostUnique: parseNumList(req.query.pricingPostUnique),
-      pricingStories: parseNumList(req.query.pricingStories),
-      pricingPackageMonthly: parseNumList(req.query.pricingPackageMonthly),
-      pricingCommission: parseNumList(req.query.pricingCommission),
-      pricingPermuta: parseNumList(req.query.pricingPermuta),
-      pricingImageRights: parseNumList(req.query.pricingImageRights),
-      pricingContentDelivery: parseNumList(req.query.pricingContentDelivery),
-      pricingLaunch: parseNumList(req.query.pricingLaunch),
+      pricingFeed: parseNumList(req.query.pricingFeed),
+      pricingReels: parseNumList(req.query.pricingReels),
+      pricingStory: parseNumList(req.query.pricingStory),
+      pricingDestaque: parseNumList(req.query.pricingDestaque),
       sort,
       limit,
       offset,
     };
-    const result = await searchProfiles(db, query);
-    if (!req.user) {
+    let restrictToHandles: string[] | undefined;
+    if (req.user) {
+      const raw = (req.headers[X_CAMPAIGN_ID] ?? req.headers['x-campaign-id']) as string | undefined;
+      const campaignId = typeof raw === 'string' ? raw.trim() : '';
+      if (!campaignId || !isCampaignIdGuid(campaignId)) {
+        res.status(403).json({
+          error: 'Para buscar perfis, envie o header X-Campaign-Id com o ID de uma campanha.',
+          code: 'CAMPAIGN_ID_REQUIRED',
+        });
+        return;
+      }
+      const userId = Number(req.user.sub);
+      const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+      if (!handles || handles.length === 0) {
+        res.status(403).json({ error: 'Campanha não encontrada ou sem perfis.', code: 'CAMPAIGN_NOT_FOUND' });
+        return;
+      }
+      restrictToHandles = handles;
+    }
+    const result = await searchProfiles(db, query, restrictToHandles?.length ? { restrictToHandles } : undefined);
+    if (!req.user || publicAtLimit(req)) {
       res.json(redactSearchResultForAnonymous(result as unknown as { total: number; items: Record<string, unknown>[]; facets: Record<string, unknown> }));
       return;
     }
@@ -1863,24 +1889,658 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
   }
 });
 
-/** Dados de ativação do perfil (cadastro completo na plataforma). Sem login não retorna dados (contato, preços). */
-app.get('/api/profiles/:handle/activation', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+/** Créditos do usuário autenticado. */
+app.get('/api/me/credits', async (req: RequestWithAuth, res: Response) => {
   try {
-    if (!req.user || publicAtLimit(req)) {
-      res.status(200).json({ _redacted: true });
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
       return;
     }
-    const handle = (req.params.handle || '').replace(/^@/, '');
+    const userId = Number(req.user.sub);
+    const balance = creditsCampaignsDb.getBalance(userId);
+    res.json({ balance });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Lista handles favoritados pelo usuário. */
+app.get('/api/me/favorites', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handles = sqlite.getFavoriteHandles(userId);
+    res.json({ handles });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Adiciona influenciador aos favoritos. Body: { handle: string }. */
+app.post('/api/me/favorites', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handle = (req.body?.handle ?? req.body?.profile_handle ?? '').toString().trim().replace(/^@/, '');
+    if (!handle) {
+      res.status(400).json({ error: 'handle é obrigatório' });
+      return;
+    }
+    sqlite.addFavorite(userId, handle);
+    res.status(201).json({ ok: true, handle });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Remove influenciador dos favoritos. */
+app.delete('/api/me/favorites/:handle', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handle = (req.params.handle ?? '').replace(/^@/, '').trim();
+    if (!handle) {
+      res.status(400).json({ error: 'handle é obrigatório' });
+      return;
+    }
+    sqlite.removeFavorite(userId, handle);
+    res.json({ ok: true, handle });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Resultado de stats e preview de uma campanha. */
+interface CampaignStatsResult {
+  totalLikes: number;
+  totalComments: number;
+  totalViews: number;
+  totalFollowers: number;
+  postsCount: number;
+  avgEngagementRate: number;
+  avgLikes: number;
+  avgComments: number;
+  avgViews: number;
+  previewProfiles: Array<{ handle: string; profile_pic_url?: string; full_name?: string; followers_count?: number }>;
+  topHashtags: string[];
+}
+
+/** Agrega stats de engajamento e preview dos perfis da campanha. */
+async function getCampaignStats(campaignId: string, userId: number): Promise<CampaignStatsResult | null> {
+  const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+  if (!handles || handles.length === 0) return null;
+  const result = await searchProfiles(db, { limit: 10000, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
+  let totalLikes = 0;
+  let totalComments = 0;
+  let totalViews = 0;
+  let totalFollowers = 0;
+  let postsCount = 0;
+  let engagementSum = 0;
+  let engCount = 0;
+  let avgLikesSum = 0;
+  let avgCommentsSum = 0;
+  let avgViewsSum = 0;
+  for (const item of result.items) {
+    const eng = (item as ProfileListItem).engagement;
+    totalLikes += eng?.total_likes ?? 0;
+    totalComments += eng?.total_comments ?? 0;
+    totalViews += eng?.total_views ?? 0;
+    postsCount += eng?.posts_count ?? 0;
+    avgLikesSum += eng?.avg_likes ?? 0;
+    avgCommentsSum += eng?.avg_comments ?? 0;
+    avgViewsSum += eng?.avg_views ?? 0;
+    totalFollowers += (item as ProfileListItem).followers_count ?? 0;
+    if (eng?.engagement_rate != null && Number.isFinite(eng.engagement_rate)) {
+      engagementSum += eng.engagement_rate;
+      engCount++;
+    }
+  }
+  const n = result.items.length;
+  const previewProfiles = result.items.slice(0, 8).map((i) => ({
+    handle: (i as ProfileListItem).handle,
+    profile_pic_url: (i as ProfileListItem).profile_pic_url,
+    full_name: (i as ProfileListItem).full_name,
+    followers_count: (i as ProfileListItem).followers_count,
+  }));
+  const categoryCount = new Map<string, number>();
+  for (const item of result.items) {
+    const cats = (item as ProfileListItem).categories ?? [];
+    for (const c of cats) {
+      const key = String(c).trim().toLowerCase();
+      if (!key) continue;
+      categoryCount.set(key, (categoryCount.get(key) ?? 0) + 1);
+    }
+  }
+  const topHashtags = [...categoryCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([key]) => key);
+  return {
+    totalLikes,
+    totalComments,
+    totalViews,
+    totalFollowers,
+    postsCount,
+    avgEngagementRate: engCount > 0 ? Math.round((engagementSum / engCount) * 100) / 100 : 0,
+    avgLikes: n > 0 ? Math.round(avgLikesSum / n) : 0,
+    avgComments: n > 0 ? Math.round(avgCommentsSum / n) : 0,
+    avgViews: n > 0 ? Math.round(avgViewsSum / n) : 0,
+    previewProfiles,
+    topHashtags,
+  };
+}
+
+/** Lista campanhas do usuário logado (com stats de engajamento por campanha). */
+app.get('/api/me/campaigns', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const rows = creditsCampaignsDb.listCampaigns(userId);
+    const campaigns = await Promise.all(
+      rows.map(async (r) => {
+        const base = {
+          id: r.id,
+          name: r.name,
+          handlesCount: r.handles_count,
+          creditsUsed: r.credits_used,
+          created_at: r.created_at,
+        };
+        const data = await getCampaignStats(r.id, userId);
+        if (!data) return { ...base };
+        const { previewProfiles, topHashtags, ...stats } = data;
+        return { ...base, stats, previewProfiles, topHashtags };
+      })
+    );
+    res.json({ campaigns });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Cria campanha (compra do relatório): resolve a busca, grava handles e debita créditos (1 por influenciador). Requer login. */
+const CREDITS_PER_INFLUENCER = 1;
+app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário para comprar relatório' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const body = req.body as { query?: ProfilesSearchQuery; name?: string; maxHandles?: number | string };
+    const query = body?.query;
+    if (!query || typeof query !== 'object') {
+      res.status(400).json({ error: 'Envie { query: {...} } com os filtros da busca' });
+      return;
+    }
+    const rawMax = body?.maxHandles;
+    const parsedMax = rawMax != null ? Number(rawMax) : NaN;
+    const maxHandles = Number.isFinite(parsedMax) && parsedMax > 0
+      ? Math.min(Math.floor(parsedMax), 10000)
+      : undefined;
+    const allHandles: string[] = [];
+    const pageSize = 100;
+    let offset = 0;
+    for (;;) {
+      if (maxHandles != null && allHandles.length >= maxHandles) break;
+      const q: ProfilesSearchQuery = { ...query, limit: pageSize, offset };
+      const result = await searchProfiles(db, q);
+      for (const item of result.items) {
+        if (item.handle) {
+          allHandles.push(item.handle);
+          if (maxHandles != null && allHandles.length >= maxHandles) break;
+        }
+      }
+      if (result.items.length < pageSize) break;
+      offset += pageSize;
+      if (offset >= result.total) break;
+    }
+    const finalHandles = maxHandles != null ? allHandles.slice(0, maxHandles) : allHandles;
+    if (finalHandles.length === 0) {
+      res.status(400).json({ error: 'Nenhum perfil no resultado da busca' });
+      return;
+    }
+    const creditsNeeded = finalHandles.length * CREDITS_PER_INFLUENCER;
+    const balance = creditsCampaignsDb.getBalance(userId);
+    if (balance < creditsNeeded) {
+      res.status(402).json({
+        error: `Créditos insuficientes. Necessário: ${creditsNeeded}, saldo: ${balance}`,
+        code: 'INSUFFICIENT_CREDITS',
+        required: creditsNeeded,
+        balance,
+      });
+      return;
+    }
+    if (!creditsCampaignsDb.spendCredits(userId, creditsNeeded, 'campaign', undefined)) {
+      res.status(402).json({ error: 'Falha ao debitar créditos', code: 'DEBIT_FAILED' });
+      return;
+    }
+    const campaignId = creditsCampaignsDb.createCampaign(userId, finalHandles, creditsNeeded, body.name);
+    res.status(201).json({ campaignId, handlesCount: finalHandles.length, creditsUsed: creditsNeeded });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Dados da campanha (para listar por campanha). */
+app.get('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const campaign = creditsCampaignsDb.getCampaign(campaignId, userId);
+    if (!campaign) {
+      res.status(404).json({ error: 'Campanha não encontrada' });
+      return;
+    }
+    res.json({
+      id: campaign.id,
+      name: campaign.name,
+      handlesCount: campaign.handles_count,
+      creditsUsed: campaign.credits_used,
+      created_at: campaign.created_at,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Atualiza o nome da campanha. */
+app.patch('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const userId = Number(req.user.sub);
+    const updated = creditsCampaignsDb.updateCampaignName(campaignId, userId, name);
+    if (!updated) {
+      res.status(404).json({ error: 'Campanha não encontrada' });
+      return;
+    }
+    res.json({ ok: true, name: name || null });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Parseia query params para ProfilesSearchQuery (mesma lógica da busca principal, sem q/categories). */
+function buildCampaignProfilesQuery(req: { query: Record<string, unknown> }): ProfilesSearchQuery {
+  const parseNumList = (v: unknown): number[] | undefined => {
+    if (v == null) return undefined;
+    if (Array.isArray(v)) return v.map(Number).filter(Number.isFinite);
+    if (typeof v === 'string') return v.split(',').map((x) => Number(x.trim())).filter(Number.isFinite);
+    return undefined;
+  };
+  const minFollowers = req.query.minFollowers != null ? Number(req.query.minFollowers) : undefined;
+  const maxFollowers = req.query.maxFollowers != null ? Number(req.query.maxFollowers) : undefined;
+  const minEngagementRate = req.query.minEngagementRate != null ? Number(req.query.minEngagementRate) : undefined;
+  const minAvgLikes = req.query.minAvgLikes != null ? Number(req.query.minAvgLikes) : undefined;
+  const minPostsCount = req.query.minPostsCount != null ? Number(req.query.minPostsCount) : undefined;
+  const contentTypes = req.query.contentTypes as string | string[] | undefined;
+  const engagementRateBuckets = req.query.engagementRateBuckets;
+  const avgLikesBuckets = req.query.avgLikesBuckets;
+  const postsCountBuckets = req.query.postsCountBuckets;
+  const activationFilter = req.query.activationFilter;
+  const cities = req.query.cities;
+  const states = req.query.states;
+  const neighborhoods = req.query.neighborhoods;
+  const socialNetworks = req.query.socialNetworks;
+  const excludePrivate = req.query.excludePrivate === 'true';
+  const accountTypeFilter = req.query.accountTypeFilter;
+  const sort = (req.query.sort as string) || 'engagement_desc';
+  const limit = Math.min(Math.max(0, Number(req.query.limit) || 50), 200);
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const q = (req.query.q as string)?.trim() || undefined;
+  return {
+    q,
+    minFollowers: Number.isFinite(minFollowers) ? minFollowers : undefined,
+    maxFollowers: Number.isFinite(maxFollowers) ? maxFollowers : undefined,
+    minEngagementRate: Number.isFinite(minEngagementRate) ? minEngagementRate : undefined,
+    minAvgLikes: Number.isFinite(minAvgLikes) ? minAvgLikes : undefined,
+    minPostsCount: Number.isFinite(minPostsCount) ? minPostsCount : undefined,
+    engagementRateBuckets: Array.isArray(engagementRateBuckets) ? engagementRateBuckets.map(Number).filter(Number.isFinite) : typeof engagementRateBuckets === 'string' ? engagementRateBuckets.split(',').map((x) => Number(x.trim())).filter(Number.isFinite) : undefined,
+    avgLikesBuckets: Array.isArray(avgLikesBuckets) ? avgLikesBuckets.map(Number).filter(Number.isFinite) : typeof avgLikesBuckets === 'string' ? avgLikesBuckets.split(',').map((x) => Number(x.trim())).filter(Number.isFinite) : undefined,
+    postsCountBuckets: Array.isArray(postsCountBuckets) ? postsCountBuckets.map(Number).filter(Number.isFinite) : typeof postsCountBuckets === 'string' ? postsCountBuckets.split(',').map((x) => Number(x.trim())).filter(Number.isFinite) : undefined,
+    activationFilter: Array.isArray(activationFilter) ? activationFilter.map(String).filter(Boolean) : typeof activationFilter === 'string' ? activationFilter.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+    cities: Array.isArray(cities) ? cities.map(String).filter(Boolean) : typeof cities === 'string' ? cities.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+    states: Array.isArray(states) ? states.map(String).filter(Boolean) : typeof states === 'string' ? states.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+    neighborhoods: Array.isArray(neighborhoods) ? neighborhoods.map(String).filter(Boolean) : typeof neighborhoods === 'string' ? neighborhoods.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+    socialNetworks: Array.isArray(socialNetworks) ? socialNetworks.map(String).filter(Boolean) : typeof socialNetworks === 'string' ? socialNetworks.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+    excludePrivate,
+    accountTypeFilter: parseNumList(accountTypeFilter)?.filter((n) => [1, 2, 3].includes(n)),
+    contentTypes: Array.isArray(contentTypes) ? contentTypes.map(String).filter(Boolean) : typeof contentTypes === 'string' ? contentTypes?.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+    pricingFeed: parseNumList(req.query.pricingFeed),
+    pricingReels: parseNumList(req.query.pricingReels),
+    pricingStory: parseNumList(req.query.pricingStory),
+    pricingDestaque: parseNumList(req.query.pricingDestaque),
+    costTierFilter: parseCostTierFilter(req.query.costTierFilter),
+    sort,
+    limit,
+    offset,
+  };
+}
+
+/** Cache do contexto (lista completa) por campanha para aplicar filtros em cima sem refazer a busca. TTL 5 min. */
+const CAMPAIGN_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
+const campaignContextCache = new Map<
+  string,
+  { items: ProfileListItem[]; ts: number }
+>();
+
+function getCachedCampaignContext(campaignId: string): ProfileListItem[] | null {
+  const entry = campaignContextCache.get(campaignId);
+  if (!entry || Date.now() - entry.ts > CAMPAIGN_CONTEXT_CACHE_TTL_MS) return null;
+  return entry.items;
+}
+
+function setCachedCampaignContext(campaignId: string, items: ProfileListItem[]): void {
+  campaignContextCache.set(campaignId, { items, ts: Date.now() });
+}
+
+const COST_TIER_VALUES = ['low', 'medium', 'high', 'very_high'] as const;
+
+function parseCostTierFilter(v: unknown): string[] | undefined {
+  if (v == null) return undefined;
+  const arr = Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',').map((x) => x.trim().toLowerCase()) : [];
+  const filtered = arr.filter((s) => (COST_TIER_VALUES as readonly string[]).includes(s));
+  return filtered.length > 0 ? filtered : undefined;
+}
+
+/** Nome do header para contexto de campanha. Obrigatório ao acessar dados de outro influenciador. */
+const X_CAMPAIGN_ID = 'x-campaign-id';
+
+function normalizeHandle(h: string | undefined): string {
+  return (h ?? '').replace(/^@/, '').trim().toLowerCase();
+}
+
+/**
+ * Middleware: autoriza acesso a dados de um perfil somente se (1) o usuário logado é o dono do perfil, ou
+ * (2) o header X-Campaign-Id é enviado com um GUID de campanha do usuário que contenha o handle.
+ * Preenche req.allowedCampaignId quando liberado via campanha.
+ * getHandle: extrai o handle da requisição (ex.: req => req.params.handle ou req => req.query.profile).
+ * requireHandle: se true, retorna 403 quando getHandle retorna vazio (ex.: GET /api/posts sem profile).
+ * requireAuth: se false, quando não há usuário chama next() (handler pode retornar dados redigidos); default true.
+ */
+function requireProfileOrCampaign(
+  getHandle: (req: RequestWithAuth) => string | undefined,
+  options?: { requireHandle?: boolean; requireAuth?: boolean }
+) {
+  const requireAuth = options?.requireAuth !== false;
+  return (req: RequestWithAuth, res: Response, next: () => void): void => {
+    if (!req.user) {
+      if (!requireAuth) {
+        next();
+        return;
+      }
+      res.status(401).json({ error: 'Login necessário', code: 'UNAUTHORIZED' });
+      return;
+    }
+    const rawHandle = getHandle(req);
+    const handle = normalizeHandle(rawHandle);
+    if (!handle) {
+      if (options?.requireHandle) {
+        res.status(403).json({
+          error: 'Para acessar dados de perfil, informe o handle (ex.: profile=@handle na query) ou use o header X-Campaign-Id em uma rota de campanha.',
+          code: 'HANDLE_REQUIRED',
+        });
+        return;
+      }
+      next();
+      return;
+    }
+    const loggedHandle = normalizeHandle(req.user.profile_handle ?? '');
+    if (loggedHandle && loggedHandle === handle) {
+      (req as RequestWithAuth).allowedCampaignId = undefined;
+      next();
+      return;
+    }
+    const campaignIdRaw = (req.headers[X_CAMPAIGN_ID] ?? req.headers['x-campaign-id']) as string | undefined;
+    const campaignId = typeof campaignIdRaw === 'string' ? campaignIdRaw.trim() : '';
+    if (!campaignId || !isCampaignIdGuid(campaignId)) {
+      res.status(403).json({
+        error: 'Para acessar dados de outro influenciador, envie o header X-Campaign-Id com o ID de uma campanha que contenha esse perfil.',
+        code: 'CAMPAIGN_ID_REQUIRED',
+      });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    if (!handles || !handles.some((h) => normalizeHandle(h) === handle)) {
+      res.status(403).json({
+        error: 'Perfil não encontrado nesta campanha ou campanha inválida.',
+        code: 'PROFILE_NOT_IN_CAMPAIGN',
+      });
+      return;
+    }
+    (req as RequestWithAuth).allowedCampaignId = campaignId;
+    next();
+  };
+}
+
+/** Middleware: exige header X-Campaign-Id válido e que a campanha pertença ao usuário. Preenche req.allowedCampaignId. */
+function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () => void): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Login necessário', code: 'UNAUTHORIZED' });
+    return;
+  }
+  const raw = (req.headers[X_CAMPAIGN_ID] ?? req.headers['x-campaign-id']) as string | undefined;
+  const campaignId = typeof raw === 'string' ? raw.trim() : '';
+  if (!campaignId || !isCampaignIdGuid(campaignId)) {
+    res.status(403).json({
+      error: 'Envie o header X-Campaign-Id com o ID de uma campanha válida.',
+      code: 'CAMPAIGN_ID_REQUIRED',
+    });
+    return;
+  }
+  const userId = Number(req.user.sub);
+  const campaign = creditsCampaignsDb.getCampaign(campaignId, userId);
+  if (!campaign) {
+    res.status(403).json({ error: 'Campanha não encontrada ou sem acesso.', code: 'CAMPAIGN_NOT_FOUND' });
+    return;
+  }
+  (req as RequestWithAuth).allowedCampaignId = campaignId;
+  next();
+}
+
+/** Listagem de perfis de uma campanha (paginação + filtros iguais à busca principal). */
+app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    if (!handles || handles.length === 0) {
+      res.status(404).json({ error: 'Campanha não encontrada ou sem perfis' });
+      return;
+    }
+    const query = buildCampaignProfilesQuery(req);
+    let contextItems: ProfileListItem[] | null = getCachedCampaignContext(campaignId);
+    if (contextItems == null) {
+      const fullResult = await searchProfiles(db, { limit: 10000, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
+      contextItems = fullResult.items;
+      setCachedCampaignContext(campaignId, contextItems);
+    }
+    const result = await searchProfiles(db, query, { initialItems: contextItems });
+    res.json({ total: result.total, items: result.items, facets: result.facets });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Perfil de um influenciador dentro de uma campanha. Só retorna dados se o perfil estiver na campanha. */
+app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
+    if (!handle) {
+      res.status(400).json({ error: 'Handle inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    if (!handles || handles.length === 0) {
+      res.status(404).json({ error: 'Campanha não encontrada ou sem perfis' });
+      return;
+    }
+    const handleInCampaign = handles.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle);
+    if (!handleInCampaign) {
+      res.status(404).json({ error: 'Perfil não encontrado nesta campanha', handle: req.params.handle });
+      return;
+    }
+    const value = await db.get('profile', handle);
+    if (value == null) {
+      res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+      return;
+    }
+    const profile = value as Record<string, unknown>;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(profile);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Ativação do perfil dentro de uma campanha. Só retorna dados se o perfil estiver na campanha. */
+app.get('/api/campaigns/:id/profiles/:handle/activation', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
+    if (!handle) {
+      res.status(400).json({ error: 'Handle inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    if (!handles || handles.length === 0) {
+      res.status(404).json({ error: 'Campanha não encontrada ou sem perfis' });
+      return;
+    }
+    const handleInCampaign = handles.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle);
+    if (!handleInCampaign) {
+      res.status(404).json({ error: 'Perfil não encontrado nesta campanha', handle: req.params.handle });
+      return;
+    }
     const data = sqlite.getActivation(handle);
     if (data == null) {
       res.status(200).json({});
       return;
     }
+    if (isPricingEmpty(data.pricing as Record<string, unknown> | undefined)) {
+      try {
+        const profile = await db.loadByHandle(handle);
+        const followers = getFollowersFromProfile(profile as Record<string, unknown> | null);
+        const suggested = getSuggestedPricingFromFollowers(followers);
+        (data as { pricing?: Record<string, string> }).pricing = suggestedPricingToActivationFormat(suggested);
+      } catch (_) {
+        // ignorar
+      }
+    }
+    res.setHeader('Cache-Control', 'no-store');
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
 });
+
+/** Admin: adicionar créditos a um usuário. */
+app.post('/api/admin/users/:userId/credits', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
+  try {
+    const targetUserId = Number(req.params.userId);
+    const body = req.body as { amount?: number };
+    const amount = Number(body?.amount);
+    if (!Number.isFinite(targetUserId) || !Number.isFinite(amount) || amount <= 0) {
+      res.status(400).json({ error: 'userId e amount (número positivo) obrigatórios' });
+      return;
+    }
+    creditsCampaignsDb.addCredits(targetUserId, amount, 'admin_add', undefined);
+    const balance = creditsCampaignsDb.getBalance(targetUserId);
+    res.json({ balance, added: amount });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Dados de ativação do perfil. Só retorna dados completos se for o próprio influenciador ou com X-Campaign-Id. */
+app.get(
+  '/api/profiles/:handle/activation',
+  rateLimitDataApi,
+  requireProfileOrCampaign((req) => req.params.handle, { requireAuth: false }),
+  async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user || publicAtLimit(req)) {
+      res.status(200).json({ _redacted: true });
+      return;
+    }
+    const handle = normalizeHandle(req.params.handle);
+    const data = sqlite.getActivation(handle);
+    if (data == null) {
+      res.status(200).json({});
+      return;
+    }
+    if (isPricingEmpty(data.pricing as Record<string, unknown> | undefined)) {
+      try {
+        const profile = await db.loadByHandle(handle);
+        const followers = getFollowersFromProfile(profile as Record<string, unknown> | null);
+        const suggested = getSuggestedPricingFromFollowers(followers);
+        (data as { pricing?: Record<string, string> }).pricing = suggestedPricingToActivationFormat(suggested);
+      } catch (_) {
+        // Se não conseguir carregar perfil (ex.: handle não existe no RocksDB), mantém pricing vazio
+      }
+    }
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+  }
+);
 
 app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Response) => {
   try {
@@ -1984,47 +2644,52 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
   }
 });
 
-/** Perfil por handle. Para público que atingiu limite diário, retorna versão redigida (sem contagens, bio, etc.) para evitar vazamento. */
-app.get('/api/profiles/:handle', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
-  try {
-    const handle = (req.params.handle || '').replace(/^@/, '');
-    const key = handle.toLowerCase();
-    const value = await db.get('profile', key);
-    if (value == null) {
-      res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
-      return;
+/** Perfil por handle. Só retorna dados se for o próprio influenciador ou com X-Campaign-Id de campanha que contenha o perfil. */
+app.get(
+  '/api/profiles/:handle',
+  rateLimitDataApi,
+  requireProfileOrCampaign((req) => req.params.handle),
+  async (req: RequestWithAuth, res: Response) => {
+    try {
+      const handle = normalizeHandle(req.params.handle);
+      const value = await db.get('profile', handle);
+      if (value == null) {
+        res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+        return;
+      }
+      const profile = value as Record<string, unknown>;
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(profile);
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
-    const profile = value as Record<string, unknown>;
-    res.setHeader('Cache-Control', 'no-store');
-    if (!req.user || publicAtLimit(req)) {
-      res.json(redactProfile(profile));
-      return;
-    }
-    res.json(profile);
-  } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
-});
+);
 
-/** Resumo do perfil com engagement e BI (métricas derivadas 100% do Instagram). Retorna profile + engagement + bi. */
-app.get('/api/profiles/:handle/summary', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
-  try {
-    const handle = (req.params.handle || '').replace(/^@/, '');
-    const summary = await getProfileSummary(db, handle);
-    if (summary == null) {
-      res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
-      return;
+/** Resumo do perfil com engagement e BI. Só retorna dados completos se for o próprio influenciador ou com X-Campaign-Id. */
+app.get(
+  '/api/profiles/:handle/summary',
+  rateLimitDataApi,
+  requireProfileOrCampaign((req) => req.params.handle, { requireAuth: false }),
+  async (req: RequestWithAuth, res: Response) => {
+    try {
+      const handle = normalizeHandle(req.params.handle);
+      const summary = await getProfileSummary(db, handle);
+      if (summary == null) {
+        res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      if (!req.user || publicAtLimit(req)) {
+        res.json({ profile: redactProfile(summary.profile), engagement: summary.engagement, bi: summary.bi });
+        return;
+      }
+      res.json(summary);
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
-    res.setHeader('Cache-Control', 'no-store');
-    if (!req.user || publicAtLimit(req)) {
-      res.json({ profile: redactProfile(summary.profile), engagement: summary.engagement, bi: summary.bi });
-      return;
-    }
-    res.json(summary);
-  } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
-});
+);
 
 const MEDIA_TYPES = ['post', 'reel', 'tagged', 'highlight'] as const;
 
@@ -2037,10 +2702,14 @@ function getContentTypeFromItem(key: string, value: Record<string, unknown>): st
   return 'post';
 }
 
-/** Posts/reels/marcados/highlights do perfil. type=post|reel|tagged|highlight filtra; sem type retorna todos. */
-app.get('/api/posts', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+/** Posts/reels/marcados/highlights do perfil. Requer profile=@handle (próprio ou com X-Campaign-Id). */
+app.get(
+  '/api/posts',
+  rateLimitDataApi,
+  requireProfileOrCampaign((req) => req.query.profile as string | undefined, { requireHandle: true, requireAuth: false }),
+  async (req: RequestWithAuth, res: Response) => {
   try {
-    const profileFilter = (req.query.profile as string)?.toLowerCase().replace(/^@/, '');
+    const profileFilter = normalizeHandle(req.query.profile as string | undefined);
     const typeFilter = (req.query.type as string)?.toLowerCase();
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Number(req.query.offset) || 0;
@@ -2073,7 +2742,8 @@ app.get('/api/posts', rateLimitDataApi, async (req: RequestWithAuth, res: Respon
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
-});
+  }
+);
 
 /** Projetos para influenciadores (estilo Workana). Lista e detalhe: usuário logado. Cadastrar: adm. Candidatar: influenciador. */
 app.get('/api/projects', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {

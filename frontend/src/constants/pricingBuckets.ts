@@ -16,64 +16,34 @@ export const PRICE_BUCKETS = [
 
 export type PriceBucketValue = (typeof PRICE_BUCKETS)[number]['value']
 
-export const PRICING_FIELD_KEYS = [
-  'post_unique',
-  'stories',
-  'package_monthly',
-  'commission',
-  'permuta',
-  'image_rights',
-  'content_delivery',
-  'launch',
-] as const
+export const PRICING_FIELD_KEYS = ['feed', 'reels', 'story', 'destaque'] as const
 
 export type PricingFieldKey = (typeof PRICING_FIELD_KEYS)[number]
 
 /** Títulos curtos e didáticos para o influenciador. */
 export const PRICING_FIELD_LABELS: Record<PricingFieldKey, string> = {
-  post_unique: '1️⃣ Post no feed',
-  stories: '2️⃣ Stories',
-  package_monthly: '3️⃣ Pacote mensal',
-  commission: '4️⃣ Comissão / afiliado',
-  permuta: '5️⃣ Permuta',
-  image_rights: '6️⃣ Uso da sua imagem',
-  content_delivery: '7️⃣ Entrega de conteúdo (sem postar)',
-  launch: '8️⃣ Lançamento / campanha',
+  feed: 'Valor por Feed',
+  reels: 'Valor por Reels',
+  story: 'Valor por story',
+  destaque: 'Valor por Destaque',
 }
 
 /** Descrições didáticas: o que é o formato e o que a faixa de valor representa. */
 export const PRICING_FIELD_DESCRIPTIONS: Record<PricingFieldKey, string> = {
-  post_unique:
-    'Um único post no feed (foto ou vídeo) que fica permanente. A faixa indica quanto você cobra por um post desse tipo.',
-  stories:
-    'Conteúdo em stories que some em 24h (divulgação rápida, bastidores, enquetes). A faixa indica quanto você cobra por story.',
-  package_monthly:
-    'Pacote com no mínimo 10 posts ou stories por mês. A faixa indica quanto você cobra por mês por esse pacote.',
-  commission:
-    'Parceria em que você ganha por venda (link, cupom). A faixa é o valor mínimo do negócio em que você aceita esse tipo de parceria.',
-  permuta:
-    'Troca por produto ou serviço, sem dinheiro. A faixa indica o valor equivalente do que você costuma aceitar em troca (ex.: produto de até R$ 500).',
-  image_rights:
-    'Marca usa sua foto/vídeo em site, anúncio ou embalagem (você não posta). A faixa indica quanto você cobra pelos direitos de uso.',
-  content_delivery:
-    'Você produz o conteúdo e entrega para a marca publicar no canal dela (não aparece no seu feed). A faixa indica quanto você cobra pela entrega.',
-  launch:
-    'Campanha com vários formatos em período curto (lançamento, data especial). A faixa indica quanto você cobra pelo conjunto da campanha.',
+  feed: 'Um único post no feed (foto ou vídeo) que fica permanente. A faixa indica quanto você cobra por um post desse tipo.',
+  reels: 'Vídeo curto (Reels) no feed. A faixa indica quanto você cobra por um reel.',
+  story: 'Conteúdo em stories que some em 24h. A faixa indica quanto você cobra por story.',
+  destaque: 'Conteúdo que fica nos destaques do perfil. A faixa indica quanto você cobra por destaque.',
 }
 
 /**
- * Multiplicador em relação ao "post no feed" (base = 1 post).
- * Garante que cada sugestão esteja de acordo com a regra/descrição do formato.
+ * Multiplicador em relação ao "feed" (base = 1).
  */
 const FORMAT_MULTIPLIER: Record<PricingFieldKey, number> = {
-  post_unique: 1, // 1 post = base
-  stories: 0.25, // 1 story = 1/4 do valor de 1 post
-  package_monthly: 10, // 10 posts por mês = 10x o valor de 1 post
-  commission: 1, // valor mínimo do negócio = pelo menos o valor de 1 post
-  permuta: 0.8, // valor equivalente em produto/serviço (em geral um pouco abaixo do post)
-  image_rights: 0.5, // direitos de uso (uso em outros canais) ≈ metade do post
-  content_delivery: 0.6, // entrega sem postar ≈ 60% do valor de 1 post
-  launch: 3, // campanha (vários formatos) ≈ 3x o valor de 1 post
+  feed: 1,
+  reels: 1.2,
+  story: 0.25,
+  destaque: 0.5,
 }
 
 /** Valor base sugerido por post (em reais) a partir de seguidores. Conservador, começa baixo. */

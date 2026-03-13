@@ -1,0 +1,239 @@
+/* Dashboard de campanhas – colorido e vibrante */
+.my-campaigns-page {
+  position: relative;
+  z-index: 1;
+  max-width: 1120px;
+  margin: 0 auto;
+  border-radius: var(--app-card-radius);
+}
+
+.my-campaigns-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.my-campaigns-title {
+  margin: 0 !important;
+  color: var(--app-primary) !important;
+}
+
+.my-campaigns-error {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.my-campaigns-loading {
+  text-align: center;
+  padding: 48px;
+}
+
+/* Barra de resumo: responsiva, quebra linha em telas pequenas */
+.my-campaigns-summary {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 16px 24px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--app-border-light);
+  width: 100%;
+  background: linear-gradient(90deg, rgba(104, 39, 143, 0.06), rgba(232, 186, 0, 0.05), rgba(34, 197, 94, 0.05));
+  border-radius: 12px;
+}
+
+.my-campaigns-summary .ant-statistic {
+  min-width: 72px;
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+.my-campaigns-summary .ant-statistic-title .anticon {
+  margin-right: 3px;
+  color: var(--app-primary);
+}
+
+.my-campaigns-summary .ant-statistic-title {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+  margin-bottom: 2px;
+}
+
+.my-campaigns-summary .ant-statistic-content {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--app-primary);
+}
+
+.my-campaigns-summary .ant-statistic-content-suffix {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--app-text-secondary);
+  margin-left: 2px;
+}
+
+.my-campaign-card-perfis {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.my-campaign-card-perfis .anticon {
+  color: var(--app-primary);
+  opacity: 0.9;
+}
+
+.my-campaigns-grid {
+  margin-top: 0;
+}
+
+.my-campaign-card {
+  cursor: pointer;
+  height: 100%;
+  border-radius: var(--app-card-radius);
+  box-shadow: var(--app-card-shadow);
+  border-left: 4px solid var(--app-primary);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(104, 39, 143, 0.03));
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-left-color 0.2s ease;
+}
+
+.my-campaign-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(104, 39, 143, 0.15);
+  border-left-color: var(--app-accent);
+}
+
+.my-campaign-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.my-campaign-card-name {
+  margin: 0 !important;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px !important;
+  color: var(--app-primary) !important;
+}
+
+.my-campaign-card-stats {
+  margin-bottom: 12px;
+}
+
+.my-campaign-card-engagement {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--app-border-light);
+  background: linear-gradient(135deg, rgba(104, 39, 143, 0.04), transparent);
+  margin-left: -16px;
+  margin-right: -16px;
+  padding-left: 16px;
+  padding-right: 16px;
+  padding-bottom: 8px;
+  border-radius: 0 0 var(--app-card-radius) var(--app-card-radius);
+}
+
+.my-campaign-card-engagement-label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--app-primary);
+}
+
+.my-campaign-metric {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: help;
+}
+
+.my-campaign-metric .anticon {
+  opacity: 1;
+  color: var(--app-primary);
+}
+
+.my-campaign-card-stats .ant-statistic-title {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+  margin-bottom: 2px;
+}
+
+.my-campaign-card-stats .ant-statistic-title .anticon {
+  margin-right: 4px;
+  color: var(--app-primary);
+  opacity: 0.9;
+}
+
+.my-campaign-card-date {
+  display: flex;
+  align-items: center;
+  padding-top: 4px;
+}
+
+.my-campaign-card-footer {
+  padding-top: 12px;
+  border-top: 1px solid var(--app-border-light);
+}
+
+.my-campaign-card-footer .ant-typography {
+  font-size: 12px;
+}
+
+.my-campaign-card-footer.my-campaign-card-footer-hashtags .ant-typography {
+  color: var(--app-primary);
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .my-campaigns-page {
+    padding: 16px;
+  }
+
+  .my-campaigns-summary {
+    gap: 12px 20px;
+    padding: 10px 12px;
+  }
+
+  .my-campaigns-summary .ant-statistic {
+    min-width: 64px;
+  }
+
+  .my-campaigns-summary .ant-statistic-title {
+    font-size: 10px;
+  }
+
+  .my-campaigns-summary .ant-statistic-content {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .my-campaigns-summary {
+    gap: 10px 16px;
+  }
+
+  .my-campaigns-summary .ant-statistic {
+    min-width: 56px;
+  }
+
+  .my-campaigns-summary .ant-statistic-title {
+    font-size: 10px;
+  }
+
+  .my-campaigns-summary .ant-statistic-content {
+    font-size: 12px;
+  }
+}

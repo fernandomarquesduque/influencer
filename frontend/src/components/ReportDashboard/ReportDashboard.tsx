@@ -72,7 +72,7 @@ export default function ReportDashboard({
     { icon: <EnvironmentOutlined />, label: 'Localização (cidade, estado, bairro) quando preenchida', count: countWithLocation, has: hasLocation },
     { icon: <UserOutlined />, label: 'Tipo de perfil (pessoal, criador, empresa)', count: total, has: true },
     { icon: <UnlockOutlined />, label: 'Dados de ativação salvos (preços, tipo de conteúdo)', count: activatedCount, has: hasActivation },
-    { icon: <DollarOutlined />, label: 'Faixas de preço (post único, stories, pacote, comissão, permuta, etc.)', count: countWithPricing, has: !!hasPricing },
+    { icon: <DollarOutlined />, label: 'Faixas de preço (Feed, Reels, story, Destaque)', count: countWithPricing, has: !!hasPricing },
     { icon: <ContactsOutlined />, label: 'Contatos e redes (WhatsApp, TikTok, Facebook, etc.)', count: countWithSocial, has: !!hasSocial },
   ]
 
