@@ -117,28 +117,51 @@ export default function Layout() {
         <>
           <div
             style={{
-              background: 'var(--app-header-bg)',
-              borderBottom: '1px solid var(--app-header-border)',
-              position: 'sticky',
-              top: 0,
-              zIndex: 100,
-              boxShadow: 'var(--app-shadow-sm)',
+              background: user ? 'var(--app-header-bg)' : 'transparent',
+              borderBottom: user ? '1px solid var(--app-header-border)' : 'none',
+              ...(user ? { position: 'sticky' as const, top: 0, zIndex: 100 } : {}),
+              boxShadow: user ? 'var(--app-shadow-sm)' : 'none',
             }}
           >
             <header
               style={{
-                height: isMobile ? 64 : 56,
-                padding: isMobile ? '0 56px 0 12px' : '0 24px',
+                height: user ? (isMobile ? 64 : 56) : 'auto',
+                padding: user
+                  ? (isMobile ? '0 56px 0 12px' : '0 24px')
+                  : (isMobile ? '24px 12px' : '28px 24px'),
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: isMobile ? 'flex-start' : 'space-between',
+                justifyContent: user ? (isMobile ? 'flex-start' : 'space-between') : 'center',
                 position: isMobile ? 'relative' : undefined,
                 maxWidth: 1200,
                 margin: '0 auto',
                 width: '100%',
               }}
             >
-              {isMobile ? (
+              {!user ? (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => { window.location.href = '/' }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/' } }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    textDecoration: 'none',
+                    color: 'var(--app-header-text)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Logo
+                    size="large"
+                    height={isMobile ? 40 : 36}
+                    variant="default"
+                    style={{ flexShrink: 0 }}
+                    alt="Relatório de Influencer"
+                  />
+                </div>
+              ) : isMobile ? (
                 <>
                   <div
                     role="button"
@@ -209,6 +232,7 @@ export default function Layout() {
                               ...(isAssinante ? [{ key: 'home', label: 'Início', onClick: () => navigate('/app') }] : []),
                               ...(isAdm ? [{ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') }] : []),
                               ...(user ? [{ key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') }] : []),
+                              ...(user ? [{ key: 'payments', label: 'Meus pagamentos', onClick: () => navigate('/app/payments') }] : []),
                               ...(isAdm ? [{ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') }] : []),
                               ...(isAdm ? [{ key: 'users', label: 'Usuários', onClick: () => navigate('/admin/users') }] : []),
                               ...(isAdm ? [{ key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') }] : []),
@@ -325,102 +349,109 @@ export default function Layout() {
               )}
             </header>
           </div>
-          <Drawer
-            title="Menu"
-            placement="right"
-            open={mobileMenuOpen}
-            onClose={() => setMobileMenuOpen(false)}
-            styles={{ body: { paddingTop: 8 } }}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Tema</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {THEME_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => { setTheme(opt.value); setMobileMenuOpen(false) }}
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: 8,
-                        border: theme === opt.value ? '2px solid var(--app-primary)' : '1px solid var(--app-border)',
-                        background: theme === opt.value ? 'var(--app-primary-muted)' : 'var(--app-card-bg)',
-                        color: 'var(--app-text)',
-                        fontSize: 13,
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+          {user && (
+            <Drawer
+              title="Menu"
+              placement="right"
+              open={mobileMenuOpen}
+              onClose={() => setMobileMenuOpen(false)}
+              styles={{ body: { paddingTop: 8 } }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Tema</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {THEME_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => { setTheme(opt.value); setMobileMenuOpen(false) }}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          border: theme === opt.value ? '2px solid var(--app-primary)' : '1px solid var(--app-border)',
+                          background: theme === opt.value ? 'var(--app-primary-muted)' : 'var(--app-card-bg)',
+                          color: 'var(--app-text)',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                {user && (
+                  <>
+                    {(user.scope === 'influencer' || isAdm) && (
+                      <Link to="/app/projects" style={{ ...drawerLinkStyle, ...(isActive('/app/projects') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                        Projetos
+                      </Link>
+                    )}
+                    {(isAdm || isAssinante) && (
+                      <Link to="/app" style={{ ...drawerLinkStyle, ...(isActive('/app') && location.pathname === '/app' ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                        Início
+                      </Link>
+                    )}
+                    {user && (
+                      <Link to="/app/payments" style={{ ...drawerLinkStyle, ...(isActive('/app/payments') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                        Meus pagamentos
+                      </Link>
+                    )}
+                    {user && (
+                      <Link to="/app/campaigns" style={{ ...drawerLinkStyle, ...(isActive('/app/campaigns') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                        Minhas campanhas
+                      </Link>
+                    )}
+                    {myHandle && (
+                      <Link to={myProfilePath} style={{ ...drawerLinkStyle, ...(isActive(myProfilePath) ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                        Meu perfil
+                      </Link>
+                    )}
+                    {isAdm && (
+                      <Link to="/admin/users" style={{ ...drawerLinkStyle, ...(isActive('/admin') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                        Usuários
+                      </Link>
+                    )}
+                    {isAdm && (
+                      <Link to="/app/bulk-message" style={{ ...drawerLinkStyle, ...(isActive('/app/bulk-message') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                        Disparo em massa
+                      </Link>
+                    )}
+                  </>
+                )}
+                {user ? (
+                  <Button type="text" block style={{ textAlign: 'left', padding: '12px 0', fontSize: 14, color: 'var(--app-text-secondary)' }} onClick={() => { setMobileMenuOpen(false); logout(); }}>
+                    Sair
+                  </Button>
+                ) : (
+                  <Link to="/login" style={{ ...drawerLinkStyle, display: 'block' }} onClick={() => setMobileMenuOpen(false)}>
+                    Entrar
+                  </Link>
+                )}
+                {!user && (
+                  <Link
+                    to="/app/create"
+                    style={{
+                      ...drawerLinkStyle,
+                      background: 'var(--app-primary)',
+                      color: 'var(--brand-white)',
+                      padding: '12px 16px',
+                      borderRadius: 12,
+                      fontWeight: 600,
+                      display: 'block',
+                      textAlign: 'center',
+                      marginTop: 8,
+                    }}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Cadastrar conta
+                  </Link>
+                )}
               </div>
-              {user && (
-                <>
-                  {(user.scope === 'influencer' || isAdm) && (
-                    <Link to="/app/projects" style={{ ...drawerLinkStyle, ...(isActive('/app/projects') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
-                      Projetos
-                    </Link>
-                  )}
-                  {(isAdm || isAssinante) && (
-                    <Link to="/app" style={{ ...drawerLinkStyle, ...(isActive('/app') && location.pathname === '/app' ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
-                      Início
-                    </Link>
-                  )}
-                  {user && (
-                    <Link to="/app/campaigns" style={{ ...drawerLinkStyle, ...(isActive('/app/campaigns') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
-                      Minhas campanhas
-                    </Link>
-                  )}
-                  {myHandle && (
-                    <Link to={myProfilePath} style={{ ...drawerLinkStyle, ...(isActive(myProfilePath) ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
-                      Meu perfil
-                    </Link>
-                  )}
-                  {isAdm && (
-                    <Link to="/admin/users" style={{ ...drawerLinkStyle, ...(isActive('/admin') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
-                      Usuários
-                    </Link>
-                  )}
-                  {isAdm && (
-                    <Link to="/app/bulk-message" style={{ ...drawerLinkStyle, ...(isActive('/app/bulk-message') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
-                      Disparo em massa
-                    </Link>
-                  )}
-                </>
-              )}
-              {user ? (
-                <Button type="text" block style={{ textAlign: 'left', padding: '12px 0', fontSize: 14, color: 'var(--app-text-secondary)' }} onClick={() => { setMobileMenuOpen(false); logout(); }}>
-                  Sair
-                </Button>
-              ) : (
-                <Link to="/login" style={{ ...drawerLinkStyle, display: 'block' }} onClick={() => setMobileMenuOpen(false)}>
-                  Entrar
-                </Link>
-              )}
-              {!user && (
-                <Link
-                  to="/app/create"
-                  style={{
-                    ...drawerLinkStyle,
-                    background: 'var(--app-primary)',
-                    color: 'var(--brand-white)',
-                    padding: '12px 16px',
-                    borderRadius: 12,
-                    fontWeight: 600,
-                    display: 'block',
-                    textAlign: 'center',
-                    marginTop: 8,
-                  }}
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  Cadastrar conta
-                </Link>
-              )}
-            </div>
-          </Drawer>
+            </Drawer>
+          )}
         </>
       )}
       <Content className="app-layout-content" style={{ overflow: 'visible' }}>

@@ -165,11 +165,6 @@ export default function ReportDashboard({
                 <Text strong className="report-dashboard-preview-handle">
                   {getDisplayFirstName(item)}
                 </Text>
-                {item.followers_count != null && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {formatNumber(item.followers_count)} seguidores
-                  </Text>
-                )}
               </div>
             ))}
           </div>

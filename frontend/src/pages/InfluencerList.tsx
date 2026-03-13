@@ -172,7 +172,7 @@ export default function InfluencerList() {
     const res = await fetchProfilesSearch(
       {
         ...query,
-        limit: 1,
+        limit: 0,
         offset: 0,
         sort: 'relevance_desc',
       },
@@ -214,9 +214,9 @@ export default function InfluencerList() {
 
   const fullQueryFromUrl = hasMandatoryFilters
     ? (() => {
-        const { hasMandatory: _hm, ...rest } = parsedUrl
-        return { ...rest, limit: PAGE_SIZE, offset: rest.offset ?? 0, sort: (rest.sort as ProfilesSort) ?? 'relevance_desc' }
-      })()
+      const { hasMandatory: _hm, ...rest } = parsedUrl
+      return { ...rest, limit: PAGE_SIZE, offset: rest.offset ?? 0, sort: (rest.sort as ProfilesSort) ?? 'relevance_desc' }
+    })()
     : null
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -241,7 +241,7 @@ export default function InfluencerList() {
   const [wizardInitialFacets, setWizardInitialFacets] = useState<ProfilesSearchFacets | null>(null)
   useEffect(() => {
     if (!hasMandatoryFilters) {
-      fetchProfilesSearch({ limit: 1, offset: 0, sort: 'engagement_desc' })
+      fetchProfilesSearch({ limit: 0, offset: 0, sort: 'engagement_desc' })
         .then((res) => setWizardInitialFacets(res.facets ?? null))
         .catch(() => setWizardInitialFacets(null))
     } else {
@@ -538,22 +538,22 @@ export default function InfluencerList() {
 
   if (!hasMandatoryFilters) {
     return (
-      <div style={{ padding: '24px 0' }}>
+      <div>
         <SearchWizard
           initialFacets={wizardInitialFacets}
           initialSearchTerm={parsedUrl.q ?? ''}
           initialFilters={
             (parsedUrl.q || parsedUrl.categories?.length)
               ? {
-                  q: parsedUrl.q ?? undefined,
-                  categories: parsedUrl.categories?.length ? (Array.isArray(parsedUrl.categories) ? parsedUrl.categories : [parsedUrl.categories]) : undefined,
-                  minFollowers: parsedUrl.minFollowers,
-                  maxFollowers: parsedUrl.maxFollowers,
-                  engagementRateBuckets: parsedUrl.engagementRateBuckets,
-                  excludePrivate: parsedUrl.excludePrivate,
-                  accountTypeFilter: parsedUrl.accountTypeFilter,
-                  activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
-                }
+                q: parsedUrl.q ?? undefined,
+                categories: parsedUrl.categories?.length ? (Array.isArray(parsedUrl.categories) ? parsedUrl.categories : [parsedUrl.categories]) : undefined,
+                minFollowers: parsedUrl.minFollowers,
+                maxFollowers: parsedUrl.maxFollowers,
+                engagementRateBuckets: parsedUrl.engagementRateBuckets,
+                excludePrivate: parsedUrl.excludePrivate,
+                accountTypeFilter: parsedUrl.accountTypeFilter,
+                activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
+              }
               : undefined
           }
           onSearchTermChange={handleWizardSearchTermChange}
@@ -569,7 +569,7 @@ export default function InfluencerList() {
 
   if (showDashboard) {
     return (
-      <div style={{ padding: '24px 0', position: 'relative', minHeight: 320 }}>
+      <div style={{ position: 'relative', minHeight: 320 }}>
         {loading && (
           <div
             style={{

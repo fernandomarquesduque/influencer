@@ -3,13 +3,14 @@
  * Pode ser usado na página /app/checkout ou dentro de um modal.
  */
 import { useState, useMemo, useEffect } from 'react'
-import { Card, Typography, Button, Spin, Alert, Result, Slider, InputNumber } from 'antd'
-import { ShoppingCartOutlined, DollarOutlined } from '@ant-design/icons'
+import { Link } from 'react-router-dom'
+import { Card, Typography, Button, Spin, Alert, Result, Slider, InputNumber, Space } from 'antd'
+import { DollarOutlined, CreditCardOutlined } from '@ant-design/icons'
 import { useAuth } from '../../contexts/AuthContext'
 import { useCredits } from '../../contexts/CreditsContext'
 import { createCampaign, adminAddCredits, type ProfilesSearchQuery } from '../../api'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 const CREDITS_PER_INFLUENCER = 1
 const MIN_PROFILES = 1
@@ -21,6 +22,8 @@ export interface CheckoutContentProps {
   onCancel: () => void
   /** Se true, botão "Comprar mais créditos" no erro leva para a app em vez de navegar (útil no modal). */
   embed?: boolean
+  /** Callback ao clicar em "Comprar créditos" (ex.: navegar para /app/payments). Se não informado, usa Link para /app/payments. */
+  onBuyCredits?: () => void
 }
 
 export default function CheckoutContent({
@@ -29,6 +32,7 @@ export default function CheckoutContent({
   onSuccess,
   onCancel,
   embed = false,
+  onBuyCredits,
 }: CheckoutContentProps) {
   const { user, loading: authLoading, isAdm } = useAuth()
   const { balance, refreshCredits } = useCredits()
@@ -169,10 +173,25 @@ export default function CheckoutContent({
           showIcon
           style={{ marginBottom: 24 }}
           action={
-            error.includes('insuficiente') && !embed ? (
-              <Button size="small" type="primary" onClick={onCancel}>
-                Voltar
-              </Button>
+            error.includes('insuficiente') ? (
+              <Space size="small">
+                {onBuyCredits ? (
+                  <Button size="small" type="primary" icon={<CreditCardOutlined />} onClick={onBuyCredits}>
+                    Comprar créditos
+                  </Button>
+                ) : (
+                  <Link to="/app/payments">
+                    <Button size="small" type="primary" icon={<CreditCardOutlined />}>
+                      Comprar créditos
+                    </Button>
+                  </Link>
+                )}
+                {!embed && (
+                  <Button size="small" onClick={onCancel}>
+                    Voltar
+                  </Button>
+                )}
+              </Space>
             ) : null
           }
         />
@@ -208,9 +227,19 @@ export default function CheckoutContent({
       </div>
 
       {!canPurchase && !canAdminBypass && total > 0 && balance < required && (
-        <Text type="secondary" style={{ display: 'block', marginTop: 16 }}>
-          Entre em contato para adquirir mais créditos.
-        </Text>
+        <div style={{ marginTop: 16 }}>
+          {onBuyCredits ? (
+            <Button type="primary" ghost icon={<CreditCardOutlined />} onClick={onBuyCredits}>
+              Comprar créditos (PIX ou Boleto)
+            </Button>
+          ) : (
+            <Link to="/app/payments">
+              <Button type="primary" ghost icon={<CreditCardOutlined />}>
+                Comprar créditos (PIX ou Boleto)
+              </Button>
+            </Link>
+          )}
+        </div>
       )}
     </div>
   )

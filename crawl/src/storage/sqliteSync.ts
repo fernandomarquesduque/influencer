@@ -175,6 +175,40 @@ export class SqliteSync {
     this.migrateMessageTemplatesRejectHashes();
     this.migrateMessageTemplatesSendDelay();
     this.migrateDirectQueueColumns();
+    this.migrateUserFavoriteCampaignId();
+  }
+
+  private migrateUserFavoriteCampaignId(): void {
+    try {
+      this.db.exec('ALTER TABLE user_favorite ADD COLUMN campaign_id TEXT');
+    } catch (_) {
+      // Coluna já existe
+    }
+    this.migrateUserFavoriteMultipleCampaigns();
+  }
+
+  /** Permite o mesmo influencer em mais de uma campanha: PK (user_id, profile_handle, campaign_id). */
+  private migrateUserFavoriteMultipleCampaigns(): void {
+    const tableInfo = this.db.prepare("PRAGMA table_info(user_favorite)").all() as { name: string }[];
+    const hasCampaignId = tableInfo.some((c) => c.name === 'campaign_id');
+    const pkInfo = this.db.prepare("PRAGMA table_info(user_favorite)").all() as { name: string; pk: number }[];
+    const pkCols = pkInfo.filter((c) => c.pk > 0).map((c) => c.name).sort();
+    if (pkCols.length === 3 && pkCols.includes('campaign_id')) return;
+    if (!hasCampaignId) return;
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_favorite_new (
+        user_id INTEGER NOT NULL,
+        profile_handle TEXT NOT NULL,
+        campaign_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, profile_handle, campaign_id)
+      );
+      INSERT OR IGNORE INTO user_favorite_new (user_id, profile_handle, campaign_id, created_at)
+      SELECT user_id, profile_handle, COALESCE(NULLIF(trim(campaign_id), ''), ''), created_at FROM user_favorite;
+      DROP TABLE user_favorite;
+      ALTER TABLE user_favorite_new RENAME TO user_favorite;
+      CREATE INDEX IF NOT EXISTS idx_user_favorite_user ON user_favorite(user_id);
+    `);
   }
 
   private migrateMessageTemplatesRejectHashes(): void {
@@ -296,33 +330,53 @@ export class SqliteSync {
     this.db.prepare('DELETE FROM profile_activation WHERE profile_handle = ?').run(handle);
   }
 
-  /** Lista handles favoritados pelo usuário. */
+  /** Lista handles favoritados pelo usuário (distintos; um handle pode estar em várias campanhas). */
   getFavoriteHandles(userId: number): string[] {
-    const rows = this.db.prepare('SELECT profile_handle FROM user_favorite WHERE user_id = ? ORDER BY created_at DESC')
-      .all(userId) as { profile_handle: string }[];
+    const rows = this.db.prepare(
+      'SELECT DISTINCT profile_handle FROM user_favorite WHERE user_id = ?'
+    ).all(userId) as { profile_handle: string }[];
     return rows.map((r) => r.profile_handle);
   }
 
-  /** Adiciona favorito (idempotente). */
-  addFavorite(userId: number, profileHandle: string): void {
+  /** Lista favoritos: um mesmo handle pode aparecer várias vezes (uma por campanha). */
+  getFavorites(userId: number): { profile_handle: string; campaign_id: string | null }[] {
+    const rows = this.db.prepare(
+      'SELECT profile_handle, campaign_id FROM user_favorite WHERE user_id = ? ORDER BY created_at DESC'
+    ).all(userId) as { profile_handle: string; campaign_id: string }[];
+    return rows.map((r) => ({
+      profile_handle: r.profile_handle,
+      campaign_id: r.campaign_id && r.campaign_id.trim() !== '' ? r.campaign_id : null,
+    }));
+  }
+
+  /** Adiciona favorito (idempotente por user+handle+campaign). O mesmo influencer pode estar em várias campanhas. */
+  addFavorite(userId: number, profileHandle: string, campaignId?: string | null): void {
     const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
     if (!handle) return;
+    const cid = campaignId?.trim() ? campaignId.trim() : '';
     this.db.prepare(
-      'INSERT OR IGNORE INTO user_favorite (user_id, profile_handle) VALUES (?, ?)'
-    ).run(userId, handle);
+      `INSERT INTO user_favorite (user_id, profile_handle, campaign_id) VALUES (?, ?, ?)
+       ON CONFLICT(user_id, profile_handle, campaign_id) DO NOTHING`
+    ).run(userId, handle, cid);
   }
 
-  /** Remove favorito. */
-  removeFavorite(userId: number, profileHandle: string): void {
+  /** Remove favorito. Se campaignId for informado, remove só essa (handle, campanha); senão remove todas as entradas do handle. */
+  removeFavorite(userId: number, profileHandle: string, campaignId?: string | null): void {
     const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
-    this.db.prepare('DELETE FROM user_favorite WHERE user_id = ? AND profile_handle = ?').run(userId, handle);
+    if (!handle) return;
+    const cid = campaignId?.trim() ? campaignId.trim() : null;
+    if (cid !== null) {
+      this.db.prepare('DELETE FROM user_favorite WHERE user_id = ? AND profile_handle = ? AND campaign_id = ?').run(userId, handle, cid);
+    } else {
+      this.db.prepare('DELETE FROM user_favorite WHERE user_id = ? AND profile_handle = ?').run(userId, handle);
+    }
   }
 
-  /** Verifica se o usuário favoritou o handle. */
+  /** Verifica se o usuário favoritou o handle (em qualquer campanha). */
   isFavorite(userId: number, profileHandle: string): boolean {
     const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
     const row = this.db.prepare(
-      'SELECT 1 FROM user_favorite WHERE user_id = ? AND profile_handle = ?'
+      'SELECT 1 FROM user_favorite WHERE user_id = ? AND profile_handle = ? LIMIT 1'
     ).get(userId, handle);
     return !!row;
   }

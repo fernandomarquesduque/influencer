@@ -53,6 +53,7 @@ import AuthRejected from './pages/AuthRejected'
 import MediaKit from './pages/MediaKit'
 import SendMessage from './pages/SendMessage'
 import BulkMessage from './pages/BulkMessage'
+import Payments from './pages/Payments'
 
 function RedirectInfluencerToApp() {
   const { handle } = useParams<{ handle: string }>()
@@ -79,6 +80,7 @@ export default function App() {
             <Route index element={<MyCampaigns />} />
             <Route path="campaigns/create" element={<ListAndDetailModal />} />
             <Route path="checkout" element={<Checkout />} />
+            <Route path="payments" element={<Payments />} />
             <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
             <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail requireCampaignId />} />
             <Route path="campaigns" element={<MyCampaigns />} />

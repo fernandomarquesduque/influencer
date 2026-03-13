@@ -954,7 +954,7 @@ select,
 .campaign-list-table .campaign-list-cell-border {
   border-left: 1px solid var(--app-border-light, var(--app-border));
   padding-left: 6px;
-  padding-right: 7px;
+  padding-right: 0px;
   /* +1px para compensar border-left e centralizar o texto */
 }
 

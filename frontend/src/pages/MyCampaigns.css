@@ -7,6 +7,40 @@
   border-radius: var(--app-card-radius);
 }
 
+/* Proporção 30% (favoritos) / 70% (grid de campanhas) */
+.my-campaigns-page.my-campaigns-split {
+  max-width: none;
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  align-items: flex-start;
+}
+
+.my-campaigns-split .my-campaigns-main {
+  max-width: 1120px;
+  padding-left: 20px;
+}
+
+@media (max-width: 768px) {
+  .my-campaigns-page.my-campaigns-split {
+    flex-direction: column;
+  }
+
+  .my-campaigns-split .my-campaigns-sidebar {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--app-border) !important;
+    padding-right: 0 !important;
+    padding-bottom: 16px !important;
+  }
+
+  .my-campaigns-split .my-campaigns-main {
+    padding-left: 0;
+  }
+}
+
 .my-campaigns-header {
   display: flex;
   justify-content: space-between;

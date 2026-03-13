@@ -40,6 +40,7 @@ export default function Checkout() {
       total={state.total}
       onSuccess={(campaignId) => navigate(`/app/campaigns/${campaignId}`, { replace: true })}
       onCancel={() => navigate('/app')}
+      onBuyCredits={() => navigate('/app/payments')}
     />
   )
 }

@@ -306,8 +306,93 @@ export async function fetchCredits(options?: { signal?: AbortSignal }): Promise<
   return res.json()
 }
 
-/** Lista de handles favoritados pelo usuário. */
-export async function fetchFavorites(options?: { signal?: AbortSignal }): Promise<{ handles: string[] }> {
+/** Pagamento (comprar créditos). */
+export interface PaymentItem {
+  id: string
+  asaasPaymentId: string | null
+  amountCents: number
+  creditsGranted: number
+  status: string
+  billingType: string
+  invoiceUrl: string | null
+  bankSlipUrl: string | null
+  pixCopyPaste: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MyPaymentsResponse {
+  payments: PaymentItem[]
+}
+
+export async function fetchMyPayments(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<MyPaymentsResponse> {
+  const params = new URLSearchParams()
+  if (options?.limit != null) params.set('limit', String(options.limit))
+  if (options?.offset != null) params.set('offset', String(options.offset))
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/me/payments${qs ? `?${qs}` : ''}`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao carregar pagamentos')
+  }
+  return res.json()
+}
+
+export async function fetchPayment(id: string, options?: { signal?: AbortSignal }): Promise<PaymentItem> {
+  const res = await fetch(`${API_BASE}/me/payments/${encodeURIComponent(id)}`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Pagamento não encontrado')
+  }
+  return res.json()
+}
+
+export interface CreatePaymentForCreditsResponse {
+  paymentId: string
+  asaasPaymentId: string | null
+  status: string
+  credits: number
+  amountCents: number
+  valueBrl: number
+  billingType: string
+  invoiceUrl: string | null
+  bankSlipUrl: string | null
+  pixCopyPaste: string | null
+}
+
+export async function createPaymentForCredits(
+  credits: number,
+  billingType: 'PIX' | 'BOLETO' = 'PIX',
+  options?: { signal?: AbortSignal }
+): Promise<CreatePaymentForCreditsResponse> {
+  const res = await fetch(`${API_BASE}/me/payments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ credits, billingType }),
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || 'Falha ao gerar pagamento')
+  }
+  return data as CreatePaymentForCreditsResponse
+}
+
+/** Item de favorito com nome da campanha (quando favoritado a partir de uma campanha). */
+export interface FavoriteItem {
+  handle: string
+  campaignId?: string
+  campaignName?: string
+}
+
+/** Lista de favoritos do usuário (handles + opcionalmente favorites com campaignName). */
+export async function fetchFavorites(options?: { signal?: AbortSignal }): Promise<{ handles: string[]; favorites?: FavoriteItem[] }> {
   const res = await fetch(`${API_BASE}/me/favorites`, {
     headers: { ...authHeaders() },
     signal: options?.signal,
@@ -316,13 +401,15 @@ export async function fetchFavorites(options?: { signal?: AbortSignal }): Promis
   return res.json()
 }
 
-/** Adiciona influenciador aos favoritos. */
-export async function addFavorite(handle: string): Promise<void> {
+/** Adiciona influenciador aos favoritos. campaignId opcional: campanha de onde está favoritando. */
+export async function addFavorite(handle: string, options?: { campaignId?: string | null }): Promise<void> {
   const h = handle.replace(/^@/, '').trim()
+  const body: { handle: string; campaignId?: string } = { handle: h }
+  if (options?.campaignId?.trim()) body.campaignId = options.campaignId.trim()
   const res = await fetch(`${API_BASE}/me/favorites`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ handle: h }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
@@ -330,10 +417,11 @@ export async function addFavorite(handle: string): Promise<void> {
   }
 }
 
-/** Remove influenciador dos favoritos. */
-export async function removeFavorite(handle: string): Promise<void> {
+/** Remove influenciador dos favoritos. campaignId opcional: remove só essa (handle, campanha); sem campaignId remove todas as entradas do handle. */
+export async function removeFavorite(handle: string, options?: { campaignId?: string | null }): Promise<void> {
   const h = handle.replace(/^@/, '').trim()
-  const res = await fetch(`${API_BASE}/me/favorites/${encodeURIComponent(h)}`, {
+  const qs = options?.campaignId?.trim() ? `?campaignId=${encodeURIComponent(options.campaignId.trim())}` : ''
+  const res = await fetch(`${API_BASE}/me/favorites/${encodeURIComponent(h)}${qs}`, {
     method: 'DELETE',
     headers: { ...authHeaders() },
   })
@@ -603,6 +691,28 @@ export async function fetchProfile(handle: string, options?: { campaignId?: stri
     throw Object.assign(new Error(msg), { code: 'RATE_LIMIT' })
   }
   if (!res.ok) throw new Error('Falha ao carregar perfil')
+  return res.json()
+}
+
+/** Resumo do perfil com engagement e BI. Mesmo controle de acesso que o perfil (próprio, campanha ou favorito). */
+export interface ProfileSummaryResponse {
+  profile: ProfileItem
+  engagement?: EngagementStats
+  bi?: unknown
+}
+
+export async function fetchProfileSummary(handle: string, options?: { campaignId?: string | null }): Promise<ProfileSummaryResponse | null> {
+  const h = handle.replace(/^@/, '')
+  const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}/summary`, {
+    headers: authHeadersWithCampaign(options?.campaignId),
+  })
+  if (res.status === 404) return null
+  if (res.status === 429) {
+    const err = await res.json().catch(() => ({}))
+    const msg = (err as { error?: string }).error || 'Muitas requisições. Aguarde um minuto.'
+    throw Object.assign(new Error(msg), { code: 'RATE_LIMIT' })
+  }
+  if (!res.ok) throw new Error('Falha ao carregar resumo do perfil')
   return res.json()
 }
 

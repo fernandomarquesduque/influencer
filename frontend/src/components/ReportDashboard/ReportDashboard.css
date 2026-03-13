@@ -22,7 +22,7 @@
 .report-dashboard {
   max-width: 880px;
   margin: 0 auto;
-  padding: 40px 24px 64px;
+  padding: 0px 0px;
   background: var(--report-bg);
   min-height: 100%;
 }
@@ -171,7 +171,7 @@
   padding: 8px 24px 24px;
 }
 
-.report-dashboard-includes .ant-card-body > p {
+.report-dashboard-includes .ant-card-body>p {
   margin-bottom: 20px;
   font-size: 13px;
   line-height: 1.5;

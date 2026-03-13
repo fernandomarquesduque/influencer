@@ -19,7 +19,8 @@ import {
   FileTextOutlined,
 } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
-import { fetchMyCampaigns, type MyCampaignItem, type MyCampaignStats } from '../api'
+import { fetchMyCampaigns, fetchFavorites, type MyCampaignItem, type MyCampaignStats } from '../api'
+import FavoriteProfilesList, { type FavoriteProfilesListProps } from '../components/FavoriteProfilesList'
 import './MyCampaigns.css'
 
 const { Title, Text } = Typography
@@ -65,6 +66,7 @@ export default function MyCampaigns() {
   const [campaigns, setCampaigns] = useState<MyCampaignItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [hasFavorites, setHasFavorites] = useState(false)
 
   useEffect(() => {
     if (!user) return
@@ -82,6 +84,13 @@ export default function MyCampaigns() {
     }
   }, [authLoading, user, navigate])
 
+  useEffect(() => {
+    if (!user) return
+    fetchFavorites()
+      .then((res) => setHasFavorites((res.handles?.length ?? 0) > 0))
+      .catch(() => setHasFavorites(false))
+  }, [user])
+
   if (authLoading || !user) {
     return (
       <div style={{ padding: '48px 24px', textAlign: 'center' }}>
@@ -90,8 +99,8 @@ export default function MyCampaigns() {
     )
   }
 
-  return (
-    <div className="my-campaigns-page">
+  const mainContent = (
+    <>
       <div className="my-campaigns-header">
         <Title level={3} className="my-campaigns-title">
           <FolderOpenOutlined /> Minhas campanhas
@@ -275,6 +284,19 @@ export default function MyCampaigns() {
           </Row>
         </>
       )}
+    </>
+  )
+
+  return (
+    <div className={`my-campaigns-page${hasFavorites ? ' my-campaigns-split' : ''}`}>
+      {hasFavorites && (
+        <div className="my-campaigns-sidebar" style={{ width: '30%', minWidth: 200, maxWidth: 320, borderRight: '1px solid var(--app-border)', paddingRight: 16, flexShrink: 0 }}>
+          <FavoriteProfilesList onEmpty={() => setHasFavorites(false)} />
+        </div>
+      )}
+      <div className="my-campaigns-main" style={{ flex: 1, minWidth: 0 }}>
+        {mainContent}
+      </div>
     </div>
   )
 }

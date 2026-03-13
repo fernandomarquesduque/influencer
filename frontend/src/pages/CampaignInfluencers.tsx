@@ -58,7 +58,6 @@ function campaignQueryToUrlParams(query: Partial<ProfilesSearchQuery>): Record<s
   if (query.activationFilter?.length) params.activationFilter = query.activationFilter.join(',')
   if (query.cities?.length) params.cities = query.cities.join(',')
   if (query.states?.length) params.states = query.states.join(',')
-  if (query.neighborhoods?.length) params.neighborhoods = query.neighborhoods.join(',')
   if (query.socialNetworks?.length) params.socialNetworks = query.socialNetworks.join(',')
   if (query.offset != null && query.offset > 0) params.offset = String(query.offset)
   return params
@@ -87,7 +86,6 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
     activationFilter: parseStrList(params.get('activationFilter')),
     cities: parseStrList(params.get('cities')),
     states: parseStrList(params.get('states')),
-    neighborhoods: parseStrList(params.get('neighborhoods')),
     socialNetworks: parseStrList(params.get('socialNetworks')),
     offset: params.has('offset') ? Number(params.get('offset')) : undefined,
   }
@@ -177,7 +175,7 @@ function CampaignListRow({
       style={{
         display: 'grid',
         gridTemplateColumns: LIST_GRID_COLUMNS,
-        gap: '0 8px',
+        gap: '0 2px',
         alignItems: 'center',
         padding: '4px 10px',
         minHeight: 40,
@@ -357,8 +355,8 @@ export default function CampaignInfluencers() {
       return next
     })
     try {
-      if (isFav) await removeFavorite(handle)
-      else await addFavorite(handle)
+      if (isFav) await removeFavorite(handle, campaignId ? { campaignId } : undefined)
+      else await addFavorite(handle, { campaignId: campaignId ?? undefined })
     } catch {
       setFavoriteHandles((prev) => {
         const next = new Set(prev)
@@ -568,7 +566,6 @@ export default function CampaignInfluencers() {
   const selectedActivation = (query.activationFilter ?? []) as string[]
   const selectedCities = (query.cities ?? []) as string[]
   const selectedStates = (query.states ?? []) as string[]
-  const selectedNeighborhoods = (query.neighborhoods ?? []) as string[]
   const selectedSocial = (query.socialNetworks ?? []) as string[]
   const selectedContentTypes = (query.contentTypes ?? []) as string[]
   const selectedPricingFeed = (query.pricingFeed ?? []) as number[]
@@ -587,7 +584,6 @@ export default function CampaignInfluencers() {
     selectedActivation.length > 0 ||
     selectedCities.length > 0 ||
     selectedStates.length > 0 ||
-    selectedNeighborhoods.length > 0 ||
     selectedSocial.length > 0 ||
     selectedContentTypes.length > 0 ||
     hasPricingFilter ||
@@ -858,21 +854,6 @@ export default function CampaignInfluencers() {
                   maxTagCount={1}
                 />
               )}
-              {facets?.neighborhoods && facets.neighborhoods.length > 0 && (
-                <Select
-                  mode="multiple"
-                  size="small"
-                  placeholder="Bairros"
-                  allowClear
-                  showSearch={false}
-                  optionFilterProp="label"
-                  value={selectedNeighborhoods.length ? selectedNeighborhoods : undefined}
-                  options={facets.neighborhoods.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                  onChange={(vals) => updateFilter({ neighborhoods: vals?.length ? vals : undefined })}
-                  style={{ width: 110 }}
-                  maxTagCount={1}
-                />
-              )}
               {hasActiveFilters && (
                 <Button type="text" size="small" icon={<ClearOutlined />} onClick={clearFilters} style={{ marginLeft: 2, padding: '0 4px', height: 22, fontSize: 11 }}>
                   Limpar
@@ -963,7 +944,7 @@ export default function CampaignInfluencers() {
                   style={{
                     display: 'grid',
                     gridTemplateColumns: LIST_GRID_COLUMNS,
-                    gap: '0 8px',
+                    gap: '0 2px',
                     alignItems: 'center',
                     padding: '4px 10px',
                     minHeight: 28,

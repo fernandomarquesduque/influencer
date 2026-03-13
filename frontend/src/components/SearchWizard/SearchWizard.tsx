@@ -368,8 +368,6 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       style={{
         maxWidth: 680,
         margin: '0 auto',
-        padding: '20px 24px 24px',
-        minHeight: 'calc(100vh - 100px)',
         overflow: 'visible',
         display: 'flex',
         flexDirection: 'column',
@@ -377,8 +375,8 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       }}
     >
       {/* Cada etapa em tela separada */}
-      <div style={{ textAlign: 'center', flex: 1, width: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'visible', position: 'relative' }} className="search-wizard-step">
-        <div key={step} className="search-wizard-stage" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100%', flex: 1 }}>
+      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', overflow: 'visible', position: 'relative', alignItems: 'center' }} className="search-wizard-step">
+        <div key={step} className="search-wizard-stage" style={{ display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', textAlign: 'center' }}>
           <Typography.Title level={2} style={{ marginBottom: 4, fontSize: 22, fontWeight: 600, flexShrink: 0 }}>
             {currentStep.title}
           </Typography.Title>
@@ -386,9 +384,9 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
             {currentStep.subtitle}
           </Text>
 
-          <div style={{ marginTop: 20, textAlign: 'center', width: '100%', maxWidth: 580 }}>
+          <div style={{ marginTop: 20, width: '100%', maxWidth: 580, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             {step === 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, width: '100%' }}>
                 <Input
                   placeholder="Buscar (ex: moda, fitness, viagem)"
                   value={hashtagSearchWord}
@@ -413,7 +411,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                   <Alert type="error" message={step0Error} showIcon style={{ maxWidth: 380, width: '100%' }} />
                 )}
                 {hashtagSearchWord.trim().length < 3 && !step0Error && (
-                  <Text type="secondary" style={{ fontSize: 14, lineHeight: 1.5 }}>
+                  <Text type="secondary" style={{ fontSize: 14, lineHeight: 1.5, textAlign: 'center' }}>
                     Digite pelo menos 3 caracteres e clique em Próximo para buscar.
                   </Text>
                 )}
@@ -687,7 +685,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
             )}
           </div>
 
-          {/* Progress e botões junto ao conteúdo, no meio */}
+          {/* Progress e botões */}
           <div style={{ paddingTop: 20, width: '100%', maxWidth: 580, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, flexShrink: 0 }}>
             <div className="search-wizard-progress" style={{ width: '100%', maxWidth: 400 }}>
               <Progress
@@ -698,11 +696,11 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                 strokeWidth={4}
                 style={{ borderRadius: 2 }}
               />
-              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block', textAlign: 'center', opacity: 0.8 }}>
+              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block', opacity: 0.8, textAlign: 'center' }}>
                 {step + 1} / {STEPS.length}
               </Text>
             </div>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
               {step > 0 && (
                 <Button size="middle" onClick={prevStep} style={{ borderRadius: 10, minWidth: 100, height: 40, fontSize: 15 }}>
                   Voltar

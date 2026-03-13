@@ -185,8 +185,8 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     const prev = isFavorite
     setIsFavorite(!prev)
     try {
-      if (prev) await removeFavorite(handle)
-      else await addFavorite(handle)
+      if (prev) await removeFavorite(handle, campaignId ? { campaignId } : undefined)
+      else await addFavorite(handle, { campaignId: campaignId ?? undefined })
     } catch {
       setIsFavorite(prev)
     }
