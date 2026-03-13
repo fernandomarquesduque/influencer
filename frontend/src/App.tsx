@@ -76,9 +76,25 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/premium" element={<Premium />} />
-          <Route path="search" element={<div style={{ padding: '20px 20px' }}><div style={{ paddingBottom: '30px', display: 'flex', justifyContent: 'center', padding: '24px 24px 0' }}><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /></div><ListAndDetailModal /></div>} />
+          <Route path="search" element={<div style={{ padding: '20px 20px' }}><div style={{ marginBottom: '30px', display: 'flex', justifyContent: 'center', padding: '24px 24px 0' }}><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /></div><ListAndDetailModal /></div>} />
           <Route path="/checkout" element={<><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /><CheckoutCredits /></>} />
           <Route path="/" element={<Home />} />
+
+          <Route path="/app" element={<Layout />}>
+            <Route index element={<ListAndDetailModal />} />
+            <Route path="campaigns" element={<MyCampaigns />} />
+            <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
+            <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail />} />
+            <Route path="payments" element={<Payments />} />
+            <Route path="projects" element={<Projects />} />
+            <Route path="projects/:projectId" element={<Projects />} />
+            <Route path="bulk-message" element={<BulkMessage />} />
+            <Route path="create" element={<Auth />} />
+            <Route path="create/password" element={<AuthPassword />} />
+            <Route path="influencer/:handle" element={<InfluencerDetail />} />
+            <Route path="influencer/:handle/media-kit" element={<MediaKit />} />
+            <Route path="influencer/:handle/send-message" element={<SendMessage />} />
+          </Route>
 
           <Route path="/extraction" element={<Extraction />} />
           <Route path="/extract-profile" element={<ExtractProfile />} />

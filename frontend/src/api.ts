@@ -395,6 +395,57 @@ export async function registerAndCreatePayment(
   return data as RegisterAndCreatePaymentResponse
 }
 
+/** Pagamento direto do relatório (sem créditos). Logado: query + desiredCount + billingType. Guest: + email, password, name?. */
+export interface PayForReportResponse {
+  paymentId: string
+  asaasPaymentId: string | null
+  status: string
+  desiredCount: number
+  amountCents: number
+  valueBrl: number
+  billingType: string
+  invoiceUrl: string | null
+  bankSlipUrl: string | null
+  pixCopyPaste: string | null
+  campaignId?: string
+  token?: string
+  user?: { id: number; username: string; scope: string; profile_handle: string | null }
+}
+
+export async function payForReport(
+  params: {
+    query: ProfilesSearchQuery
+    desiredCount: number
+    billingType: 'PIX' | 'BOLETO'
+    email?: string
+    password?: string
+    name?: string
+    cpfCnpj?: string
+  },
+  options?: { signal?: AbortSignal }
+): Promise<PayForReportResponse> {
+  const body: Record<string, unknown> = {
+    query: params.query,
+    desiredCount: params.desiredCount,
+    billingType: params.billingType,
+  }
+  if (params.email != null) body.email = params.email
+  if (params.password != null) body.password = params.password
+  if (params.name != null) body.name = params.name
+  if (params.cpfCnpj != null) body.cpfCnpj = params.cpfCnpj
+  const res = await fetch(`${API_BASE}/checkout/pay-for-report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || 'Falha ao gerar pagamento')
+  }
+  return data as PayForReportResponse
+}
+
 export async function createPaymentForCredits(
   credits: number,
   billingType: 'PIX' | 'BOLETO' = 'PIX',
@@ -1285,6 +1336,22 @@ export async function saveProfileActivation(handle: string, data: Omit<ProfileAc
   if (!res.ok) throw new Error('Falha ao salvar ativação')
   const out = await res.json()
   return out && typeof out === 'object' ? out : {}
+}
+
+/** Cadastro público como Assinante (sem pagamento). Retorna token + user. */
+export async function registerAssinanteApi(params: { email: string; password: string; name?: string }): Promise<{ token: string; user: { id: number; username: string; scope: string; profile_handle: string | null } }> {
+  const res = await fetch(`${API_BASE}/auth/register-assinante`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: params.email.trim().toLowerCase(),
+      password: params.password,
+      name: params.name?.trim() || undefined,
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao cadastrar')
+  return data as { token: string; user: { id: number; username: string; scope: string; profile_handle: string | null } }
 }
 
 /** Admin: tipos de usuário (scope). */

@@ -36,6 +36,12 @@ export interface PaymentRow {
   pix_copy_paste: string | null;
   created_at: string;
   updated_at: string;
+  /** Pagamento de relatório: query da busca (JSON). */
+  report_query?: string | null;
+  /** Pagamento de relatório: quantidade de influenciadores. */
+  report_desired_count?: number | null;
+  /** ID da campanha criada no checkout (status pendente até confirmação). */
+  campaign_id?: string | null;
 }
 
 export class PaymentsDb {
@@ -70,6 +76,16 @@ export class PaymentsDb {
       CREATE INDEX IF NOT EXISTS idx_payment_user ON payment(user_id);
       CREATE INDEX IF NOT EXISTS idx_payment_asaas_id ON payment(asaas_payment_id);
     `);
+    const cols = this.db.prepare('PRAGMA table_info(payment)').all() as { name: string }[];
+    if (cols.length > 0 && !cols.some((c) => c.name === 'report_query')) {
+      this.db.exec('ALTER TABLE payment ADD COLUMN report_query TEXT');
+    }
+    if (cols.length > 0 && !cols.some((c) => c.name === 'report_desired_count')) {
+      this.db.exec('ALTER TABLE payment ADD COLUMN report_desired_count INTEGER');
+    }
+    if (cols.length > 0 && !cols.some((c) => c.name === 'campaign_id')) {
+      this.db.exec('ALTER TABLE payment ADD COLUMN campaign_id TEXT');
+    }
   }
 
   createPayment(params: {
@@ -83,14 +99,19 @@ export class PaymentsDb {
     invoiceUrl?: string | null;
     bankSlipUrl?: string | null;
     pixCopyPaste?: string | null;
+    reportQuery?: string | null;
+    reportDesiredCount?: number | null;
+    campaignId?: string | null;
   }): string {
     const id = crypto.randomUUID();
+    const hasReport = params.reportDesiredCount != null && params.reportDesiredCount > 0;
     this.db
       .prepare(
         `INSERT INTO payment (
           id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
-          status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+          status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
+          report_query, report_desired_count, campaign_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?)`
       )
       .run(
         id,
@@ -103,7 +124,10 @@ export class PaymentsDb {
         params.billingType,
         params.invoiceUrl ?? null,
         params.bankSlipUrl ?? null,
-        params.pixCopyPaste ?? null
+        params.pixCopyPaste ?? null,
+        hasReport ? (params.reportQuery ?? null) : null,
+        hasReport ? params.reportDesiredCount : null,
+        params.campaignId ?? null
       );
     return id;
   }
@@ -112,7 +136,8 @@ export class PaymentsDb {
     const row = this.db
       .prepare(
         `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
-                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at
+                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
+                report_query, report_desired_count, campaign_id
          FROM payment WHERE id = ?`
       )
       .get(id) as PaymentRow | undefined;
@@ -125,7 +150,8 @@ export class PaymentsDb {
     const row = this.db
       .prepare(
         `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
-                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at
+                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
+                report_query, report_desired_count, campaign_id
          FROM payment WHERE asaas_payment_id = ?`
       )
       .get(asaasPaymentId) as PaymentRow | undefined;

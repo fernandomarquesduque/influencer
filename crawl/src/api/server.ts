@@ -28,7 +28,7 @@ import {
 } from '../crawl/extractSingleProfile.js';
 import { searchProfiles, getProfileSummary, scheduleSearchCacheRewarm, warmSearchCache, type ProfilesSearchQuery, type ProfileListItem } from './profilesSearch.js';
 import { CreditsCampaignsDb, isCampaignIdGuid } from '../storage/creditsCampaignsDb.js';
-import { PaymentsDb } from '../storage/paymentsDb.js';
+import { PaymentsDb, type PaymentRow } from '../storage/paymentsDb.js';
 import * as asaas from '../asaas/client.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { loginWithCredentials } from '../instagramClient/login.js';
@@ -283,7 +283,7 @@ async function runOneExtract(
       if (isLoginOrChallengeSignal(result)) {
         await client.closeContext();
       }
-      if (fromExtractProfileApi && result.success && page) await page.close().catch(() => {});
+      if (fromExtractProfileApi && result.success && page) await page.close().catch(() => { });
       return result;
     }
     if (result.success && result.saved
@@ -293,7 +293,7 @@ async function runOneExtract(
       enqueueSelectionMessageIfAllowed(result.handle);
     }
     if (fromExtractProfileApi && result.success && page) {
-      runSupplementReelsAndTagged(page, handle, db).catch(() => {});
+      runSupplementReelsAndTagged(page, handle, db).catch(() => { });
     }
     if (!options?.skipCount) apiExtractProfileCount++;
     return result;
@@ -335,7 +335,7 @@ async function runOneExtract(
     }
 
     console.error(`[API] runOneExtract @${handle} exceção:`, msg, stack ?? '');
-    if (fromExtractProfileApi && result?.success && page) await page.close().catch(() => {});
+    if (fromExtractProfileApi && result?.success && page) await page.close().catch(() => { });
     return { success: false, handle, error: msg };
   }
 }
@@ -373,7 +373,7 @@ async function runSupplementReelsAndTagged(
       err instanceof Error ? err.message : String(err)
     );
   } finally {
-    await page.close().catch(() => {});
+    await page.close().catch(() => { });
   }
 }
 
@@ -1651,8 +1651,6 @@ app.get('/api/profiles', rateLimitDataApi, requireCampaignIdHeader, async (req: 
 });
 
 const PUBLIC_PAGE_SIZE = 12;
-/** Limite diário de buscas para anônimos e usuários public (proteção contra extração em massa). Configurável por API_PUBLIC_MAX_REQUESTS_PER_DAY. */
-const PUBLIC_MAX_REQUESTS_PER_DAY = Number(process.env.API_PUBLIC_MAX_REQUESTS_PER_DAY) || 50;
 /** Requisições por minuto por IP (anônimo). Configurável por API_RATE_LIMIT_PER_MIN_IP. */
 const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 30;
 /** Requisições por minuto por usuário (public/influencer). Configurável por API_RATE_LIMIT_PER_MIN_USER. */
@@ -1686,22 +1684,6 @@ function rateLimitDataApi(req: RequestWithAuth, res: Response, next: () => void)
     return;
   }
   next();
-}
-
-/** Retorna true se o visitante é público (ou anônimo) e já atingiu o limite de requisições/dia — nesse caso as APIs de perfil/ativação/posts devem retornar dados redigidos. Admin e assinante nunca sofrem limite. */
-function publicAtLimit(req: RequestWithAuth): boolean {
-  if (req.user?.scope === 'adm' || req.user?.scope === 'assinante') {
-    return false;
-  }
-  if (req.user?.scope === 'public') {
-    return authDb.countPublicRequestsToday(Number(req.user.sub)) >= PUBLIC_MAX_REQUESTS_PER_DAY;
-  }
-  if (!req.user) {
-    const ip = (req.ip || (req as unknown as { socket?: { remoteAddress?: string } }).socket?.remoteAddress || 'unknown').toString();
-    const ipHash = crypto.createHash('sha256').update(ip + (process.env.ANON_SEARCH_SALT || '')).digest('hex');
-    return authDb.countAnonymousRequestsToday(ipHash) >= PUBLIC_MAX_REQUESTS_PER_DAY;
-  }
-  return false;
 }
 
 /** Reduz perfil para versão sem dados sensíveis (público que atingiu limite). Mantém apenas bio e dados mínimos de exibição (foto, nome, handle). */
@@ -1776,7 +1758,7 @@ function redactSearchResultForAnonymous(result: { total: number; items: Record<s
   return { total: result.total, items, facets };
 }
 
-/** Listagem de perfis com filtros avançados e engajamento. Público (anônimo ou scope public): 1ª página, até PUBLIC_MAX_REQUESTS_PER_DAY requisições/dia.
+/** Listagem de perfis com filtros avançados e engajamento. Público (anônimo ou scope public): 1ª página.
  * Com limit=0 retorna só quantitativos (total + facets), sem autenticação nem X-Campaign-Id. */
 app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
@@ -1795,24 +1777,6 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       if (Number(req.query.offset) > 0) {
         res.status(403).json({ error: 'Assinantes podem ver mais páginas. Seja premium.', code: 'PUBLIC_PAGE_LIMIT' });
         return;
-      }
-      if (req.user?.scope === 'public') {
-        const userId = Number(req.user.sub);
-        const count = authDb.countPublicRequestsToday(userId);
-        if (count >= PUBLIC_MAX_REQUESTS_PER_DAY) {
-          res.status(403).json({ error: `Limite de ${PUBLIC_MAX_REQUESTS_PER_DAY} buscas por dia. Seja assinante para buscar sem limite.`, code: 'PUBLIC_SEARCH_LIMIT' });
-          return;
-        }
-        authDb.addPublicRequest(userId);
-      } else if (!req.user) {
-        const ip = (req.ip || req.socket?.remoteAddress || 'unknown').toString();
-        const ipHash = crypto.createHash('sha256').update(ip + (process.env.ANON_SEARCH_SALT || '')).digest('hex');
-        const count = authDb.countAnonymousRequestsToday(ipHash);
-        if (count >= PUBLIC_MAX_REQUESTS_PER_DAY) {
-          res.status(403).json({ error: `Limite de ${PUBLIC_MAX_REQUESTS_PER_DAY} buscas por dia. Faça login ou seja assinante para mais.`, code: 'PUBLIC_SEARCH_LIMIT' });
-          return;
-        }
-        authDb.addAnonymousRequest(ipHash);
       }
     }
 
@@ -1898,7 +1862,7 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       res.json(result);
       return;
     }
-    if (!req.user || publicAtLimit(req)) {
+    if (!req.user) {
       res.json(redactSearchResultForAnonymous(result as unknown as { total: number; items: Record<string, unknown>[]; facets: Record<string, unknown> }));
       return;
     }
@@ -1982,6 +1946,51 @@ app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
       pixCopyPaste: row.pix_copy_paste,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Cadastro público: cria usuário como Assinante (sem pagamento). Body: email, password, name?. Retorna token + user. */
+app.post('/api/auth/register-assinante', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as { email?: string; password?: string; name?: string };
+    const email = (body?.email ?? '').toString().trim().toLowerCase();
+    const password = (body?.password ?? '').toString();
+    const name = (body?.name ?? '').toString().trim() || email;
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ error: 'E-mail é obrigatório e deve ser válido' });
+      return;
+    }
+    if (!password || password.length < 6) {
+      res.status(400).json({ error: 'A senha deve ter no mínimo 6 caracteres' });
+      return;
+    }
+    if (authDb.getByUsername(email)) {
+      res.status(409).json({ error: 'Já existe uma conta com este e-mail. Faça login.' });
+      return;
+    }
+    const passwordHash = hashPassword(password);
+    const userId = authDb.createUser(email, passwordHash, 'assinante' as AuthScope, null);
+    const authUser = authDb.getById(userId);
+    if (!authUser) {
+      res.status(500).json({ error: 'Erro ao criar conta' });
+      return;
+    }
+    const secret = getJwtSecret();
+    const token = signJwt(
+      { sub: String(userId), username: authUser.username, scope: 'assinante' as AuthScope, profile_handle: authUser.profile_handle ?? undefined },
+      secret
+    );
+    res.status(201).json({
+      token,
+      user: {
+        id: authUser.id,
+        username: authUser.username,
+        scope: authUser.scope,
+        profile_handle: authUser.profile_handle,
+      },
     });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -2111,6 +2120,276 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
   }
 });
 
+/** Cria campanha a partir da query e quantidade. Retorna campaignId ou null se nenhum handle. */
+async function createReportCampaignFromQuery(
+  query: ProfilesSearchQuery,
+  reportCount: number,
+  userId: number
+): Promise<string | null> {
+  const allHandles: string[] = [];
+  const pageSize = 100;
+  let offset = 0;
+  for (; ;) {
+    if (allHandles.length >= reportCount) break;
+    const q: ProfilesSearchQuery = { ...query, limit: pageSize, offset };
+    const result = await searchProfiles(db, q);
+    for (const item of result.items) {
+      if (item.handle) {
+        allHandles.push(item.handle);
+        if (allHandles.length >= reportCount) break;
+      }
+    }
+    if (result.items.length < pageSize) break;
+    offset += pageSize;
+    if (offset >= result.total) break;
+  }
+  const finalHandles = allHandles.slice(0, reportCount);
+  if (finalHandles.length === 0) return null;
+  return creditsCampaignsDb.createCampaign(userId, finalHandles, 0, query.q?.trim() || 'Relatório');
+}
+
+/** Pagamento direto do relatório (sem créditos). Guest: body { email, name?, query, desiredCount, billingType } — senha opcional (gera automática se omitida). Logado: auth + body { query, desiredCount, billingType }. Cria campanha com status pendente na hora. */
+app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!asaas.isAsaasConfigured()) {
+      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      return;
+    }
+    const body = req.body as { email?: string; password?: string; name?: string; cpfCnpj?: string; query?: ProfilesSearchQuery; desiredCount?: number; billingType?: string };
+    const query = body?.query;
+    const desiredCount = body?.desiredCount != null ? Math.min(10000, Math.max(1, Number(body.desiredCount))) : NaN;
+    if (!query || typeof query !== 'object' || !Number.isFinite(desiredCount)) {
+      res.status(400).json({ error: 'Envie query (filtros da busca) e desiredCount (1 a 10000)' });
+      return;
+    }
+    const billingType = (body?.billingType ?? 'PIX').toUpperCase() === 'BOLETO' ? 'BOLETO' : 'PIX';
+
+    let userId: number | undefined;
+    let authUser: { id: number; username: string; scope: string; profile_handle: string | null } | undefined;
+    let token: string | undefined;
+
+    if (!req.user) {
+      const email = (body?.email ?? '').toString().trim().toLowerCase();
+      const name = (body?.name ?? '').toString().trim() || email;
+      if (!email || !email.includes('@')) {
+        res.status(400).json({ error: 'Informe um e-mail válido.' });
+        return;
+      }
+      const existingUser = authDb.getByUsername(email);
+      if (existingUser) {
+        const password = (body?.password ?? '').toString();
+        if (!password || !verifyPassword(password, existingUser.password_hash)) {
+          res.status(409).json({ error: 'Já existe uma conta com este e-mail. Faça login para continuar.' });
+          return;
+        }
+        userId = existingUser.id;
+        authUser = authDb.getById(userId)!;
+        token = signJwt(
+          { sub: String(userId), username: authUser.username, scope: authUser.scope as AuthScope, profile_handle: authUser.profile_handle ?? undefined },
+          getJwtSecret()
+        );
+      } else {
+        const cpfCnpj = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
+        if (cpfCnpj.length !== 11 && cpfCnpj.length !== 14) {
+          res.status(400).json({ error: 'Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.' });
+          return;
+        }
+        const displayNameGuest = name;
+        const tempExternalRef = `guest_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        let asaasCustomerId: string | null = null;
+        const existingTemp = await asaas.findCustomersByExternalReference(tempExternalRef);
+        if (existingTemp?.data && existingTemp.data.length > 0 && existingTemp.data[0].id) {
+          asaasCustomerId = existingTemp.data[0].id;
+        } else {
+          const created = await asaas.createCustomer({
+            name: displayNameGuest,
+            email,
+            cpfCnpj,
+            externalReference: tempExternalRef,
+          });
+          asaasCustomerId = created?.id ?? null;
+        }
+        if (!asaasCustomerId) {
+          res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+          return;
+        }
+        const amountCentsGuest = desiredCount * CREDITS_PRICE_CENTS;
+        const valueBrlGuest = amountCentsGuest / 100;
+        const dueDateGuest = new Date();
+        dueDateGuest.setDate(dueDateGuest.getDate() + (billingType === 'BOLETO' ? 3 : 1));
+        const dueStrGuest = dueDateGuest.toISOString().slice(0, 10);
+        const paymentPayloadGuest = {
+          customer: asaasCustomerId,
+          value: valueBrlGuest,
+          dueDate: dueStrGuest,
+          billingType: billingType as 'PIX' | 'BOLETO',
+          description: `Relatório - ${desiredCount} influenciadores`,
+          externalReference: `report_pending_${Date.now()}`,
+        };
+        const asaasPayment = await asaas.createPayment(paymentPayloadGuest);
+        const asaasPaymentId = asaasPayment?.id ?? null;
+        const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
+        const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
+        const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+        const hasPaymentUrl = Boolean(bankSlipUrl || pixCopyPaste);
+        if (!hasPaymentUrl || !asaasPaymentId) {
+          res.status(502).json({ error: 'Não foi possível gerar o pagamento. Tente novamente.' });
+          return;
+        }
+        const password = (body?.password ?? '').toString();
+        const passwordToUse = password.length >= 6 ? password : crypto.randomBytes(16).toString('hex');
+        const passwordHash = hashPassword(passwordToUse);
+        try {
+          userId = authDb.createUser(email, passwordHash, 'assinante' as AuthScope, null);
+        } catch (createErr: unknown) {
+          const msg = createErr instanceof Error ? createErr.message : String(createErr);
+          if (msg.includes('UNIQUE') && msg.includes('username')) {
+            res.status(409).json({ error: 'Já existe uma conta com este e-mail. Faça login para continuar.' });
+            return;
+          }
+          throw createErr;
+        }
+        authUser = authDb.getById(userId)!;
+        token = signJwt(
+          { sub: String(userId), username: authUser.username, scope: 'assinante' as AuthScope, profile_handle: authUser.profile_handle ?? undefined },
+          getJwtSecret()
+        );
+        const campaignIdGuest = await createReportCampaignFromQuery(query, desiredCount, userId);
+        const paymentId = paymentsDb.createPayment({
+          userId,
+          asaasPaymentId,
+          asaasCustomerId,
+          amountCents: amountCentsGuest,
+          creditsGranted: 0,
+          status: 'PENDING',
+          billingType: billingType as 'PIX' | 'BOLETO',
+          invoiceUrl,
+          bankSlipUrl,
+          pixCopyPaste,
+          reportQuery: JSON.stringify(query),
+          reportDesiredCount: desiredCount,
+          campaignId: campaignIdGuest ?? undefined,
+        });
+        const out: Record<string, unknown> = {
+          paymentId,
+          asaasPaymentId,
+          status: 'PENDING',
+          desiredCount,
+          amountCents: amountCentsGuest,
+          valueBrl: valueBrlGuest,
+          billingType,
+          invoiceUrl,
+          bankSlipUrl,
+          pixCopyPaste,
+        };
+        if (campaignIdGuest) out.campaignId = campaignIdGuest;
+        if (token) {
+          out.token = token;
+          out.user = { id: authUser.id, username: authUser.username, scope: authUser.scope, profile_handle: authUser.profile_handle };
+        }
+        res.status(201).json(out);
+        return;
+      }
+    }
+    if (req.user) {
+      userId = Number(req.user.sub);
+      authUser = authDb.getById(userId)!;
+      if (!authUser) {
+        res.status(401).json({ error: 'Usuário não encontrado' });
+        return;
+      }
+    }
+
+    if (userId == null || !authUser) {
+      res.status(500).json({ error: 'Não foi possível identificar o usuário' });
+      return;
+    }
+
+    const amountCents = desiredCount * CREDITS_PRICE_CENTS;
+    const valueBrl = amountCents / 100;
+    const displayName = req.user
+      ? (authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username)
+      : ((body?.name ?? '').toString().trim() || authUser.username);
+    const email = authUser.username.includes('@') ? authUser.username : `user${userId}@payments.influencer.local`;
+    const externalRef = `user_${userId}`;
+
+    let asaasCustomerId: string | null = null;
+    const existingCustomer = await asaas.findCustomersByExternalReference(externalRef);
+    if (existingCustomer?.data && existingCustomer.data.length > 0 && existingCustomer.data[0].id) {
+      asaasCustomerId = existingCustomer.data[0].id;
+    } else {
+      const cpfCnpjOpt = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
+      const created = await asaas.createCustomer({
+        name: displayName,
+        email,
+        externalReference: externalRef,
+        ...(cpfCnpjOpt.length === 11 || cpfCnpjOpt.length === 14 ? { cpfCnpj: cpfCnpjOpt } : {}),
+      });
+      asaasCustomerId = created?.id ?? null;
+    }
+    if (!asaasCustomerId) {
+      res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+      return;
+    }
+
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + (billingType === 'BOLETO' ? 3 : 1));
+    const dueStr = dueDate.toISOString().slice(0, 10);
+
+    const paymentPayload = {
+      customer: asaasCustomerId,
+      value: valueBrl,
+      dueDate: dueStr,
+      billingType: billingType as 'PIX' | 'BOLETO',
+      description: `Relatório - ${desiredCount} influenciadores`,
+      externalReference: `report_${userId}_${Date.now()}`,
+    };
+    const asaasPayment = await asaas.createPayment(paymentPayload);
+    const asaasPaymentId = asaasPayment?.id ?? null;
+    const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
+    const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
+    const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+
+    const campaignIdReport = await createReportCampaignFromQuery(query, desiredCount, userId);
+    const paymentId = paymentsDb.createPayment({
+      userId,
+      asaasPaymentId,
+      asaasCustomerId,
+      amountCents,
+      creditsGranted: 0,
+      status: 'PENDING',
+      billingType: billingType as 'PIX' | 'BOLETO',
+      invoiceUrl,
+      bankSlipUrl,
+      pixCopyPaste,
+      reportQuery: JSON.stringify(query),
+      reportDesiredCount: desiredCount,
+      campaignId: campaignIdReport ?? undefined,
+    });
+
+    const out: Record<string, unknown> = {
+      paymentId,
+      asaasPaymentId,
+      status: 'PENDING',
+      desiredCount,
+      amountCents,
+      valueBrl,
+      billingType,
+      invoiceUrl,
+      bankSlipUrl,
+      pixCopyPaste,
+    };
+    if (campaignIdReport) out.campaignId = campaignIdReport;
+    if (token) {
+      out.token = token;
+      out.user = { id: authUser.id, username: authUser.username, scope: authUser.scope, profile_handle: authUser.profile_handle };
+    }
+    res.status(201).json(out);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 /** Cria pagamento para comprar créditos (PIX ou BOLETO via Asaas). */
 app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
   try {
@@ -2235,7 +2514,22 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
       confirmedStatus === 'RECEIVED_IN_CASH';
     if (isPaid && row.status === 'PENDING') {
       paymentsDb.updateStatusByAsaasId(asaasId, 'CONFIRMED');
-      creditsCampaignsDb.addCredits(row.user_id, row.credits_granted, 'payment', row.id);
+      const reportCount = row.report_desired_count;
+      const reportQueryStr = row.report_query;
+      const existingCampaignId = (row as PaymentRow & { campaign_id?: string | null }).campaign_id;
+      if (reportCount != null && reportCount > 0 && reportQueryStr && !existingCampaignId) {
+        try {
+          await createReportCampaignFromQuery(
+            JSON.parse(reportQueryStr) as ProfilesSearchQuery,
+            reportCount,
+            row.user_id
+          );
+        } catch (e) {
+          console.error('[payments/webhook] report campaign create', e);
+        }
+      } else if (!reportQueryStr || reportCount == null || reportCount <= 0) {
+        creditsCampaignsDb.addCredits(row.user_id, row.credits_granted, 'payment', row.id);
+      }
     }
     res.status(200).json({ received: true });
   } catch (e) {
@@ -2472,7 +2766,7 @@ app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: R
     const allHandles: string[] = [];
     const pageSize = 100;
     let offset = 0;
-    for (;;) {
+    for (; ;) {
       if (maxHandles != null && allHandles.length >= maxHandles) break;
       const q: ProfilesSearchQuery = { ...query, limit: pageSize, offset };
       const result = await searchProfiles(db, q);
@@ -2900,31 +3194,31 @@ app.get(
   rateLimitDataApi,
   requireProfileOrCampaign((req) => req.params.handle, { requireAuth: false }),
   async (req: RequestWithAuth, res: Response) => {
-  try {
-    if (!req.user || publicAtLimit(req)) {
-      res.status(200).json({ _redacted: true });
-      return;
-    }
-    const handle = normalizeHandle(req.params.handle);
-    const data = sqlite.getActivation(handle);
-    if (data == null) {
-      res.status(200).json({});
-      return;
-    }
-    if (isPricingEmpty(data.pricing as Record<string, unknown> | undefined)) {
-      try {
-        const profile = await db.loadByHandle(handle);
-        const followers = getFollowersFromProfile(profile as Record<string, unknown> | null);
-        const suggested = getSuggestedPricingFromFollowers(followers);
-        (data as { pricing?: Record<string, string> }).pricing = suggestedPricingToActivationFormat(suggested);
-      } catch (_) {
-        // Se não conseguir carregar perfil (ex.: handle não existe no RocksDB), mantém pricing vazio
+    try {
+      if (!req.user) {
+        res.status(200).json({ _redacted: true });
+        return;
       }
+      const handle = normalizeHandle(req.params.handle);
+      const data = sqlite.getActivation(handle);
+      if (data == null) {
+        res.status(200).json({});
+        return;
+      }
+      if (isPricingEmpty(data.pricing as Record<string, unknown> | undefined)) {
+        try {
+          const profile = await db.loadByHandle(handle);
+          const followers = getFollowersFromProfile(profile as Record<string, unknown> | null);
+          const suggested = getSuggestedPricingFromFollowers(followers);
+          (data as { pricing?: Record<string, string> }).pricing = suggestedPricingToActivationFormat(suggested);
+        } catch (_) {
+          // Se não conseguir carregar perfil (ex.: handle não existe no RocksDB), mantém pricing vazio
+        }
+      }
+      res.json(data);
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
-  }
   }
 );
 
@@ -3066,7 +3360,7 @@ app.get(
         return;
       }
       res.setHeader('Cache-Control', 'no-store');
-      if (!req.user || publicAtLimit(req)) {
+      if (!req.user) {
         res.json({ profile: redactProfile(summary.profile), engagement: summary.engagement, bi: summary.bi });
         return;
       }
@@ -3094,40 +3388,40 @@ app.get(
   rateLimitDataApi,
   requireProfileOrCampaign((req) => req.query.profile as string | undefined, { requireHandle: true, requireAuth: false }),
   async (req: RequestWithAuth, res: Response) => {
-  try {
-    const profileFilter = normalizeHandle(req.query.profile as string | undefined);
-    const typeFilter = (req.query.type as string)?.toLowerCase();
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const offset = Number(req.query.offset) || 0;
-    const items = profileFilter
-      ? await db.getByBucket('post', profileFilter + ':')
-      : await db.getByBucket('post');
-    let filtered = items;
-    if (typeFilter && MEDIA_TYPES.includes(typeFilter as (typeof MEDIA_TYPES)[number])) {
-      filtered = items.filter(({ key, value }) => {
-        const v = value as Record<string, unknown>;
-        return getContentTypeFromItem(key, v) === typeFilter;
-      });
-    }
-    const total = filtered.length;
-    const slice = filtered.slice(offset, offset + limit).map(({ key, value }) => {
-      const item = value as Record<string, unknown>;
-      const post = item?.post as Record<string, unknown> | undefined;
-      const content = item?.content as Record<string, unknown> | undefined;
-      if (post && post.taken_at == null && content?.caption_created_at != null && typeof content.caption_created_at === 'number') {
-        item.post = { ...post, taken_at: content.caption_created_at };
+    try {
+      const profileFilter = normalizeHandle(req.query.profile as string | undefined);
+      const typeFilter = (req.query.type as string)?.toLowerCase();
+      const limit = Math.min(Number(req.query.limit) || 50, 200);
+      const offset = Number(req.query.offset) || 0;
+      const items = profileFilter
+        ? await db.getByBucket('post', profileFilter + ':')
+        : await db.getByBucket('post');
+      let filtered = items;
+      if (typeFilter && MEDIA_TYPES.includes(typeFilter as (typeof MEDIA_TYPES)[number])) {
+        filtered = items.filter(({ key, value }) => {
+          const v = value as Record<string, unknown>;
+          return getContentTypeFromItem(key, v) === typeFilter;
+        });
       }
-      if (!item.content_type) item.content_type = getContentTypeFromItem(key, item);
-      return { key, ...item };
-    });
-    if (!req.user || publicAtLimit(req)) {
-      res.json({ total, items: redactPostsItems(slice), _redacted: true });
-      return;
+      const total = filtered.length;
+      const slice = filtered.slice(offset, offset + limit).map(({ key, value }) => {
+        const item = value as Record<string, unknown>;
+        const post = item?.post as Record<string, unknown> | undefined;
+        const content = item?.content as Record<string, unknown> | undefined;
+        if (post && post.taken_at == null && content?.caption_created_at != null && typeof content.caption_created_at === 'number') {
+          item.post = { ...post, taken_at: content.caption_created_at };
+        }
+        if (!item.content_type) item.content_type = getContentTypeFromItem(key, item);
+        return { key, ...item };
+      });
+      if (!req.user) {
+        res.json({ total, items: redactPostsItems(slice), _redacted: true });
+        return;
+      }
+      res.json({ total, items: slice });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
-    res.json({ total, items: slice });
-  } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
-  }
   }
 );
 

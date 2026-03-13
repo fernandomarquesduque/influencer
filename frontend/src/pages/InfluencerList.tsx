@@ -616,6 +616,10 @@ export default function InfluencerList() {
               setCheckoutModalOpen(false)
               navigate(`/app/campaigns/${campaignId}`)
             }}
+            onPaymentCreated={() => {
+              setCheckoutModalOpen(false)
+              navigate('/app/campaigns', { replace: true })
+            }}
             onCancel={() => setCheckoutModalOpen(false)}
           />
         </Modal>

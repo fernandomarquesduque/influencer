@@ -73,8 +73,13 @@ export default function Layout() {
 
   useEffect(() => {
     if (user?.scope === 'assinante') {
-      const allowed = location.pathname === '/app' || location.pathname === '/app/'
-      if (!allowed) navigate('/app', { replace: true })
+      const base = '/app'
+      const path = location.pathname
+      const allowed =
+        path === base || path === `${base}/` ||
+        path.startsWith(`${base}/campaigns`) ||
+        path.startsWith(`${base}/payments`)
+      if (!allowed) navigate(base, { replace: true })
     }
   }, [user?.scope, location.pathname, navigate])
 
@@ -259,27 +264,34 @@ export default function Layout() {
                             title="Conta"
                             aria-label="Abrir menu da conta"
                           >
-                            {!isMobile && (
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  alignItems: 'flex-end',
-                                  justifyContent: 'center',
-                                  lineHeight: 1.2,
-                                  marginBottom: 2,
-                                }}
-                              >
-                                <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--app-header-text)', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
-                                  {headerProfileName ?? user.username}
-                                </span>
-                                {myHandle && (
-                                  <span style={{ fontSize: 12, color: 'var(--app-header-text)', opacity: 0.9 }}>
-                                    @{myHandle}
+                            {!isMobile && (() => {
+                              const isEmail = user.username.includes('@')
+                              const displayName = (myHandle && headerProfileName && headerProfileName !== user.username)
+                                ? headerProfileName
+                                : (isEmail ? user.username.slice(0, user.username.indexOf('@')).replace(/^./, (c: string) => c.toUpperCase()) : (headerProfileName ?? user.username))
+                              const displaySubtext = myHandle ? `@${myHandle}` : (isEmail ? user.username : null)
+                              return (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'flex-end',
+                                    justifyContent: 'center',
+                                    lineHeight: 1.3,
+                                    marginBottom: 2,
+                                  }}
+                                >
+                                  <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--app-header-text)', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
+                                    {displayName}
                                   </span>
-                                )}
-                              </div>
-                            )}
+                                  {displaySubtext && (
+                                    <span style={{ fontSize: 12, color: 'var(--app-header-text)', opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 140, textOverflow: 'ellipsis' }}>
+                                      {displaySubtext}
+                                    </span>
+                                  )}
+                                </div>
+                              )
+                            })()}
                             <span
                               style={{
                                 display: 'flex',

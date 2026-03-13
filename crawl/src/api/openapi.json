@@ -539,8 +539,6 @@
               "type": "string",
               "enum": [
                 "auth_user",
-                "auth_public_request",
-                "auth_anonymous_request",
                 "auth_profile_verification",
                 "profiles",
                 "post",

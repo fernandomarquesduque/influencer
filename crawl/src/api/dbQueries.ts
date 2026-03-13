@@ -12,8 +12,6 @@ const DEFAULT_PATH = './data/influencer.db';
 /** Tabelas permitidas para consulta (profiles e post ficam só no RocksDB). */
 const ALLOWED_TABLES = [
   'auth_user',
-  'auth_public_request',
-  'auth_anonymous_request',
   'auth_profile_verification',
   'profile_activation',
 ] as const;

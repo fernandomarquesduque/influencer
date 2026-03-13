@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Influencer API — SQLite",
-    "description": "Endpoints que leem ou gravam no banco **SQLite** (data/influencer.db): autenticação, ativação de perfis e admin. Tabelas: auth_user, auth_public_request, auth_anonymous_request, auth_profile_verification, profile_activation.",
+    "description": "Endpoints que leem ou gravam no banco **SQLite** (data/influencer.db): autenticação, ativação de perfis e admin. Tabelas: auth_user, auth_profile_verification, profile_activation.",
     "version": "1.0.0"
   },
   "servers": [{ "url": "http://localhost:3000", "description": "Local" }],
@@ -360,7 +360,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": ["auth_user", "auth_public_request", "auth_anonymous_request", "auth_profile_verification", "profile_activation"]
+              "enum": ["auth_user", "auth_profile_verification", "profile_activation"]
             },
             "description": "Nome da tabela"
           },

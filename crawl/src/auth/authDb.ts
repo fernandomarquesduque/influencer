@@ -61,23 +61,12 @@ export class AuthDb {
         ALTER TABLE auth_user_new RENAME TO auth_user;
       `);
     }
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS auth_public_request (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        search_date TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES auth_user(id)
-      );
-      CREATE TABLE IF NOT EXISTS auth_anonymous_request (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ip_hash TEXT NOT NULL,
-        search_date TEXT NOT NULL
-      );
-    `);
     const oldPublic = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='auth_public_search'").get();
     if (oldPublic) this.db.exec('DROP TABLE IF EXISTS auth_public_search');
     const oldAnon = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='auth_anonymous_search'").get();
     if (oldAnon) this.db.exec('DROP TABLE IF EXISTS auth_anonymous_search');
+    this.db.exec('DROP TABLE IF EXISTS auth_public_request');
+    this.db.exec('DROP TABLE IF EXISTS auth_anonymous_request');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS auth_profile_verification (
         handle TEXT NOT NULL,
@@ -101,7 +90,7 @@ export class AuthDb {
   }
 
   getByUsername(username: string): AuthUserRow | undefined {
-    const u = username.replace(/^@/, '').trim().toLowerCase();
+    const u = username.trim().toLowerCase().replace(/@/g, '');
     if (!u) return undefined;
     const row = this.db.prepare('SELECT id, username, password_hash, scope, profile_handle, created_at FROM auth_user WHERE LOWER(TRIM(REPLACE(username, \'@\', \'\'))) = ?').get(u) as AuthUserRow | undefined;
     return row;
@@ -142,7 +131,6 @@ export class AuthDb {
     if (!Number.isInteger(id) || id < 1) {
       throw new Error('deleteUser: id inválido');
     }
-    this.db.prepare('DELETE FROM auth_public_request WHERE user_id = ?').run(id);
     const result = this.db.prepare('DELETE FROM auth_user WHERE id = ?').run(id) as { changes: number };
     if (result.changes === 0) {
       throw new Error('Usuário não encontrado');
@@ -150,34 +138,6 @@ export class AuthDb {
     if (result.changes > 1) {
       throw new Error('deleteUser: esperado 1 linha removida, removidas ' + result.changes);
     }
-  }
-
-  /** Quantidade de requisições à API de busca feitas pelo usuário hoje (limite/dia definido em server: PUBLIC_MAX_REQUESTS_PER_DAY). */
-  countPublicRequestsToday(userId: number): number {
-    const today = new Date().toISOString().slice(0, 10);
-    const row = this.db.prepare(
-      'SELECT COUNT(*) as c FROM auth_public_request WHERE user_id = ? AND search_date = ?'
-    ).get(userId, today) as { c: number };
-    return row?.c ?? 0;
-  }
-
-  addPublicRequest(userId: number): void {
-    const today = new Date().toISOString().slice(0, 10);
-    this.db.prepare('INSERT INTO auth_public_request (user_id, search_date) VALUES (?, ?)').run(userId, today);
-  }
-
-  /** Quantidade de requisições à API de busca por IP hoje (limite/dia definido em server: PUBLIC_MAX_REQUESTS_PER_DAY). */
-  countAnonymousRequestsToday(ipHash: string): number {
-    const today = new Date().toISOString().slice(0, 10);
-    const row = this.db.prepare(
-      'SELECT COUNT(*) as c FROM auth_anonymous_request WHERE ip_hash = ? AND search_date = ?'
-    ).get(ipHash, today) as { c: number };
-    return row?.c ?? 0;
-  }
-
-  addAnonymousRequest(ipHash: string): void {
-    const today = new Date().toISOString().slice(0, 10);
-    this.db.prepare('INSERT INTO auth_anonymous_request (ip_hash, search_date) VALUES (?, ?)').run(ipHash, today);
   }
 
   /** Salva ou substitui código de verificação (userId null = 2FA como login, sem conta prévia). */
