@@ -2,6 +2,11 @@
 @import './theme.css';
 
 /* Base */
+html,
+body {
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -18,7 +23,8 @@ body {
   position: relative;
   min-height: calc(100vh - 56px);
   background: var(--app-bg);
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: visible;
 }
 
 .app-layout-content::before,
@@ -937,41 +943,123 @@ select,
   }
 }
 
-/* Lista compacta da campanha (modo tabela) */
-.campaign-list-row:hover {
+/* Loader full-screen do wizard enquanto busca influenciadores */
+@keyframes searchWizardLoaderSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.search-wizard-loader-overlay {
+  animation: searchWizardLoaderFade 0.3s ease-out;
+}
+
+@keyframes searchWizardLoaderFade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Lista compacta da campanha (tabela HTML) */
+.campaign-list-table .campaign-list-row:hover {
   background: var(--app-bg-hover, rgba(0, 0, 0, 0.02)) !important;
 }
 
+.campaign-list-table .campaign-list-row td {
+  border-bottom: 1px solid var(--app-border, #f0f0f0);
+  white-space: nowrap;
+}
+
+.campaign-list-table thead th {
+  white-space: nowrap;
+}
+
 .campaign-list-table .campaign-list-cell {
-  padding: 0 4px;
+  padding: 4px 6px;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  text-align: center;
 }
 
 .campaign-list-table .campaign-list-cell-border {
   border-left: 1px solid var(--app-border-light, var(--app-border));
-  padding-left: 6px;
-  padding-right: 0px;
-  /* +1px para compensar border-left e centralizar o texto */
 }
 
-.campaign-list-table .campaign-list-header .campaign-list-cell:first-child {
-  padding-left: 0;
-}
-
-.campaign-list-table .campaign-list-row>div:first-child {
-  padding: 0;
-}
-
-.campaign-list-table .campaign-list-row>div:nth-child(2) {
-  min-width: 0;
+/* Modal Comprar créditos – layout premium */
+.buy-credits-modal .ant-modal-content {
+  border-radius: 20px;
   overflow: hidden;
-  text-align: left;
+  box-shadow: 0 24px 64px rgba(104, 39, 143, 0.15);
 }
 
-.campaign-list-table .campaign-list-header>div:nth-child(2).campaign-list-cell {
-  text-align: left;
+.buy-credits-modal .ant-modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.buy-credits-modal .ant-modal-title {
+  color: var(--app-text);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.buy-credits-modal .ant-modal-body {
+  padding: 24px;
+}
+
+.buy-credits-modal .credit-pack-btn {
+  min-width: 72px;
+  height: 44px;
+  border-radius: 12px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  border: 2px solid var(--app-border);
+  background: var(--app-card-bg);
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.buy-credits-modal .credit-pack-btn:hover {
+  transform: translateY(-1px);
+  border-color: var(--app-primary);
+  color: var(--app-primary);
+}
+
+.buy-credits-modal .credit-pack-btn-selected {
+  background: linear-gradient(135deg, var(--app-primary) 0%, rgba(104, 39, 143, 0.9) 100%);
+  border-color: transparent;
+  color: #fff;
+}
+
+.buy-credits-modal .payment-option {
+  border-radius: 14px;
+  padding: 14px 16px;
+  border: 2px solid var(--app-border);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.buy-credits-modal .payment-option:hover {
+  border-color: var(--app-primary-muted);
+  background: var(--app-primary-muted);
+}
+
+.buy-credits-modal .payment-option-selected {
+  border-color: var(--app-primary);
+  background: var(--app-primary-muted);
+}
+
+.buy-credits-modal .total-highlight {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--app-primary);
+  background: linear-gradient(135deg, var(--app-primary-muted) 0%, transparent 100%);
+  padding: 12px 16px;
+  border-radius: 12px;
 }

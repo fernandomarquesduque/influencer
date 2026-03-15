@@ -147,8 +147,8 @@ export default function Layout() {
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => { window.location.href = '/' }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/' } }}
+                  onClick={() => { window.location.href = '/app' }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/app' } }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -171,8 +171,8 @@ export default function Layout() {
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => { window.location.href = '/' }}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/' } }}
+                    onClick={() => { window.location.href = '/app' }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/app' } }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -205,8 +205,8 @@ export default function Layout() {
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => { window.location.href = '/' }}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/' } }}
+                    onClick={() => { window.location.href = '/app' }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/app' } }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -234,7 +234,7 @@ export default function Layout() {
                               ...(myProfilePath
                                 ? [{ key: 'profile', label: 'Meu perfil', onClick: () => navigate(myProfilePath) }]
                                 : []),
-                              ...(isAssinante ? [{ key: 'home', label: 'Início', onClick: () => navigate('/app') }] : []),
+                              ...(isAssinante ? [{ key: 'campaigns/create', label: 'Buscar Influencer', onClick: () => navigate('/app/campaigns/create') }] : []),
                               ...(isAdm ? [{ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') }] : []),
                               ...(user ? [{ key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') }] : []),
                               ...(user ? [{ key: 'payments', label: 'Meus pagamentos', onClick: () => navigate('/app/payments') }] : []),
@@ -321,7 +321,8 @@ export default function Layout() {
                           </button>
                         </Dropdown>
                         {creditsState != null && (
-                          <span
+                          <Link
+                            to="/app/payments"
                             style={{
                               fontSize: 15,
                               fontWeight: 600,
@@ -330,11 +331,15 @@ export default function Layout() {
                               padding: '6px 12px',
                               borderRadius: 8,
                               whiteSpace: 'nowrap',
+                              textDecoration: 'none',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
                             }}
-                            title="Créditos disponíveis"
+                            title="Créditos disponíveis - clique para ver pagamentos"
                           >
                             💰 {creditsState.loading ? '...' : `${creditsState.balance} créditos`}
-                          </span>
+                          </Link>
                         )}
                       </>
                     ) : (
@@ -466,7 +471,7 @@ export default function Layout() {
           )}
         </>
       )}
-      <Content className="app-layout-content" style={{ overflow: 'visible' }}>
+      <Content className="app-layout-content" style={{ overflowX: 'hidden' }}>
         <div className="app-page">
           <Outlet />
         </div>

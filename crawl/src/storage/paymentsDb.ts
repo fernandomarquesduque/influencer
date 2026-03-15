@@ -86,6 +86,11 @@ export class PaymentsDb {
     if (cols.length > 0 && !cols.some((c) => c.name === 'campaign_id')) {
       this.db.exec('ALTER TABLE payment ADD COLUMN campaign_id TEXT');
     }
+    try {
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_payment_campaign_id ON payment(campaign_id)');
+    } catch {
+      /* ignore if exists */
+    }
   }
 
   createPayment(params: {
@@ -144,6 +149,18 @@ export class PaymentsDb {
     if (!row) return null;
     if (userId != null && row.user_id !== userId) return null;
     return row;
+  }
+
+  getByCampaignId(campaignId: string, userId: number): PaymentRow | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
+                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
+                report_query, report_desired_count, campaign_id
+         FROM payment WHERE campaign_id = ? AND user_id = ?`
+      )
+      .get(campaignId, userId) as PaymentRow | undefined;
+    return row ?? null;
   }
 
   getByAsaasPaymentId(asaasPaymentId: string): PaymentRow | null {

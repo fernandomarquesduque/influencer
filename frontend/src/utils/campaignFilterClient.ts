@@ -37,6 +37,15 @@ function matchesQuery(searchableText: string, q: string): { match: boolean; rele
   return { match: false, relevance: 0 }
 }
 
+function getSizeFromItem(item: ProfileListItem): string | null {
+  const fc = item.followers_count
+  if (fc == null || !Number.isFinite(fc)) return null
+  if (fc < 10_000) return 'nano'
+  if (fc < 50_000) return 'micro'
+  if (fc < 500_000) return 'mid'
+  return 'macro'
+}
+
 function getCostTierFromItem(item: ProfileListItem): CostTier | null {
   const fromAct = getCostTier(item.activation?.pricing as PricingData | undefined)
   if (fromAct) return fromAct.tier as CostTier
@@ -71,6 +80,8 @@ export function filterAndSortCampaignItems(
   let list = [...items]
   const q = (query.q ?? '').trim().toLowerCase()
   const costTierFilter = (query.costTierFilter ?? []).map((s) => s.toLowerCase())
+  const sizeFilter = (query.sizeFilter ?? []).map((s) => s.toLowerCase())
+  const accountTypeFilter = (query.accountTypeFilter ?? [])
   const contentTypesFilter = (query.contentTypes ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean)
   const activationFilter = (query.activationFilter ?? []).map((s) => s.toLowerCase())
   const citiesFilter = (query.cities ?? []).map((s) => s.toLowerCase())
@@ -118,6 +129,20 @@ export function filterAndSortCampaignItems(
     list = list.filter((i) => {
       const tier = getCostTierFromItem(i)
       return tier != null && tierSet.has(tier)
+    })
+  }
+  if (sizeFilter.length > 0) {
+    const sizeSet = new Set(sizeFilter)
+    list = list.filter((i) => {
+      const size = getSizeFromItem(i)
+      return size != null && sizeSet.has(size)
+    })
+  }
+  if (accountTypeFilter.length > 0) {
+    const typeSet = new Set(accountTypeFilter)
+    list = list.filter((i) => {
+      const at = (i as { account_type?: number }).account_type
+      return at != null && typeSet.has(at)
     })
   }
   if (q) {
@@ -196,6 +221,8 @@ export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearch
   const neighborhoodCount = new Map<string, number>()
   const socialCount = { whatsapp: 0, tiktok: 0, facebook: 0, linkedin: 0, twitter: 0 }
   const costTierCount = new Map<string, number>()
+  const sizeCount = new Map<string, number>()
+  const accountTypeCount = new Map<number, number>()
 
   for (const item of items) {
     if (item.activation) {
@@ -224,6 +251,12 @@ export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearch
     }
     const tier = getCostTierFromItem(item)
     if (tier) costTierCount.set(tier, (costTierCount.get(tier) ?? 0) + 1)
+    const size = getSizeFromItem(item)
+    if (size) sizeCount.set(size, (sizeCount.get(size) ?? 0) + 1)
+    const at = (item as { account_type?: number }).account_type
+    if (at != null && (at === 1 || at === 2 || at === 3)) {
+      accountTypeCount.set(at, (accountTypeCount.get(at) ?? 0) + 1)
+    }
   }
 
   const engagementRateBuckets = [
@@ -278,5 +311,16 @@ export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearch
     neighborhoods: [...neighborhoodCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     social: socialCount,
     cost_tier: [...costTierCount.entries()].filter(([, count]) => count > 0).map(([tier, count]) => ({ tier, count })).sort((a, b) => b.count - a.count),
+    size_buckets: [
+      { key: 'nano', label: 'Nano', count: sizeCount.get('nano') ?? 0 },
+      { key: 'micro', label: 'Micro', count: sizeCount.get('micro') ?? 0 },
+      { key: 'mid', label: 'Mid', count: sizeCount.get('mid') ?? 0 },
+      { key: 'macro', label: 'Macro', count: sizeCount.get('macro') ?? 0 },
+    ].filter((x) => x.count > 0),
+    account_type: [
+      { value: 1, label: 'Pessoal', count: accountTypeCount.get(1) ?? 0 },
+      { value: 2, label: 'Criador', count: accountTypeCount.get(2) ?? 0 },
+      { value: 3, label: 'Empresa', count: accountTypeCount.get(3) ?? 0 },
+    ].filter((x) => x.count > 0),
   }
 }

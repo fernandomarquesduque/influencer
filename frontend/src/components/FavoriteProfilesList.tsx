@@ -28,13 +28,17 @@ function getTierLabel(followers: number | undefined | null): string {
   return 'Macro Influencer'
 }
 
+interface CampaignRef {
+  campaignId?: string | null
+  campaignName?: string
+}
+
 interface FavoriteProfileRow {
   key: string
   handle: string
-  campaignId?: string | null
   profile: ProfileItem | null
   engagement?: { engagement_rate?: number; posts_per_week?: number }
-  campaignName?: string
+  campaigns: CampaignRef[]
 }
 
 export interface FavoriteProfilesListProps {
@@ -47,7 +51,7 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
   const [rows, setRows] = useState<FavoriteProfileRow[]>([])
   const [loading, setLoading] = useState(true)
 
-  const handleRemoveFavorite = (handle: string, campaignId: string | undefined | null, displayName: string, e: React.MouseEvent) => {
+  const handleRemoveFavorite = (handle: string, displayName: string, e: React.MouseEvent) => {
     e.stopPropagation()
     Modal.confirm({
       title: 'Remover dos favoritos',
@@ -56,9 +60,9 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
       cancelText: 'Cancelar',
       okButtonProps: { danger: true },
       onOk: () =>
-        removeFavorite(handle, { campaignId: campaignId ?? undefined }).then(() => {
+        removeFavorite(handle).then(() => {
           setRows((prev) => {
-            const next = prev.filter((r) => r.handle !== handle || r.campaignId !== campaignId)
+            const next = prev.filter((r) => r.handle !== handle)
             if (next.length === 0) onEmpty?.()
             return next
           })
@@ -89,18 +93,34 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
         ).then((profileResults) => {
           const profileByHandle = new Map<string | undefined, { profile: ProfileItem | null; engagement?: { engagement_rate?: number; posts_per_week?: number } }>()
           profileResults.forEach((r) => profileByHandle.set(r.handle, { profile: r.profile, engagement: r.engagement }))
-          const list: FavoriteProfileRow[] = favorites.map((f) => {
+          const rawRows = favorites.map((f) => {
             const h = (f.handle ?? '').toLowerCase().replace(/^@/, '').trim()
             const { profile, engagement } = profileByHandle.get(h) ?? { profile: null, engagement: undefined }
             return {
-              key: `${h}-${f.campaignId ?? ''}`,
               handle: h,
-              campaignId: f.campaignId,
               profile,
               engagement,
-              campaignName: f.campaignName,
+              campaignRef: { campaignId: f.campaignId, campaignName: f.campaignName } as CampaignRef,
             }
           })
+          const groupedByHandle = new Map<string, Omit<FavoriteProfileRow, 'key'> & { campaigns: CampaignRef[] }>()
+          rawRows.forEach((r) => {
+            const existing = groupedByHandle.get(r.handle)
+            if (existing) {
+              existing.campaigns.push(r.campaignRef)
+            } else {
+              groupedByHandle.set(r.handle, {
+                handle: r.handle,
+                profile: r.profile,
+                engagement: r.engagement,
+                campaigns: [r.campaignRef],
+              })
+            }
+          })
+          const list: FavoriteProfileRow[] = Array.from(groupedByHandle.values()).map((row) => ({
+            ...row,
+            key: row.handle,
+          }))
           setRows(list)
           setLoading(false)
         })
@@ -140,7 +160,7 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
           dataSource={rows}
           rowKey={(r) => r.key}
           style={{ flex: 1, overflow: 'auto', minHeight: 0 }}
-          renderItem={({ handle, campaignId, profile, engagement, campaignName }) => {
+          renderItem={({ handle, profile, engagement, campaigns }) => {
             const name = (profile?.full_name ?? profile?.username ?? handle) as string
             const pic = profile ? proxyImageUrl(getProfilePicUrl(profile as unknown as Record<string, unknown>)) : undefined
             const followers = profile?.followers_count ?? 0
@@ -171,21 +191,27 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                     alignItems: 'stretch',
                   }}
                 >
-                  {/* Linha superior: avatar + nome/handle + badge + coração */}
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<HeartFilled />}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleRemoveFavorite(handle, name !== handle ? `${name} (@${handle})` : `@${handle}`, e)
+                    }}
+                    style={{ position: 'absolute', top: 8, right: 8, padding: '2px 4px', minWidth: 24 }}
+                    title="Remover dos favoritos"
+                  />
+                  {/* Linha superior: (avatar + nano) + nome/handle */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, marginBottom: 6 }}>
-                    <Avatar
-                      size={40}
-                      src={pic}
-                      icon={!pic ? <UserOutlined /> : undefined}
-                      style={{ flexShrink: 0, border: '1px solid var(--app-border)' }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <Text strong ellipsis style={{ display: 'block', fontSize: 13, lineHeight: 1.25, color: 'var(--app-text)' }}>
-                        {name}
-                      </Text>
-                      <Text type="secondary" style={{ fontSize: 11 }}>@{handle}</Text>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                      <Avatar
+                        size={40}
+                        src={pic}
+                        icon={!pic ? <UserOutlined /> : undefined}
+                        style={{ border: '1px solid var(--app-border)' }}
+                      />
                       <span
                         style={{
                           fontSize: 9,
@@ -202,20 +228,21 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                         <StarFilled style={{ fontSize: 9 }} />
                         {tierLabel.replace(/\s*Influencer\s*$/i, '')}
                       </span>
-                      <Button
-                        type="text"
-                        size="small"
-                        danger
-                        icon={<HeartFilled />}
-                          onClick={(e) => handleRemoveFavorite(handle, campaignId, name !== handle ? `${name} (@${handle})` : `@${handle}`, e)}
-                        style={{ padding: '2px 4px', minWidth: 24 }}
-                        title="Remover dos favoritos"
-                      />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <Text strong ellipsis style={{ display: 'block', fontSize: 13, lineHeight: 1.25, color: 'var(--app-text)' }}>
+                        {name}
+                      </Text>
+                      <Text type="secondary" style={{ fontSize: 11 }}>@{handle}</Text>
                     </div>
                   </div>
-                  <div style={{ marginBottom: 4, fontSize: 10, color: campaignName ? 'var(--app-primary)' : 'var(--app-text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <FolderOutlined style={{ opacity: 0.9, fontSize: 10 }} />
-                    <Text ellipsis style={{ fontSize: 10 }}>{campaignName || '—'}</Text>
+                  <div style={{ marginBottom: 4, fontSize: 10, color: campaigns.some((c) => c.campaignName) ? 'var(--app-primary)' : 'var(--app-text-secondary)', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                    <FolderOutlined style={{ opacity: 0.9, fontSize: 10, flexShrink: 0 }} />
+                    <Text ellipsis style={{ fontSize: 10 }}>
+                      {campaigns.length > 0
+                        ? campaigns.map((c) => c.campaignName || '—').join(', ')
+                        : '—'}
+                    </Text>
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 10px', fontSize: 11, color: 'var(--app-text)', alignItems: 'center' }}>
                     <span>

@@ -596,6 +596,12 @@ export default function InfluencerList() {
           facets={facets}
           sampleItems={data.slice(0, 6)}
           onViewList={() => setCheckoutModalOpen(true)}
+          onBack={() => {
+            const params = queryToUrlParams(query)
+            delete params[WIZARD_DONE_PARAM]
+            delete params[LIST_VIEW_PARAM]
+            setFilterParams(params)
+          }}
           loading={loading}
         />
         <Modal

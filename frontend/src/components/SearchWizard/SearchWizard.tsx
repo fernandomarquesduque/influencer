@@ -192,6 +192,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
   const [estimateCount, setEstimateCount] = useState<number | null>(null)
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
   const [estimateLoading, setEstimateLoading] = useState(false)
+  const [nextStepLoading, setNextStepLoading] = useState(false)
   const [step0Error, setStep0Error] = useState<string | null>(null)
   const hasInitializedHashtagsRef = useRef(false)
   const searchTermSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -331,7 +332,31 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
     }
     syncUrl()
     if (step < STEPS.length - 1) {
-      setStep((s) => s + 1)
+      if (onEstimate) {
+        setNextStepLoading(true)
+        try {
+          const facetsForStep1 = facets ?? initialFacets
+          let step1AllNames: string[] | undefined
+          if (step === 1 && facetsForStep1?.categories?.length) {
+            const term = hashtagSearchWord.trim().toLowerCase()
+            const list = getStep1CategoryList(facetsForStep1, term, maxHashtags)
+            const sumList = list.reduce((s0, c) => s0 + c.count, 0)
+            const restCount = Math.max(0, (totalForQOnlyRef.current ?? estimateCount ?? 0) - sumList)
+            step1AllNames = [...list.map((c) => c.name), ...(restCount > 0 ? [NO_PERFIL_CATEGORY_KEY] : [])]
+          }
+          const query = stateToQuery(state, step1AllNames)
+          const { total, facets: nextFacets } = await onEstimate(query)
+          setEstimateCount(total)
+          setFacets(nextFacets ?? null)
+          setStep((s) => s + 1)
+        } catch {
+          // mantém na mesma etapa em erro
+        } finally {
+          setNextStepLoading(false)
+        }
+      } else {
+        setStep((s) => s + 1)
+      }
     } else finish()
   }
 
@@ -373,11 +398,6 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
     })
   }
 
-  const canAdvance = () => {
-    if (step === 0) return hashtagSearchWord.trim().length >= 3 && !estimateLoading
-    return true
-  }
-
   // Uma única busca (etapa 0) alimenta todo o funil; steps 1–5 usam facets/total dessa resposta.
 
   // Ao entrar no step 1 (hashtags): todos os itens + "No Perfil" (quando restCount > 0) vêm selecionados
@@ -387,6 +407,15 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       return
     }
   }, [step])
+
+  const isLoadingOptions = estimateLoading || nextStepLoading || (step >= 1 && !(facets ?? initialFacets))
+  const showFullScreenLoader = estimateLoading || (step >= 1 && !(facets ?? initialFacets))
+
+  const canAdvance = () => {
+    if (isLoadingOptions) return false
+    if (step === 0) return hashtagSearchWord.trim().length >= 3
+    return true
+  }
 
   return (
     <div
@@ -398,8 +427,45 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
+        position: 'relative',
       }}
     >
+      {showFullScreenLoader && (
+        <div
+          className="search-wizard-loader-overlay"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            background: 'linear-gradient(135deg, rgba(104, 39, 143, 0.06) 0%, rgba(255, 255, 255, 0.98) 50%, rgba(232, 186, 0, 0.05) 100%)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 24,
+          }}
+        >
+          <div
+            style={{
+              width: 64,
+              height: 64,
+              border: '4px solid rgba(104, 39, 143, 0.15)',
+              borderTopColor: 'var(--app-primary)',
+              borderRadius: '50%',
+              animation: 'searchWizardLoaderSpin 0.9s linear infinite',
+            }}
+          />
+          <div style={{ textAlign: 'center', maxWidth: 320 }}>
+            <Typography.Title level={3} style={{ margin: 0, fontSize: 20, fontWeight: 600, color: 'var(--app-text)' }}>
+              Buscando os melhores influenciadores para você
+            </Typography.Title>
+            <Text type="secondary" style={{ fontSize: 15, marginTop: 8, display: 'block' }}>
+              Em instantes você verá perfis incríveis que combinam com sua busca
+            </Text>
+          </div>
+        </div>
+      )}
       {/* Cada etapa em tela separada */}
       <div style={{ width: '100%', display: 'flex', flexDirection: 'column', overflow: 'visible', position: 'relative', alignItems: 'center' }} className="search-wizard-step">
         <div key={step} className="search-wizard-stage" style={{ display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', textAlign: 'center' }}>
@@ -438,7 +504,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                 )}
                 {hashtagSearchWord.trim().length < 3 && !step0Error && (
                   <Text type="secondary" style={{ fontSize: 14, lineHeight: 1.5, textAlign: 'center' }}>
-                    Digite pelo menos 3 caracteres e clique em Próximo para buscar.
+                    Digite pelo menos 3 caracteres e clique em Buscar.
                   </Text>
                 )}
               </div>
@@ -722,7 +788,7 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
               {step > 0 && (
-                <Button size="middle" onClick={prevStep} style={{ borderRadius: 10, minWidth: 100, height: 40, fontSize: 15 }}>
+                <Button size="middle" onClick={prevStep} disabled={!!isLoadingOptions} style={{ borderRadius: 10, minWidth: 100, height: 40, fontSize: 15 }}>
                   Voltar
                 </Button>
               )}
@@ -731,12 +797,12 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
                 size="middle"
                 onClick={nextStep}
                 disabled={!canAdvance()}
-                loading={step === 0 && !!estimateLoading}
+                loading={!!isLoadingOptions}
                 icon={step === STEPS.length - 1 ? <RocketOutlined /> : undefined}
                 className="search-wizard-next-btn"
                 style={{ borderRadius: 10, minWidth: 200, height: 40, fontSize: 15 }}
               >
-                {step === STEPS.length - 1 ? 'Ver resultados' : 'Próximo'}
+                {step === STEPS.length - 1 ? 'Ver resultados' : step === 0 ? 'Buscar' : 'Próximo'}
               </Button>
             </div>
           </div>

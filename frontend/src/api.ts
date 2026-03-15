@@ -188,6 +188,8 @@ export interface ProfilesSearchQuery {
   pricingDestaque?: number[]
   /** Faixa de preço: low = abaixo da média, medium = normal, high/very_high = acima da média. */
   costTierFilter?: string[]
+  /** Tamanho: nano, micro, mid, macro. */
+  sizeFilter?: string[]
   sort?: ProfilesSort
   limit?: number
   offset?: number
@@ -234,6 +236,8 @@ export interface ProfilesSearchFacets {
   }
   /** Faixa de preço (low, medium, high, very_high); só entradas com count > 0. */
   cost_tier?: { tier: string; count: number }[]
+  /** Contagem por tamanho (nano, micro, mid, macro). */
+  size_buckets?: { key: string; label: string; count: number }[]
 }
 
 export interface ProfilesSearchResponse {
@@ -412,11 +416,28 @@ export interface PayForReportResponse {
   user?: { id: number; username: string; scope: string; profile_handle: string | null }
 }
 
+/** Preview do preço do relatório (ativados R$2, não ativados R$1). */
+export async function reportPricePreview(
+  params: { query: ProfilesSearchQuery; desiredCount: number },
+  options?: { signal?: AbortSignal }
+): Promise<{ amountCents: number; valueBrl: number; activatedCount: number; notActivatedCount: number }> {
+  const res = await fetch(`${API_BASE}/checkout/report-price-preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ query: params.query, desiredCount: params.desiredCount }),
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao obter preço')
+  return data as { amountCents: number; valueBrl: number; activatedCount: number; notActivatedCount: number }
+}
+
 export async function payForReport(
   params: {
     query: ProfilesSearchQuery
     desiredCount: number
     billingType: 'PIX' | 'BOLETO'
+    expiresAt: string
     email?: string
     password?: string
     name?: string
@@ -428,6 +449,7 @@ export async function payForReport(
     query: params.query,
     desiredCount: params.desiredCount,
     billingType: params.billingType,
+    expiresAt: params.expiresAt,
   }
   if (params.email != null) body.email = params.email
   if (params.password != null) body.password = params.password
@@ -526,12 +548,12 @@ export interface CreateCampaignError {
 
 export async function createCampaign(
   query: ProfilesSearchQuery,
-  options?: { name?: string; maxHandles?: number; signal?: AbortSignal }
+  options: { expiresAt: string; name?: string; maxHandles?: number; signal?: AbortSignal }
 ): Promise<CreateCampaignResponse> {
   const res = await fetch(`${API_BASE}/campaigns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ query, name: options?.name, maxHandles: options?.maxHandles }),
+    body: JSON.stringify({ query, name: options?.name, maxHandles: options?.maxHandles, expiresAt: options?.expiresAt }),
     signal: options?.signal,
   })
   const data = await res.json().catch(() => ({}))
@@ -549,9 +571,20 @@ export async function createCampaign(
 export interface CampaignInfo {
   id: string
   name: string | null
+  description: string | null
   handlesCount: number
   credits_used: number
   created_at: string
+  expires_at: string
+  pendingPayment?: {
+    status: string
+    billingType: string
+    bankSlipUrl: string | null
+    invoiceUrl: string | null
+    pixCopyPaste: string | null
+    amountCents: number
+    valueBrl: number
+  }
 }
 
 export async function getCampaign(
@@ -574,7 +607,7 @@ export async function updateCampaignName(
   campaignId: string,
   name: string,
   options?: { signal?: AbortSignal }
-): Promise<{ ok: boolean; name: string | null }> {
+): Promise<{ ok: boolean; name: string | null; description: string | null }> {
   const res = await fetch(`${API_BASE}/campaigns/${campaignId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -584,6 +617,25 @@ export async function updateCampaignName(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error((err as { error?: string }).error || 'Falha ao atualizar nome')
+  }
+  return res.json()
+}
+
+/** Atualiza a descrição (anotações) da campanha. */
+export async function updateCampaignDescription(
+  campaignId: string,
+  description: string,
+  options?: { signal?: AbortSignal }
+): Promise<{ ok: boolean; description: string | null }> {
+  const res = await fetch(`${API_BASE}/campaigns/${campaignId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ description }),
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao salvar anotações')
   }
   return res.json()
 }
@@ -621,6 +673,16 @@ export interface MyCampaignItem {
   previewProfiles?: MyCampaignPreviewProfile[]
   /** 2 hashtags/categorias mais relevantes da campanha. */
   topHashtags?: string[]
+  /** Pagamento pendente (PIX/Boleto) para esta campanha. */
+  pendingPayment?: {
+    status: string
+    billingType: string
+    bankSlipUrl: string | null
+    invoiceUrl: string | null
+    pixCopyPaste: string | null
+    amountCents: number
+    valueBrl: number
+  }
 }
 
 export interface MyCampaignsResponse {

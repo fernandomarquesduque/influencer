@@ -17,10 +17,11 @@ import {
   RiseOutlined,
   TeamOutlined,
   FileTextOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import { fetchMyCampaigns, fetchFavorites, type MyCampaignItem, type MyCampaignStats } from '../api'
-import FavoriteProfilesList, { type FavoriteProfilesListProps } from '../components/FavoriteProfilesList'
+import FavoriteProfilesList from '../components/FavoriteProfilesList'
 import './MyCampaigns.css'
 
 const { Title, Text } = Typography
@@ -28,7 +29,7 @@ const { Title, Text } = Typography
 function formatDate(iso: string): string {
   try {
     const d = new Date(iso)
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
   } catch {
     return iso
   }
@@ -131,49 +132,6 @@ export default function MyCampaigns() {
         </Empty>
       ) : (
         <>
-          {(() => {
-            const totals = sumStats(campaigns)
-            const hasStats = (totals.totalLikes ?? 0) > 0 || (totals.totalViews ?? 0) > 0 || (totals.totalFollowers ?? 0) > 0
-            return (
-              <div className="my-campaigns-summary">
-                <Statistic title="Campanhas" value={campaigns.length} suffix="relatórios" />
-                <Statistic
-                  title="Perfis"
-                  value={campaigns.reduce((s, c) => s + c.handlesCount, 0)}
-                  formatter={(v) => formatShortNum(Number(v))}
-                />
-                {hasStats && (
-                  <>
-                    <Statistic
-                      title={<><HeartOutlined /> Total Likes</>}
-                      value={totals.totalLikes ?? 0}
-                      formatter={(v) => formatShortNum(Number(v))}
-                    />
-                    <Statistic
-                      title={<><CommentOutlined /> Total Comentários</>}
-                      value={totals.totalComments ?? 0}
-                      formatter={(v) => formatShortNum(Number(v))}
-                    />
-                    <Statistic
-                      title={<><EyeOutlined /> Total Views</>}
-                      value={totals.totalViews ?? 0}
-                      formatter={(v) => formatShortNum(Number(v))}
-                    />
-                    <Statistic
-                      title={<><TeamOutlined /> Seguidores</>}
-                      value={totals.totalFollowers ?? 0}
-                      formatter={(v) => formatShortNum(Number(v))}
-                    />
-                    <Statistic
-                      title={<><FileTextOutlined /> Posts</>}
-                      value={totals.postsCount ?? 0}
-                      formatter={(v) => formatShortNum(Number(v))}
-                    />
-                  </>
-                )}
-              </div>
-            )
-          })()}
           <Row gutter={[16, 16]} className="my-campaigns-grid">
             {campaigns.map((c) => (
               <Col xs={24} sm={12} lg={8} key={c.id}>
@@ -210,6 +168,13 @@ export default function MyCampaigns() {
                         </Text>
                       </div>
                     </Col>
+                    {c.pendingPayment && (
+                      <Col span={24}>
+                        <span className="my-campaign-card-pending-payment">
+                          <ClockCircleOutlined /> Aguardando pagamento
+                        </span>
+                      </Col>
+                    )}
                   </Row>
                   {c.stats && (c.stats.totalLikes > 0 || c.stats.totalViews > 0 || c.stats.totalFollowers > 0) && (
                     <div className="my-campaign-card-engagement">
@@ -262,7 +227,7 @@ export default function MyCampaigns() {
                         {(c.stats.avgLikes > 0 || c.stats.avgComments > 0) && (
                           <Col span={24}>
                             <Text type="secondary" style={{ fontSize: 11 }}>
-                              Média por perfil: {formatShortNum(c.stats.avgLikes)} likes · {formatShortNum(c.stats.avgComments)} comentários
+                              Média: {formatShortNum(c.stats.avgLikes)} likes · {formatShortNum(c.stats.avgComments)} comentários
                             </Text>
                           </Col>
                         )}
@@ -287,11 +252,56 @@ export default function MyCampaigns() {
     </>
   )
 
+  const showSidebar = hasFavorites || (campaigns.length > 0 && !loading)
+  const totals = campaigns.length > 0 ? sumStats(campaigns) : {}
+  const hasStats = (totals.totalLikes ?? 0) > 0 || (totals.totalViews ?? 0) > 0 || (totals.totalFollowers ?? 0) > 0
+
   return (
-    <div className={`my-campaigns-page${hasFavorites ? ' my-campaigns-split' : ''}`}>
-      {hasFavorites && (
-        <div className="my-campaigns-sidebar" style={{ width: '30%', minWidth: 200, maxWidth: 320, borderRight: '1px solid var(--app-border)', paddingRight: 16, flexShrink: 0 }}>
-          <FavoriteProfilesList onEmpty={() => setHasFavorites(false)} />
+    <div className={`my-campaigns-page${showSidebar ? ' my-campaigns-split' : ''}`}>
+      {showSidebar && (
+        <div className="my-campaigns-sidebar" style={{ width: '22%', minWidth: 180, maxWidth: 260, borderRight: '1px solid var(--app-border)', paddingRight: 16, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {campaigns.length > 0 && (
+            <div>
+              <Text strong style={{ fontSize: 14, color: 'var(--app-primary)', marginBottom: 8, display: 'block' }}>Resumo</Text>
+              <div className="my-campaigns-summary my-campaigns-summary-sidebar">
+                <Statistic title="Campanhas" value={campaigns.length} suffix="relatórios" />
+                <Statistic
+                  title="Perfis"
+                  value={campaigns.reduce((s, c) => s + c.handlesCount, 0)}
+                  formatter={(v) => formatShortNum(Number(v))}
+                />
+                {hasStats && (
+                  <>
+                    <Statistic
+                      title={<><HeartOutlined /> Likes</>}
+                      value={totals.totalLikes ?? 0}
+                      formatter={(v) => formatShortNum(Number(v))}
+                    />
+                    <Statistic
+                      title={<><CommentOutlined /> Comentários</>}
+                      value={totals.totalComments ?? 0}
+                      formatter={(v) => formatShortNum(Number(v))}
+                    />
+                    <Statistic
+                      title={<><TeamOutlined /> Seguidores</>}
+                      value={totals.totalFollowers ?? 0}
+                      formatter={(v) => formatShortNum(Number(v))}
+                    />
+                    <Statistic
+                      title={<><FileTextOutlined /> Posts</>}
+                      value={totals.postsCount ?? 0}
+                      formatter={(v) => formatShortNum(Number(v))}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {hasFavorites && (
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <FavoriteProfilesList onEmpty={() => setHasFavorites(false)} />
+            </div>
+          )}
         </div>
       )}
       <div className="my-campaigns-main" style={{ flex: 1, minWidth: 0 }}>

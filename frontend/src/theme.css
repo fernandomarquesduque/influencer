@@ -47,7 +47,7 @@
   --app-border: #E5E7EB;
   --app-border-light: var(--app-border);
   --app-progress-trail: rgba(0, 0, 0, 0.1);
-  --app-card-radius: 20px;
+  --app-card-radius: 10px;
   --app-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   --app-input-focus: 0 0 0 2px rgba(92, 103, 242, 0.2);
 

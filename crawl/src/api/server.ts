@@ -1619,7 +1619,7 @@ app.get('/api/profiles', rateLimitDataApi, requireCampaignIdHeader, async (req: 
   try {
     const campaignId = req.allowedCampaignId!;
     const userId = Number(req.user!.sub);
-    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
     if (!handles || handles.length === 0) {
       res.json({ total: 0, items: [] });
       return;
@@ -1849,9 +1849,9 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
         }
       } else {
         const userId = Number(req.user.sub);
-        const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+        const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
         if (!handles || handles.length === 0) {
-          res.status(403).json({ error: 'Campanha não encontrada ou sem perfis.', code: 'CAMPAIGN_NOT_FOUND' });
+          res.status(403).json({ error: 'Campanha não encontrada, expirada ou sem perfis.', code: 'CAMPAIGN_NOT_FOUND' });
           return;
         }
         restrictToHandles = handles;
@@ -1889,6 +1889,10 @@ app.get('/api/me/credits', async (req: RequestWithAuth, res: Response) => {
 
 /** Preço por crédito em centavos (ex.: 100 = R$ 1,00). */
 const CREDITS_PRICE_CENTS = Math.max(1, Number(process.env.CREDITS_PRICE_CENTS) || 100);
+/** Preço por influenciador ativado no relatório (R$ 2,00). */
+const REPORT_PRICE_CENTS_ACTIVATED = 200;
+/** Preço por influenciador não ativado no relatório (R$ 1,00). */
+const REPORT_PRICE_CENTS_NOT_ACTIVATED = 100;
 
 /** Lista pagamentos do usuário (comprar créditos). */
 app.get('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
@@ -2120,12 +2124,11 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
   }
 });
 
-/** Cria campanha a partir da query e quantidade. Retorna campaignId ou null se nenhum handle. */
-async function createReportCampaignFromQuery(
+/** Obtém handles do relatório pela query e calcula o valor (R$2 ativados, R$1 não ativados). */
+async function getReportHandlesAndPrice(
   query: ProfilesSearchQuery,
-  reportCount: number,
-  userId: number
-): Promise<string | null> {
+  reportCount: number
+): Promise<{ handles: string[]; amountCents: number; activatedCount: number; notActivatedCount: number }> {
   const allHandles: string[] = [];
   const pageSize = 100;
   let offset = 0;
@@ -2144,9 +2147,46 @@ async function createReportCampaignFromQuery(
     if (offset >= result.total) break;
   }
   const finalHandles = allHandles.slice(0, reportCount);
-  if (finalHandles.length === 0) return null;
-  return creditsCampaignsDb.createCampaign(userId, finalHandles, 0, query.q?.trim() || 'Relatório');
+  if (finalHandles.length === 0) return { handles: [], amountCents: 0, activatedCount: 0, notActivatedCount: 0 };
+  const activations = db.getActivationsBatch(finalHandles);
+  let activatedCount = 0;
+  for (const h of finalHandles) {
+    const act = activations.get(h.toLowerCase().replace(/^@/, ''));
+    if (act?.city && String(act.city).trim()) activatedCount++;
+  }
+  const notActivatedCount = finalHandles.length - activatedCount;
+  const amountCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
+  return { handles: finalHandles, amountCents, activatedCount, notActivatedCount };
 }
+
+/** Cria campanha a partir da query e quantidade. Retorna campaignId ou null se nenhum handle. */
+async function createReportCampaignFromQuery(
+  query: ProfilesSearchQuery,
+  reportCount: number,
+  userId: number,
+  expiresAt?: string
+): Promise<string | null> {
+  const { handles } = await getReportHandlesAndPrice(query, reportCount);
+  if (handles.length === 0) return null;
+  return creditsCampaignsDb.createCampaign(userId, handles, 0, query.q?.trim() || 'Relatório', expiresAt);
+}
+
+/** Preview do preço do relatório (ativados R$2, não ativados R$1). Body: { query, desiredCount }. */
+app.post('/api/checkout/report-price-preview', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as { query?: ProfilesSearchQuery; desiredCount?: number };
+    const query = body?.query;
+    const desiredCount = body?.desiredCount != null ? Math.min(10000, Math.max(1, Number(body.desiredCount))) : NaN;
+    if (!query || typeof query !== 'object' || !Number.isFinite(desiredCount)) {
+      res.status(400).json({ error: 'Envie query e desiredCount' });
+      return;
+    }
+    const { amountCents, activatedCount, notActivatedCount } = await getReportHandlesAndPrice(query, desiredCount);
+    res.json({ amountCents, valueBrl: amountCents / 100, activatedCount, notActivatedCount });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
 
 /** Pagamento direto do relatório (sem créditos). Guest: body { email, name?, query, desiredCount, billingType } — senha opcional (gera automática se omitida). Logado: auth + body { query, desiredCount, billingType }. Cria campanha com status pendente na hora. */
 app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAuth, res: Response) => {
@@ -2155,11 +2195,16 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
       res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
       return;
     }
-    const body = req.body as { email?: string; password?: string; name?: string; cpfCnpj?: string; query?: ProfilesSearchQuery; desiredCount?: number; billingType?: string };
+    const body = req.body as { email?: string; password?: string; name?: string; cpfCnpj?: string; query?: ProfilesSearchQuery; desiredCount?: number; billingType?: string; expiresAt?: string };
     const query = body?.query;
     const desiredCount = body?.desiredCount != null ? Math.min(10000, Math.max(1, Number(body.desiredCount))) : NaN;
     if (!query || typeof query !== 'object' || !Number.isFinite(desiredCount)) {
       res.status(400).json({ error: 'Envie query (filtros da busca) e desiredCount (1 a 10000)' });
+      return;
+    }
+    const expiresAt = (body?.expiresAt ?? '').toString().trim();
+    if (!expiresAt || !/^\d{4}-\d{2}-\d{2}$/.test(expiresAt)) {
+      res.status(400).json({ error: 'Envie expiresAt no formato YYYY-MM-DD (data de expiração da campanha obrigatória)' });
       return;
     }
     const billingType = (body?.billingType ?? 'PIX').toUpperCase() === 'BOLETO' ? 'BOLETO' : 'PIX';
@@ -2213,7 +2258,11 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
           res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
           return;
         }
-        const amountCentsGuest = desiredCount * CREDITS_PRICE_CENTS;
+        const { handles: reportHandles, amountCents: amountCentsGuest } = await getReportHandlesAndPrice(query, desiredCount);
+        if (reportHandles.length === 0) {
+          res.status(400).json({ error: 'Nenhum perfil encontrado para o relatório. Ajuste os filtros.' });
+          return;
+        }
         const valueBrlGuest = amountCentsGuest / 100;
         const dueDateGuest = new Date();
         dueDateGuest.setDate(dueDateGuest.getDate() + (billingType === 'BOLETO' ? 3 : 1));
@@ -2254,7 +2303,7 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
           { sub: String(userId), username: authUser.username, scope: 'assinante' as AuthScope, profile_handle: authUser.profile_handle ?? undefined },
           getJwtSecret()
         );
-        const campaignIdGuest = await createReportCampaignFromQuery(query, desiredCount, userId);
+        const campaignIdGuest = await createReportCampaignFromQuery(query, desiredCount, userId, expiresAt);
         const paymentId = paymentsDb.createPayment({
           userId,
           asaasPaymentId,
@@ -2305,7 +2354,11 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
       return;
     }
 
-    const amountCents = desiredCount * CREDITS_PRICE_CENTS;
+    const { handles: reportHandles, amountCents } = await getReportHandlesAndPrice(query, desiredCount);
+    if (reportHandles.length === 0) {
+      res.status(400).json({ error: 'Nenhum perfil encontrado para o relatório. Ajuste os filtros.' });
+      return;
+    }
     const valueBrl = amountCents / 100;
     const displayName = req.user
       ? (authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username)
@@ -2350,7 +2403,7 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
     const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
     const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
 
-    const campaignIdReport = await createReportCampaignFromQuery(query, desiredCount, userId);
+    const campaignIdReport = await createReportCampaignFromQuery(query, desiredCount, userId, expiresAt);
     const paymentId = paymentsDb.createPayment({
       userId,
       asaasPaymentId,
@@ -2598,9 +2651,9 @@ app.post('/api/me/favorites', async (req: RequestWithAuth, res: Response) => {
       return;
     }
     if (campaignId) {
-      const camp = creditsCampaignsDb.getCampaign(campaignId, userId);
+      const camp = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
       if (!camp) {
-        res.status(400).json({ error: 'Campanha não encontrada' });
+        res.status(400).json({ error: 'Campanha não encontrada ou expirada' });
         return;
       }
     }
@@ -2648,9 +2701,9 @@ interface CampaignStatsResult {
   topHashtags: string[];
 }
 
-/** Agrega stats de engajamento e preview dos perfis da campanha. */
+/** Agrega stats de engajamento e preview dos perfis da campanha. Só retorna dados para campanha ativa. */
 async function getCampaignStats(campaignId: string, userId: number): Promise<CampaignStatsResult | null> {
-  const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+  const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
   if (!handles || handles.length === 0) return null;
   const result = await searchProfiles(db, { limit: 10000, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
   let totalLikes = 0;
@@ -2724,15 +2777,28 @@ app.get('/api/me/campaigns', async (req: RequestWithAuth, res: Response) => {
     const rows = creditsCampaignsDb.listCampaigns(userId);
     const campaigns = await Promise.all(
       rows.map(async (r) => {
-        const base = {
+        const base: Record<string, unknown> = {
           id: r.id,
           name: r.name,
           handlesCount: r.handles_count,
           creditsUsed: r.credits_used,
           created_at: r.created_at,
+          expires_at: r.expires_at,
         };
+        const payment = paymentsDb.getByCampaignId(r.id, userId);
+        if (payment && payment.status === 'PENDING') {
+          base.pendingPayment = {
+            status: payment.status,
+            billingType: payment.billing_type,
+            bankSlipUrl: payment.bank_slip_url,
+            invoiceUrl: payment.invoice_url,
+            pixCopyPaste: payment.pix_copy_paste,
+            amountCents: payment.amount_cents,
+            valueBrl: payment.amount_cents / 100,
+          };
+        }
         const data = await getCampaignStats(r.id, userId);
-        if (!data) return { ...base };
+        if (!data) return base;
         const { previewProfiles, topHashtags, ...stats } = data;
         return { ...base, stats, previewProfiles, topHashtags };
       })
@@ -2752,10 +2818,15 @@ app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: R
       return;
     }
     const userId = Number(req.user.sub);
-    const body = req.body as { query?: ProfilesSearchQuery; name?: string; maxHandles?: number | string };
+    const body = req.body as { query?: ProfilesSearchQuery; name?: string; maxHandles?: number | string; expiresAt?: string };
     const query = body?.query;
     if (!query || typeof query !== 'object') {
       res.status(400).json({ error: 'Envie { query: {...} } com os filtros da busca' });
+      return;
+    }
+    const expiresAt = (body?.expiresAt ?? '').toString().trim();
+    if (!expiresAt || !/^\d{4}-\d{2}-\d{2}$/.test(expiresAt)) {
+      res.status(400).json({ error: 'Envie expiresAt no formato YYYY-MM-DD (data de expiração da campanha obrigatória)' });
       return;
     }
     const rawMax = body?.maxHandles;
@@ -2800,7 +2871,7 @@ app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: R
       res.status(402).json({ error: 'Falha ao debitar créditos', code: 'DEBIT_FAILED' });
       return;
     }
-    const campaignId = creditsCampaignsDb.createCampaign(userId, finalHandles, creditsNeeded, body.name);
+    const campaignId = creditsCampaignsDb.createCampaign(userId, finalHandles, creditsNeeded, body.name, expiresAt);
     res.status(201).json({ campaignId, handlesCount: finalHandles.length, creditsUsed: creditsNeeded });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -2820,18 +2891,33 @@ app.get('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
       return;
     }
     const userId = Number(req.user.sub);
-    const campaign = creditsCampaignsDb.getCampaign(campaignId, userId);
+    const campaign = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
     if (!campaign) {
-      res.status(404).json({ error: 'Campanha não encontrada' });
+      res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
       return;
     }
-    res.json({
+    const payload: Record<string, unknown> = {
       id: campaign.id,
       name: campaign.name,
+      description: campaign.description ?? null,
       handlesCount: campaign.handles_count,
       creditsUsed: campaign.credits_used,
       created_at: campaign.created_at,
-    });
+      expires_at: campaign.expires_at,
+    };
+    const payment = paymentsDb.getByCampaignId(campaignId, userId);
+    if (payment && payment.status === 'PENDING') {
+      payload.pendingPayment = {
+        status: payment.status,
+        billingType: payment.billing_type,
+        bankSlipUrl: payment.bank_slip_url,
+        invoiceUrl: payment.invoice_url,
+        pixCopyPaste: payment.pix_copy_paste,
+        amountCents: payment.amount_cents,
+        valueBrl: payment.amount_cents / 100,
+      };
+    }
+    res.json(payload);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -2849,14 +2935,34 @@ app.patch('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
       res.status(400).json({ error: 'ID da campanha inválido' });
       return;
     }
-    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+    const description = typeof req.body?.description === 'string' ? req.body.description : undefined;
     const userId = Number(req.user.sub);
-    const updated = creditsCampaignsDb.updateCampaignName(campaignId, userId, name);
-    if (!updated) {
-      res.status(404).json({ error: 'Campanha não encontrada' });
+    const campExists = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
+    if (!campExists) {
+      res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
       return;
     }
-    res.json({ ok: true, name: name || null });
+    if (name !== undefined) {
+      const ok = creditsCampaignsDb.updateCampaignName(campaignId, userId, name ?? '');
+      if (!ok) {
+        res.status(404).json({ error: 'Campanha não encontrada' });
+        return;
+      }
+    }
+    if (description !== undefined) {
+      const ok = creditsCampaignsDb.updateCampaignDescription(campaignId, userId, description);
+      if (!ok) {
+        res.status(404).json({ error: 'Campanha não encontrada' });
+        return;
+      }
+    }
+    const camp = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
+    res.json({
+      ok: true,
+      name: camp?.name ?? null,
+      description: camp?.description ?? null,
+    });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -3009,10 +3115,10 @@ function requireProfileOrCampaign(
       });
       return;
     }
-    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
     if (!handles || !handles.some((h) => normalizeHandle(h) === handle)) {
       res.status(403).json({
-        error: 'Perfil não encontrado nesta campanha ou campanha inválida.',
+        error: 'Perfil não encontrado nesta campanha, campanha expirada ou inválida.',
         code: 'PROFILE_NOT_IN_CAMPAIGN',
       });
       return;
@@ -3038,9 +3144,9 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
     return;
   }
   const userId = Number(req.user.sub);
-  const campaign = creditsCampaignsDb.getCampaign(campaignId, userId);
+  const campaign = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
   if (!campaign) {
-    res.status(403).json({ error: 'Campanha não encontrada ou sem acesso.', code: 'CAMPAIGN_NOT_FOUND' });
+    res.status(403).json({ error: 'Campanha não encontrada, expirada ou sem acesso.', code: 'CAMPAIGN_NOT_FOUND' });
     return;
   }
   (req as RequestWithAuth).allowedCampaignId = campaignId;
@@ -3060,9 +3166,9 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
       return;
     }
     const userId = Number(req.user.sub);
-    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
     if (!handles || handles.length === 0) {
-      res.status(404).json({ error: 'Campanha não encontrada ou sem perfis' });
+      res.status(404).json({ error: 'Campanha não encontrada, expirada ou sem perfis' });
       return;
     }
     const query = buildCampaignProfilesQuery(req);
@@ -3097,9 +3203,9 @@ app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: Req
       return;
     }
     const userId = Number(req.user.sub);
-    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
     if (!handles || handles.length === 0) {
-      res.status(404).json({ error: 'Campanha não encontrada ou sem perfis' });
+      res.status(404).json({ error: 'Campanha não encontrada, expirada ou sem perfis' });
       return;
     }
     const handleInCampaign = handles.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle);
@@ -3138,9 +3244,9 @@ app.get('/api/campaigns/:id/profiles/:handle/activation', rateLimitDataApi, asyn
       return;
     }
     const userId = Number(req.user.sub);
-    const handles = creditsCampaignsDb.getCampaignHandles(campaignId, userId);
+    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
     if (!handles || handles.length === 0) {
-      res.status(404).json({ error: 'Campanha não encontrada ou sem perfis' });
+      res.status(404).json({ error: 'Campanha não encontrada, expirada ou sem perfis' });
       return;
     }
     const handleInCampaign = handles.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle);

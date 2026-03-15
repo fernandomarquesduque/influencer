@@ -3,13 +3,14 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Typography, Spin, Alert, Modal, Radio, Space, Tag, message } from 'antd'
-import { DollarOutlined, CopyOutlined, BankOutlined } from '@ant-design/icons'
+import { Card, Table, Button, Typography, Spin, Alert, Modal, Space, Tag, message, InputNumber } from 'antd'
+import { DollarOutlined, CopyOutlined, BankOutlined, ThunderboltOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import { useCredits } from '../contexts/CreditsContext'
 import {
   fetchMyPayments,
   createPaymentForCredits,
+  adminAddCredits,
   type PaymentItem,
   type CreatePaymentForCreditsResponse,
 } from '../api'
@@ -69,15 +70,16 @@ function StatusTag({ status }: { status: string }) {
 
 export default function Payments() {
   const navigate = useNavigate()
-  const { user, loading: authLoading } = useAuth()
+  const { user, isAdm, loading: authLoading } = useAuth()
   const { balance, refreshCredits } = useCredits()
   const [payments, setPayments] = useState<PaymentItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [buyModalOpen, setBuyModalOpen] = useState(false)
+  const [buyModalOpen, setBuyModalOpen] = useState(true)
   const [buyCredits, setBuyCredits] = useState(50)
   const [buyBillingType, setBuyBillingType] = useState<'PIX' | 'BOLETO'>('PIX')
   const [creating, setCreating] = useState(false)
+  const [approvingAdmin, setApprovingAdmin] = useState(false)
   const [createdPayment, setCreatedPayment] = useState<CreatePaymentForCreditsResponse | null>(null)
 
   const loadPayments = useCallback(async () => {
@@ -114,6 +116,23 @@ export default function Payments() {
       setError((e as Error).message)
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleAdminApprove = async () => {
+    if (!user?.id) return
+    setApprovingAdmin(true)
+    setError(null)
+    try {
+      await adminAddCredits(user.id, buyCredits)
+      message.success(`${buyCredits} créditos adicionados com sucesso`)
+      await loadPayments()
+      await refreshCredits()
+      closeBuyModal()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setApprovingAdmin(false)
     }
   }
 
@@ -235,44 +254,106 @@ export default function Payments() {
       </Card>
 
       <Modal
+        className="buy-credits-modal"
         title="Comprar créditos"
         open={buyModalOpen}
         onCancel={closeBuyModal}
         footer={null}
-        width={480}
+        width={500}
         destroyOnClose
       >
         {!createdPayment ? (
           <>
-            <div style={{ marginBottom: 16 }}>
-              <Text strong>Quantidade de créditos</Text>
-              <div style={{ marginTop: 8 }}>
-                <Radio.Group
-                  optionType="button"
+            <div style={{ marginBottom: 24 }}>
+              <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 10 }}>Quantidade de créditos</Text>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                {CREDIT_PACKS.map((p) => (
+                  <button
+                    key={p.credits}
+                    type="button"
+                    className={`credit-pack-btn ${buyCredits === p.credits ? 'credit-pack-btn-selected' : ''}`}
+                    onClick={() => setBuyCredits(p.credits)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div>
+                <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>Ou escolha o valor:</Text>
+                <InputNumber
+                  min={1}
+                  max={10000}
                   value={buyCredits}
-                  onChange={(e) => setBuyCredits(e.target.value)}
-                  options={CREDIT_PACKS.map((p) => ({ label: p.label, value: p.credits }))}
+                  onChange={(v) => setBuyCredits(v != null && Number.isFinite(v) ? Math.min(10000, Math.max(1, Math.floor(v))) : 1)}
+                  size="large"
+                  style={{ width: '100%' }}
+                  addonAfter="créditos"
                 />
               </div>
             </div>
-            <div style={{ marginBottom: 20 }}>
-              <Text strong>Forma de pagamento</Text>
-              <div style={{ marginTop: 8 }}>
-                <Radio.Group
-                  value={buyBillingType}
-                  onChange={(e) => setBuyBillingType(e.target.value)}
-                  options={[
-                    { label: 'PIX (instantâneo)', value: 'PIX' },
-                    { label: 'Boleto', value: 'BOLETO' },
-                  ]}
-                />
+            <div style={{ marginBottom: 24 }}>
+              <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 10 }}>Forma de pagamento</Text>
+              <div style={{ display: 'flex', gap: 12, width: '100%' }}>
+                <div
+                  className={`payment-option ${buyBillingType === 'PIX' ? 'payment-option-selected' : ''}`}
+                  onClick={() => setBuyBillingType('PIX')}
+                  style={{ flex: 1, width: '50%', minWidth: 0 }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && setBuyBillingType('PIX')}
+                >
+                  <ThunderboltOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
+                  <Text strong>PIX</Text>
+                  <Text type="secondary" style={{ fontSize: 12, marginLeft: 4 }}>instantâneo</Text>
+                </div>
+                <div
+                  className={`payment-option ${buyBillingType === 'BOLETO' ? 'payment-option-selected' : ''}`}
+                  onClick={() => setBuyBillingType('BOLETO')}
+                  style={{ flex: 1, width: '50%', minWidth: 0 }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && setBuyBillingType('BOLETO')}
+                >
+                  <BankOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
+                  <Text strong>Boleto</Text>
+                </div>
               </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button onClick={closeBuyModal}>Cancelar</Button>
-              <Button type="primary" loading={creating} onClick={handleCreatePayment} icon={<DollarOutlined />}>
-                Gerar pagamento
-              </Button>
+
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+              <div>
+                {isAdm && (
+                  <Button
+                    type="default"
+                    size="large"
+                    loading={approvingAdmin}
+                    onClick={handleAdminApprove}
+                    icon={<CheckCircleOutlined />}
+                    style={{ borderColor: 'var(--app-primary)', color: 'var(--app-primary)' }}
+                  >
+                    Aprovar sem pagar
+                  </Button>
+                )}
+              </div>
+              <Space>
+                <Button onClick={closeBuyModal} size="large">Cancelar</Button>
+                <Button
+                  type="primary"
+                  size="large"
+                  loading={creating}
+                  onClick={handleCreatePayment}
+                  icon={<DollarOutlined />}
+                  style={{
+                    background: 'linear-gradient(135deg, var(--app-primary) 0%, rgba(104, 39, 143, 0.9) 100%)',
+                    border: 'none',
+                    paddingLeft: 24,
+                    paddingRight: 24,
+                    fontWeight: 600,
+                  }}
+                >
+                  Gerar pagamento
+                </Button>
+              </Space>
             </div>
           </>
         ) : (

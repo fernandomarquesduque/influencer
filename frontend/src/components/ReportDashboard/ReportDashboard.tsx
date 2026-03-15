@@ -3,7 +3,7 @@
  * Exibido após o wizard de filtros; o usuário decide aqui se quer comprar/ver a lista completa.
  */
 import { Card, Typography, Button, Statistic, Space } from 'antd'
-import { RocketOutlined, UnlockOutlined, CheckCircleOutlined, MinusCircleOutlined, EnvironmentOutlined, UserOutlined, DollarOutlined, ContactsOutlined } from '@ant-design/icons'
+import { RocketOutlined, UnlockOutlined, CheckCircleOutlined, MinusCircleOutlined, EnvironmentOutlined, UserOutlined, ContactsOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import type { ProfilesSearchQuery, ProfilesSearchFacets, ProfileListItem } from '../../api'
 import { getProfilePicUrl, proxyImageUrl } from '../../api'
 import './ReportDashboard.css'
@@ -21,6 +21,8 @@ export interface ReportDashboardProps {
   sampleItems?: ProfileListItem[]
   /** Chamado quando o usuário clica para ver a lista completa / comprar relatório. */
   onViewList: () => void
+  /** Chamado quando o usuário clica em Voltar (retornar ao wizard). */
+  onBack?: () => void
   /** Carregando dados do dashboard. */
   loading?: boolean
 }
@@ -49,6 +51,7 @@ export default function ReportDashboard({
   facets,
   sampleItems = [],
   onViewList,
+  onBack,
   loading = false,
 }: ReportDashboardProps) {
   const engagementRate = facets?.engagement_rate ?? []
@@ -64,15 +67,11 @@ export default function ReportDashboard({
   const social = facets?.social
   const countWithSocial = social ? Math.max(social.whatsapp, social.tiktok, social.facebook, social.linkedin, social.twitter) : 0
   const hasSocial = countWithSocial > 0
-  const pricing = facets?.pricing
-  const hasPricing = pricing && Object.values(pricing).some((arr) => Array.isArray(arr) && arr.length > 0)
-  const countWithPricing = hasPricing ? activatedCount : 0
 
   const reportIncludes = [
     { icon: <EnvironmentOutlined />, label: 'Localização (cidade, estado, bairro) quando preenchida', count: countWithLocation, has: hasLocation },
     { icon: <UserOutlined />, label: 'Tipo de perfil (pessoal, criador, empresa)', count: total, has: true },
     { icon: <UnlockOutlined />, label: 'Dados de ativação salvos (preços, tipo de conteúdo)', count: activatedCount, has: hasActivation },
-    { icon: <DollarOutlined />, label: 'Faixas de preço (Feed, Reels, story, Destaque)', count: countWithPricing, has: !!hasPricing },
     { icon: <ContactsOutlined />, label: 'Contatos e redes (WhatsApp, TikTok, Facebook, etc.)', count: countWithSocial, has: !!hasSocial },
   ]
 
@@ -109,16 +108,29 @@ export default function ReportDashboard({
             </div>
           </div>
         )}
-        <Button
-          type="primary"
-          size="large"
-          onClick={onViewList}
-          loading={loading}
-          className="report-dashboard-cta"
-          icon={<RocketOutlined />}
-        >
-          Ver lista completa e acessar relatório
-        </Button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 8 }}>
+          <Button
+            type="primary"
+            size="large"
+            onClick={onViewList}
+            loading={loading}
+            className="report-dashboard-cta"
+            icon={<RocketOutlined />}
+            style={{ borderRadius: 10 }}
+          >
+            Ver lista completa e acessar relatório
+          </Button>
+          {onBack && (
+            <Button
+              size="middle"
+              onClick={onBack}
+              icon={<ArrowLeftOutlined />}
+              style={{ borderRadius: 10 }}
+            >
+              Voltar
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card title="O que o relatório contém" className="report-dashboard-card report-dashboard-includes">

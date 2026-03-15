@@ -13,6 +13,7 @@ function FocusScrollHandler() {
     const onFocus = (e: FocusEvent) => {
       if (location.pathname === '/') return
       const el = e.target as HTMLElement
+      if (el.closest('.ant-modal-wrap, .ant-drawer-content-wrapper')) return
       const isField =
         el.matches('input, textarea, select, [contenteditable="true"]') ||
         el.closest('.ant-input-affix-wrapper, .ant-select-selector')
@@ -81,8 +82,9 @@ export default function App() {
           <Route path="/" element={<Home />} />
 
           <Route path="/app" element={<Layout />}>
-            <Route index element={<ListAndDetailModal />} />
+            <Route index element={<MyCampaigns />} />
             <Route path="campaigns" element={<MyCampaigns />} />
+            <Route path="campaigns/create" element={<ListAndDetailModal />} />
             <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
             <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail />} />
             <Route path="payments" element={<Payments />} />

@@ -4,13 +4,14 @@
  */
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, UserOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled } from '@ant-design/icons'
+import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag, Card, Alert } from 'antd'
+import { AppstoreOutlined, UnorderedListOutlined, UserOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, BankOutlined, CopyOutlined, CommentOutlined, TeamOutlined, FileTextOutlined, RiseOutlined, CalendarOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
   fetchCampaignProfiles,
   getCampaign,
   updateCampaignName,
+  updateCampaignDescription,
   fetchFavorites,
   addFavorite,
   removeFavorite,
@@ -28,7 +29,9 @@ import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS, PRICING_FIELD_LABELS, getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
+import CampaignBIPanel from '../components/CampaignBIPanel/CampaignBIPanel'
 import { MessageOutlined, VideoCameraOutlined } from '@ant-design/icons'
+import QRCode from 'qrcode'
 
 const PAGE_SIZE = 100
 /** Quantidade de itens exibidos inicialmente e a cada rodada de scroll (carregamento progressivo). */
@@ -50,6 +53,8 @@ function campaignQueryToUrlParams(query: Partial<ProfilesSearchQuery>): Record<s
   if (query.q?.trim()) params.q = query.q.trim()
   if (query.sort) params.sort = query.sort
   if (query.costTierFilter?.length) params.costTierFilter = query.costTierFilter.join(',')
+  if (query.sizeFilter?.length) params.sizeFilter = query.sizeFilter.join(',')
+  if (query.accountTypeFilter?.length) params.accountTypeFilter = query.accountTypeFilter.map(String).join(',')
   if (query.contentTypes?.length) params.contentTypes = query.contentTypes.join(',')
   if (query.pricingFeed?.length) params.pricingFeed = query.pricingFeed.join(',')
   if (query.pricingReels?.length) params.pricingReels = query.pricingReels.join(',')
@@ -78,6 +83,8 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
     q: params.get('q')?.trim() || undefined,
     sort: (params.get('sort') as ProfilesSort) || undefined,
     costTierFilter: parseStrList(params.get('costTierFilter')),
+    sizeFilter: parseStrList(params.get('sizeFilter')),
+    accountTypeFilter: parseNumList(params.get('accountTypeFilter')),
     contentTypes: parseStrList(params.get('contentTypes')),
     pricingFeed: parseNumList(params.get('pricingFeed')),
     pricingReels: parseNumList(params.get('pricingReels')),
@@ -98,7 +105,50 @@ function formatShortNum(n: number | undefined | null): string {
   return String(n)
 }
 
-const LIST_GRID_COLUMNS = '48px minmax(160px, 1fr) 72px 76px 74px 74px 72px 68px 48px'
+function getTierShort(followers: number | undefined | null): string {
+  if (followers == null || !Number.isFinite(followers)) return '—'
+  if (followers < 10_000) return 'Nano'
+  if (followers < 50_000) return 'Micro'
+  if (followers < 500_000) return 'Mid'
+  return 'Macro'
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
+  } catch {
+    return iso
+  }
+}
+
+function computeReportStats(items: ProfileListItem[] | null): { totalLikes: number; totalComments: number; totalViews: number; totalFollowers: number; postsCount: number; avgEngagementRate: number; count: number } {
+  if (!items?.length) return { totalLikes: 0, totalComments: 0, totalViews: 0, totalFollowers: 0, postsCount: 0, avgEngagementRate: 0, count: 0 }
+  let totalLikes = 0, totalComments = 0, totalViews = 0, totalFollowers = 0, postsCount = 0, engSum = 0, engCount = 0
+  for (const it of items) {
+    totalFollowers += it.followers_count ?? 0
+    const eng = it.engagement
+    if (eng) {
+      totalLikes += eng.total_likes ?? 0
+      totalComments += eng.total_comments ?? 0
+      totalViews += eng.total_views ?? 0
+      postsCount += eng.posts_count ?? 0
+      if (Number.isFinite(eng.engagement_rate)) {
+        engSum += eng.engagement_rate
+        engCount++
+      }
+    }
+  }
+  return {
+    totalLikes,
+    totalComments,
+    totalViews,
+    totalFollowers,
+    postsCount,
+    avgEngagementRate: engCount > 0 ? Math.round((engSum / engCount) * 100) / 100 : 0,
+    count: items.length,
+  }
+}
 
 /** Uma linha compacta (modo lista tipo tabela) com dados de ativação. */
 function CampaignListRow({
@@ -127,7 +177,8 @@ function CampaignListRow({
     : null
   const hasWhatsApp = !!(act?.whatsapp?.trim())
   const hasTiktok = !!(act?.tiktok?.trim())
-  const contentTypes = Array.isArray(act?.content_type) ? act.content_type.slice(0, 2).map((c) => CONTENT_TYPE_LABELS[c] ?? c) : []
+  const accountTypeValue = (item as { account_type?: number }).account_type
+  const accountTypeLabel = accountTypeValue === 1 ? 'Pessoal' : accountTypeValue === 2 ? 'Criador' : accountTypeValue === 3 ? 'Empresa' : null
   const hasPricing =
     act?.pricing &&
     typeof act.pricing === 'object' &&
@@ -167,126 +218,147 @@ function CampaignListRow({
     )
 
   return (
-    <div
+    <tr
       role="button"
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => e.key === 'Enter' && onClick()}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: LIST_GRID_COLUMNS,
-        gap: '0 2px',
-        alignItems: 'center',
-        padding: '4px 10px',
-        minHeight: 40,
-        borderBottom: '1px solid var(--app-border, #f0f0f0)',
-        cursor: 'pointer',
-        background: 'var(--app-bg)',
-        transition: 'background 0.15s',
-        minWidth: 900,
-      }}
       className="campaign-list-row"
+      style={{ cursor: 'pointer', background: 'var(--app-bg)', transition: 'background 0.15s' }}
     >
-      <div style={{ width: 40, height: 40, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'var(--app-placeholder-bg)' }}>
-        {pic ? (
-          <img src={pic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        ) : (
-          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--app-text-secondary)' }}>
-            <UserOutlined style={{ fontSize: 20 }} />
-          </div>
-        )}
-      </div>
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          <Tooltip title={name}>
-            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--app-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {name}
-            </div>
-          </Tooltip>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 14 }}>
-            {hasWhatsApp && <Tooltip title="WhatsApp"><MessageOutlined style={{ color: 'var(--app-icon-whatsapp, #25D366)' }} /></Tooltip>}
-            {hasTiktok && <Tooltip title="TikTok"><VideoCameraOutlined style={{ color: 'var(--app-text-secondary)' }} /></Tooltip>}
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
-          <Tooltip title={`@${handle}`}>
-            <span style={{ fontSize: 12, color: 'var(--app-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              @{handle}
-            </span>
-          </Tooltip>
-          {contentTypes.length > 0 && contentTypes.slice(0, 3).map((ct, i) => {
-            const tagColors = ['blue', 'green', 'orange'] as const
-            return (
-              <Tag key={ct} color={tagColors[i % 3]} style={{ margin: 0, fontSize: 10, padding: '0 5px', lineHeight: '18px' }}>
-                {ct}
-              </Tag>
-            )
-          })}
-          {contentTypes.length > 3 && (
-            <Tag color="default" style={{ margin: 0, fontSize: 10 }}>+{contentTypes.length - 3}</Tag>
+      <td style={{ verticalAlign: 'middle', padding: '4px 6px', textAlign: 'right', width: '1%' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, justifyContent: 'center', minWidth: 0, alignItems: 'flex-end' }}>
+          {accountTypeLabel ? (
+            <Tag
+              color={accountTypeValue === 1 ? 'default' : accountTypeValue === 2 ? 'blue' : 'purple'}
+              style={{ margin: 0, fontSize: 10, padding: '0 5px', lineHeight: '18px', width: 'fit-content' }}
+            >
+              {accountTypeLabel}
+            </Tag>
+          ) : (
+            <span style={{ fontSize: 10, color: 'var(--app-text-tertiary)' }}>—</span>
           )}
         </div>
-        {location && (
-          <Tooltip title={location}>
-            <div style={{ fontSize: 11, color: 'var(--app-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {location}
+      </td>
+      <td style={{ verticalAlign: 'middle', padding: '4px 6px', width: 48 }}>
+        <div style={{ width: 40, height: 40, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'var(--app-placeholder-bg)' }}>
+          {pic ? (
+            <img src={pic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--app-text-secondary)' }}>
+              <UserOutlined style={{ fontSize: 20 }} />
             </div>
-          </Tooltip>
-        )}
-      </div>
-      <Tooltip title={formatShortNum(followers) !== String(followers) ? String(followers) : undefined}>
-        <div className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text)' }}>
-          {formatShortNum(followers)}
+          )}
         </div>
-      </Tooltip>
-      <div className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text)' }}>
-        {engagementRate.toFixed(1)}%
-      </div>
-      <Tooltip title={formatShortNum(totalLikes) !== String(totalLikes) ? String(totalLikes) : undefined}>
-        <div className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text)' }}>
-          {formatShortNum(totalLikes)}
-        </div>
-      </Tooltip>
-      <Tooltip title={formatShortNum(totalComments) !== String(totalComments) ? String(totalComments) : undefined}>
-        <div className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text-secondary)' }}>
-          {formatShortNum(totalComments)}
-        </div>
-      </Tooltip>
-      <Tooltip title="Média de likes por post">
-        <div className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text-secondary)' }}>
-          {formatShortNum(avgLikes)}
-        </div>
-      </Tooltip>
-      <Tooltip title={priceTooltipNode}>
-        <div className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, fontWeight: 600, color: costTierColor ?? 'var(--app-text)' }}>
-          {costTier
-            ? (() => {
-              const label = costTier.label.trim()
-              return label.charAt(0).toUpperCase() + label.slice(1)
-            })()
-            : '—'}
-        </div>
-      </Tooltip>
+      </td>
       {onFavoriteToggle != null ? (
-        <div className="campaign-list-cell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => e.stopPropagation()}>
+        <td className="campaign-list-cell" style={{ textAlign: 'center', width: 36, verticalAlign: 'middle', padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} onClick={(e) => e.stopPropagation()}>
           <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
             <Button
               type="text"
               size="small"
-              icon={isFavorite ? <HeartFilled style={{ color: 'var(--app-primary)' }} /> : <HeartOutlined style={{ color: 'var(--app-text-secondary)' }} />}
+              icon={isFavorite ? <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 14 }} /> : <HeartOutlined style={{ color: 'var(--app-text-secondary)', fontSize: 14 }} />}
               onClick={(e) => {
                 e.stopPropagation()
                 onFavoriteToggle(handle)
               }}
-              style={{ minWidth: 32, height: 32, padding: 0 }}
+              style={{ minWidth: 24, height: 24, padding: 0 }}
               aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
             />
           </Tooltip>
-        </div>
+        </td>
       ) : (
-        <div />
+        <td style={{ width: 36, padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} />
       )}
-    </div>
+      <td style={{ verticalAlign: 'middle', padding: '4px 4px', width: '100%', maxWidth: 300, minWidth: 0, overflow: 'hidden', textAlign: 'left' }}>
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <Tooltip title={name}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--app-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {name}
+              </div>
+            </Tooltip>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 14 }}>
+              {hasWhatsApp && <Tooltip title="WhatsApp"><MessageOutlined style={{ color: 'var(--app-icon-whatsapp, #25D366)' }} /></Tooltip>}
+              {hasTiktok && <Tooltip title="TikTok"><VideoCameraOutlined style={{ color: 'var(--app-text-secondary)' }} /></Tooltip>}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <Tooltip title={Number.isFinite(followers) && followers >= 0 ? (followers < 10_000 ? 'Nano (até 10k seg.)' : followers < 50_000 ? 'Micro (10k–50k)' : followers < 500_000 ? 'Mid (50k–500k)' : 'Macro (500k+)') : undefined}>
+              <span
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  color: '#fff',
+                  padding: '1px 5px',
+                  borderRadius: 8,
+                  flexShrink: 0,
+                  background: (() => {
+                    const t = getTierShort(followers)
+                    if (t === 'Nano') return 'linear-gradient(90deg, #722ed1, #9254de)'
+                    if (t === 'Micro') return 'linear-gradient(90deg, #1890ff, #40a9ff)'
+                    if (t === 'Mid') return 'linear-gradient(90deg, #13c2c2, #36cfc9)'
+                    if (t === 'Macro') return 'linear-gradient(90deg, #eb2f96, #f759ab)'
+                    return 'rgba(0,0,0,0.25)'
+                  })(),
+                }}
+              >
+                {getTierShort(followers)}
+              </span>
+            </Tooltip>
+            <Tooltip title={`@${handle}`}>
+              <span style={{ fontSize: 12, color: 'var(--app-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                @{handle}
+              </span>
+            </Tooltip>
+          </div>
+          {location && (
+            <Tooltip title={location}>
+              <div style={{ fontSize: 11, color: 'var(--app-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {location}
+              </div>
+            </Tooltip>
+          )}
+        </div>
+      </td>
+      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text)', textAlign: 'center', width: 72 }}>
+        <Tooltip title={formatShortNum(followers) !== String(followers) ? String(followers) : undefined}>
+          <span>
+            {formatShortNum(followers)}
+          </span>
+        </Tooltip>
+      </td>
+      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text)', textAlign: 'center', width: 76 }}>
+        {engagementRate.toFixed(1)}%
+      </td>
+      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text)', textAlign: 'center', width: 74 }}>
+        <Tooltip title={formatShortNum(totalLikes) !== String(totalLikes) ? String(totalLikes) : undefined}>
+          <span>{formatShortNum(totalLikes)}</span>
+        </Tooltip>
+      </td>
+      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text-secondary)', textAlign: 'center', width: 74 }}>
+        <Tooltip title={formatShortNum(totalComments) !== String(totalComments) ? String(totalComments) : undefined}>
+          <span>{formatShortNum(totalComments)}</span>
+        </Tooltip>
+      </td>
+      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text-secondary)', textAlign: 'center', width: 72 }}>
+        <Tooltip title="Média de likes por post">
+          <span>{formatShortNum(avgLikes)}</span>
+        </Tooltip>
+      </td>
+      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, fontWeight: 600, color: costTierColor ?? 'var(--app-text)', textAlign: 'center', width: 68 }}>
+        <Tooltip title={priceTooltipNode}>
+          <span>
+            {costTier
+              ? (() => {
+                const label = costTier.label.trim()
+                return label.charAt(0).toUpperCase() + label.slice(1)
+              })()
+              : '—'}
+          </span>
+        </Tooltip>
+      </td>
+    </tr>
   )
 }
 
@@ -333,16 +405,39 @@ export default function CampaignInfluencers() {
   const addHandleForImageUpdate = useRef<((handle: string) => void) | null>(null)
   const queryRef = useRef(query)
   queryRef.current = query
+  const [pendingPaymentPixQr, setPendingPaymentPixQr] = useState<string | null>(null)
+
+  useEffect(() => {
+    const pix = campaignInfo?.pendingPayment?.pixCopyPaste
+    if (!pix) {
+      setPendingPaymentPixQr(null)
+      return
+    }
+    let cancelled = false
+    QRCode.toDataURL(pix, { width: 220, margin: 2 })
+      .then((url) => { if (!cancelled) setPendingPaymentPixQr(url) })
+      .catch(() => { if (!cancelled) setPendingPaymentPixQr(null) })
+    return () => { cancelled = true }
+  }, [campaignInfo?.pendingPayment?.pixCopyPaste])
 
   useEffect(() => {
     if (!user) {
       setFavoriteHandles(new Set())
       return
     }
+    const norm = (h: string) => (h ?? '').toLowerCase().replace(/^@/, '').trim()
     fetchFavorites()
-      .then((res) => setFavoriteHandles(new Set((res.handles ?? []).map((h) => h.toLowerCase().replace(/^@/, '')))))
+      .then((res) => {
+        // Na tela de campanha, considerar só favoritos desta campanha para o estado "selecionado"
+        if (campaignId && (res.favorites?.length ?? 0) > 0) {
+          const forCampaign = (res.favorites ?? []).filter((f) => f.campaignId === campaignId).map((f) => norm(f.handle))
+          setFavoriteHandles(new Set(forCampaign))
+        } else {
+          setFavoriteHandles(new Set((res.handles ?? []).map(norm)))
+        }
+      })
       .catch(() => setFavoriteHandles(new Set()))
-  }, [user])
+  }, [user, campaignId])
 
   const handleFavoriteToggle = useCallback(async (handle: string) => {
     const normalized = handle.toLowerCase().replace(/^@/, '').trim()
@@ -365,7 +460,7 @@ export default function CampaignInfluencers() {
         return next
       })
     }
-  }, [favoriteHandles])
+  }, [campaignId, favoriteHandles])
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
@@ -536,6 +631,16 @@ export default function CampaignInfluencers() {
     setNameModalOpen(true)
   }, [campaignInfo?.name])
 
+  const handleDescriptionSave = useCallback(
+    (value: string) => {
+      if (!campaignId) return
+      updateCampaignDescription(campaignId, value).then(() => {
+        setCampaignInfo((prev) => (prev ? { ...prev, description: value || null } : null))
+      })
+    },
+    [campaignId]
+  )
+
   const openDetail = (handleOrKey: string) => {
     if (!campaignId) return
     const path = `/app/campaigns/${campaignId}/influencer/${encodeURIComponent(handleOrKey)}`
@@ -573,6 +678,8 @@ export default function CampaignInfluencers() {
   const selectedPricingStory = (query.pricingStory ?? []) as number[]
   const selectedPricingDestaque = (query.pricingDestaque ?? []) as number[]
   const costTierFilter = (query.costTierFilter ?? []) as string[]
+  const selectedSizeFilter = (query.sizeFilter ?? []) as string[]
+  const selectedAccountTypeFilter = (query.accountTypeFilter ?? []) as number[]
   const hasPricingFilter =
     selectedPricingFeed.length > 0 ||
     selectedPricingReels.length > 0 ||
@@ -586,6 +693,8 @@ export default function CampaignInfluencers() {
     selectedStates.length > 0 ||
     selectedSocial.length > 0 ||
     selectedContentTypes.length > 0 ||
+    selectedSizeFilter.length > 0 ||
+    selectedAccountTypeFilter.length > 0 ||
     hasPricingFilter ||
     hasCostTierFilter
   const selectedCostTierOption: 'low' | 'medium' | 'above' | undefined =
@@ -627,7 +736,7 @@ export default function CampaignInfluencers() {
   }
 
   return (
-    <div>
+    <div style={{ overflowX: 'hidden' }}>
       <Modal
         title={campaignHasName ? 'Editar nome da campanha' : 'Informe o nome da campanha'}
         open={nameModalOpen}
@@ -680,440 +789,569 @@ export default function CampaignInfluencers() {
           </Typography.Text>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Button type="default" onClick={() => navigate('/app/campaigns')}>
+          <Button
+            type="primary"
+            onClick={() => navigate('/app/campaigns')}
+            style={{
+              background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark, #6b21a8) 100%)',
+              border: 'none',
+              boxShadow: 'var(--app-shadow-cta, 0 2px 8px rgba(124, 58, 237, 0.35))',
+            }}
+          >
             Minhas campanhas
           </Button>
-          <Button type="default" onClick={() => navigate('/app')}>
+          <Button
+            type="primary"
+            onClick={() => navigate('/search')}
+            style={{
+              background: 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
+              border: 'none',
+              boxShadow: '0 2px 8px rgba(8, 145, 178, 0.35)',
+            }}
+          >
             Nova busca
           </Button>
         </div>
       </div>
 
-      {facets == null && loading ? (
+      {campaignInfo?.pendingPayment ? (
+        <div style={{ margin: '24px auto', overflowX: 'hidden', maxWidth: '100%' }}>
+          <Alert
+            type="warning"
+            message="Pagamento pendente — pague o boleto ou PIX para liberar os resultados."
+            showIcon
+            style={{ marginBottom: 12, width: '100%' }}
+          />
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, overflowX: 'hidden', minWidth: 0, maxWidth: '100%' }}>
+            <Card style={{ flex: 1, minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
+
+              {campaignInfo.pendingPayment.billingType === 'BOLETO' && campaignInfo.pendingPayment.bankSlipUrl ? (
+                <div style={{ overflow: 'hidden', width: '100%', maxWidth: '100%' }}>
+                  <iframe
+                    src={campaignInfo.pendingPayment.bankSlipUrl}
+                    title="Preview do boleto"
+                    style={{ zoom: 0.8, width: '100%', height: 'calc(100vh - 250px)', minHeight: 400, border: '1px solid var(--app-border)', borderRadius: 8, display: 'block' }}
+                  />
+                </div>
+              ) : campaignInfo.pendingPayment.billingType === 'PIX' && pendingPaymentPixQr ? (
+                <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                  <img src={pendingPaymentPixQr} alt="QR Code PIX" style={{ width: 220, height: 220 }} />
+                  <Typography.Text strong style={{ display: 'block', marginTop: 12 }}>Escaneie para pagar</Typography.Text>
+                </div>
+              ) : (
+                <Typography.Text type="secondary">Aguardando dados de pagamento.</Typography.Text>
+              )}
+            </Card>
+            <Card
+              style={{
+                flex: 1,
+                minWidth: 0,
+                maxWidth: '100%',
+                background: 'linear-gradient(135deg, var(--app-card-bg) 0%, var(--app-card-bg-soft) 100%)',
+                border: '1px solid var(--app-border)',
+                boxShadow: 'var(--app-shadow-md)',
+              }}
+            >
+              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                <div>
+                  <Typography.Title level={4} style={{ margin: '0 0 4px 0', color: 'var(--app-text)', fontWeight: 700 }}>
+                    {campaignInfo.name?.trim() || 'Seu relatório'}
+                  </Typography.Title>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {campaignInfo.created_at ? <><CalendarOutlined style={{ marginRight: 4, opacity: 0.7 }} />{formatDate(campaignInfo.created_at)}</> : 'Seus influenciadores estão prontos'}
+                  </Typography.Text>
+                </div>
+                <Tag color="success" style={{ borderRadius: 6, flexShrink: 0 }}>Quase lá!</Tag>
+              </div>
+
+              <div
+                style={{
+                  background: 'var(--app-primary-muted)',
+                  padding: '12px 16px',
+                  borderRadius: 12,
+                  marginBottom: 16,
+                  border: '1px solid var(--app-border-light)',
+                }}
+              >
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>Valor total</Typography.Text>
+                <Typography.Title level={3} style={{ margin: '4px 0 0 0', color: 'var(--app-primary)', fontWeight: 700 }}>
+                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(campaignInfo.pendingPayment.valueBrl)}
+                </Typography.Title>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <Typography.Text strong style={{ marginBottom: 8, display: 'block', fontSize: 13, color: 'var(--app-text)' }}>
+                  O que você vai receber
+                </Typography.Text>
+                {loading && !contextItems?.length ? (
+                  <Spin size="small" />
+                ) : (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(2, 1fr)',
+                      gap: '8px 16px',
+                      padding: '12px 0',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><UserOutlined /></span>
+                      <span><strong>{contextItems?.length ?? campaignInfo.handlesCount ?? 0}</strong> perfis</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><TeamOutlined /></span>
+                      <span><strong>{formatShortNum(computeReportStats(contextItems ?? []).totalFollowers)}</strong> seguidores</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><HeartOutlined /></span>
+                      <span><strong>{formatShortNum(computeReportStats(contextItems ?? []).totalLikes)}</strong> likes</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><CommentOutlined /></span>
+                      <span><strong>{formatShortNum(computeReportStats(contextItems ?? []).totalComments)}</strong> comentários</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><FileTextOutlined /></span>
+                      <span><strong>{formatShortNum(computeReportStats(contextItems ?? []).postsCount)}</strong> posts</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><RiseOutlined /></span>
+                      <span><strong>{computeReportStats(contextItems ?? []).avgEngagementRate?.toFixed(2) ?? '0'}%</strong> engajamento</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                {campaignInfo.pendingPayment.billingType === 'BOLETO' && campaignInfo.pendingPayment.bankSlipUrl && (
+                  <Button
+                    type="primary"
+                    href={campaignInfo.pendingPayment.bankSlipUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    block
+                    icon={<BankOutlined />}
+                    size="large"
+                    style={{
+                      height: 44,
+                      fontWeight: 600,
+                      boxShadow: 'var(--app-shadow-cta)',
+                      background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark) 100%)',
+                      border: 'none',
+                    }}
+                  >
+                    Pagar boleto agora
+                  </Button>
+                )}
+                {campaignInfo.pendingPayment.billingType === 'PIX' && campaignInfo.pendingPayment.pixCopyPaste && (
+                  <>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>Código PIX (copie e cole no app do banco):</Typography.Text>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <Typography.Text
+                        copyable={{ text: campaignInfo.pendingPayment.pixCopyPaste }}
+                        style={{ flex: 1, minWidth: 0, wordBreak: 'break-all', fontSize: 12 }}
+                        ellipsis
+                      />
+                      <Button
+                        type="primary"
+                        icon={<CopyOutlined />}
+                        onClick={() => campaignInfo.pendingPayment?.pixCopyPaste && void navigator.clipboard.writeText(campaignInfo.pendingPayment.pixCopyPaste)}
+                        style={{
+                          fontWeight: 600,
+                          background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark) 100%)',
+                          border: 'none',
+                        }}
+                      >
+                        Copiar e pagar
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {campaignInfo.pendingPayment.invoiceUrl && (
+                  <Button href={campaignInfo.pendingPayment.invoiceUrl} target="_blank" rel="noopener noreferrer" block size="middle" style={{ marginTop: 4 }}>
+                    Ver fatura
+                  </Button>
+                )}
+              </Space>
+            </Card>
+          </div>
+        </div>
+      ) : facets == null && loading ? (
         <div style={{ textAlign: 'center', padding: 16 }}>
           <Spin size="small" />
         </div>
       ) : facets == null && !loading ? (
         <Empty description="Nenhum perfil nesta campanha." />
       ) : (
-        <div>
-          {facets != null && (
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 0 8px',
-                marginBottom: 8,
-                borderBottom: '1px solid var(--app-border-light)',
-              }}
-            >
-              <FilterOutlined style={{ fontSize: 12, color: 'var(--app-text-secondary)', marginRight: 2 }} />
-              {facets?.cost_tier && facets.cost_tier.length > 0 && (
-                <Select
-                  size="small"
-                  placeholder="Preço"
-                  allowClear
-                  value={selectedCostTierOption}
-                  options={(() => {
-                    const opts: { value: 'low' | 'medium' | 'above'; label: string }[] = []
-                    const low = facets.cost_tier!.find((x) => x.tier === 'low')
-                    if (low && low.count > 0) opts.push({ value: 'low', label: `Abaixo (${low.count})` })
-                    const medium = facets.cost_tier!.find((x) => x.tier === 'medium')
-                    if (medium && medium.count > 0) opts.push({ value: 'medium', label: `Normal (${medium.count})` })
-                    const high = facets.cost_tier!.find((x) => x.tier === 'high')
-                    const veryHigh = facets.cost_tier!.find((x) => x.tier === 'very_high')
-                    const aboveCount = (high?.count ?? 0) + (veryHigh?.count ?? 0)
-                    if (aboveCount > 0) opts.push({ value: 'above', label: `Acima (${aboveCount})` })
-                    return opts
-                  })()}
-                  style={{ width: 130 }}
-                  onChange={(value) => {
-                    if (value == null) {
-                      updateFilter({ costTierFilter: undefined })
-                      return
-                    }
-                    const costTierFilter =
-                      value === 'low' ? ['low'] : value === 'medium' ? ['medium'] : ['high', 'very_high']
-                    updateFilter({ costTierFilter })
-                  }}
-                />
-              )}
-              {facets?.content_type && facets.content_type.filter((x) => x.count > 0).length > 0 && (
-                <Select
-                  mode="multiple"
-                  size="small"
-                  placeholder="Conteúdo"
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  value={selectedContentTypes.length ? selectedContentTypes : undefined}
-                  options={facets.content_type
-                    .filter((x) => x.count > 0)
-                    .map(({ name, count }) => ({
-                      value: name,
-                      label: `${CONTENT_TYPE_LABELS[name] ?? name} (${count})`,
-                    }))}
-                  onChange={(vals) => updateFilter({ contentTypes: vals?.length ? vals : undefined })}
-                  style={{ width: 140 }}
-                  maxTagCount={1}
-                />
-              )}
-              {facets?.pricing && Object.values(facets.pricing).some((arr) => arr && arr.length > 0) &&
-                PRICING_FILTER_KEYS.map((key) => {
-                  const actKey = key.slice(7).toLowerCase() as 'feed' | 'reels' | 'story' | 'destaque'
-                  const buckets = facets.pricing?.[actKey]
-                  if (!buckets || buckets.length === 0) return null
-                  const value =
-                    key === 'pricingFeed' ? selectedPricingFeed
-                      : key === 'pricingReels' ? selectedPricingReels
-                        : key === 'pricingStory' ? selectedPricingStory
-                          : selectedPricingDestaque
-                  const options = buckets.map((b) => ({
-                    value: b.value,
-                    label: `${PRICE_BUCKETS.find((pb) => pb.value === b.value)?.label ?? `R$ ${b.value}`} (${b.count})`,
-                  }))
-                  return (
-                    <Select
-                      key={key}
-                      mode="multiple"
-                      size="small"
-                      placeholder={PRICING_FILTER_LABELS[key]}
-                      allowClear
-                      value={value?.length ? value : undefined}
-                      options={options}
-                      onChange={(vals) => updateFilter({ [key]: vals?.length ? vals : undefined })}
-                      style={{ width: 100 }}
-                      maxTagCount={1}
-                    />
-                  )
-                })}
-              {facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0) && (
-                <Select
-                  mode="multiple"
-                  size="small"
-                  placeholder="Ativado"
-                  allowClear
-                  value={selectedActivation.length ? selectedActivation : undefined}
-                  options={[
-                    facets.activation.activated > 0 && { value: 'activated', label: `Sim (${facets.activation.activated})` },
-                    facets.activation.not_activated > 0 && { value: 'not_activated', label: `Não (${facets.activation.not_activated})` },
-                  ].filter(Boolean) as { value: string; label: string }[]}
-                  onChange={(vals) => updateFilter({ activationFilter: vals?.length && vals.length < 2 ? vals : undefined })}
-                  style={{ width: 100 }}
-                  maxTagCount={1}
-                />
-              )}
-              {facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0) && (
-                <Select
-                  mode="multiple"
-                  size="small"
-                  placeholder="Redes"
-                  allowClear
-                  value={selectedSocial.length ? selectedSocial : undefined}
-                  options={[
-                    facets.social.whatsapp > 0 && { value: 'whatsapp', label: `WA (${facets.social.whatsapp})` },
-                    facets.social.tiktok > 0 && { value: 'tiktok', label: `TikTok (${facets.social.tiktok})` },
-                    facets.social.facebook > 0 && { value: 'facebook', label: `FB (${facets.social.facebook})` },
-                    facets.social.linkedin > 0 && { value: 'linkedin', label: `LI (${facets.social.linkedin})` },
-                    facets.social.twitter > 0 && { value: 'twitter', label: `X (${facets.social.twitter})` },
-                  ].filter(Boolean) as { value: string; label: string }[]}
-                  onChange={(vals) => updateFilter({ socialNetworks: vals?.length ? vals : undefined })}
-                  style={{ width: 110 }}
-                  maxTagCount={1}
-                />
-              )}
-              {facets?.cities && facets.cities.length > 0 && (
-                <Select
-                  mode="multiple"
-                  size="small"
-                  placeholder="Cidades"
-                  allowClear
-                  showSearch={false}
-                  optionFilterProp="label"
-                  value={selectedCities.length ? selectedCities : undefined}
-                  options={facets.cities.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                  onChange={(vals) => updateFilter({ cities: vals?.length ? vals : undefined })}
-                  style={{ width: 120 }}
-                  maxTagCount={1}
-                />
-              )}
-              {facets?.states && facets.states.length > 0 && (
-                <Select
-                  mode="multiple"
-                  size="small"
-                  placeholder="Estados"
-                  allowClear
-                  showSearch={false}
-                  optionFilterProp="label"
-                  value={selectedStates.length ? selectedStates : undefined}
-                  options={facets.states.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                  onChange={(vals) => updateFilter({ states: vals?.length ? vals : undefined })}
-                  style={{ width: 110 }}
-                  maxTagCount={1}
-                />
-              )}
-              {hasActiveFilters && (
-                <Button type="text" size="small" icon={<ClearOutlined />} onClick={clearFilters} style={{ marginLeft: 2, padding: '0 4px', height: 22, fontSize: 11 }}>
-                  Limpar
-                </Button>
-              )}
+        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', minWidth: 0 }}>
+          {!isMobile && (
+            <div style={{ flexShrink: 0, width: 240, minWidth: 0 }}>
+              <CampaignBIPanel
+                items={filteredList}
+                facets={facets}
+                loading={loading}
+                query={query}
+                onFilter={updateFilter}
+                description={campaignInfo?.description ?? null}
+                onDescriptionSave={handleDescriptionSave}
+                expiresAt={campaignInfo?.expires_at ?? null}
+                createdAt={campaignInfo?.created_at ?? null}
+              />
             </div>
           )}
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, width: '100%', minWidth: 0 }}>
-              <Typography.Text strong type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
-                Busca Palavras
-              </Typography.Text>
-              <Space.Compact style={{ flex: 1, minWidth: 0 }}>
-                <Input
-                  placeholder="Nome ou @usuario"
-                  prefix={<SearchOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  onPressEnter={() => updateFilter({ q: searchInput.trim() || undefined })}
-                  allowClear
-                  size="small"
-                  style={{ flex: 1 }}
-                />
-                <Button
-                  type="primary"
-                  size="small"
-                  icon={<SearchOutlined />}
-                  onClick={() => updateFilter({ q: searchInput.trim() || undefined })}
-                >
-                  Buscar
-                </Button>
-              </Space.Compact>
-              {!isMobile && (
-                <Button.Group
-                  style={{ flexShrink: 0, borderRadius: 20, overflow: 'hidden' }}
-                >
-                  <Tooltip title="Lista (um por linha)">
-                    <Button
-                      type={viewMode === 'list' ? 'primary' : 'default'}
-                      icon={<UnorderedListOutlined />}
-                      onClick={() => setViewMode('list')}
-                      size="small"
-                    />
-                  </Tooltip>
-                  <Tooltip title="Lado a lado (grade)">
-                    <Button
-                      type={viewMode === 'grid' ? 'primary' : 'default'}
-                      icon={<AppstoreOutlined />}
-                      onClick={() => setViewMode('grid')}
-                      size="small"
-                    />
-                  </Tooltip>
-                </Button.Group>
-              )}
-            </div>
-            {loading && (
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {isMobile && facets != null && (
               <div
                 style={{
-                  marginBottom: 8,
-                  padding: '6px 10px',
-                  fontSize: 13,
-                  color: 'var(--colorTextSecondary)',
                   display: 'flex',
+                  flexWrap: 'wrap',
                   alignItems: 'center',
-                  gap: 8,
+                  gap: 6,
+                  padding: '4px 0 8px',
+                  marginBottom: 8,
+                  borderBottom: '1px solid var(--app-border-light)',
                 }}
               >
-                <Spin size="small" />
-                <span>Filtrando...</span>
+                <FilterOutlined style={{ fontSize: 12, color: 'var(--app-text-secondary)', marginRight: 2 }} />
+                {facets?.size_buckets && facets.size_buckets.length > 0 && (
+                  <Select
+                    mode="multiple"
+                    size="small"
+                    placeholder="Tamanho"
+                    allowClear
+                    value={selectedSizeFilter.length ? selectedSizeFilter : undefined}
+                    options={facets.size_buckets.map(({ key, label, count }) => ({
+                      value: key,
+                      label: `${label} (${count})`,
+                    }))}
+                    onChange={(vals) => updateFilter({ sizeFilter: vals?.length ? vals : undefined })}
+                    style={{ width: 120 }}
+                    maxTagCount={1}
+                  />
+                )}
+                {facets?.account_type && facets.account_type.length > 0 && (
+                  <Select
+                    mode="multiple"
+                    size="small"
+                    placeholder="Tipo conta"
+                    allowClear
+                    value={selectedAccountTypeFilter.length ? selectedAccountTypeFilter : undefined}
+                    options={facets.account_type.map(({ value, label, count }) => ({
+                      value,
+                      label: `${label} (${count})`,
+                    }))}
+                    onChange={(vals) => updateFilter({ accountTypeFilter: vals?.length ? vals : undefined })}
+                    style={{ width: 120 }}
+                    maxTagCount={1}
+                  />
+                )}
+                {facets?.cost_tier && facets.cost_tier.length > 0 && (
+                  <Select
+                    size="small"
+                    placeholder="Preço"
+                    allowClear
+                    value={selectedCostTierOption}
+                    options={(() => {
+                      const opts: { value: 'low' | 'medium' | 'above'; label: string }[] = []
+                      const low = facets.cost_tier!.find((x) => x.tier === 'low')
+                      if (low && low.count > 0) opts.push({ value: 'low', label: `Abaixo (${low.count})` })
+                      const medium = facets.cost_tier!.find((x) => x.tier === 'medium')
+                      if (medium && medium.count > 0) opts.push({ value: 'medium', label: `Normal (${medium.count})` })
+                      const high = facets.cost_tier!.find((x) => x.tier === 'high')
+                      const veryHigh = facets.cost_tier!.find((x) => x.tier === 'very_high')
+                      const aboveCount = (high?.count ?? 0) + (veryHigh?.count ?? 0)
+                      if (aboveCount > 0) opts.push({ value: 'above', label: `Acima (${aboveCount})` })
+                      return opts
+                    })()}
+                    style={{ width: 130 }}
+                    onChange={(value) => {
+                      if (value == null) {
+                        updateFilter({ costTierFilter: undefined })
+                        return
+                      }
+                      const costTierFilter =
+                        value === 'low' ? ['low'] : value === 'medium' ? ['medium'] : ['high', 'very_high']
+                      updateFilter({ costTierFilter })
+                    }}
+                  />
+                )}
+                {facets?.content_type && facets.content_type.filter((x) => x.count > 0).length > 0 && (
+                  <Select
+                    mode="multiple"
+                    size="small"
+                    placeholder="Conteúdo"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    value={selectedContentTypes.length ? selectedContentTypes : undefined}
+                    options={facets.content_type
+                      .filter((x) => x.count > 0)
+                      .map(({ name, count }) => ({
+                        value: name,
+                        label: `${CONTENT_TYPE_LABELS[name] ?? name} (${count})`,
+                      }))}
+                    onChange={(vals) => updateFilter({ contentTypes: vals?.length ? vals : undefined })}
+                    style={{ width: 140 }}
+                    maxTagCount={1}
+                  />
+                )}
+                {facets?.pricing && Object.values(facets.pricing).some((arr) => arr && arr.length > 0) &&
+                  PRICING_FILTER_KEYS.map((key) => {
+                    const actKey = key.slice(7).toLowerCase() as 'feed' | 'reels' | 'story' | 'destaque'
+                    const buckets = facets.pricing?.[actKey]
+                    if (!buckets || buckets.length === 0) return null
+                    const value =
+                      key === 'pricingFeed' ? selectedPricingFeed
+                        : key === 'pricingReels' ? selectedPricingReels
+                          : key === 'pricingStory' ? selectedPricingStory
+                            : selectedPricingDestaque
+                    const options = buckets.map((b) => ({
+                      value: b.value,
+                      label: `${PRICE_BUCKETS.find((pb) => pb.value === b.value)?.label ?? `R$ ${b.value}`} (${b.count})`,
+                    }))
+                    return (
+                      <Select
+                        key={key}
+                        mode="multiple"
+                        size="small"
+                        placeholder={PRICING_FILTER_LABELS[key]}
+                        allowClear
+                        value={value?.length ? value : undefined}
+                        options={options}
+                        onChange={(vals) => updateFilter({ [key]: vals?.length ? vals : undefined })}
+                        style={{ width: 100 }}
+                        maxTagCount={1}
+                      />
+                    )
+                  })}
+                {facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0) && (
+                  <Select
+                    mode="multiple"
+                    size="small"
+                    placeholder="Ativado"
+                    allowClear
+                    value={selectedActivation.length ? selectedActivation : undefined}
+                    options={[
+                      facets.activation.activated > 0 && { value: 'activated', label: `Sim (${facets.activation.activated})` },
+                      facets.activation.not_activated > 0 && { value: 'not_activated', label: `Não (${facets.activation.not_activated})` },
+                    ].filter(Boolean) as { value: string; label: string }[]}
+                    onChange={(vals) => updateFilter({ activationFilter: vals?.length && vals.length < 2 ? vals : undefined })}
+                    style={{ width: 100 }}
+                    maxTagCount={1}
+                  />
+                )}
+                {facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0) && (
+                  <Select
+                    mode="multiple"
+                    size="small"
+                    placeholder="Redes"
+                    allowClear
+                    value={selectedSocial.length ? selectedSocial : undefined}
+                    options={[
+                      facets.social.whatsapp > 0 && { value: 'whatsapp', label: `WA (${facets.social.whatsapp})` },
+                      facets.social.tiktok > 0 && { value: 'tiktok', label: `TikTok (${facets.social.tiktok})` },
+                      facets.social.facebook > 0 && { value: 'facebook', label: `FB (${facets.social.facebook})` },
+                      facets.social.linkedin > 0 && { value: 'linkedin', label: `LI (${facets.social.linkedin})` },
+                      facets.social.twitter > 0 && { value: 'twitter', label: `X (${facets.social.twitter})` },
+                    ].filter(Boolean) as { value: string; label: string }[]}
+                    onChange={(vals) => updateFilter({ socialNetworks: vals?.length ? vals : undefined })}
+                    style={{ width: 110 }}
+                    maxTagCount={1}
+                  />
+                )}
+                {facets?.cities && facets.cities.length > 0 && (
+                  <Select
+                    mode="multiple"
+                    size="small"
+                    placeholder="Cidades"
+                    allowClear
+                    showSearch={false}
+                    optionFilterProp="label"
+                    value={selectedCities.length ? selectedCities : undefined}
+                    options={facets.cities.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                    onChange={(vals) => updateFilter({ cities: vals?.length ? vals : undefined })}
+                    style={{ width: 120 }}
+                    maxTagCount={1}
+                  />
+                )}
+                {facets?.states && facets.states.length > 0 && (
+                  <Select
+                    mode="multiple"
+                    size="small"
+                    placeholder="Estados"
+                    allowClear
+                    showSearch={false}
+                    optionFilterProp="label"
+                    value={selectedStates.length ? selectedStates : undefined}
+                    options={facets.states.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                    onChange={(vals) => updateFilter({ states: vals?.length ? vals : undefined })}
+                    style={{ width: 110 }}
+                    maxTagCount={1}
+                  />
+                )}
+                {hasActiveFilters && (
+                  <Button type="text" size="small" icon={<ClearOutlined />} onClick={clearFilters} style={{ marginLeft: 2, padding: '0 4px', height: 22, fontSize: 11 }}>
+                    Limpar
+                  </Button>
+                )}
               </div>
             )}
-            {!loading && data.length === 0 && (
-              <Empty description="Nenhum perfil nesta campanha." />
-            )}
-            {(data.length > 0 || loading) && (effectiveViewMode === 'list' ? (
-              <div
-                className="campaign-list-table"
-                style={{
-                  border: '1px solid var(--app-border, #f0f0f0)',
-                  borderRadius: 8,
-                  overflow: 'auto',
-                  background: 'var(--app-bg)',
-                  minWidth: 0,
-                }}
-              >
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, width: '100%', minWidth: 0 }}>
+                <Typography.Text strong type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+                  Busca Palavras
+                </Typography.Text>
+                <Space.Compact style={{ flex: 1, minWidth: 0 }}>
+                  <Input
+                    placeholder="Digite uma palavra"
+                    prefix={<SearchOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onPressEnter={() => updateFilter({ q: searchInput.trim() || undefined })}
+                    allowClear
+                    size="small"
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<SearchOutlined />}
+                    onClick={() => updateFilter({ q: searchInput.trim() || undefined })}
+                  >
+                    Buscar
+                  </Button>
+                </Space.Compact>
+                {!isMobile && (
+                  <Button.Group
+                    style={{ flexShrink: 0, borderRadius: 20, overflow: 'hidden' }}
+                  >
+                    <Tooltip title="Lista (um por linha)">
+                      <Button
+                        type={viewMode === 'list' ? 'primary' : 'default'}
+                        icon={<UnorderedListOutlined />}
+                        onClick={() => setViewMode('list')}
+                        size="small"
+                      />
+                    </Tooltip>
+                    <Tooltip title="Lado a lado (grade)">
+                      <Button
+                        type={viewMode === 'grid' ? 'primary' : 'default'}
+                        icon={<AppstoreOutlined />}
+                        onClick={() => setViewMode('grid')}
+                        size="small"
+                      />
+                    </Tooltip>
+                  </Button.Group>
+                )}
+              </div>
+              {loading && (
                 <div
-                  className="campaign-list-header"
                   style={{
-                    display: 'grid',
-                    gridTemplateColumns: LIST_GRID_COLUMNS,
-                    gap: '0 2px',
+                    marginBottom: 8,
+                    padding: '6px 10px',
+                    fontSize: 13,
+                    color: 'var(--colorTextSecondary)',
+                    display: 'flex',
                     alignItems: 'center',
-                    padding: '4px 10px',
-                    minHeight: 28,
-                    background: 'var(--app-bg-secondary, #fafafa)',
-                    borderBottom: '1px solid var(--app-border, #f0f0f0)',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    color: 'var(--app-text-secondary)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.02em',
-                    minWidth: 900,
+                    gap: 8,
                   }}
                 >
-                  <div />
-                  <Tooltip title="Clique para ordenar por nome">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSortColumn('name')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('name')}
-                      className="campaign-list-cell"
-                      style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      Perfil
-                      {currentSort === 'name_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'name_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                    </div>
-                  </Tooltip>
-                  <Tooltip title="Clique para ordenar por seguidores">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSortColumn('followers')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('followers')}
-                      className="campaign-list-cell campaign-list-cell-border"
-                      style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      Seg.
-                      {currentSort === 'followers_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'followers_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                    </div>
-                  </Tooltip>
-                  <Tooltip title="Clique para ordenar por engajamento">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSortColumn('engagement')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('engagement')}
-                      className="campaign-list-cell campaign-list-cell-border"
-                      style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      Eng.
-                      {currentSort === 'engagement_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'engagement_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                    </div>
-                  </Tooltip>
-                  <Tooltip title="Total de curtidas">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSortColumn('total_likes')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('total_likes')}
-                      className="campaign-list-cell campaign-list-cell-border"
-                      style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      Like
-                      {currentSort === 'total_likes_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'total_likes_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                    </div>
-                  </Tooltip>
-                  <Tooltip title="Ordenar por comentários">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSortColumn('total_comments')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('total_comments')}
-                      className="campaign-list-cell campaign-list-cell-border"
-                      style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      Com.
-                      {currentSort === 'total_comments_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'total_comments_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                    </div>
-                  </Tooltip>
-                  <Tooltip title="Média de likes por post">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSortColumn('avg_likes')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('avg_likes')}
-                      className="campaign-list-cell campaign-list-cell-border"
-                      style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      Posts
-                      {currentSort === 'avg_likes_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'avg_likes_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                    </div>
-                  </Tooltip>
-                  <Tooltip title="Clique para ordenar por preço">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSortColumn('cost_tier')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('cost_tier')}
-                      className="campaign-list-cell campaign-list-cell-border"
-                      style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      Preço
-                      {currentSort === 'cost_tier_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'cost_tier_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                    </div>
-                  </Tooltip>
-                  <Tooltip title="Clique para ordenar por favoritos">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSortColumn('favorite')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('favorite')}
-                      className="campaign-list-cell"
-                      style={{ textAlign: 'center', fontSize: 10, color: 'var(--app-text-secondary)', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      Fav.
-                      {currentSort === 'favorite_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'favorite_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                    </div>
-                  </Tooltip>
+                  <Spin size="small" />
+                  <span>Filtrando...</span>
                 </div>
-                {data.map((item) => (
-                  <CampaignListRow
-                    key={item.key}
-                    item={item}
-                    onClick={() => openDetail(item.handle ?? item.key)}
-                    isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
-                    onFavoriteToggle={user ? handleFavoriteToggle : undefined}
-                  />
-                ))}
-              </div>
-            ) : (
-              <Row gutter={[12, 12]}>
-                {data.map((item) => (
-                  <Col
-                    key={item.key}
-                    xs={24}
-                    sm={12}
-                    md={12}
-                    lg={8}
-                    style={{ minWidth: 0 }}
-                  >
-                    <ProfileSummaryCard
-                      item={item}
-                      variant="list"
-                      onClick={() => openDetail(item.handle ?? item.key)}
-                      onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
-                      showMetrics={!!user}
-                      isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
-                      onFavoriteToggle={user ? handleFavoriteToggle : undefined}
+              )}
+              {!loading && data.length === 0 && (
+                <Empty description="Nenhum perfil nesta campanha." />
+              )}
+              {(data.length > 0 || loading) && (effectiveViewMode === 'list' ? (
+                <div style={{ overflow: 'auto', border: '1px solid var(--app-border, #f0f0f0)', borderRadius: 8, minWidth: 0 }}>
+                  <table className="campaign-list-table" style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--app-bg)' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--app-bg-secondary, #fafafa)', borderBottom: '1px solid var(--app-border, #f0f0f0)', fontSize: 10, fontWeight: 600, color: 'var(--app-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                        <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid var(--app-border)', width: '1%', whiteSpace: 'nowrap' }} />
+                        <th style={{ padding: '6px 8px', width: 48 }} />
+                        <th style={{ padding: '4px 0', paddingLeft: 0, paddingRight: 0, textAlign: 'center', width: 36, cursor: 'pointer', userSelect: 'none' }} role="button" tabIndex={0} onClick={() => handleSortColumn('favorite')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('favorite')} title="Ordenar por favoritos">
+                          {currentSort === 'favorite_desc'
+                            ? <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 12 }} />
+                            : <HeartOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 12, opacity: 0.5 }} />}
+                        </th>
+                        <th style={{ padding: '4px 4px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: '100%', maxWidth: 300 }} role="button" tabIndex={0} onClick={() => handleSortColumn('name')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('name')}>
+                          Perfil {currentSort === 'name_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'name_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                        </th>
+                        <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 72 }} role="button" tabIndex={0} onClick={() => handleSortColumn('followers')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('followers')}>
+                          Seg. {currentSort === 'followers_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'followers_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                        </th>
+                        <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 76 }} role="button" tabIndex={0} onClick={() => handleSortColumn('engagement')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('engagement')}>
+                          Eng. {currentSort === 'engagement_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'engagement_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                        </th>
+                        <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 74 }} role="button" tabIndex={0} onClick={() => handleSortColumn('total_likes')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('total_likes')}>
+                          Like {currentSort === 'total_likes_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'total_likes_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                        </th>
+                        <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 74 }} role="button" tabIndex={0} onClick={() => handleSortColumn('total_comments')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('total_comments')}>
+                          Com. {currentSort === 'total_comments_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'total_comments_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                        </th>
+                        <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 72 }} role="button" tabIndex={0} onClick={() => handleSortColumn('avg_likes')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('avg_likes')}>
+                          Posts {currentSort === 'avg_likes_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'avg_likes_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                        </th>
+                        <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 68 }} role="button" tabIndex={0} onClick={() => handleSortColumn('cost_tier')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('cost_tier')}>
+                          Preço {currentSort === 'cost_tier_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'cost_tier_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.map((item) => (
+                        <CampaignListRow
+                          key={item.key}
+                          item={item}
+                          onClick={() => openDetail(item.handle ?? item.key)}
+                          isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
+                          onFavoriteToggle={user ? handleFavoriteToggle : undefined}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <Row gutter={[8, 8]}>
+                  {data.map((item) => (
+                    <Col
+                      key={item.key}
+                      xs={24}
+                      sm={12}
+                      md={8}
+                      lg={8}
+                      style={{ minWidth: 0 }}
+                    >
+                      <ProfileSummaryCard
+                        item={item}
+                        variant="list"
+                        onClick={() => openDetail(item.handle ?? item.key)}
+                        onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
+                        showMetrics={!!user}
+                        isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
+                        onFavoriteToggle={user ? handleFavoriteToggle : undefined}
+                      />
+                    </Col>
+                  ))}
+                </Row>
+              ))}
+              {!loading && data.length > 0 && (
+                <>
+                  {data.length < total && (
+                    <div
+                      ref={loadMoreSentinelRef}
+                      style={{ minHeight: 1, marginTop: 16 }}
+                      aria-hidden
                     />
-                  </Col>
-                ))}
-              </Row>
-            ))}
+                  )}
+                  <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
+                    {data.length} de {total} perfis
+                  </Typography.Text>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      )}
-      {!loading && data.length > 0 && (
-        <>
-          {data.length < total && (
-            <div
-              ref={loadMoreSentinelRef}
-              style={{ minHeight: 1, marginTop: 16 }}
-              aria-hidden
-            />
-          )}
-          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
-            {data.length} de {total} perfis
-          </Typography.Text>
-        </>
       )}
     </div>
   )
