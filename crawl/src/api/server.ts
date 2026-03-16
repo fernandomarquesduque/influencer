@@ -54,6 +54,7 @@ import { signJwt, getJwtSecret } from '../auth/jwt.js';
 import { verifyPassword, hashPassword } from '../auth/password.js';
 import type { AuthScope } from '../auth/types.js';
 import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
+import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
 
 const require = createRequire(import.meta.url);
 const openApiRocksdb = require('./openapi-rocksdb.json');
@@ -480,6 +481,8 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
         profile_activated = !!(act?.city && String(act.city).trim());
       }
     }
+    const email_verified = user.email_verified !== undefined ? user.email_verified === 1 : undefined;
+    const display_name = (user as { display_name?: string | null }).display_name ?? null;
     res.json({
       token,
       user: {
@@ -487,7 +490,9 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
         username: user.username,
         scope: user.scope,
         profile_handle: user.profile_handle,
+        ...(display_name != null && { display_name }),
         ...(profile_activated !== undefined && { profile_activated }),
+        ...(email_verified !== undefined && { email_verified: email_verified === true }),
       },
     });
   } catch (e) {
@@ -495,12 +500,14 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   }
 });
 
-/** Usuário atual (a partir do JWT). Para influencer com profile_handle, inclui profile_activated (cadastro de ativação completo). */
+/** Usuário atual (a partir do JWT). Para influencer com profile_handle, inclui profile_activated. Para assinante, inclui email_verified. */
 app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
   if (!req.user) {
     res.status(200).json({ user: null });
     return;
   }
+  const userId = Number(req.user.sub);
+  const dbUser = authDb.getById(userId);
   const profileHandle = req.user.profile_handle ?? null;
   let profile_activated: boolean | undefined;
   if (req.user.scope === 'influencer') {
@@ -512,14 +519,64 @@ app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
       profile_activated = !!(activation?.city && String(activation.city).trim());
     }
   }
+  const email_verified = dbUser?.email_verified !== undefined ? dbUser.email_verified === 1 : undefined;
+  const display_name = dbUser && 'display_name' in dbUser ? (dbUser as { display_name?: string | null }).display_name ?? null : null;
   res.json({
     user: {
-      id: Number(req.user.sub),
+      id: userId,
       username: req.user.username,
       scope: req.user.scope,
       profile_handle: profileHandle,
+      display_name,
       ...(profile_activated !== undefined && { profile_activated }),
+      ...(email_verified !== undefined && { email_verified: email_verified === true }),
     },
+  });
+});
+
+/** Atualiza o perfil do usuário logado (ex.: desvincular Instagram, nome). Body: { profile_handle?: string | null, display_name?: string | null }. Retorna user atualizado e token. */
+app.patch('/api/auth/me', (req: RequestWithAuth, res: Response) => {
+  if (!req.user) {
+    res.status(401).json({ error: 'Faça login para atualizar o perfil.' });
+    return;
+  }
+  const userId = Number(req.user.sub);
+  const body = req.body as { profile_handle?: string | null; display_name?: string | null; name?: string | null };
+  const updates: { profile_handle?: string | null; display_name?: string | null } = {};
+  if (body.profile_handle !== undefined) {
+    updates.profile_handle = body.profile_handle == null || (typeof body.profile_handle === 'string' && !body.profile_handle.trim())
+      ? null
+      : String(body.profile_handle).replace(/^@/, '').trim();
+  }
+  if (body.display_name !== undefined || body.name !== undefined) {
+    const raw = body.display_name !== undefined ? body.display_name : body.name;
+    updates.display_name = raw == null || (typeof raw === 'string' && !raw.trim()) ? null : String(raw).trim();
+  }
+  if (Object.keys(updates).length > 0) {
+    authDb.updateUser(userId, updates);
+  }
+  const updated = authDb.getById(userId);
+  if (!updated) {
+    res.status(500).json({ error: 'Erro ao atualizar perfil.' });
+    return;
+  }
+  const secret = getJwtSecret();
+  const token = signJwt(
+    { sub: String(updated.id), username: updated.username, scope: updated.scope as AuthScope, profile_handle: updated.profile_handle ?? undefined },
+    secret
+  );
+  const email_verified = updated.email_verified !== undefined ? updated.email_verified === 1 : undefined;
+  const display_name = (updated as { display_name?: string | null }).display_name ?? null;
+  res.status(200).json({
+    user: {
+      id: updated.id,
+      username: updated.username,
+      scope: updated.scope,
+      profile_handle: updated.profile_handle ?? null,
+      display_name,
+      ...(email_verified !== undefined && { email_verified: email_verified === true }),
+    },
+    token,
   });
 });
 
@@ -1267,12 +1324,40 @@ app.post('/api/auth/verify-profile', (req: RequestWithAuth, res: Response) => {
         res.status(400).json({ error: 'Código não corresponde à sua conta.' });
         return;
       }
+      const currentUser = authDb.getById(currentUserId);
+      const isAssinanteLinkingInstagram = currentUser?.scope === 'assinante' && !currentUser.profile_handle && !authDb.isMissionInstagramClaimed(currentUserId);
       const existingByUsername = authDb.getByUsername(nickname);
-      if (existingByUsername && existingByUsername.id !== currentUserId) {
+      // Só desvia para outro usuário se o atual NÃO for assinante vinculando Instagram (missão)
+      if (existingByUsername && existingByUsername.id !== currentUserId && currentUser?.scope !== 'assinante') {
         authDb.updateUser(existingByUsername.id, { profile_handle: nickname });
         return res.status(200).json({ verified: true, profile_handle: nickname });
       }
-      authDb.updateUser(currentUserId, { profile_handle: nickname, username: nickname });
+      // Assinante: se o nickname já é username de outro usuário, só atualizar profile_handle (evitar UNIQUE)
+      if (currentUser?.scope === 'assinante' && existingByUsername && existingByUsername.id !== currentUserId) {
+        authDb.updateUser(currentUserId, { profile_handle: nickname });
+      } else {
+        authDb.updateUser(currentUserId, { profile_handle: nickname, username: nickname });
+      }
+      if (currentUser?.scope === 'assinante') {
+        if (isAssinanteLinkingInstagram) {
+          authDb.setMissionInstagramClaimed(currentUserId);
+          creditsCampaignsDb.addCredits(currentUserId, MISSION_INSTAGRAM_CREDITS, 'mission_instagram', undefined);
+        }
+        const secret = getJwtSecret();
+        const user = authDb.getById(currentUserId)!;
+        const newToken = signJwt(
+          { sub: String(user.id), username: user.username, scope: user.scope as AuthScope, profile_handle: user.profile_handle ?? undefined },
+          secret
+        );
+        return res.status(200).json({
+          verified: true,
+          profile_handle: nickname,
+          mission_completed: true,
+          credits: MISSION_INSTAGRAM_CREDITS,
+          token: newToken,
+          user: { id: user.id, username: user.username, scope: user.scope, profile_handle: user.profile_handle },
+        });
+      }
       return res.status(200).json({ verified: true, profile_handle: nickname });
     }
 
@@ -1489,34 +1574,41 @@ app.delete('/api/admin/users/:id', requireScopes('adm'), (req: RequestWithAuth, 
   }
 });
 
-/** LGPD: excluir conta. Influencer: própria conta (via profile_handle do JWT). Adm: qualquer conta via query handle=. */
-app.delete('/api/account', requireScopes('adm', 'influencer'), async (req: RequestWithAuth, res: Response) => {
+/** LGPD: excluir conta. Assinante: própria conta (por id). Influencer: própria conta (via profile_handle do JWT). Adm: qualquer conta via query handle=. */
+app.delete('/api/account', requireScopes('adm', 'assinante', 'influencer'), async (req: RequestWithAuth, res: Response) => {
   try {
-    let handle: string;
+    let userId: number;
+    let handle: string | null = null;
     if (req.user!.scope === 'adm') {
-      handle = (req.query?.handle ?? '').toString().trim().replace(/^@/, '').toLowerCase();
-      if (!handle) {
+      const handleParam = (req.query?.handle ?? '').toString().trim().replace(/^@/, '').toLowerCase();
+      if (!handleParam) {
         res.status(400).json({ error: 'Informe o handle (query: handle=)' });
         return;
       }
-    } else {
-      handle = (req.user!.profile_handle || '').replace(/^@/, '').trim().toLowerCase();
-      if (!handle) {
-        res.status(400).json({ error: 'Conta sem perfil vinculado.' });
+      handle = handleParam;
+      const user = authDb.getByProfileHandle(handle);
+      if (!user) {
+        res.status(404).json({ error: 'Usuário não encontrado.' });
         return;
       }
+      userId = user.id;
+    } else {
+      userId = Number(req.user!.sub);
+      const user = authDb.getById(userId);
+      if (!user) {
+        res.status(404).json({ error: 'Usuário não encontrado.' });
+        return;
+      }
+      handle = (user.profile_handle || '').replace(/^@/, '').trim().toLowerCase() || null;
     }
-    const user = authDb.getByProfileHandle(handle);
-    if (!user) {
-      res.status(404).json({ error: 'Usuário não encontrado.' });
-      return;
+    if (handle) {
+      sqlite.deleteActivation(handle);
+      sqlite.deleteProjectApplicationsByHandle(handle);
+      await rocks.deleteByKeyPrefix('post', `${handle}:`);
+      await rocks.delete('profile', handle);
+      authDb.clearProfileVerification(handle);
     }
-    sqlite.deleteActivation(handle);
-    sqlite.deleteProjectApplicationsByHandle(handle);
-    await rocks.deleteByKeyPrefix('post', `${handle}:`);
-    await rocks.delete('profile', handle);
-    authDb.clearProfileVerification(handle);
-    authDb.deleteUser(user.id);
+    authDb.deleteUser(userId);
     res.status(204).end();
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -1829,6 +1921,7 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       sort,
       limit,
       offset,
+      includeFacets: req.query.includeFacets === 'false' || req.query.includeFacets === false ? false : true,
     };
     let restrictToHandles: string[] | undefined;
     let queryForSearch = query;
@@ -1956,13 +2049,13 @@ app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
   }
 });
 
-/** Cadastro público: cria usuário como Assinante (sem pagamento). Body: email, password, name?. Retorna token + user. */
+/** Cadastro público: cria usuário como Assinante (sem pagamento). Envia e-mail de validação. Body: email, password, name?. Retorna token + user (email_verified: false). */
 app.post('/api/auth/register-assinante', async (req: Request, res: Response) => {
   try {
     const body = req.body as { email?: string; password?: string; name?: string };
     const email = (body?.email ?? '').toString().trim().toLowerCase();
     const password = (body?.password ?? '').toString();
-    const name = (body?.name ?? '').toString().trim() || email;
+    const name = (body?.name ?? '').toString().trim() || null;
     if (!email || !email.includes('@')) {
       res.status(400).json({ error: 'E-mail é obrigatório e deve ser válido' });
       return;
@@ -1976,12 +2069,23 @@ app.post('/api/auth/register-assinante', async (req: Request, res: Response) => 
       return;
     }
     const passwordHash = hashPassword(password);
-    const userId = authDb.createUser(email, passwordHash, 'assinante' as AuthScope, null);
+    const userId = authDb.createUser(email, passwordHash, 'assinante' as AuthScope, null, name);
     const authUser = authDb.getById(userId);
     if (!authUser) {
       res.status(500).json({ error: 'Erro ao criar conta' });
       return;
     }
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    authDb.setEmailVerification(userId, verificationToken, expiresAt);
+    const frontBase = process.env.FRONTEND_BASE_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
+    const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
+    sendVerificationEmail({
+      to: email,
+      subject: 'Confirme seu e-mail - Busca Influencer',
+      verifyUrl,
+      bodyText: 'Clique no link abaixo para validar sua conta e liberar seus 10 créditos de boas-vindas.',
+    }).catch((err) => console.error('[register-assinante] Erro ao enviar e-mail:', err));
     const secret = getJwtSecret();
     const token = signJwt(
       { sub: String(userId), username: authUser.username, scope: 'assinante' as AuthScope, profile_handle: authUser.profile_handle ?? undefined },
@@ -1994,8 +2098,92 @@ app.post('/api/auth/register-assinante', async (req: Request, res: Response) => 
         username: authUser.username,
         scope: authUser.scope,
         profile_handle: authUser.profile_handle,
+        email_verified: false,
+        display_name: (authUser as { display_name?: string | null }).display_name ?? null,
       },
     });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+const MISSION_EMAIL_CREDITS = 10;
+const MISSION_INSTAGRAM_CREDITS = 50;
+
+/** Valida e-mail pelo token (link no e-mail). Concede 10 créditos (missão 1) e retorna sucesso para o front exibir confete. */
+app.get('/api/auth/verify-email', (req: Request, res: Response) => {
+  try {
+    const token = (req.query?.token ?? '').toString().trim();
+    if (!token) {
+      res.status(400).json({ error: 'Token ausente' });
+      return;
+    }
+    console.log('[verify-email] Token recebido, tamanho:', token.length, 'início:', token.slice(0, 8) + '...');
+
+    let userId: number | null = authDb.getUserIdByEmailVerificationToken(token);
+
+    if (!userId && (process.env.ALLOW_DEV_VERIFY_BYPASS === '1' || process.env.NODE_ENV !== 'production') && (token === 'dev-bypass' || token === 'dev')) {
+      const users = authDb.listUsers();
+      const unverified = users.find((u) => (u as { email_verified?: number }).email_verified === 0);
+      if (unverified) {
+        userId = unverified.id;
+        console.log('[verify-email] Dev bypass: validando usuário id=', userId);
+      }
+    }
+
+    if (!userId) {
+      console.log('[verify-email] Token não encontrado ou expirado no banco.');
+      res.status(400).json({ error: 'Link inválido ou expirado. Solicite um novo e-mail de validação.' });
+      return;
+    }
+
+    const userRow = authDb.getById(userId);
+    if (userRow?.email_verified === 1) {
+      console.log('[verify-email] Usuário já validado, retornando sucesso (idempotente).');
+      res.status(200).json({ success: true, credits: MISSION_EMAIL_CREDITS });
+      return;
+    }
+
+    authDb.setEmailVerified(userId);
+    creditsCampaignsDb.addCredits(userId, MISSION_EMAIL_CREDITS, 'mission_email', undefined);
+    console.log('[verify-email] E-mail validado e créditos concedidos, userId=', userId);
+    res.status(200).json({ success: true, credits: MISSION_EMAIL_CREDITS });
+  } catch (e) {
+    console.error('[verify-email] Erro:', e);
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Reenvia o e-mail de validação para o usuário logado. */
+app.post('/api/auth/resend-verification', authOptional, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Faça login para reenviar o e-mail.' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const authUser = authDb.getById(userId);
+    if (!authUser) {
+      res.status(404).json({ error: 'Usuário não encontrado' });
+      return;
+    }
+    if (authUser.email_verified === 1) {
+      res.status(200).json({ ok: true, message: 'E-mail já validado' });
+      return;
+    }
+    const email = authUser.username;
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    authDb.setEmailVerification(userId, verificationToken, expiresAt);
+    const frontBase = process.env.FRONTEND_BASE_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
+    const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
+    await sendVerificationEmail({
+      to: email,
+      subject: 'Confirme seu e-mail - Busca Influencer',
+      verifyUrl,
+      bodyText: 'Clique no link abaixo para validar sua conta e liberar seus 10 créditos de boas-vindas.',
+    });
+    res.status(200).json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -2580,6 +2768,12 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
         } catch (e) {
           console.error('[payments/webhook] report campaign create', e);
         }
+      } else if (existingCampaignId && reportCount != null && reportCount > 0) {
+        try {
+          creditsCampaignsDb.setCampaignQuantity(existingCampaignId, row.user_id, reportCount);
+        } catch (e) {
+          console.error('[payments/webhook] trim campaign to quantity', e);
+        }
       } else if (!reportQueryStr || reportCount == null || reportCount <= 0) {
         creditsCampaignsDb.addCredits(row.user_id, row.credits_granted, 'payment', row.id);
       }
@@ -2686,7 +2880,7 @@ app.delete('/api/me/favorites/:handle', async (req: RequestWithAuth, res: Respon
   }
 });
 
-/** Resultado de stats e preview de uma campanha. */
+/** Resultado de stats e preview de uma campanha (compilado para exibição em pagamento pendente). */
 interface CampaignStatsResult {
   totalLikes: number;
   totalComments: number;
@@ -2699,13 +2893,22 @@ interface CampaignStatsResult {
   avgViews: number;
   previewProfiles: Array<{ handle: string; profile_pic_url?: string; full_name?: string; followers_count?: number }>;
   topHashtags: string[];
+  /** Cidades presentes nos perfis ativados (nome e quantidade). */
+  cities: Array<{ name: string; count: number }>;
+  /** Estados presentes nos perfis ativados (nome e quantidade). */
+  states: Array<{ name: string; count: number }>;
+  /** Quantidade de perfis com ativação (cidade preenchida). */
+  activatedCount: number;
+  amountCents?: number;
+  valueBrl?: number;
 }
 
 /** Agrega stats de engajamento e preview dos perfis da campanha. Só retorna dados para campanha ativa. */
 async function getCampaignStats(campaignId: string, userId: number): Promise<CampaignStatsResult | null> {
   const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
   if (!handles || handles.length === 0) return null;
-  const result = await searchProfiles(db, { limit: 10000, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
+  const limit = Math.min(handles.length, 2000);
+  const result = await searchProfiles(db, { limit, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
   let totalLikes = 0;
   let totalComments = 0;
   let totalViews = 0;
@@ -2751,6 +2954,34 @@ async function getCampaignStats(campaignId: string, userId: number): Promise<Cam
     .sort((a, b) => b[1] - a[1])
     .slice(0, 2)
     .map(([key]) => key);
+
+  const cityCount = new Map<string, number>();
+  const stateCount = new Map<string, number>();
+  let activatedCount = 0;
+  for (const item of result.items) {
+    const act = (item as ProfileListItem).activation;
+    if (act?.city?.trim()) {
+      activatedCount++;
+      const city = act.city.trim();
+      cityCount.set(city, (cityCount.get(city) ?? 0) + 1);
+    }
+    if (act?.state?.trim()) {
+      const state = act.state.trim();
+      stateCount.set(state, (stateCount.get(state) ?? 0) + 1);
+    }
+  }
+  const cities = [...cityCount.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 20);
+  const states = [...stateCount.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 20);
+
+  const notActivatedCount = n - activatedCount;
+  const amountCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
+
   return {
     totalLikes,
     totalComments,
@@ -2763,10 +2994,15 @@ async function getCampaignStats(campaignId: string, userId: number): Promise<Cam
     avgViews: n > 0 ? Math.round(avgViewsSum / n) : 0,
     previewProfiles,
     topHashtags,
+    cities,
+    states,
+    activatedCount,
+    amountCents,
+    valueBrl: amountCents / 100,
   };
 }
 
-/** Lista campanhas do usuário logado (com stats de engajamento por campanha). */
+/** Lista campanhas do usuário logado (com stats de engajamento por campanha). Query: light=1 retorna só lista (sem stats) para carregamento rápido. */
 app.get('/api/me/campaigns', async (req: RequestWithAuth, res: Response) => {
   try {
     if (!req.user) {
@@ -2774,7 +3010,40 @@ app.get('/api/me/campaigns', async (req: RequestWithAuth, res: Response) => {
       return;
     }
     const userId = Number(req.user.sub);
+    const light = (req.query?.light ?? '') === '1' || (req.query?.light ?? '') === 'true';
     const rows = creditsCampaignsDb.listCampaigns(userId);
+    if (light) {
+      const campaigns = rows.map((r) => {
+        const base: Record<string, unknown> = {
+          id: r.id,
+          name: r.name,
+          handlesCount: r.handles_count,
+          creditsUsed: r.credits_used,
+          created_at: r.created_at,
+          expires_at: r.expires_at,
+        };
+        const payment = paymentsDb.getByCampaignId(r.id, userId);
+        const hasPending = r.credits_used === 0 && (!payment || payment.status === 'PENDING');
+        if (hasPending) {
+          if (payment && payment.status === 'PENDING') {
+            base.pendingPayment = {
+              status: payment.status,
+              billingType: payment.billing_type,
+              bankSlipUrl: payment.bank_slip_url,
+              invoiceUrl: payment.invoice_url,
+              pixCopyPaste: payment.pix_copy_paste,
+              amountCents: payment.amount_cents,
+              valueBrl: payment.amount_cents / 100,
+            };
+          } else {
+            base.pendingPayment = { status: 'PENDING', paymentMissing: true };
+          }
+        }
+        return base;
+      });
+      res.json({ campaigns });
+      return;
+    }
     const campaigns = await Promise.all(
       rows.map(async (r) => {
         const base: Record<string, unknown> = {
@@ -2786,16 +3055,21 @@ app.get('/api/me/campaigns', async (req: RequestWithAuth, res: Response) => {
           expires_at: r.expires_at,
         };
         const payment = paymentsDb.getByCampaignId(r.id, userId);
-        if (payment && payment.status === 'PENDING') {
-          base.pendingPayment = {
-            status: payment.status,
-            billingType: payment.billing_type,
-            bankSlipUrl: payment.bank_slip_url,
-            invoiceUrl: payment.invoice_url,
-            pixCopyPaste: payment.pix_copy_paste,
-            amountCents: payment.amount_cents,
-            valueBrl: payment.amount_cents / 100,
-          };
+        const hasPending = r.credits_used === 0 && (!payment || payment.status === 'PENDING');
+        if (hasPending) {
+          if (payment && payment.status === 'PENDING') {
+            base.pendingPayment = {
+              status: payment.status,
+              billingType: payment.billing_type,
+              bankSlipUrl: payment.bank_slip_url,
+              invoiceUrl: payment.invoice_url,
+              pixCopyPaste: payment.pix_copy_paste,
+              amountCents: payment.amount_cents,
+              valueBrl: payment.amount_cents / 100,
+            };
+          } else {
+            base.pendingPayment = { status: 'PENDING', paymentMissing: true };
+          }
         }
         const data = await getCampaignStats(r.id, userId);
         if (!data) return base;
@@ -2906,18 +3180,103 @@ app.get('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
       expires_at: campaign.expires_at,
     };
     const payment = paymentsDb.getByCampaignId(campaignId, userId);
-    if (payment && payment.status === 'PENDING') {
-      payload.pendingPayment = {
-        status: payment.status,
-        billingType: payment.billing_type,
-        bankSlipUrl: payment.bank_slip_url,
-        invoiceUrl: payment.invoice_url,
-        pixCopyPaste: payment.pix_copy_paste,
-        amountCents: payment.amount_cents,
-        valueBrl: payment.amount_cents / 100,
-      };
+    const hasPendingPayment = campaign.credits_used === 0 && (!payment || payment.status === 'PENDING');
+    if (hasPendingPayment) {
+      if (payment && payment.status === 'PENDING') {
+        payload.pendingPayment = {
+          status: payment.status,
+          billingType: payment.billing_type,
+          bankSlipUrl: payment.bank_slip_url,
+          invoiceUrl: payment.invoice_url,
+          pixCopyPaste: payment.pix_copy_paste,
+          amountCents: payment.amount_cents,
+          valueBrl: payment.amount_cents / 100,
+        };
+      } else {
+        try {
+          const compilado = await getCampaignStats(campaignId, userId);
+          const amountCents = compilado?.amountCents ?? campaign.handles_count * 100;
+          payload.pendingPayment = {
+            status: 'PENDING',
+            billingType: null,
+            bankSlipUrl: null,
+            invoiceUrl: null,
+            pixCopyPaste: null,
+            amountCents,
+            valueBrl: amountCents / 100,
+            paymentMissing: true,
+          };
+          if (compilado) payload.compilado = compilado;
+        } catch (e) {
+          console.warn('[GET /api/campaigns/:id] compilado for paymentMissing failed', e);
+          payload.pendingPayment = {
+            status: 'PENDING',
+            billingType: null,
+            bankSlipUrl: null,
+            invoiceUrl: null,
+            pixCopyPaste: null,
+            amountCents: campaign.handles_count * 100,
+            valueBrl: (campaign.handles_count * 100) / 100,
+            paymentMissing: true,
+          };
+        }
+      }
+      if (payload.pendingPayment && !(payload.pendingPayment as Record<string, unknown>).paymentMissing) {
+        try {
+          const compilado = await getCampaignStats(campaignId, userId);
+          if (compilado) payload.compilado = compilado;
+        } catch (e) {
+          console.warn('[GET /api/campaigns/:id] compilado failed', e);
+        }
+      }
     }
     res.json(payload);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Altera a quantidade de perfis a comprar (só quando pagamento pendente). Reduz a campanha aos primeiros N handles. */
+app.patch('/api/campaigns/:id/set-quantity', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const campaign = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
+    if (!campaign) {
+      res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
+      return;
+    }
+    if (campaign.credits_used > 0) {
+      res.status(400).json({ error: 'Não é possível alterar a quantidade após o pagamento.' });
+      return;
+    }
+    const quantity = typeof req.body?.quantity === 'number'
+      ? Math.floor(req.body.quantity)
+      : Number(req.body?.quantity);
+    if (!Number.isFinite(quantity) || quantity < 1 || quantity > campaign.handles_count) {
+      res.status(400).json({
+        error: `Informe uma quantidade entre 1 e ${campaign.handles_count}.`,
+      });
+      return;
+    }
+    if (quantity === campaign.handles_count) {
+      res.json({ ok: true, quantity: campaign.handles_count });
+      return;
+    }
+    const ok = creditsCampaignsDb.setCampaignQuantity(campaignId, userId, quantity);
+    if (!ok) {
+      res.status(400).json({ error: 'Não foi possível alterar a quantidade.' });
+      return;
+    }
+    res.json({ ok: true, quantity });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -2963,6 +3322,235 @@ app.patch('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
       name: camp?.name ?? null,
       description: camp?.description ?? null,
     });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Exclui a campanha (apenas do dono). */
+app.delete('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const ok = creditsCampaignsDb.deleteCampaign(campaignId, userId);
+    if (!ok) {
+      res.status(404).json({ error: 'Campanha não encontrada ou já excluída' });
+      return;
+    }
+    res.status(204).send();
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Gera boleto ou PIX para uma campanha que ainda não tem pagamento (payment ausente ou excluído). */
+app.post('/api/campaigns/:id/create-payment', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    if (!asaas.isAsaasConfigured()) {
+      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const campaign = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
+    if (!campaign) {
+      res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
+      return;
+    }
+    const existingPayment = paymentsDb.getByCampaignId(campaignId, userId);
+    if (existingPayment) {
+      if (existingPayment.status === 'PENDING') {
+        res.json({
+          bankSlipUrl: existingPayment.bank_slip_url,
+          pixCopyPaste: existingPayment.pix_copy_paste,
+          invoiceUrl: existingPayment.invoice_url,
+          billingType: existingPayment.billing_type,
+          amountCents: existingPayment.amount_cents,
+          valueBrl: existingPayment.amount_cents / 100,
+        });
+        return;
+      }
+      res.status(400).json({ error: 'Esta campanha já possui um pagamento registrado.' });
+      return;
+    }
+    if (campaign.credits_used > 0) {
+      res.status(400).json({ error: 'Campanha já foi paga com créditos.' });
+      return;
+    }
+    const body = req.body as { billingType?: string; cpfCnpj?: string; quantity?: number };
+    const billingType = (body?.billingType ?? 'PIX').toUpperCase() === 'BOLETO' ? 'BOLETO' : 'PIX';
+    if (billingType === 'BOLETO') {
+      const cpfCnpj = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
+      if (cpfCnpj.length !== 11 && cpfCnpj.length !== 14) {
+        res.status(400).json({ error: 'Para boleto, informe CPF (11 dígitos) ou CNPJ (14 dígitos).' });
+        return;
+      }
+    }
+    const quantity = (body?.quantity != null && Number.isFinite(body.quantity))
+      ? Math.min(campaign.handles_count, Math.max(1, Math.floor(body.quantity)))
+      : campaign.handles_count;
+    let amountCents: number;
+    if (quantity < campaign.handles_count) {
+      const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
+      const firstN = handles ? handles.slice(0, quantity) : [];
+      if (firstN.length === 0) {
+        amountCents = quantity * 100;
+      } else {
+        const result = await searchProfiles(db, { limit: firstN.length, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: firstN });
+        let activatedCount = 0;
+        for (const item of result.items) {
+          const act = (item as ProfileListItem).activation;
+          if (act?.city?.trim()) activatedCount++;
+        }
+        const notActivatedCount = result.items.length - activatedCount;
+        amountCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
+      }
+    } else {
+      const stats = await getCampaignStats(campaignId, userId);
+      amountCents = stats?.amountCents ?? campaign.handles_count * 100;
+    }
+    const valueBrl = amountCents / 100;
+
+    const authUser = authDb.getById(userId);
+    if (!authUser) {
+      res.status(401).json({ error: 'Usuário não encontrado' });
+      return;
+    }
+    const displayName = authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username;
+    const email = authUser.username.includes('@') ? authUser.username : `user${userId}@payments.influencer.local`;
+    const externalRef = `user_${userId}`;
+    let asaasCustomerId: string | null = null;
+    const existingCustomer = await asaas.findCustomersByExternalReference(externalRef);
+    if (existingCustomer?.data && existingCustomer.data.length > 0 && existingCustomer.data[0].id) {
+      asaasCustomerId = existingCustomer.data[0].id;
+    } else {
+      const cpfCnpjOpt = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
+      const created = await asaas.createCustomer({
+        name: displayName,
+        email,
+        externalReference: externalRef,
+        ...(cpfCnpjOpt.length === 11 || cpfCnpjOpt.length === 14 ? { cpfCnpj: cpfCnpjOpt } : {}),
+      });
+      asaasCustomerId = created?.id ?? null;
+    }
+    if (!asaasCustomerId) {
+      res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+      return;
+    }
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + (billingType === 'BOLETO' ? 3 : 1));
+    const dueStr = dueDate.toISOString().slice(0, 10);
+    const paymentPayload = {
+      customer: asaasCustomerId,
+      value: valueBrl,
+      dueDate: dueStr,
+      billingType: billingType as 'PIX' | 'BOLETO',
+      description: `Relatório - ${quantity} influenciadores`,
+      externalReference: `report_${userId}_${campaignId.slice(0, 8)}_${Date.now()}`,
+    };
+    const asaasPayment = await asaas.createPayment(paymentPayload);
+    const asaasPaymentId = asaasPayment?.id ?? null;
+    const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
+    const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
+    const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+    const hasPaymentUrl = Boolean(bankSlipUrl || pixCopyPaste);
+    if (!hasPaymentUrl || !asaasPaymentId) {
+      res.status(502).json({ error: 'Não foi possível gerar o pagamento. Tente novamente.' });
+      return;
+    }
+    paymentsDb.createPayment({
+      userId,
+      asaasPaymentId,
+      asaasCustomerId,
+      amountCents,
+      creditsGranted: 0,
+      status: 'PENDING',
+      billingType: billingType as 'PIX' | 'BOLETO',
+      invoiceUrl,
+      bankSlipUrl,
+      pixCopyPaste,
+      campaignId,
+      reportDesiredCount: quantity < campaign.handles_count ? quantity : undefined,
+    });
+    res.status(201).json({
+      bankSlipUrl,
+      pixCopyPaste,
+      invoiceUrl,
+      billingType,
+      amountCents,
+      valueBrl,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Paga a campanha com créditos (1 crédito por influenciador). Libera o relatório sem PIX/boleto. */
+app.post('/api/campaigns/:id/pay-with-credits', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const campaign = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
+    if (!campaign) {
+      res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
+      return;
+    }
+    if (campaign.credits_used > 0) {
+      res.status(400).json({ error: 'Esta campanha já foi paga.' });
+      return;
+    }
+    const bodyQuantity = req.body && typeof (req.body as { quantity?: number }).quantity === 'number'
+      ? Math.floor((req.body as { quantity: number }).quantity)
+      : null;
+    const creditsNeeded = bodyQuantity != null && bodyQuantity >= 1 && bodyQuantity <= campaign.handles_count
+      ? bodyQuantity
+      : campaign.handles_count;
+    const balance = creditsCampaignsDb.getBalance(userId);
+    if (balance < creditsNeeded) {
+      res.status(402).json({
+        error: `Créditos insuficientes. Necessário: ${creditsNeeded}, saldo: ${balance}`,
+        code: 'INSUFFICIENT_CREDITS',
+        required: creditsNeeded,
+        balance,
+      });
+      return;
+    }
+    if (!creditsCampaignsDb.spendCredits(userId, creditsNeeded, 'campaign', campaignId)) {
+      res.status(402).json({ error: 'Falha ao debitar créditos', code: 'DEBIT_FAILED' });
+      return;
+    }
+    if (!creditsCampaignsDb.setCampaignCreditsUsed(campaignId, userId, creditsNeeded)) {
+      res.status(500).json({ error: 'Falha ao atualizar campanha' });
+      return;
+    }
+    if (creditsNeeded < campaign.handles_count) {
+      creditsCampaignsDb.setCampaignQuantity(campaignId, userId, creditsNeeded);
+    }
+    res.json({ ok: true, creditsUsed: creditsNeeded });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -3159,7 +3747,7 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
   next();
 }
 
-/** Listagem de perfis de uma campanha (paginação + filtros iguais à busca principal). */
+/** Listagem de perfis de uma campanha (paginação + filtros iguais à busca principal). Com pagamento pendente: retorna facets + total + pricePreview, sem items. */
 app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
     if (!req.user) {
@@ -3172,19 +3760,77 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
       return;
     }
     const userId = Number(req.user.sub);
+    const campaign = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
+    if (!campaign) {
+      res.status(404).json({ error: 'Campanha não encontrada, expirada ou sem perfis' });
+      return;
+    }
     const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
     if (!handles || handles.length === 0) {
       res.status(404).json({ error: 'Campanha não encontrada, expirada ou sem perfis' });
       return;
     }
+    const payment = paymentsDb.getByCampaignId(campaignId, userId);
+    const pendingPayment = campaign.credits_used === 0 && (!payment || payment.status === 'PENDING');
+
     const query = buildCampaignProfilesQuery(req);
     let contextItems: ProfileListItem[] | null = getCachedCampaignContext(campaignId);
     if (contextItems == null) {
       const fullResult = await searchProfiles(db, { limit: 10000, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
       contextItems = fullResult.items;
-      setCachedCampaignContext(campaignId, contextItems);
+      if (!pendingPayment && contextItems.length > 0) setCachedCampaignContext(campaignId, contextItems);
     }
-    const result = await searchProfiles(db, query, { initialItems: contextItems });
+    const queryForResult = pendingPayment ? { ...query, limit: 10000, offset: 0 } : query;
+    const result = await searchProfiles(db, queryForResult, { initialItems: contextItems });
+
+    if (pendingPayment) {
+      let activatedCount = 0;
+      let totalLikes = 0;
+      let totalComments = 0;
+      let totalViews = 0;
+      let totalFollowers = 0;
+      let postsCount = 0;
+      let engSum = 0;
+      let engCount = 0;
+      for (const item of result.items) {
+        const it = item as ProfileListItem;
+        const act = it.activation;
+        if (act?.city && String(act.city).trim()) activatedCount++;
+        totalFollowers += it.followers_count ?? 0;
+        const eng = it.engagement;
+        if (eng) {
+          totalLikes += eng.total_likes ?? 0;
+          totalComments += eng.total_comments ?? 0;
+          totalViews += eng.total_views ?? 0;
+          postsCount += eng.posts_count ?? 0;
+          if (Number.isFinite(eng.engagement_rate)) {
+            engSum += eng.engagement_rate;
+            engCount++;
+          }
+        }
+      }
+      const notActivatedCount = result.items.length - activatedCount;
+      const amountCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
+      const avgEngagementRate = engCount > 0 ? Math.round((engSum / engCount) * 100) / 100 : 0;
+      res.json({
+        total: result.total,
+        items: [],
+        facets: result.facets,
+        pricePreview: {
+          amountCents,
+          valueBrl: amountCents / 100,
+          activatedCount,
+          notActivatedCount,
+          totalLikes,
+          totalComments,
+          totalViews,
+          totalFollowers,
+          postsCount,
+          avgEngagementRate,
+        },
+      });
+      return;
+    }
     res.json({ total: result.total, items: result.items, facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });

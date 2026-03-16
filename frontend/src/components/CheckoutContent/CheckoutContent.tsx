@@ -1,18 +1,29 @@
 /**
  * Checkout: compra do relatório (pagamento direto com PIX ou Boleto).
- * Sem créditos: usuário escolhe a quantidade de influenciadores e paga o valor.
+ * Fluxo de onboarding por e-mail: quantidade → cadastro leve → verificar e-mail → pagamento.
+ * CPF/CNPJ só é pedido na etapa de pagamento (PIX/Boleto).
  */
 import { useState, useEffect, useMemo } from 'react'
 import QRCode from 'qrcode'
 import { Card, Typography, Button, Spin, Alert, Slider, InputNumber, Space, Input, Radio } from 'antd'
-import { DollarOutlined, CopyOutlined, BankOutlined, WalletOutlined } from '@ant-design/icons'
+import { DollarOutlined, CopyOutlined, BankOutlined, WalletOutlined, MailOutlined } from '@ant-design/icons'
 import { useAuth } from '../../contexts/AuthContext'
 import { useCredits } from '../../contexts/CreditsContext'
-import { payForReport, reportPricePreview, createCampaign, type ProfilesSearchQuery, type AuthScope } from '../../api'
+import {
+  payForReport,
+  reportPricePreview,
+  createCampaign,
+  registerCheckoutUser,
+  resendVerificationEmail,
+  type ProfilesSearchQuery,
+  type AuthScope,
+} from '../../api'
 
 const { Text } = Typography
 
 const MIN_PROFILES = 1
+
+export type GuestStep = 'quantity' | 'signup' | 'verify-email' | 'payment'
 
 function formatBrl(cents: number): string {
   return new Intl.NumberFormat('pt-BR', {
@@ -39,19 +50,19 @@ export default function CheckoutContent({
   onPaymentCreated,
   embed = false,
 }: CheckoutContentProps) {
-  const { user, loading: authLoading, loginWithToken } = useAuth()
+  const { user, loading: authLoading, loginWithToken, refreshUser, logout } = useAuth()
   const { balance: creditsBalance, refreshCredits } = useCredits()
 
-  const [guestStep, setGuestStep] = useState<1 | 2>(1)
+  const [guestStep, setGuestStep] = useState<GuestStep>('quantity')
   const [guestName, setGuestName] = useState('')
   const [guestEmail, setGuestEmail] = useState('')
-  const [guestCpfCnpj, setGuestCpfCnpj] = useState('')
   const [guestPassword, setGuestPassword] = useState('')
   const [guestPasswordConfirm, setGuestPasswordConfirm] = useState('')
+  const [paymentCpfCnpj, setPaymentCpfCnpj] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const billingType = 'BOLETO' as const
-  const [paymentMethod, setPaymentMethod] = useState<'credits' | 'boleto'>('credits')
+  const [resendSuccess, setResendSuccess] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<'credits' | 'pix' | 'boleto'>('credits')
   const [paymentCreated, setPaymentCreated] = useState<{
     pixCopyPaste: string | null
     bankSlipUrl: string | null
@@ -106,69 +117,114 @@ export default function CheckoutContent({
   const creditsNeeded = desiredCount
   const canUseCredits = creditsBalance >= creditsNeeded
 
+  // Preferir créditos quando houver saldo; boleto/PIX só se não tiver ou escolher explicitamente
   useEffect(() => {
-    if (paymentMethod === 'credits' && !canUseCredits) setPaymentMethod('boleto')
-  }, [paymentMethod, canUseCredits])
+    if (canUseCredits) setPaymentMethod('credits')
+    else if (paymentMethod === 'credits') setPaymentMethod('boleto')
+  }, [canUseCredits])
 
   const totalCents = pricePreview?.amountCents ?? 0
   const priceReady = pricePreview != null
 
+  /** Usuário pode seguir para pagamento se e-mail está validado. Backend pode não enviar email_verified; tratamos undefined como permitido (compatibilidade). */
+  const canProceedToPayment = user?.emailVerified !== false
+
+  const handleSignup = async () => {
+    setError(null)
+    if (!guestEmail.trim() || !guestEmail.includes('@')) {
+      setError('Informe um e-mail válido.')
+      return
+    }
+    if (guestPassword.length < 6) {
+      setError('A senha deve ter no mínimo 6 caracteres.')
+      return
+    }
+    if (guestPassword !== guestPasswordConfirm) {
+      setError('Senha e confirmar senha não conferem.')
+      return
+    }
+    setLoading(true)
+    try {
+      const res = await registerCheckoutUser({
+        email: guestEmail.trim().toLowerCase(),
+        name: guestName.trim() || undefined,
+        password: guestPassword,
+      })
+      loginWithToken(res.token, {
+        id: res.user.id,
+        username: res.user.username,
+        scope: res.user.scope as AuthScope,
+        profile_handle: res.user.profile_handle,
+        displayName: res.user.display_name ?? null,
+        emailVerified: res.user.email_verified,
+      })
+      setGuestStep('verify-email')
+      void refreshCredits()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleResendVerification = async () => {
+    setError(null)
+    setResendSuccess(false)
+    setLoading(true)
+    try {
+      await resendVerificationEmail()
+      setResendSuccess(true)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAlreadyVerified = async () => {
+    setError(null)
+    setLoading(true)
+    try {
+      await refreshUser()
+      setGuestStep('payment')
+    } catch {
+      setError('Não foi possível atualizar. Tente novamente.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleTrocarEmail = () => {
+    logout()
+    setGuestStep('signup')
+    setGuestEmail('')
+    setError(null)
+  }
+
   const handlePayForReport = async () => {
-    if (!query || total <= 0) return
-    if (!user) {
-      if (!guestEmail.trim() || !guestEmail.includes('@')) {
-        setError('Informe um e-mail válido.')
-        return
-      }
-      if (guestPassword.length < 6) {
-        setError('A senha deve ter no mínimo 6 caracteres.')
-        return
-      }
-      if (guestPassword !== guestPasswordConfirm) {
-        setError('Senha e confirmar senha não conferem.')
+    if (!query || total <= 0 || !user) return
+    if (paymentMethod !== 'pix' && paymentMethod !== 'boleto') return
+    if (paymentMethod === 'boleto') {
+      const digits = paymentCpfCnpj.replace(/\D/g, '')
+      if (digits.length !== 11 && digits.length !== 14) {
+        setError('Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para emissão do boleto.')
         return
       }
     }
     setError(null)
     setLoading(true)
     try {
+      const cpfCnpj = paymentMethod === 'boleto' ? paymentCpfCnpj.replace(/\D/g, '') : undefined
       const res = await payForReport({
         query,
         desiredCount,
-        billingType,
+        billingType: paymentMethod === 'boleto' ? 'BOLETO' : 'PIX',
         expiresAt,
-        ...(!user
-          ? {
-              email: guestEmail.trim().toLowerCase(),
-              name: guestName.trim() || undefined,
-              password: guestPassword,
-            }
-          : {}),
+        ...(cpfCnpj && cpfCnpj.length >= 11 ? { cpfCnpj } : {}),
       })
       if (res.campaignId && onSuccess) {
         onSuccess(res.campaignId)
-        if (res.token && res.user) {
-          loginWithToken(res.token, {
-            id: res.user.id,
-            username: res.user.username,
-            scope: res.user.scope as AuthScope,
-            profile_handle: res.user.profile_handle,
-          })
-          void refreshCredits()
-        }
-        return
-      }
-      if (res.token && res.user) {
-        loginWithToken(res.token, {
-          id: res.user.id,
-          username: res.user.username,
-          scope: res.user.scope as AuthScope,
-          profile_handle: res.user.profile_handle,
-        })
         void refreshCredits()
-      }
-      if (!user && res.token && res.pixCopyPaste && onPaymentCreated) {
-        onPaymentCreated()
         return
       }
       setPaymentCreated({
@@ -177,6 +233,7 @@ export default function CheckoutContent({
         invoiceUrl: res.invoiceUrl ?? null,
         billingType: res.billingType,
       })
+      if (onPaymentCreated) onPaymentCreated()
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -218,6 +275,7 @@ export default function CheckoutContent({
       </div>
     )
   }
+
   if (paymentCreated && user) {
     return (
       <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
@@ -260,8 +318,8 @@ export default function CheckoutContent({
     )
   }
 
-  // Fluxo em três etapas para guest: 1 = quantidade, 2 = dados, 3 = pagamento (PIX/Boleto)
-  if (!user && guestStep === 1) {
+  // ——— ETAPA 1: Escolha da quantidade (guest)
+  if (!user && guestStep === 'quantity') {
     return (
       <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
         <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
@@ -294,7 +352,7 @@ export default function CheckoutContent({
             </Text>
           </div>
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: priceReady && (pricePreview!.activatedCount > 0 || pricePreview!.notActivatedCount > 0) ? 4 : 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: priceReady && pricePreview && (pricePreview.activatedCount > 0 || pricePreview.notActivatedCount > 0) ? 4 : 0 }}>
               <Text strong>Total</Text>
               <Text strong style={{ color: 'var(--app-primary)' }}>
                 {priceReady ? formatBrl(totalCents) : <Spin size="small" />}
@@ -310,7 +368,7 @@ export default function CheckoutContent({
           </div>
         </Card>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Button type="primary" size="large" onClick={() => setGuestStep(2)} disabled={total <= 0 || !priceReady}>
+          <Button type="primary" size="large" onClick={() => setGuestStep('signup')} disabled={total <= 0 || !priceReady}>
             Continuar
           </Button>
           {!embed && <Button size="large" onClick={onCancel}>Cancelar</Button>}
@@ -319,43 +377,32 @@ export default function CheckoutContent({
     )
   }
 
-  if (!user && guestStep === 2) {
+  // ——— ETAPA 2: Cadastro leve (nome, e-mail, senha) — sem CPF/CNPJ
+  if (!user && guestStep === 'signup') {
     return (
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '12px 20px 16px' }}>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 6, fontSize: 12 }}>Etapa 2 de 2</Text>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 6, fontSize: 12 }}>Etapa 2 de 4</Text>
         <Card size="small" style={{ marginBottom: 10, padding: '8px 12px' }} bodyStyle={{ padding: '8px 12px' }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 13 }}>{desiredCount.toLocaleString('pt-BR')} influenciadores</Text>
-              <Text strong style={{ color: 'var(--app-primary)', fontSize: 13 }}>
-                {priceReady ? formatBrl(totalCents) : <Spin size="small" />}
-              </Text>
-            </div>
-            {priceReady && pricePreview && (pricePreview.activatedCount > 0 || pricePreview.notActivatedCount > 0) && (
-              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-                {pricePreview.activatedCount > 0 && `${pricePreview.activatedCount} ativados (R$ 2) `}
-                {pricePreview.activatedCount > 0 && pricePreview.notActivatedCount > 0 && '+ '}
-                {pricePreview.notActivatedCount > 0 && `${pricePreview.notActivatedCount} normais (R$ 1)`}
-              </Text>
-            )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: 13 }}>{desiredCount.toLocaleString('pt-BR')} influenciadores</Text>
+            <Text strong style={{ color: 'var(--app-primary)', fontSize: 13 }}>
+              {priceReady ? formatBrl(totalCents) : <Spin size="small" />}
+            </Text>
           </div>
         </Card>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Preencha seus dados.</Text>
+        <Typography.Title level={5} style={{ marginTop: 16, marginBottom: 4 }}>Crie sua conta para continuar</Typography.Title>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 13 }}>
+          Cadastre-se para salvar sua busca, receber seus créditos de boas-vindas e liberar a compra do relatório.
+        </Text>
         <Card size="small" style={{ marginBottom: 10 }} bodyStyle={{ padding: '10px 12px' }}>
           <Space direction="vertical" style={{ width: '100%' }} size="small">
             <div>
               <Text strong style={{ fontSize: 12 }}>Nome</Text>
               <Input size="small" placeholder="Seu nome" value={guestName} onChange={(e) => setGuestName(e.target.value)} style={{ marginTop: 2 }} />
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <div>
-                <Text strong style={{ fontSize: 12 }}>E-mail</Text>
-                <Input size="small" type="email" placeholder="seu@email.com" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} style={{ marginTop: 2 }} />
-              </div>
-              <div>
-                <Text strong style={{ fontSize: 12 }}>CPF ou CNPJ</Text>
-                <Input size="small" placeholder="Apenas números" value={guestCpfCnpj} onChange={(e) => setGuestCpfCnpj(e.target.value.replace(/\D/g, ''))} style={{ marginTop: 2 }} maxLength={14} />
-              </div>
+            <div>
+              <Text strong style={{ fontSize: 12 }}>E-mail</Text>
+              <Input size="small" type="email" placeholder="seu@email.com" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} style={{ marginTop: 2 }} />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div>
@@ -371,88 +418,75 @@ export default function CheckoutContent({
         </Card>
         {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 10 }} onClose={() => setError(null)} closable />}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Button
-            type="primary"
-            size="middle"
-            loading={loading}
-            disabled={loading}
-            onClick={async () => {
-              setError(null)
-              if (!guestEmail.trim() || !guestEmail.includes('@')) {
-                setError('Informe um e-mail válido.')
-                return
-              }
-              const cpfCnpjDigits = guestCpfCnpj.replace(/\D/g, '')
-              if (cpfCnpjDigits.length !== 11 && cpfCnpjDigits.length !== 14) {
-                setError('Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.')
-                return
-              }
-              if (guestPassword.length < 6) {
-                setError('A senha deve ter no mínimo 6 caracteres.')
-                return
-              }
-              if (guestPassword !== guestPasswordConfirm) {
-                setError('Senha e confirmar senha não conferem.')
-                return
-              }
-              setLoading(true)
-              try {
-                const res = await payForReport({
-                  query,
-                  desiredCount,
-                  billingType: 'BOLETO',
-                  expiresAt,
-                  email: guestEmail.trim().toLowerCase(),
-                  name: guestName.trim() || undefined,
-                  password: guestPassword,
-                  cpfCnpj: cpfCnpjDigits,
-                })
-                if (res.campaignId && onSuccess) {
-                  onSuccess(res.campaignId)
-                  if (res.token && res.user) {
-                    loginWithToken(res.token, {
-                      id: res.user.id,
-                      username: res.user.username,
-                      scope: res.user.scope as AuthScope,
-                      profile_handle: res.user.profile_handle,
-                    })
-                    void refreshCredits()
-                  }
-                  return
-                }
-                if (res.token && res.user) {
-                  loginWithToken(res.token, {
-                    id: res.user.id,
-                    username: res.user.username,
-                    scope: res.user.scope as AuthScope,
-                    profile_handle: res.user.profile_handle,
-                  })
-                  void refreshCredits()
-                }
-                if ((res.pixCopyPaste || res.bankSlipUrl) && res.token && onPaymentCreated) {
-                  requestAnimationFrame(() => {
-                    requestAnimationFrame(() => onPaymentCreated())
-                  })
-                  return
-                }
-                setError('Não foi possível gerar o pagamento. Tente novamente.')
-              } catch (e) {
-                setError((e as Error).message)
-              } finally {
-                setLoading(false)
-              }
-            }}
-          >
+          <Button type="primary" size="middle" loading={loading} disabled={loading} onClick={handleSignup}>
             Continuar
           </Button>
-          <Button size="middle" onClick={() => { setGuestStep(1); setError(null) }} disabled={loading}>Voltar</Button>
+          <Button size="middle" onClick={() => { setGuestStep('quantity'); setError(null) }} disabled={loading}>Voltar</Button>
           {!embed && <Button size="middle" onClick={onCancel} disabled={loading}>Cancelar</Button>}
         </div>
       </div>
     )
   }
 
-  // Usuário logado: tela única (quantidade + forma de pagamento + botão)
+  // ——— ETAPA 3: Verificar e-mail (usuário já logado após cadastro)
+  if (user && guestStep === 'verify-email') {
+    return (
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
+        <Typography.Title level={5} style={{ marginBottom: 4 }}>Confirme seu e-mail</Typography.Title>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
+          Enviamos um link de confirmação para o seu e-mail. Após validar, você poderá continuar com a liberação do relatório.
+        </Text>
+        <Alert
+          type="info"
+          message="Valide sua conta para liberar seus créditos e continuar."
+          description="Enviamos um link de confirmação para o seu e-mail. Valide sua conta para liberar seus créditos e continuar."
+          showIcon
+          icon={<MailOutlined />}
+          style={{ marginBottom: 20 }}
+        />
+        {resendSuccess && <Alert type="success" message="E-mail reenviado." showIcon style={{ marginBottom: 16 }} />}
+        {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} onClose={() => setError(null)} closable />}
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Button type="primary" block size="large" loading={loading} onClick={handleAlreadyVerified}>
+            Já validei meu e-mail
+          </Button>
+          <Button block loading={loading} onClick={handleResendVerification}>
+            Reenviar e-mail
+          </Button>
+          <Button block type="link" size="small" onClick={handleTrocarEmail}>
+            Trocar e-mail
+          </Button>
+          {!embed && <Button block onClick={onCancel}>Fechar</Button>}
+        </Space>
+      </div>
+    )
+  }
+
+  // ——— Usuário logado mas e-mail não validado: bloquear pagamento
+  if (user && !canProceedToPayment && guestStep !== 'verify-email') {
+    return (
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
+        <Alert
+          type="warning"
+          message="Você precisa validar seu e-mail antes de concluir a compra."
+          description="Valide sua conta pelo link enviado ao seu e-mail para continuar."
+          showIcon
+          style={{ marginBottom: 20 }}
+        />
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Button type="primary" block loading={loading} onClick={handleAlreadyVerified}>
+            Já validei meu e-mail
+          </Button>
+          <Button block loading={loading} onClick={handleResendVerification}>
+            Reenviar e-mail de validação
+          </Button>
+          {!embed && <Button block onClick={onCancel}>Fechar</Button>}
+        </Space>
+      </div>
+    )
+  }
+
+  // ——— ETAPA 4 (e usuário logado): Pagamento — quantidade + forma de pagamento + CPF/CNPJ só para Boleto/PIX
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
       <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
@@ -504,6 +538,9 @@ export default function CheckoutContent({
 
       <Card size="small" style={{ marginBottom: 24 }} bodyStyle={{ padding: 12 }}>
         <Text strong style={{ display: 'block', marginBottom: 10 }}>Forma de pagamento</Text>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+          Escolha como pagar. Boleto e PIX só são gerados após você clicar em Continuar.
+        </Text>
         <Radio.Group
           value={paymentMethod}
           onChange={(e) => setPaymentMethod(e.target.value)}
@@ -512,15 +549,27 @@ export default function CheckoutContent({
           <Radio value="credits" disabled={!canUseCredits}>
             <Space>
               <WalletOutlined />
-              <span>Usar créditos</span>
+              <span>Usar meus créditos</span>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 ({creditsNeeded} créditos — saldo: {creditsBalance})
               </Text>
+              {canUseCredits && (
+                <Text type="success" style={{ fontSize: 11 }}>Recomendado</Text>
+              )}
               {!canUseCredits && (
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   Saldo insuficiente
                 </Text>
               )}
+            </Space>
+          </Radio>
+          <Radio value="pix">
+            <Space>
+              <DollarOutlined />
+              <span>Pagar com PIX</span>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                ({priceReady ? formatBrl(totalCents) : '...'})
+              </Text>
             </Space>
           </Radio>
           <Radio value="boleto">
@@ -535,6 +584,18 @@ export default function CheckoutContent({
         </Radio.Group>
       </Card>
 
+      {paymentMethod === 'boleto' && (
+        <Card size="small" style={{ marginBottom: 24 }} bodyStyle={{ padding: 12 }}>
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>CPF ou CNPJ (para emissão do boleto)</Text>
+          <Input
+            placeholder="Apenas números"
+            value={paymentCpfCnpj}
+            onChange={(e) => setPaymentCpfCnpj(e.target.value.replace(/\D/g, ''))}
+            maxLength={14}
+          />
+        </Card>
+      )}
+
       {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 24 }} onClose={() => setError(null)} closable />}
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -543,10 +604,10 @@ export default function CheckoutContent({
           size="large"
           icon={paymentMethod === 'credits' ? <WalletOutlined /> : <DollarOutlined />}
           onClick={paymentMethod === 'credits' ? handlePayWithCredits : handlePayForReport}
-          disabled={loading || total <= 0 || !priceReady || (paymentMethod === 'credits' && !canUseCredits)}
+          disabled={loading || total <= 0 || !priceReady || (paymentMethod === 'credits' && !canUseCredits) || (paymentMethod !== 'credits' && paymentMethod === 'boleto' && !paymentCpfCnpj.trim())}
           loading={loading}
         >
-          Continuar
+          {paymentMethod === 'credits' ? 'Usar créditos e gerar relatório' : paymentMethod === 'pix' ? 'Gerar PIX' : 'Gerar boleto'}
         </Button>
         {!embed && (
           <Button size="large" onClick={onCancel} disabled={loading}>Cancelar</Button>

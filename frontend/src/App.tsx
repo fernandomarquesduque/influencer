@@ -55,7 +55,11 @@ import MediaKit from './pages/MediaKit'
 import SendMessage from './pages/SendMessage'
 import BulkMessage from './pages/BulkMessage'
 import Payments from './pages/Payments'
+import Profile from './pages/Profile'
 import CheckoutCredits from './pages/CheckoutCredits'
+import VerifyEmail from './pages/VerifyEmail'
+import MissionReward from './pages/MissionReward'
+import LinkInstagramMission from './pages/LinkInstagramMission'
 import Logo from './components/Logo'
 
 function RedirectInfluencerToApp() {
@@ -79,6 +83,8 @@ export default function App() {
           <Route path="/premium" element={<Premium />} />
           <Route path="search" element={<div style={{ padding: '20px 20px' }}><div style={{ marginBottom: '30px', display: 'flex', justifyContent: 'center', padding: '24px 24px 0' }}><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /></div><ListAndDetailModal /></div>} />
           <Route path="/checkout" element={<><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /><CheckoutCredits /></>} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
+          <Route path="/missions/reward" element={<MissionReward />} />
           <Route path="/" element={<Home />} />
 
           <Route path="/app" element={<Layout />}>
@@ -88,11 +94,13 @@ export default function App() {
             <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
             <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail />} />
             <Route path="payments" element={<Payments />} />
+            <Route path="profile" element={<Profile />} />
             <Route path="projects" element={<Projects />} />
             <Route path="projects/:projectId" element={<Projects />} />
             <Route path="bulk-message" element={<BulkMessage />} />
             <Route path="create" element={<Auth />} />
             <Route path="create/password" element={<AuthPassword />} />
+            <Route path="missions/link-instagram" element={<LinkInstagramMission />} />
             <Route path="influencer/:handle" element={<InfluencerDetail />} />
             <Route path="influencer/:handle/media-kit" element={<MediaKit />} />
             <Route path="influencer/:handle/send-message" element={<SendMessage />} />

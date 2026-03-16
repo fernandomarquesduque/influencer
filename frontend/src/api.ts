@@ -244,6 +244,19 @@ export interface ProfilesSearchResponse {
   total: number
   items: ProfileListItem[]
   facets?: ProfilesSearchFacets
+  /** Quando a campanha tem pagamento pendente: valor e stats calculados com base nos filtros (sem retornar items). */
+  pricePreview?: {
+    amountCents: number
+    valueBrl: number
+    activatedCount: number
+    notActivatedCount: number
+    totalLikes?: number
+    totalComments?: number
+    totalViews?: number
+    totalFollowers?: number
+    postsCount?: number
+    avgEngagementRate?: number
+  }
 }
 
 export async function fetchProfilesSearch(
@@ -567,6 +580,24 @@ export async function createCampaign(
   return data as CreateCampaignResponse
 }
 
+/** Compilado da campanha (quantitativo, cidades, categorias) — retornado quando há pagamento pendente. */
+export interface CampaignCompilado {
+  totalLikes: number
+  totalComments: number
+  totalViews: number
+  totalFollowers: number
+  postsCount: number
+  avgEngagementRate: number
+  avgLikes: number
+  avgComments: number
+  avgViews: number
+  previewProfiles: Array<{ handle: string; profile_pic_url?: string; full_name?: string; followers_count?: number }>
+  topHashtags: string[]
+  cities: Array<{ name: string; count: number }>
+  states: Array<{ name: string; count: number }>
+  activatedCount: number
+}
+
 /** Dados da campanha. */
 export interface CampaignInfo {
   id: string
@@ -578,13 +609,17 @@ export interface CampaignInfo {
   expires_at: string
   pendingPayment?: {
     status: string
-    billingType: string
+    billingType: string | null
     bankSlipUrl: string | null
     invoiceUrl: string | null
     pixCopyPaste: string | null
     amountCents: number
     valueBrl: number
+    /** true quando não existe registro de payment; usuário precisa gerar PIX/boleto. */
+    paymentMissing?: boolean
   }
+  /** Compilado completo (quantitativo, cidades, categorias) quando há pagamento pendente. */
+  compilado?: CampaignCompilado
 }
 
 export async function getCampaign(
@@ -640,6 +675,86 @@ export async function updateCampaignDescription(
   return res.json()
 }
 
+/** Exclui a campanha (apenas do dono). */
+export async function deleteCampaign(
+  campaignId: string,
+  options?: { signal?: AbortSignal }
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/campaigns/${campaignId}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao excluir campanha')
+  }
+}
+
+/** Altera a quantidade de perfis a comprar (só quando pagamento pendente). */
+export async function setCampaignQuantity(
+  campaignId: string,
+  quantity: number,
+  options?: { signal?: AbortSignal }
+): Promise<{ ok: boolean; quantity: number }> {
+  const res = await fetch(`${API_BASE}/campaigns/${campaignId}/set-quantity`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ quantity }),
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao alterar quantidade')
+  }
+  return res.json()
+}
+
+/** Gera boleto ou PIX para uma campanha que ainda não tem pagamento. */
+export async function createCampaignPayment(
+  campaignId: string,
+  body: { billingType: 'PIX' | 'BOLETO'; cpfCnpj?: string; quantity?: number },
+  options?: { signal?: AbortSignal }
+): Promise<{
+  bankSlipUrl: string | null
+  pixCopyPaste: string | null
+  invoiceUrl: string | null
+  billingType: string
+  amountCents: number
+  valueBrl: number
+}> {
+  const res = await fetch(`${API_BASE}/campaigns/${campaignId}/create-payment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao gerar pagamento')
+  }
+  return res.json()
+}
+
+/** Paga a campanha com créditos (1 crédito por influenciador). quantity = quantidade de perfis a pagar; se omitido usa o total da campanha. */
+export async function payCampaignWithCredits(
+  campaignId: string,
+  quantity?: number,
+  options?: { signal?: AbortSignal }
+): Promise<{ ok: boolean; creditsUsed: number }> {
+  const res = await fetch(`${API_BASE}/campaigns/${campaignId}/pay-with-credits`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: quantity != null ? JSON.stringify({ quantity }) : undefined,
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao pagar com créditos')
+  }
+  return res.json()
+}
+
 /** Stats agregados da campanha (engagement, likes, views, etc.). */
 export interface MyCampaignStats {
   totalLikes: number
@@ -689,9 +804,10 @@ export interface MyCampaignsResponse {
   campaigns: MyCampaignItem[]
 }
 
-/** Lista campanhas do usuário logado. */
-export async function fetchMyCampaigns(options?: { signal?: AbortSignal }): Promise<MyCampaignsResponse> {
-  const res = await fetch(`${API_BASE}/me/campaigns`, {
+/** Lista campanhas do usuário logado. light=true retorna só lista (sem stats) para carregamento rápido. */
+export async function fetchMyCampaigns(options?: { signal?: AbortSignal; light?: boolean }): Promise<MyCampaignsResponse> {
+  const url = options?.light ? `${API_BASE}/me/campaigns?light=1` : `${API_BASE}/me/campaigns`
+  const res = await fetch(url, {
     headers: { ...authHeaders() },
     signal: options?.signal,
   })
@@ -935,7 +1051,7 @@ export async function requestVerificationCode(nickname: string): Promise<Request
   return { ...body, sent: body.sent ?? true, success: true }
 }
 
-/** Valida com o código recebido no Instagram. Sem login: retorna token+user (2FA como login). */
+/** Valida com o código recebido no Instagram. Sem login: retorna token+user (2FA como login). Assinante que vincula Instagram: mission_completed + credits (50). */
 export async function verifyProfile(
   nickname: string,
   code: string
@@ -944,6 +1060,8 @@ export async function verifyProfile(
   profile_handle: string
   token?: string
   user?: { id: number; username: string; scope: AuthScope; profile_handle: string | null }
+  mission_completed?: boolean
+  credits?: number
 }> {
   const res = await fetch(`${API_BASE}/auth/verify-profile`, {
     method: 'POST',
@@ -953,6 +1071,21 @@ export async function verifyProfile(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error((err as { error?: string }).error || 'Código inválido ou expirado')
+  }
+  return res.json()
+}
+
+/** Atualiza o perfil do usuário logado (ex.: desvincular Instagram, nome). Retorna user + token atualizados. */
+export async function updateMyProfile(params: { profile_handle?: string | null; display_name?: string | null }): Promise<{ user: { id: number; username: string; scope: string; profile_handle: string | null; display_name?: string | null; email_verified?: boolean }; token: string }> {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(params),
+  })
+  if (res.status === 401) throw new Error('Faça login para atualizar o perfil.')
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao atualizar perfil')
   }
   return res.json()
 }
@@ -1400,8 +1533,11 @@ export async function saveProfileActivation(handle: string, data: Omit<ProfileAc
   return out && typeof out === 'object' ? out : {}
 }
 
-/** Cadastro público como Assinante (sem pagamento). Retorna token + user. */
-export async function registerAssinanteApi(params: { email: string; password: string; name?: string }): Promise<{ token: string; user: { id: number; username: string; scope: string; profile_handle: string | null } }> {
+/** Cadastro público como Assinante (sem pagamento). Retorna token + user.
+ * CONTRATO BACKEND: ao criar o usuário, o backend deve disparar e-mail de validação e marcar o usuário como email_verified: false.
+ * O endpoint GET /api/auth/me deve retornar user.email_verified (boolean) para o frontend bloquear pagamento até validação.
+ */
+export async function registerAssinanteApi(params: { email: string; password: string; name?: string }): Promise<{ token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null } }> {
   const res = await fetch(`${API_BASE}/auth/register-assinante`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1413,7 +1549,36 @@ export async function registerAssinanteApi(params: { email: string; password: st
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao cadastrar')
-  return data as { token: string; user: { id: number; username: string; scope: string; profile_handle: string | null } }
+  return data as { token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null } }
+}
+
+/** Onboarding por e-mail no checkout: apenas cadastro (nome, e-mail, senha). Não cria pagamento.
+ * Usa registerAssinanteApi. Backend deve enviar e-mail de validação ao criar a conta.
+ */
+export async function registerCheckoutUser(params: { email: string; password: string; name?: string }): Promise<{ token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null } }> {
+  return registerAssinanteApi(params)
+}
+
+/** Reenviar e-mail de validação para o usuário logado.
+ * CONTRATO BACKEND: POST /api/auth/resend-verification (Authorization: Bearer token).
+ * Resposta esperada: { ok: true } ou { error: string }.
+ */
+export async function resendVerificationEmail(options?: { signal?: AbortSignal }): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/resend-verification`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao reenviar e-mail')
+}
+
+/** Valida e-mail pelo token (link no e-mail). Backend concede 10 créditos (missão 1). */
+export async function verifyEmailByToken(token: string, options?: { signal?: AbortSignal }): Promise<{ success: true; credits: number }> {
+  const res = await fetch(`${API_BASE}/auth/verify-email?token=${encodeURIComponent(token)}`, { signal: options?.signal })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Link inválido ou expirado')
+  return data as { success: true; credits: number }
 }
 
 /** Admin: tipos de usuário (scope). */

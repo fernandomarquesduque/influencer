@@ -9,7 +9,6 @@ import {
   TagsOutlined,
   TeamOutlined,
   UserOutlined,
-  BarChartOutlined,
   RocketOutlined,
 } from '@ant-design/icons'
 import { CONTENT_TYPE_LABELS } from '../../constants/contentTypes'
@@ -28,7 +27,6 @@ const STEPS = [
   { key: 'hashtags', icon: TagsOutlined, title: 'Escolha as hashtags', subtitle: 'Caso queira, especificar uma ou mais hashtags (Opcional)' },
   { key: 'porte', icon: TeamOutlined, title: 'Qual o porte?', subtitle: 'Seleção por quantidade de seguidores' },
   { key: 'accountType', icon: UserOutlined, title: 'Tipo de conta', subtitle: 'Pessoal, Criador ou Empresa' },
-  { key: 'engagement', icon: BarChartOutlined, title: 'Nível de engajamento', subtitle: 'Baixo, médio ou alto' },
   { key: 'activation', icon: RocketOutlined, title: 'Quer só perfis segmentados?', subtitle: 'A segmentação é feita com base na localização, contato, preços e tipo de conteúdo' },
 ] as const
 
@@ -64,20 +62,12 @@ const ACCOUNT_TYPE_OPTIONS = [
   { value: [3], label: 'Empresa' },
 ]
 
-const ENGAGEMENT_OPTIONS = [
-  { label: 'Qualquer', value: [] as number[] },
-  { label: 'Baixo', value: [0] },
-  { label: 'Médio', value: [1] },
-  { label: 'Alto', value: [5] },
-]
-
 export interface WizardState {
   /** Termo de busca quando a etapa de hashtags foi pulada (nenhuma encontrada). */
   q?: string
   categories?: string[]
   minFollowers?: number
   maxFollowers?: number
-  engagementRateBuckets?: number[]
   excludePrivate?: boolean
   accountTypeFilter?: number[]
   /** 'activated' | 'not_activated' — quando ['activated'], só perfis ativados. */
@@ -119,7 +109,6 @@ function stateToQuery(
     categories,
     minFollowers: state.minFollowers,
     maxFollowers: state.maxFollowers,
-    engagementRateBuckets: state.engagementRateBuckets?.length ? state.engagementRateBuckets : undefined,
     excludePrivate: state.excludePrivate || undefined,
     accountTypeFilter: state.accountTypeFilter?.length ? state.accountTypeFilter : undefined,
     activationFilter: state.activationFilter?.length ? state.activationFilter : undefined,
@@ -163,8 +152,7 @@ function countToSizeStyle(
 }
 
 function stepFromFilters(f: Partial<WizardState>): number {
-  if (f.activationFilter?.length) return 5
-  if (f.engagementRateBuckets?.length) return 4
+  if (f.activationFilter?.length) return 4
   if (f.accountTypeFilter?.length) return 3
   if (f.minFollowers != null || f.maxFollowers != null) return 2
   if (f.categories?.length) return 1
@@ -178,7 +166,6 @@ function filtersToWizardState(f: Partial<WizardState> | undefined): WizardState 
     categories: undefined,
     minFollowers: f.minFollowers,
     maxFollowers: f.maxFollowers,
-    engagementRateBuckets: f.engagementRateBuckets?.length ? f.engagementRateBuckets : undefined,
     excludePrivate: f.excludePrivate ?? undefined,
     accountTypeFilter: f.accountTypeFilter?.length ? f.accountTypeFilter : undefined,
     activationFilter: f.activationFilter?.length ? f.activationFilter : undefined,
@@ -242,7 +229,6 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       categories,
       minFollowers: state.minFollowers,
       maxFollowers: state.maxFollowers,
-      engagementRateBuckets: state.engagementRateBuckets?.length ? state.engagementRateBuckets : undefined,
       excludePrivate: state.excludePrivate || undefined,
       accountTypeFilter: state.accountTypeFilter?.length ? state.accountTypeFilter : undefined,
     }
@@ -287,7 +273,6 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       categories,
       minFollowers: s.minFollowers,
       maxFollowers: s.maxFollowers,
-      engagementRateBuckets: s.engagementRateBuckets?.length ? s.engagementRateBuckets : undefined,
       excludePrivate: s.excludePrivate || undefined,
       accountTypeFilter: s.accountTypeFilter?.length ? s.accountTypeFilter : undefined,
       activationFilter: s.activationFilter?.length ? s.activationFilter : undefined,
@@ -366,9 +351,8 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       step === 1 ? { categories: undefined }
         : step === 2 ? { minFollowers: undefined, maxFollowers: undefined }
           : step === 3 ? { accountTypeFilter: undefined }
-            : step === 4 ? { engagementRateBuckets: undefined }
-              : step === 5 ? { activationFilter: undefined }
-                : {}
+            : step === 4 ? { activationFilter: undefined }
+              : {}
     const cleaned = { ...state, ...patch }
     update(patch)
     syncUrl(cleaned)
@@ -391,7 +375,6 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       categories,
       minFollowers: state.minFollowers,
       maxFollowers: state.maxFollowers,
-      engagementRateBuckets: state.engagementRateBuckets?.length ? state.engagementRateBuckets : undefined,
       excludePrivate: state.excludePrivate || undefined,
       accountTypeFilter: state.accountTypeFilter?.length ? state.accountTypeFilter : undefined,
       activationFilter: state.activationFilter?.length ? state.activationFilter : undefined,
@@ -687,46 +670,6 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
             )}
 
             {step === 4 && (
-              <div style={{ width: '100%', textAlign: 'center' }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
-                  {(() => {
-                    const rateBuckets = facets?.engagement_rate
-                    const counts = ENGAGEMENT_OPTIONS.map((_, idx) =>
-                      idx === 0
-                        ? (rateBuckets ? rateBuckets.reduce((s, b) => s + b.count, 0) : 0)
-                        : (rateBuckets?.[idx - 1]?.count ?? 0)
-                    )
-                    return ENGAGEMENT_OPTIONS.map((opt, idx) => {
-                      const count = counts[idx]
-                      if (count === 0) return null
-                      const active =
-                        JSON.stringify(state.engagementRateBuckets ?? []) ===
-                        JSON.stringify(opt.value)
-                      return (
-                        <Button
-                          key={opt.label}
-                          type={active ? 'primary' : 'default'}
-                          size="large"
-                          onClick={() => update({ engagementRateBuckets: opt.value })}
-                          style={{ borderRadius: 14, fontSize: 15 }}
-                        >
-                          {opt.label}
-                          {count != null ? (
-                            <span style={{ marginLeft: 8, opacity: 0.9 }}>
-                              ({count.toLocaleString('pt-BR')})
-                            </span>
-                          ) : estimateLoading ? (
-                            <Spin size="small" style={{ marginLeft: 8 }} />
-                          ) : null}
-                        </Button>
-                      )
-                    })
-                  })()}
-                </div>
-              </div>
-            )}
-
-            {step === 5 && (
               <div style={{ width: '100%', textAlign: 'center' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
                   {(() => {

@@ -400,6 +400,8 @@ export interface ProfilesSearchFacets {
   followers_buckets: { key: string; label: string; min: number; max: number | undefined; count: number }[];
   /** Contagem por tipo de conta (1=pessoal, 2=criador, 3=empresa). */
   account_type: { value: number; label: string; count: number }[];
+  /** Contagem por valor de preço por formato (feed, reels, story, destaque). */
+  pricing?: Record<string, { value: number; count: number }[]>;
   /** Contagem por faixa de preço (low, medium, high, very_high); só entradas com count > 0. */
   cost_tier?: { tier: CostTier; count: number }[];
 }
@@ -473,6 +475,8 @@ export interface ProfilesSearchQuery {
   sort?: string;
   limit?: number;
   offset?: number;
+  /** Quando false, não calcula facets (resposta mais rápida; útil em paginação quando já se tem facets). Default true. */
+  includeFacets?: boolean;
 }
 
 const SECONDS_PER_WEEK = 7 * 24 * 3600;
@@ -619,7 +623,9 @@ export async function searchProfiles(
   const restrictToHandles = options?.restrictToHandles?.length
     ? new Set(options.restrictToHandles.map((h) => String(h).toLowerCase().replace(/^@/, '')))
     : null;
-  const limit = Math.min(Math.max(0, Number(query.limit) || 50), 200);
+  const isCampaignScope = !!(options?.restrictToHandles?.length || options?.initialItems?.length);
+  const limitCap = isCampaignScope ? 10000 : 200;
+  const limit = Math.min(Math.max(0, Number(query.limit) || 50), limitCap);
   const offset = Math.max(0, Number(query.offset) || 0);
   const sort = (query.sort || 'engagement_desc').toLowerCase();
   const minFollowers = query.minFollowers != null ? Number(query.minFollowers) : undefined;
@@ -659,6 +665,7 @@ export async function searchProfiles(
   const costTierFilter = costTierFilterRaw.filter((s): s is CostTier =>
     (['low', 'medium', 'high', 'very_high'] as const).includes(s as CostTier)
   ) as CostTier[];
+  const includeFacets = query.includeFacets !== false;
 
   const useInitialItems = options?.initialItems != null && options.initialItems.length > 0;
 
@@ -769,16 +776,11 @@ export async function searchProfiles(
       data: profile.data as Record<string, unknown> | undefined,
       ...(at != null && { account_type: at }),
     };
-    if (posts.length >= 2) {
-      try {
-        item.bi = computeInstagramBi(followersCount, posts as PostForBi[]);
-      } catch {
-        // ignora falha no BI (dados incompletos)
-      }
-    }
     Object.assign(item, profile);
     item.categories = categories;
-    (item as Record<string, unknown>)._searchable_text = getSearchableText(profile, key, fullName, categories, posts);
+    if (q) {
+      (item as Record<string, unknown>)._searchable_text = getSearchableText(profile, key, fullName, categories, posts);
+    }
     items.push(item);
   }
   }
@@ -828,8 +830,44 @@ export async function searchProfiles(
     }
   }
 
-  /** Filtros por ativação, cidade, estado, bairro e redes (multiselect). */
+  /** Filtros por ativação, cidade, estado, bairro e redes (multiselect). Aplicados também quando useInitialItems (ex.: campanha com pagamento pendente). */
   let filteredItems = items;
+  if (accountTypeFilter.length > 0) {
+    filteredItems = filteredItems.filter((i) => {
+      const at = (i as ProfileListItem & { account_type?: number }).account_type;
+      return at != null && accountTypeFilter.includes(at);
+    });
+  }
+  if (minFollowers != null) {
+    filteredItems = filteredItems.filter((i) => (i.followers_count ?? 0) >= minFollowers);
+  }
+  if (maxFollowers != null) {
+    filteredItems = filteredItems.filter((i) => (i.followers_count ?? 0) <= maxFollowers);
+  }
+  if (excludePrivate) {
+    filteredItems = filteredItems.filter((i) => !(i as ProfileListItem & { is_private?: boolean }).is_private);
+  }
+  if (engagementRateBucketsFilter.length > 0) {
+    filteredItems = filteredItems.filter((i) =>
+      matchesEngagementRateBuckets(i.engagement?.engagement_rate ?? 0, engagementRateBucketsFilter)
+    );
+  } else if (minEngagementRate != null) {
+    filteredItems = filteredItems.filter((i) => (i.engagement?.engagement_rate ?? 0) >= minEngagementRate);
+  }
+  if (avgLikesBucketsFilter.length > 0) {
+    filteredItems = filteredItems.filter((i) =>
+      matchesAvgLikesBuckets(i.engagement?.avg_likes ?? 0, avgLikesBucketsFilter)
+    );
+  } else if (minAvgLikes != null) {
+    filteredItems = filteredItems.filter((i) => (i.engagement?.avg_likes ?? 0) >= minAvgLikes);
+  }
+  if (postsCountBucketsFilter.length > 0) {
+    filteredItems = filteredItems.filter((i) =>
+      matchesPostsCountBuckets(i.engagement?.posts_count ?? 0, postsCountBucketsFilter)
+    );
+  } else if (minPostsCount != null) {
+    filteredItems = filteredItems.filter((i) => (i.engagement?.posts_count ?? 0) >= minPostsCount);
+  }
   if (activationFilter.length === 1) {
     const wantActivated = activationFilter[0]!.toLowerCase() === 'activated';
     filteredItems = filteredItems.filter((i) => (wantActivated ? !!i.activation : !i.activation));
@@ -928,7 +966,9 @@ export async function searchProfiles(
 
   const total = items.length;
 
-  /** Facets calculados sobre o conjunto completo filtrado (para sumarização na UI). */
+  /** Facets calculados sobre o conjunto completo filtrado (para sumarização na UI). Omitidos quando includeFacets=false (ex.: paginação). */
+  let facets: ProfilesSearchFacets;
+  if (includeFacets) {
   let activatedCount = 0;
   const categoryCount = new Map<string, number>();
   const contentTypeCount = new Map<string, number>();
@@ -1046,7 +1086,7 @@ export async function searchProfiles(
     else postsCountBuckets[2]!.count++;
   }
 
-  const facets = {
+  facets = {
     categories: [...categoryCount.entries()]
       .filter(([, count]) => count > 0)
       .map(([name, count]) => ({ name, count }))
@@ -1079,8 +1119,61 @@ export async function searchProfiles(
       .map(([tier, count]) => ({ tier, count }))
       .sort((a, b) => b.count - a.count),
   };
+  } else {
+    facets = {
+      categories: [],
+      engagement_rate: [
+        { key: 'baixa', label: 'Baixa', min: undefined, count: 0 },
+        { key: 'media', label: 'Média', min: 1, count: 0 },
+        { key: 'alta', label: 'Alta', min: 5, count: 0 },
+      ],
+      avg_likes: [
+        { key: 'baixa', label: 'Baixa', min: undefined, count: 0 },
+        { key: 'media', label: 'Média', min: 500, count: 0 },
+        { key: 'alta', label: 'Alta', min: 5000, count: 0 },
+      ],
+      posts_count: [
+        { key: 'baixa', label: 'Baixa', min: undefined, count: 0 },
+        { key: 'media', label: 'Média', min: 25, count: 0 },
+        { key: 'alta', label: 'Alta', min: 50, count: 0 },
+      ],
+      activation: { activated: 0, not_activated: total },
+      content_type: [],
+      cities: [],
+      states: [],
+      neighborhoods: [],
+      social: { whatsapp: 0, tiktok: 0, facebook: 0, linkedin: 0, twitter: 0 },
+      followers_buckets: [
+        { key: 'nano', label: 'Nano (até 10k)', min: 0, max: 10_000, count: 0 },
+        { key: 'micro', label: 'Micro (10k – 50k)', min: 10_000, max: 50_000, count: 0 },
+        { key: 'medio', label: 'Médio (50k – 200k)', min: 50_000, max: 200_000, count: 0 },
+        { key: 'macro', label: 'Macro (200k+)', min: 200_000, max: undefined, count: 0 },
+      ],
+      account_type: [
+        { value: 1, label: 'Pessoal', count: 0 },
+        { value: 2, label: 'Criador', count: 0 },
+        { value: 3, label: 'Empresa', count: 0 },
+      ],
+      pricing: Object.fromEntries(
+        pricingActivationKeys.map((actKey) => [actKey, [] as { value: number; count: number }[]])
+      ) as Record<(typeof pricingActivationKeys)[number], { value: number; count: number }[]>,
+      cost_tier: [],
+    };
+  }
 
   const slice = items.slice(offset, offset + limit);
+  /** BI pesado só para os itens da página retornada (otimização); posts vêm do map para não guardar em cada item. */
+  for (const item of slice) {
+    const postsForBi = postsByHandle.get(item.handle) as PostForBi[] | undefined;
+    const followersForBi = item.followers_count;
+    if (postsForBi && postsForBi.length >= 2 && followersForBi != null) {
+      try {
+        item.bi = computeInstagramBi(followersForBi, postsForBi);
+      } catch {
+        // ignora falha no BI (dados incompletos)
+      }
+    }
+  }
   return { total, items: slice, facets };
 }
 

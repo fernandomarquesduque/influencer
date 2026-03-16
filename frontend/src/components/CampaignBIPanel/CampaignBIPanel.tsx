@@ -69,6 +69,8 @@ export interface CampaignBIPanelProps {
   expiresAt?: string | null
   /** Data de criação do relatório (ISO string). */
   createdAt?: string | null
+  /** Quando há pagamento pendente, a API envia stats agregados; use em vez de computeStats(items). */
+  statsOverride?: { totalLikes: number; totalComments: number; totalViews: number; totalFollowers: number; postsCount: number; avgEngagementRate: number; count: number }
 }
 
 function toggleInArray(arr: string[] | undefined, value: string): string[] | undefined {
@@ -92,10 +94,10 @@ function formatDate(iso: string | null | undefined): string | null {
   } catch { return null }
 }
 
-export default function CampaignBIPanel({ items, facets, loading = false, query, onFilter, description, onDescriptionSave, expiresAt, createdAt }: CampaignBIPanelProps) {
+export default function CampaignBIPanel({ items, facets, loading = false, query, onFilter, description, onDescriptionSave, expiresAt, createdAt, statsOverride }: CampaignBIPanelProps) {
   const [descLocal, setDescLocal] = useState(description ?? '')
   useEffect(() => { setDescLocal(description ?? '') }, [description])
-  const stats = computeStats(items)
+  const stats = statsOverride ?? computeStats(items)
   const activation = facets?.activation
   const activatedCount = activation?.activated ?? 0
   const notActivatedCount = activation?.not_activated ?? 0
@@ -160,23 +162,16 @@ export default function CampaignBIPanel({ items, facets, loading = false, query,
     onFilter({ states: toggleInArray(selectedStates, name) })
   }
 
-  if (loading) {
-    return (
-      <div className="campaign-bi-panel">
-        <Card size="small" className="campaign-bi-card">
-          <div style={{ padding: 20, textAlign: 'center' }}>
-            <Spin size="small" />
-            <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>Carregando...</Text>
-          </div>
-        </Card>
-      </div>
-    )
-  }
-
   const totalProfiles = stats.count
 
   return (
     <div className="campaign-bi-panel">
+      <div className={loading ? 'campaign-bi-panel-loading-wrap' : ''}>
+        {loading && (
+          <div className="campaign-bi-panel-loading-indicator" aria-hidden>
+            <Spin size="small" />
+          </div>
+        )}
       <Card size="small" className="campaign-bi-card" title="&nbsp;&nbsp;Resumo do relatório">
         {onDescriptionSave && (
           <div className="campaign-bi-description">
@@ -447,6 +442,7 @@ export default function CampaignBIPanel({ items, facets, loading = false, query,
           </div>
         )}
       </Card>
+      </div>
     </div>
   )
 }

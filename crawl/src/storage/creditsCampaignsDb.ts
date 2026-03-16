@@ -200,6 +200,25 @@ export class CreditsCampaignsDb {
     return result.changes > 0;
   }
 
+  /** Atualiza credits_used da campanha (ex.: pagamento com créditos). Retorna true se atualizou. */
+  setCampaignCreditsUsed(campaignId: string, userId: number, creditsUsed: number): boolean {
+    const result = this.db.prepare(`
+      UPDATE campaign SET credits_used = ? WHERE id = ? AND user_id = ?
+    `).run(creditsUsed, campaignId, userId);
+    return result.changes > 0;
+  }
+
+  /** Reduz a campanha aos primeiros N handles (só quando pagamento pendente). Retorna true se atualizou. */
+  setCampaignQuantity(campaignId: string, userId: number, quantity: number): boolean {
+    const handles = this.getCampaignHandles(campaignId, userId);
+    if (!handles || quantity < 1 || quantity >= handles.length) return false;
+    const trimmed = handles.slice(0, quantity);
+    const result = this.db.prepare(`
+      UPDATE campaign SET handles_json = ?, handles_count = ? WHERE id = ? AND user_id = ?
+    `).run(JSON.stringify(trimmed), trimmed.length, campaignId, userId);
+    return result.changes > 0;
+  }
+
   getCampaignHandles(campaignId: string, userId: number): string[] | null {
     const camp = this.getCampaign(campaignId, userId);
     if (!camp) return null;
@@ -228,5 +247,11 @@ export class CreditsCampaignsDb {
       SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at
       FROM campaign WHERE user_id = ? AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY created_at DESC
     `).all(userId) as CampaignRow[];
+  }
+
+  /** Exclui a campanha (apenas se pertencer ao usuário). Retorna true se excluiu. */
+  deleteCampaign(campaignId: string, userId: number): boolean {
+    const result = this.db.prepare('DELETE FROM campaign WHERE id = ? AND user_id = ?').run(campaignId, userId);
+    return result.changes > 0;
   }
 }

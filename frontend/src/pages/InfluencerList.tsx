@@ -13,20 +13,23 @@ import {
   Collapse,
   Drawer,
   Grid,
+  message,
   Modal,
+  Form,
+  Alert,
 } from 'antd'
 import { SearchOutlined, FilterOutlined, ClearOutlined } from '@ant-design/icons'
 
 const { useBreakpoint } = Grid
-import { fetchProfilesSearch, fetchProfile, type ProfileListItem, type ProfilesSearchQuery, type ProfilesSort, type ProfilesSearchFacets } from '../api'
+import { fetchProfilesSearch, fetchProfile, createCampaign, registerCheckoutUser, type ProfileListItem, type ProfilesSearchQuery, type ProfilesSort, type ProfilesSearchFacets } from '../api'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth, type AuthUser } from '../contexts/AuthContext'
+import type { AuthScope } from '../api'
 import { useListCache } from '../contexts/ListCacheContext'
 import SearchWizard from '../components/SearchWizard/SearchWizard'
 import ReportDashboard from '../components/ReportDashboard/ReportDashboard'
-import CheckoutContent from '../components/CheckoutContent/CheckoutContent'
 
 const { Text } = Typography
 
@@ -44,7 +47,6 @@ function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
   }
   if (query.minFollowers != null) params.minFollowers = String(query.minFollowers)
   if (query.maxFollowers != null) params.maxFollowers = String(query.maxFollowers)
-  if (query.engagementRateBuckets?.length) params.engagement = query.engagementRateBuckets.join(',')
   if (query.excludePrivate) params.excludePrivate = '1'
   if (query.accountTypeFilter?.length) params.accountType = query.accountTypeFilter.join(',')
   if (query.avgLikesBuckets?.length) params.avgLikes = query.avgLikesBuckets.join(',')
@@ -86,7 +88,6 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     categories,
     minFollowers: params.has('minFollowers') ? Number(params.get('minFollowers')) : undefined,
     maxFollowers: params.has('maxFollowers') ? Number(params.get('maxFollowers')) : undefined,
-    engagementRateBuckets: parseNumList(params.get('engagement')),
     excludePrivate: params.get('excludePrivate') === '1',
     accountTypeFilter: parseNumList(params.get('accountType')),
     avgLikesBuckets: parseNumList(params.get('avgLikes')),
@@ -142,7 +143,7 @@ export default function InfluencerList() {
   const navigate = useNavigate()
   const location = useLocation()
   const { handle: urlHandle } = useParams<{ handle?: string }>()
-  const { user, isPublic } = useAuth()
+  const { user, isPublic, loginWithToken } = useAuth()
   const { getCache, saveCache } = useListCache()
   const isLimitedView = !user || isPublic
   const hashParams = useMemo(() => getParamsFromHash(location), [location.hash])
@@ -168,17 +169,22 @@ export default function InfluencerList() {
     [setFilterParams]
   )
 
+  const estimateAbortRef = useRef<AbortController | null>(null)
+  const estimateCacheRef = useRef<{ queryKey: string; result: { total: number; facets: ProfilesSearchFacets | null } } | null>(null)
   const handleWizardEstimate = useCallback(async (query: Partial<ProfilesSearchQuery>, options?: { signal?: AbortSignal }) => {
-    const res = await fetchProfilesSearch(
-      {
-        ...query,
-        limit: 0,
-        offset: 0,
-        sort: 'relevance_desc',
-      },
-      { signal: options?.signal }
-    )
-    return { total: res.total, facets: res.facets ?? null }
+    const searchQuery = { ...query, limit: 1, offset: 0, sort: 'relevance_desc' as const }
+    const queryKey = JSON.stringify(searchQuery, Object.keys(searchQuery).sort())
+    if (estimateCacheRef.current?.queryKey === queryKey) {
+      return estimateCacheRef.current.result
+    }
+    estimateAbortRef.current?.abort()
+    const controller = options?.signal ? null : new AbortController()
+    if (controller) estimateAbortRef.current = controller
+    const signal = options?.signal ?? controller?.signal
+    const res = await fetchProfilesSearch(searchQuery, { signal })
+    const result = { total: res.total, facets: res.facets ?? null }
+    estimateCacheRef.current = { queryKey, result }
+    return result
   }, [])
 
   const handleWizardComplete = useCallback(
@@ -231,22 +237,41 @@ export default function InfluencerList() {
   })
   const [limitReachedCode, setLimitReachedCode] = useState<string | null>(null)
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false)
-  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false)
+  const [creatingCampaign, setCreatingCampaign] = useState(false)
+  const [reportModalOpen, setReportModalOpen] = useState(false)
+  const [signupEmail, setSignupEmail] = useState('')
+  const [signupName, setSignupName] = useState('')
+  const [signupPassword, setSignupPassword] = useState('')
+  const [signupPasswordConfirm, setSignupPasswordConfirm] = useState('')
+  const [signupError, setSignupError] = useState<string | null>(null)
+  const [signupLoading, setSignupLoading] = useState(false)
   const filterDrawerRef = useRef<HTMLDivElement>(null)
   const scrollToRestoreRef = useRef<number | null>(null)
   const refetchedForZeroRef = useRef(false)
+  const lastLoadQueryRef = useRef<string | null>(null)
   const screens = useBreakpoint()
   const showFiltersSidebar = screens.lg
 
   const [wizardInitialFacets, setWizardInitialFacets] = useState<ProfilesSearchFacets | null>(null)
+  const wizardFacetsAbortRef = useRef<AbortController | null>(null)
   useEffect(() => {
     if (!hasMandatoryFilters) {
-      fetchProfilesSearch({ limit: 0, offset: 0, sort: 'engagement_desc' })
-        .then((res) => setWizardInitialFacets(res.facets ?? null))
-        .catch(() => setWizardInitialFacets(null))
-    } else {
-      setWizardInitialFacets(null)
+      wizardFacetsAbortRef.current?.abort()
+      const controller = new AbortController()
+      wizardFacetsAbortRef.current = controller
+      fetchProfilesSearch({ limit: 1, offset: 0, sort: 'engagement_desc' }, { signal: controller.signal })
+        .then((res) => {
+          if (!controller.signal.aborted) setWizardInitialFacets(res.facets ?? null)
+        })
+        .catch((e) => {
+          if ((e as Error).name !== 'AbortError' && !controller.signal.aborted) setWizardInitialFacets(null)
+        })
+      return () => {
+        controller.abort()
+        wizardFacetsAbortRef.current = null
+      }
     }
+    setWizardInitialFacets(null)
   }, [hasMandatoryFilters])
 
   /** Handles cuja foto falhou e foi enfileirado refresh; atualizamos só esse item na lista quando o perfil voltar com URL nova. */
@@ -372,7 +397,6 @@ export default function InfluencerList() {
         }
       })
       .finally(() => {
-        if (signal?.aborted) return
         setLoading(false)
         setLoadingMore(false)
       })
@@ -384,6 +408,7 @@ export default function InfluencerList() {
 
   useEffect(() => {
     if (!hasMandatoryFilters) {
+      lastLoadQueryRef.current = null
       setSearchInput(parsedUrl.q ?? '')
       setData([])
       setTotal(0)
@@ -392,6 +417,9 @@ export default function InfluencerList() {
       return
     }
     const fullQuery = fullQueryFromUrl!
+    const queryKey = JSON.stringify(fullQuery, Object.keys(fullQuery as Record<string, unknown>).sort())
+    if (lastLoadQueryRef.current === queryKey) return
+    lastLoadQueryRef.current = queryKey
     const cached = getCache()
     if (cached && cached.q === fullQuery.q?.trim()) {
       setData(cached.data)
@@ -469,7 +497,6 @@ export default function InfluencerList() {
   }
 
   const selectedCategories = (query.categories ?? []) as string[]
-  const selectedEngagementRate = (query.engagementRateBuckets ?? []) as number[]
   const selectedAvgLikes = (query.avgLikesBuckets ?? []) as number[]
   const selectedPostsCount = (query.postsCountBuckets ?? []) as number[]
   const selectedActivation = (query.activationFilter ?? []) as string[]
@@ -502,7 +529,6 @@ export default function InfluencerList() {
 
   const hasActiveFilters =
     selectedCategories.length > 0 ||
-    selectedEngagementRate.length > 0 ||
     selectedAvgLikes.length > 0 ||
     selectedPostsCount.length > 0 ||
     selectedExcludePrivate ||
@@ -520,7 +546,6 @@ export default function InfluencerList() {
       categories: undefined,
       excludePrivate: undefined,
       accountTypeFilter: undefined,
-      engagementRateBuckets: undefined,
       avgLikesBuckets: undefined,
       postsCountBuckets: undefined,
       activationFilter: undefined,
@@ -549,7 +574,6 @@ export default function InfluencerList() {
                 categories: parsedUrl.categories?.length ? (Array.isArray(parsedUrl.categories) ? parsedUrl.categories : [parsedUrl.categories]) : undefined,
                 minFollowers: parsedUrl.minFollowers,
                 maxFollowers: parsedUrl.maxFollowers,
-                engagementRateBuckets: parsedUrl.engagementRateBuckets,
                 excludePrivate: parsedUrl.excludePrivate,
                 accountTypeFilter: parsedUrl.accountTypeFilter,
                 activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
@@ -567,10 +591,75 @@ export default function InfluencerList() {
 
   const showDashboard = hasMandatoryFilters && listViewFromHash === 'dashboard'
 
+  const doCreateCampaignAndRedirect = useCallback(() => {
+    const expiresAt = new Date()
+    expiresAt.setFullYear(expiresAt.getFullYear() + 1)
+    const expiresAtStr = expiresAt.toISOString().slice(0, 10)
+    setCreatingCampaign(true)
+    return createCampaign(query, { maxHandles: total, expiresAt: expiresAtStr })
+      .then((res) => {
+        if (res.campaignId) {
+          setReportModalOpen(false)
+          navigate(`/app/campaigns/${res.campaignId}`)
+        }
+      })
+      .catch((e) => {
+        message.error((e as Error).message || 'Falha ao criar relatório')
+      })
+      .finally(() => setCreatingCampaign(false))
+  }, [query, total, navigate])
+
+  const handleViewListAndReport = useCallback(() => {
+    if (total < 1 || creatingCampaign) return
+    setSignupError(null)
+    setReportModalOpen(true)
+  }, [total, creatingCampaign])
+
+  const handleReportModalSubmit = useCallback(async () => {
+    if (user) {
+      doCreateCampaignAndRedirect()
+      return
+    }
+    setSignupError(null)
+    if (!signupEmail.trim() || !signupEmail.includes('@')) {
+      setSignupError('Informe um e-mail válido.')
+      return
+    }
+    if (signupPassword.length < 6) {
+      setSignupError('A senha deve ter no mínimo 6 caracteres.')
+      return
+    }
+    if (signupPassword !== signupPasswordConfirm) {
+      setSignupError('Senha e confirmação não conferem.')
+      return
+    }
+    setSignupLoading(true)
+    try {
+      const res = await registerCheckoutUser({
+        email: signupEmail.trim().toLowerCase(),
+        name: signupName.trim() || undefined,
+        password: signupPassword,
+      })
+      loginWithToken(res.token, {
+        id: res.user.id,
+        username: res.user.username,
+        scope: res.user.scope as AuthScope,
+        profile_handle: res.user.profile_handle,
+        displayName: res.user.display_name ?? null,
+        emailVerified: res.user.email_verified,
+      } as AuthUser)
+      await doCreateCampaignAndRedirect()
+    } catch (e) {
+      setSignupError((e as Error).message)
+    } finally {
+      setSignupLoading(false)
+    }
+  }, [user, signupEmail, signupName, signupPassword, signupPasswordConfirm, loginWithToken, doCreateCampaignAndRedirect])
+
   if (showDashboard) {
     return (
       <div style={{ position: 'relative', minHeight: 320 }}>
-        {loading && (
+        {(loading || creatingCampaign) && (
           <div
             style={{
               position: 'fixed',
@@ -586,7 +675,7 @@ export default function InfluencerList() {
           >
             <Spin size="large" />
             <Text style={{ marginTop: 16, fontSize: 16, color: 'var(--app-text)' }}>
-              O relatório está sendo gerado
+              {creatingCampaign ? 'Criando relatório...' : 'O relatório está sendo gerado'}
             </Text>
           </div>
         )}
@@ -595,7 +684,7 @@ export default function InfluencerList() {
           total={total}
           facets={facets}
           sampleItems={data.slice(0, 6)}
-          onViewList={() => setCheckoutModalOpen(true)}
+          onViewList={handleViewListAndReport}
           onBack={() => {
             const params = queryToUrlParams(query)
             delete params[WIZARD_DONE_PARAM]
@@ -605,35 +694,84 @@ export default function InfluencerList() {
           loading={loading}
         />
         <Modal
-          title="Comprar relatório"
-          open={checkoutModalOpen}
-          onCancel={() => setCheckoutModalOpen(false)}
+          title={user ? 'Criar relatório e ver lista' : 'Cadastre-se para acessar o relatório'}
+          open={reportModalOpen}
+          onCancel={() => {
+            if (!signupLoading && !creatingCampaign) setReportModalOpen(false)
+          }}
           footer={null}
-          width={640}
           destroyOnClose
-          maskClosable={false}
-          keyboard={false}
+          width={420}
         >
-          <CheckoutContent
-            query={query}
-            total={total}
-            embed
-            onSuccess={(campaignId) => {
-              setCheckoutModalOpen(false)
-              navigate(`/app/campaigns/${campaignId}`)
-            }}
-            onPaymentCreated={() => {
-              setCheckoutModalOpen(false)
-              navigate('/app/campaigns', { replace: true })
-            }}
-            onCancel={() => setCheckoutModalOpen(false)}
-          />
+          {user ? (
+            <div style={{ padding: '8px 0' }}>
+              <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                Será criada uma campanha com até {total.toLocaleString('pt-BR')} perfis. Você poderá ver a lista completa e acessar o relatório.
+              </Text>
+              <Button type="primary" size="large" block loading={creatingCampaign} onClick={handleReportModalSubmit} style={{ borderRadius: 8 }}>
+                Criar relatório e ver lista
+              </Button>
+            </div>
+          ) : (
+            <Form layout="vertical" style={{ marginTop: 8 }}>
+              <Form.Item label="Nome">
+                <Input
+                  placeholder="Seu nome"
+                  value={signupName}
+                  onChange={(e) => setSignupName(e.target.value)}
+                  size="large"
+                  style={{ borderRadius: 8 }}
+                />
+              </Form.Item>
+              <Form.Item label="E-mail" required>
+                <Input
+                  type="email"
+                  placeholder="seu@email.com"
+                  value={signupEmail}
+                  onChange={(e) => setSignupEmail(e.target.value)}
+                  size="large"
+                  style={{ borderRadius: 8 }}
+                />
+              </Form.Item>
+              <Form.Item label="Senha (mín. 6 caracteres)" required>
+                <Input.Password
+                  placeholder="••••••••"
+                  value={signupPassword}
+                  onChange={(e) => setSignupPassword(e.target.value)}
+                  size="large"
+                  style={{ borderRadius: 8 }}
+                />
+              </Form.Item>
+              <Form.Item label="Confirmar senha" required>
+                <Input.Password
+                  placeholder="••••••••"
+                  value={signupPasswordConfirm}
+                  onChange={(e) => setSignupPasswordConfirm(e.target.value)}
+                  size="large"
+                  style={{ borderRadius: 8 }}
+                />
+              </Form.Item>
+              {signupError && (
+                <Alert type="error" message={signupError} showIcon style={{ marginBottom: 12 }} onClose={() => setSignupError(null)} closable />
+              )}
+              <Button
+                type="primary"
+                size="large"
+                block
+                loading={signupLoading || creatingCampaign}
+                onClick={handleReportModalSubmit}
+                style={{ borderRadius: 8, marginTop: 8 }}
+              >
+                Cadastrar e criar relatório
+              </Button>
+            </Form>
+          )}
         </Modal>
       </div>
     )
   }
 
-  const showFilters = !!user && (facets != null || total > 0 || selectedCategories.length > 0 || selectedEngagementRate.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedExcludePrivate || selectedAccountType.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter)
+  const showFilters = !!user && (facets != null || total > 0 || selectedCategories.length > 0 || selectedAvgLikes.length > 0 || selectedPostsCount.length > 0 || selectedExcludePrivate || selectedAccountType.length > 0 || selectedActivation.length > 0 || selectedCities.length > 0 || selectedStates.length > 0 || selectedNeighborhoods.length > 0 || selectedSocial.length > 0 || selectedContentTypes.length > 0 || hasPricingFilter)
 
   const asideStyle: React.CSSProperties = {
     flexShrink: 0,

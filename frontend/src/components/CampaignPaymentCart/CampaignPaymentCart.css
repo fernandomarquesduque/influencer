@@ -1,0 +1,97 @@
+/* Painel de pagamento — estilo carrinho, compacto e foco no pagamento */
+.campaign-payment-panel .ant-slider-track {
+  background: linear-gradient(90deg, var(--app-primary) 0%, var(--app-primary-dark) 100%) !important;
+}
+.campaign-payment-panel .ant-slider-handle {
+  border-color: var(--app-primary) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+.campaign-payment-panel .ant-input-number {
+  border-radius: 8px;
+  border-color: var(--app-border);
+}
+.campaign-payment-panel .ant-input-number:focus,
+.campaign-payment-panel .ant-input-number:hover {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+}
+
+/* Carrinho de compra — resumo e total */
+.campaign-payment-cart {
+  --cart-gap: 10px;
+  --cart-pad: 14px 16px;
+}
+.campaign-payment-cart__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--app-text-secondary);
+  margin-bottom: var(--cart-gap);
+}
+.campaign-payment-cart__summary strong {
+  color: var(--app-text);
+}
+.campaign-payment-cart__filters {
+  margin-bottom: var(--cart-gap);
+  font-size: 11px;
+  color: var(--app-text-tertiary);
+}
+.campaign-payment-cart__filters .ant-tag {
+  font-size: 11px;
+  padding: 0 6px;
+  line-height: 20px;
+  margin-bottom: 2px;
+}
+.campaign-payment-cart__total-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  margin: 0 -16px 12px -16px;
+  background: var(--app-bg-hover, rgba(0,0,0,0.03));
+  border-radius: 8px;
+}
+.campaign-payment-cart__total-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.campaign-payment-cart__total-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--app-primary);
+  letter-spacing: -0.02em;
+}
+.campaign-payment-cart__method {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--app-border-light, rgba(0,0,0,0.06));
+  font-size: 13px;
+}
+.campaign-payment-cart__method:last-of-type {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.campaign-payment-cart__method-label {
+  min-width: 56px;
+  color: var(--app-text-secondary);
+}
+.campaign-payment-cart__method .ant-btn {
+  margin-left: auto;
+}
+.campaign-payment-cart__cta {
+  margin-top: 12px;
+}
+.campaign-payment-cart__cta .ant-btn {
+  width: 100%;
+  height: 40px;
+  font-weight: 600;
+  border-radius: 8px;
+}

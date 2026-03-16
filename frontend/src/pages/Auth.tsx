@@ -555,6 +555,16 @@ export default function Auth() {
     setLoading(true)
     try {
       const data = await verifyProfile(nickname, code)
+      if (data.mission_completed && data.credits != null) {
+        if (data.token && data.user) {
+          loginWithToken(data.token, data.user as AuthUser)
+        } else {
+          await refreshUser()
+        }
+        message.success('Missão concluída! +' + data.credits + ' créditos.')
+        navigate(`/missions/reward?type=instagram&credits=${data.credits}`, { replace: true })
+        return
+      }
       if (data.token && data.user) {
         loginWithToken(data.token, data.user as AuthUser)
         message.success('Entrou! Perfil validado.')

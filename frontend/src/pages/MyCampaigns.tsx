@@ -66,6 +66,7 @@ export default function MyCampaigns() {
   const { user, loading: authLoading } = useAuth()
   const [campaigns, setCampaigns] = useState<MyCampaignItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [statsLoading, setStatsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hasFavorites, setHasFavorites] = useState(false)
 
@@ -73,10 +74,32 @@ export default function MyCampaigns() {
     if (!user) return
     setLoading(true)
     setError(null)
-    fetchMyCampaigns()
-      .then((res) => setCampaigns(res.campaigns ?? []))
-      .catch((e) => setError((e as Error).message))
+    setStatsLoading(false)
+    const ac = new AbortController()
+    Promise.all([
+      fetchMyCampaigns({ signal: ac.signal, light: true }),
+      fetchFavorites().then((res) => (res.handles?.length ?? 0) > 0).catch(() => false),
+    ])
+      .then(([campaignsRes, fav]) => {
+        setCampaigns(campaignsRes.campaigns ?? [])
+        setHasFavorites(fav)
+        setLoading(false)
+        if ((campaignsRes.campaigns?.length ?? 0) > 0) {
+          setStatsLoading(true)
+          fetchMyCampaigns({ signal: ac.signal })
+            .then((full) => setCampaigns(full.campaigns ?? []))
+            .catch(() => {})
+            .finally(() => setStatsLoading(false))
+        }
+      })
+      .catch((e) => {
+        // Não exibir erro quando o request foi cancelado (navegação/cleanup)
+        const err = e as Error & { name?: string }
+        if (err?.name === 'AbortError' || err?.message?.toLowerCase().includes('abort')) return
+        setError(err?.message ?? 'Erro ao carregar campanhas')
+      })
       .finally(() => setLoading(false))
+    return () => ac.abort()
   }, [user])
 
   useEffect(() => {
@@ -84,13 +107,6 @@ export default function MyCampaigns() {
       navigate('/login', { replace: true })
     }
   }, [authLoading, user, navigate])
-
-  useEffect(() => {
-    if (!user) return
-    fetchFavorites()
-      .then((res) => setHasFavorites((res.handles?.length ?? 0) > 0))
-      .catch(() => setHasFavorites(false))
-  }, [user])
 
   if (authLoading || !user) {
     return (
@@ -263,6 +279,11 @@ export default function MyCampaigns() {
           {campaigns.length > 0 && (
             <div>
               <Text strong style={{ fontSize: 14, color: 'var(--app-primary)', marginBottom: 8, display: 'block' }}>Resumo</Text>
+              {statsLoading && (
+                <div style={{ marginBottom: 8 }}>
+                  <Spin size="small" /> <Text type="secondary" style={{ fontSize: 12 }}>Carregando engajamento...</Text>
+                </div>
+              )}
               <div className="my-campaigns-summary my-campaigns-summary-sidebar">
                 <Statistic title="Campanhas" value={campaigns.length} suffix="relatórios" />
                 <Statistic

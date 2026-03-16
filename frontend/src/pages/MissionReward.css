@@ -1,0 +1,74 @@
+.mission-reward-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.mission-reward-confetti {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mission-reward-confetti-piece {
+  position: absolute;
+  top: -20px;
+  border-radius: 2px;
+  animation: mission-reward-confetti-fall linear forwards;
+  opacity: 0.95;
+}
+
+@keyframes mission-reward-confetti-fall {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translateY(100vh) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+.mission-reward-content {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  max-width: 400px;
+  background: var(--app-card-bg, #fff);
+  padding: 48px 32px;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+}
+
+.mission-reward-icon {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 24px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--app-primary, #1890ff) 0%, #096dd9 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+}
+
+.mission-reward-credits {
+  display: inline-flex;
+  align-items: center;
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #f6ffed 0%, #d9f7be 100%);
+  border-radius: 999px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #389e0d;
+}
+
+.mission-reward-credits-value {
+  font-variant-numeric: tabular-nums;
+}

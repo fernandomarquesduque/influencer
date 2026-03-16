@@ -18,8 +18,12 @@ export interface AuthUser {
   username: string
   scope: AuthScope
   profile_handle: string | null
+  /** Nome escolhido no cadastro (ex.: assinante). */
+  displayName?: string | null
   /** Para scope influencer: true se o cadastro foi ativado (cidade preenchida na ativação). */
   profile_activated?: boolean
+  /** E-mail validado (link de confirmação). Se ausente, tratamos como true para compatibilidade. */
+  emailVerified?: boolean
 }
 
 interface AuthState {
@@ -63,7 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             username: u.username,
             scope: u.scope,
             profile_handle: u.profile_handle ?? null,
+            displayName: u.display_name ?? null,
             profile_activated: u.profile_activated,
+            emailVerified: u.email_verified,
           },
           loading: false,
         }))
@@ -109,7 +115,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           username: data.user.username,
           scope: data.user.scope,
           profile_handle: data.user.profile_handle ?? null,
+          displayName: data.user.display_name ?? null,
           profile_activated: data.user.profile_activated,
+          emailVerified: data.user.email_verified,
         }
         : null,
       loading: false,
@@ -126,7 +134,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         username: user.username,
         scope: user.scope,
         profile_handle: user.profile_handle ?? null,
+        displayName: user.displayName ?? null,
         profile_activated: user.profile_activated,
+        emailVerified: user.emailVerified,
       },
       loading: false,
     })
@@ -154,7 +164,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             username: u.username,
             scope: u.scope,
             profile_handle: u.profile_handle ?? null,
+            displayName: u.display_name ?? null,
             profile_activated: u.profile_activated,
+            emailVerified: u.email_verified,
           },
         }))
       }

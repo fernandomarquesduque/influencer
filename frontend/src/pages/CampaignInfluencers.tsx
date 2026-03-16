@@ -4,14 +4,17 @@
  */
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag, Card, Alert } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, UserOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, BankOutlined, CopyOutlined, CommentOutlined, TeamOutlined, FileTextOutlined, RiseOutlined, CalendarOutlined } from '@ant-design/icons'
+import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag, Alert, message, Popconfirm } from 'antd'
+import { AppstoreOutlined, UnorderedListOutlined, UserOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, BankOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
   fetchCampaignProfiles,
   getCampaign,
   updateCampaignName,
   updateCampaignDescription,
+  deleteCampaign,
+  createCampaignPayment,
+  payCampaignWithCredits,
   fetchFavorites,
   addFavorite,
   removeFavorite,
@@ -20,9 +23,11 @@ import {
   type ProfileListItem,
   type ProfilesSearchQuery,
   type ProfilesSearchFacets,
+  type ProfilesSearchResponse,
   type ProfilesSort,
   type CampaignInfo,
 } from '../api'
+import { useCreditsOptional } from '../contexts/CreditsContext'
 import { getCostTier } from '../utils/pricing'
 import { filterAndSortCampaignItems, computeFacetsFromItems } from '../utils/campaignFilterClient'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
@@ -30,8 +35,9 @@ import { PRICE_BUCKETS, PRICING_FIELD_LABELS, getSuggestedPricingFromFollowers }
 import type { PricingData } from '../api'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import CampaignBIPanel from '../components/CampaignBIPanel/CampaignBIPanel'
+import CampaignPaymentCart from '../components/CampaignPaymentCart/CampaignPaymentCart'
+import './CampaignInfluencers.css'
 import { MessageOutlined, VideoCameraOutlined } from '@ant-design/icons'
-import QRCode from 'qrcode'
 
 const PAGE_SIZE = 100
 /** Quantidade de itens exibidos inicialmente e a cada rodada de scroll (carregamento progressivo). */
@@ -111,43 +117,6 @@ function getTierShort(followers: number | undefined | null): string {
   if (followers < 50_000) return 'Micro'
   if (followers < 500_000) return 'Mid'
   return 'Macro'
-}
-
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso)
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
-  } catch {
-    return iso
-  }
-}
-
-function computeReportStats(items: ProfileListItem[] | null): { totalLikes: number; totalComments: number; totalViews: number; totalFollowers: number; postsCount: number; avgEngagementRate: number; count: number } {
-  if (!items?.length) return { totalLikes: 0, totalComments: 0, totalViews: 0, totalFollowers: 0, postsCount: 0, avgEngagementRate: 0, count: 0 }
-  let totalLikes = 0, totalComments = 0, totalViews = 0, totalFollowers = 0, postsCount = 0, engSum = 0, engCount = 0
-  for (const it of items) {
-    totalFollowers += it.followers_count ?? 0
-    const eng = it.engagement
-    if (eng) {
-      totalLikes += eng.total_likes ?? 0
-      totalComments += eng.total_comments ?? 0
-      totalViews += eng.total_views ?? 0
-      postsCount += eng.posts_count ?? 0
-      if (Number.isFinite(eng.engagement_rate)) {
-        engSum += eng.engagement_rate
-        engCount++
-      }
-    }
-  }
-  return {
-    totalLikes,
-    totalComments,
-    totalViews,
-    totalFollowers,
-    postsCount,
-    avgEngagementRate: engCount > 0 ? Math.round((engSum / engCount) * 100) / 100 : 0,
-    count: items.length,
-  }
 }
 
 /** Uma linha compacta (modo lista tipo tabela) com dados de ativação. */
@@ -378,6 +347,7 @@ export default function CampaignInfluencers() {
   const campaignId = campaignIdParam != null && CAMPAIGN_ID_GUID_REGEX.test(campaignIdParam.trim()) ? campaignIdParam.trim() : null
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
+  const creditsContext = useCreditsOptional()
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT)
   const [viewMode, setViewMode] = useState<CampaignViewMode>('list')
   const effectiveViewMode: CampaignViewMode = isMobile ? 'grid' : viewMode
@@ -392,11 +362,17 @@ export default function CampaignInfluencers() {
   const [campaignCredits, setCampaignCredits] = useState<number | null>(null)
   const [campaignInfo, setCampaignInfo] = useState<CampaignInfo | null>(null)
   const [campaignInfoLoaded, setCampaignInfoLoaded] = useState(false)
+  const [pricePreview, setPricePreview] = useState<ProfilesSearchResponse['pricePreview'] | null>(null)
   const [campaignNameInput, setCampaignNameInput] = useState('')
   const [savingCampaignName, setSavingCampaignName] = useState(false)
   const [namePromptDismissed, setNamePromptDismissed] = useState(false)
   const [nameModalOpen, setNameModalOpen] = useState(false)
   const hasAutoOpenedNameModalRef = useRef(false)
+  const [creatingPayment, setCreatingPayment] = useState<'pix' | 'boleto' | null>(null)
+  const [boletoModalOpen, setBoletoModalOpen] = useState(false)
+  const [boletoCpfValue, setBoletoCpfValue] = useState('')
+  const [payingWithCredits, setPayingWithCredits] = useState(false)
+  const [deletingCampaign, setDeletingCampaign] = useState(false)
   const [filteredList, setFilteredList] = useState<ProfileListItem[]>([])
   const [displayedCount, setDisplayedCount] = useState(DISPLAY_PAGE_SIZE)
   const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '')
@@ -405,21 +381,7 @@ export default function CampaignInfluencers() {
   const addHandleForImageUpdate = useRef<((handle: string) => void) | null>(null)
   const queryRef = useRef(query)
   queryRef.current = query
-  const [pendingPaymentPixQr, setPendingPaymentPixQr] = useState<string | null>(null)
-
-  useEffect(() => {
-    const pix = campaignInfo?.pendingPayment?.pixCopyPaste
-    if (!pix) {
-      setPendingPaymentPixQr(null)
-      return
-    }
-    let cancelled = false
-    QRCode.toDataURL(pix, { width: 220, margin: 2 })
-      .then((url) => { if (!cancelled) setPendingPaymentPixQr(url) })
-      .catch(() => { if (!cancelled) setPendingPaymentPixQr(null) })
-    return () => { cancelled = true }
-  }, [campaignInfo?.pendingPayment?.pixCopyPaste])
-
+  const pendingLoadFromFilterRef = useRef(false)
   useEffect(() => {
     if (!user) {
       setFavoriteHandles(new Set())
@@ -486,25 +448,46 @@ export default function CampaignInfluencers() {
 
   const data = filteredList.slice(0, displayedCount)
 
+  const pendingPayment = !!campaignInfo?.pendingPayment
   const loadContext = useCallback(
-    (signal?: AbortSignal) => {
+    (signal?: AbortSignal, queryOverride?: Partial<ProfilesSearchQuery>) => {
       if (campaignId == null) return
       setLoading(true)
-      fetchCampaignProfiles(campaignId, { ...defaultQuery, limit: 10000 }, { signal })
+      const baseQuery = queryOverride ?? query
+      const q = pendingPayment ? { ...baseQuery, limit: 10000 } : { ...defaultQuery, ...baseQuery, limit: 10000 }
+      fetchCampaignProfiles(campaignId, q, { signal })
         .then((res) => {
           if (signal?.aborted) return
-          setContextItems(res.items ?? [])
+          if (pendingPayment) {
+            const facetsFromApi = res.facets ?? null
+            setFacets(facetsFromApi != null && facetsFromApi.followers_buckets && !('size_buckets' in facetsFromApi)
+              ? { ...facetsFromApi, size_buckets: facetsFromApi.followers_buckets.map((b: { key: string; label: string; count: number }) => ({ key: b.key === 'medio' ? 'mid' : b.key, label: b.label, count: b.count })) }
+              : facetsFromApi)
+            setTotal(res.total ?? 0)
+            setPricePreview(res.pricePreview ?? null)
+            setContextItems([])
+            setFilteredList([])
+          } else {
+            const facetsFromApi = res.facets ?? null
+            setFacets(facetsFromApi != null && facetsFromApi.followers_buckets && !('size_buckets' in facetsFromApi)
+              ? { ...facetsFromApi, size_buckets: facetsFromApi.followers_buckets.map((b: { key: string; label: string; count: number }) => ({ key: b.key === 'medio' ? 'mid' : b.key, label: b.label, count: b.count })) }
+              : facetsFromApi)
+            setTotal(res.total ?? 0)
+            setContextItems(res.items ?? [])
+            setPricePreview(null)
+          }
         })
         .catch(() => {
           if (!signal?.aborted) {
             setContextItems([])
+            if (pendingPayment) setFacets(null)
           }
         })
         .finally(() => {
           if (!signal?.aborted) setLoading(false)
         })
     },
-    [campaignId]
+    [campaignId, pendingPayment, query]
   )
 
   const updateFilter = useCallback(
@@ -512,17 +495,22 @@ export default function CampaignInfluencers() {
       const newQuery = { ...query, ...overrides, offset: 0 }
       setQuery(newQuery)
       setSearchParams(campaignQueryToUrlParams(newQuery), { replace: true })
-      if (contextItems != null) applyContextFilters(newQuery)
+      if (pendingPayment) {
+        pendingLoadFromFilterRef.current = true
+        loadContext(undefined, newQuery)
+      } else if (contextItems != null) {
+        applyContextFilters(newQuery)
+      }
     },
-    [query, contextItems, applyContextFilters, setSearchParams]
+    [query, contextItems, applyContextFilters, setSearchParams, pendingPayment, loadContext]
   )
 
   const clearFilters = useCallback(() => {
     const newQuery = { ...defaultQuery, offset: 0 }
     setQuery(newQuery)
     setSearchParams({}, { replace: true })
-    if (contextItems != null) applyContextFilters(newQuery)
-  }, [contextItems, applyContextFilters, setSearchParams])
+    if (!pendingPayment && contextItems != null) applyContextFilters(newQuery)
+  }, [contextItems, applyContextFilters, setSearchParams, pendingPayment])
 
   const loadMore = useCallback(() => {
     setDisplayedCount((prev) => Math.min(prev + DISPLAY_PAGE_SIZE, filteredList.length))
@@ -557,17 +545,21 @@ export default function CampaignInfluencers() {
       const newQuery = { ...queryRef.current, q: nowTrimmed, offset: 0 }
       setQuery(newQuery)
       setSearchParams(campaignQueryToUrlParams(newQuery), { replace: true })
-      if (contextItems != null) applyContextFilters(newQuery)
+      if (!pendingPayment && contextItems != null) applyContextFilters(newQuery)
     }, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [searchInput, contextItems, applyContextFilters, setSearchParams])
+  }, [searchInput, contextItems, applyContextFilters, setSearchParams, pendingPayment])
 
   useEffect(() => {
     if (campaignId == null || !user) return
+    if (pendingPayment && pendingLoadFromFilterRef.current) {
+      pendingLoadFromFilterRef.current = false
+      return
+    }
     const controller = new AbortController()
     loadContext(controller.signal)
     return () => controller.abort()
-  }, [campaignId, user, loadContext])
+  }, [campaignId, user, loadContext, pendingPayment])
 
   useEffect(() => {
     if (campaignId == null || !user) return
@@ -592,9 +584,18 @@ export default function CampaignInfluencers() {
   }, [campaignId, user])
 
   useEffect(() => {
-    if (contextItems == null) return
+    if (contextItems == null || pendingPayment) return
     applyContextFilters(query)
-  }, [contextItems, query, applyContextFilters])
+  }, [contextItems, query, applyContextFilters, pendingPayment])
+
+  const maxQuantity = pendingPayment
+    ? Math.max(1, total > 0 ? total : (campaignInfo?.handlesCount ?? 1))
+    : 1
+  const creditsUsed = campaignInfo?.credits_used ?? 0
+  const unpaidQuantity = Math.max(0, maxQuantity - creditsUsed)
+  const balance = creditsContext?.balance ?? 0
+  const canPayFullWithCredits = unpaidQuantity > 0 && balance >= unpaidQuantity
+  const creditsToApply = canPayFullWithCredits ? unpaidQuantity : 0
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -640,6 +641,73 @@ export default function CampaignInfluencers() {
     },
     [campaignId]
   )
+
+  const refreshCampaign = useCallback(() => {
+    if (!campaignId) return
+    getCampaign(campaignId).then((info) => {
+      setCampaignInfo(info)
+    }).catch(() => {})
+  }, [campaignId])
+
+  const handleDeleteCampaign = useCallback(() => {
+    if (!campaignId) return
+    setDeletingCampaign(true)
+    deleteCampaign(campaignId)
+      .then(() => {
+        message.success('Campanha excluída.')
+        navigate('/app/campaigns', { replace: true })
+      })
+      .catch((err) => message.error(err instanceof Error ? err.message : 'Falha ao excluir'))
+      .finally(() => setDeletingCampaign(false))
+  }, [campaignId, navigate])
+
+  const needsGeneratePayment = !!(
+    campaignInfo?.pendingPayment &&
+    (campaignInfo.pendingPayment.paymentMissing ||
+      (!campaignInfo.pendingPayment.bankSlipUrl && !campaignInfo.pendingPayment.pixCopyPaste))
+  )
+
+  const handleGeneratePix = useCallback(() => {
+    if (!campaignId) return
+    setCreatingPayment('pix')
+    createCampaignPayment(campaignId, { billingType: 'PIX', quantity: unpaidQuantity })
+      .then(() => refreshCampaign())
+      .catch((err) => message.error(err instanceof Error ? err.message : 'Falha ao gerar PIX'))
+      .finally(() => setCreatingPayment(null))
+  }, [campaignId, unpaidQuantity, refreshCampaign])
+
+  const handleGenerateBoleto = useCallback(() => {
+    if (!campaignId) return
+    const cpfCnpj = boletoCpfValue.replace(/\D/g, '')
+    if (cpfCnpj.length !== 11 && cpfCnpj.length !== 14) {
+      message.warning('Informe CPF (11 dígitos) ou CNPJ (14 dígitos).')
+      return
+    }
+    setCreatingPayment('boleto')
+    createCampaignPayment(campaignId, { billingType: 'BOLETO', cpfCnpj, quantity: unpaidQuantity })
+      .then(() => {
+        setBoletoModalOpen(false)
+        setBoletoCpfValue('')
+        refreshCampaign()
+      })
+      .catch((err) => message.error(err instanceof Error ? err.message : 'Falha ao gerar boleto'))
+      .finally(() => setCreatingPayment(null))
+  }, [campaignId, boletoCpfValue, unpaidQuantity, refreshCampaign])
+
+  const canPayWithCredits = !!(pendingPayment && creditsToApply > 0)
+
+  const handlePayWithCredits = useCallback(() => {
+    if (!campaignId || creditsToApply <= 0) return
+    setPayingWithCredits(true)
+    payCampaignWithCredits(campaignId, creditsToApply)
+      .then(() => {
+        message.success('Pagamento com créditos concluído. Relatório liberado!')
+        refreshCampaign()
+        creditsContext?.refreshCredits()
+      })
+      .catch((err) => message.error(err instanceof Error ? err.message : 'Falha ao pagar com créditos'))
+      .finally(() => setPayingWithCredits(false))
+  }, [campaignId, creditsToApply, unpaidQuantity, refreshCampaign, creditsContext])
 
   const openDetail = (handleOrKey: string) => {
     if (!campaignId) return
@@ -763,6 +831,38 @@ export default function CampaignInfluencers() {
         </Space.Compact>
       </Modal>
 
+      <Modal
+        title="Gerar boleto"
+        open={boletoModalOpen}
+        onCancel={() => { setBoletoModalOpen(false); setBoletoCpfValue(''); }}
+        footer={null}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          Para gerar o boleto é necessário informar CPF ou CNPJ.
+        </Typography.Paragraph>
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Input
+            placeholder="CPF ou CNPJ (apenas números)"
+            value={boletoCpfValue}
+            onChange={(e) => setBoletoCpfValue(e.target.value.replace(/\D/g, ''))}
+            maxLength={14}
+            size="large"
+          />
+          <Button
+            type="primary"
+            block
+            size="large"
+            icon={<BankOutlined />}
+            loading={creatingPayment === 'boleto'}
+            disabled={creatingPayment !== null || boletoCpfValue.replace(/\D/g, '').length < 11}
+            onClick={handleGenerateBoleto}
+          >
+            Gerar boleto
+          </Button>
+        </Space>
+      </Modal>
+
       <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
         <div>
           <Typography.Title level={4} style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
@@ -774,18 +874,9 @@ export default function CampaignInfluencers() {
             )}
           </Typography.Title>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            {contextItems != null && (
-              <>
-                {contextItems.length.toLocaleString('pt-BR')} perfis no contexto
-                {total !== contextItems.length && (
-                  <> · {total.toLocaleString('pt-BR')} filtrados</>
-                )}
-              </>
-            )}
             {campaignCredits != null && (
-              <> · {campaignCredits.toLocaleString('pt-BR')} créditos</>
+              <>{campaignCredits.toLocaleString('pt-BR')} créditos</>
             )}
-            {contextItems == null && campaignCredits == null && <>— perfis</>}
           </Typography.Text>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -811,177 +902,39 @@ export default function CampaignInfluencers() {
           >
             Nova busca
           </Button>
+          <Popconfirm
+            title="Excluir campanha"
+            description="Tem certeza? Esta ação não pode ser desfeita."
+            onConfirm={handleDeleteCampaign}
+            okText="Excluir"
+            cancelText="Cancelar"
+            okButtonProps={{ danger: true }}
+          >
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              loading={deletingCampaign}
+              style={{ color: 'var(--app-text-secondary)', fontSize: 12 }}
+            >
+              Excluir campanha
+            </Button>
+          </Popconfirm>
         </div>
       </div>
 
-      {campaignInfo?.pendingPayment ? (
-        <div style={{ margin: '24px auto', overflowX: 'hidden', maxWidth: '100%' }}>
-          <Alert
-            type="warning"
-            message="Pagamento pendente — pague o boleto ou PIX para liberar os resultados."
-            showIcon
-            style={{ marginBottom: 12, width: '100%' }}
-          />
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, overflowX: 'hidden', minWidth: 0, maxWidth: '100%' }}>
-            <Card style={{ flex: 1, minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
-
-              {campaignInfo.pendingPayment.billingType === 'BOLETO' && campaignInfo.pendingPayment.bankSlipUrl ? (
-                <div style={{ overflow: 'hidden', width: '100%', maxWidth: '100%' }}>
-                  <iframe
-                    src={campaignInfo.pendingPayment.bankSlipUrl}
-                    title="Preview do boleto"
-                    style={{ zoom: 0.8, width: '100%', height: 'calc(100vh - 250px)', minHeight: 400, border: '1px solid var(--app-border)', borderRadius: 8, display: 'block' }}
-                  />
-                </div>
-              ) : campaignInfo.pendingPayment.billingType === 'PIX' && pendingPaymentPixQr ? (
-                <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                  <img src={pendingPaymentPixQr} alt="QR Code PIX" style={{ width: 220, height: 220 }} />
-                  <Typography.Text strong style={{ display: 'block', marginTop: 12 }}>Escaneie para pagar</Typography.Text>
-                </div>
-              ) : (
-                <Typography.Text type="secondary">Aguardando dados de pagamento.</Typography.Text>
-              )}
-            </Card>
-            <Card
-              style={{
-                flex: 1,
-                minWidth: 0,
-                maxWidth: '100%',
-                background: 'linear-gradient(135deg, var(--app-card-bg) 0%, var(--app-card-bg-soft) 100%)',
-                border: '1px solid var(--app-border)',
-                boxShadow: 'var(--app-shadow-md)',
-              }}
-            >
-              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                <div>
-                  <Typography.Title level={4} style={{ margin: '0 0 4px 0', color: 'var(--app-text)', fontWeight: 700 }}>
-                    {campaignInfo.name?.trim() || 'Seu relatório'}
-                  </Typography.Title>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {campaignInfo.created_at ? <><CalendarOutlined style={{ marginRight: 4, opacity: 0.7 }} />{formatDate(campaignInfo.created_at)}</> : 'Seus influenciadores estão prontos'}
-                  </Typography.Text>
-                </div>
-                <Tag color="success" style={{ borderRadius: 6, flexShrink: 0 }}>Quase lá!</Tag>
-              </div>
-
-              <div
-                style={{
-                  background: 'var(--app-primary-muted)',
-                  padding: '12px 16px',
-                  borderRadius: 12,
-                  marginBottom: 16,
-                  border: '1px solid var(--app-border-light)',
-                }}
-              >
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>Valor total</Typography.Text>
-                <Typography.Title level={3} style={{ margin: '4px 0 0 0', color: 'var(--app-primary)', fontWeight: 700 }}>
-                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(campaignInfo.pendingPayment.valueBrl)}
-                </Typography.Title>
-              </div>
-
-              <div style={{ marginBottom: 16 }}>
-                <Typography.Text strong style={{ marginBottom: 8, display: 'block', fontSize: 13, color: 'var(--app-text)' }}>
-                  O que você vai receber
-                </Typography.Text>
-                {loading && !contextItems?.length ? (
-                  <Spin size="small" />
-                ) : (
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(2, 1fr)',
-                      gap: '8px 16px',
-                      padding: '12px 0',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><UserOutlined /></span>
-                      <span><strong>{contextItems?.length ?? campaignInfo.handlesCount ?? 0}</strong> perfis</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><TeamOutlined /></span>
-                      <span><strong>{formatShortNum(computeReportStats(contextItems ?? []).totalFollowers)}</strong> seguidores</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><HeartOutlined /></span>
-                      <span><strong>{formatShortNum(computeReportStats(contextItems ?? []).totalLikes)}</strong> likes</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><CommentOutlined /></span>
-                      <span><strong>{formatShortNum(computeReportStats(contextItems ?? []).totalComments)}</strong> comentários</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><FileTextOutlined /></span>
-                      <span><strong>{formatShortNum(computeReportStats(contextItems ?? []).postsCount)}</strong> posts</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ color: 'var(--app-primary)', fontSize: 16 }}><RiseOutlined /></span>
-                      <span><strong>{computeReportStats(contextItems ?? []).avgEngagementRate?.toFixed(2) ?? '0'}%</strong> engajamento</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <Space direction="vertical" style={{ width: '100%' }} size="middle">
-                {campaignInfo.pendingPayment.billingType === 'BOLETO' && campaignInfo.pendingPayment.bankSlipUrl && (
-                  <Button
-                    type="primary"
-                    href={campaignInfo.pendingPayment.bankSlipUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    block
-                    icon={<BankOutlined />}
-                    size="large"
-                    style={{
-                      height: 44,
-                      fontWeight: 600,
-                      boxShadow: 'var(--app-shadow-cta)',
-                      background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark) 100%)',
-                      border: 'none',
-                    }}
-                  >
-                    Pagar boleto agora
-                  </Button>
-                )}
-                {campaignInfo.pendingPayment.billingType === 'PIX' && campaignInfo.pendingPayment.pixCopyPaste && (
-                  <>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>Código PIX (copie e cole no app do banco):</Typography.Text>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <Typography.Text
-                        copyable={{ text: campaignInfo.pendingPayment.pixCopyPaste }}
-                        style={{ flex: 1, minWidth: 0, wordBreak: 'break-all', fontSize: 12 }}
-                        ellipsis
-                      />
-                      <Button
-                        type="primary"
-                        icon={<CopyOutlined />}
-                        onClick={() => campaignInfo.pendingPayment?.pixCopyPaste && void navigator.clipboard.writeText(campaignInfo.pendingPayment.pixCopyPaste)}
-                        style={{
-                          fontWeight: 600,
-                          background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark) 100%)',
-                          border: 'none',
-                        }}
-                      >
-                        Copiar e pagar
-                      </Button>
-                    </div>
-                  </>
-                )}
-                {campaignInfo.pendingPayment.invoiceUrl && (
-                  <Button href={campaignInfo.pendingPayment.invoiceUrl} target="_blank" rel="noopener noreferrer" block size="middle" style={{ marginTop: 4 }}>
-                    Ver fatura
-                  </Button>
-                )}
-              </Space>
-            </Card>
-          </div>
-        </div>
-      ) : facets == null && loading ? (
+      {facets == null && loading ? (
         <div style={{ textAlign: 'center', padding: 16 }}>
           <Spin size="small" />
         </div>
-      ) : facets == null && !loading ? (
+      ) : facets == null && !loading && !campaignInfo?.pendingPayment ? (
         <Empty description="Nenhum perfil nesta campanha." />
+      ) : facets == null && !loading && campaignInfo?.pendingPayment ? (
+        <div style={{ textAlign: 'center', padding: 16 }}>
+          <Spin size="small" />
+          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>Carregando filtros e valor...</Typography.Text>
+        </div>
       ) : (
         <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', minWidth: 0 }}>
           {!isMobile && (
@@ -993,14 +946,54 @@ export default function CampaignInfluencers() {
                 query={query}
                 onFilter={updateFilter}
                 description={campaignInfo?.description ?? null}
-                onDescriptionSave={handleDescriptionSave}
+                onDescriptionSave={pendingPayment ? undefined : handleDescriptionSave}
                 expiresAt={campaignInfo?.expires_at ?? null}
                 createdAt={campaignInfo?.created_at ?? null}
+                statsOverride={pendingPayment && pricePreview && typeof pricePreview.totalLikes === 'number' ? {
+                  totalLikes: pricePreview.totalLikes ?? 0,
+                  totalComments: pricePreview.totalComments ?? 0,
+                  totalViews: pricePreview.totalViews ?? 0,
+                  totalFollowers: pricePreview.totalFollowers ?? 0,
+                  postsCount: pricePreview.postsCount ?? 0,
+                  avgEngagementRate: pricePreview.avgEngagementRate ?? 0,
+                  count: total > 0 ? total : (campaignInfo?.handlesCount ?? 0),
+                } : undefined}
               />
             </div>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
-            {isMobile && facets != null && (
+            {pendingPayment ? (
+              <>
+                <Alert
+                  type="warning"
+                  message="Pagamento pendente"
+                  showIcon
+                  style={{ marginBottom: 10, width: '100%', fontSize: 12 }}
+                />
+                <CampaignPaymentCart
+                  query={query}
+                  facets={facets}
+                  onFilter={updateFilter}
+                  valueTotal={(() => {
+                    const baseValue = (pricePreview?.valueBrl ?? campaignInfo?.pendingPayment?.valueBrl) ?? 0
+                    const totalFiltered = Math.max(1, total)
+                    return totalFiltered > 0 ? Math.floor((baseValue / totalFiltered) * maxQuantity) : 0
+                  })()}
+                  maxQuantity={maxQuantity}
+                  canPayWithCredits={canPayWithCredits}
+                  creditsToApply={creditsToApply}
+                  pendingPayment={campaignInfo?.pendingPayment ?? null}
+                  needsGeneratePayment={needsGeneratePayment}
+                  payingWithCredits={payingWithCredits}
+                  creatingPayment={creatingPayment}
+                  onPayWithCredits={handlePayWithCredits}
+                  onGeneratePix={handleGeneratePix}
+                  onOpenBoletoModal={() => setBoletoModalOpen(true)}
+                />
+              </>
+            ) : (
+              <>
+                {isMobile && facets != null && (
               <div
                 style={{
                   display: 'flex',
@@ -1195,7 +1188,7 @@ export default function CampaignInfluencers() {
                   </Button>
                 )}
               </div>
-            )}
+                )}
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, width: '100%', minWidth: 0 }}>
                 <Typography.Text strong type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
@@ -1350,6 +1343,8 @@ export default function CampaignInfluencers() {
                 </>
               )}
             </div>
+              </>
+            )}
           </div>
         </div>
       )}

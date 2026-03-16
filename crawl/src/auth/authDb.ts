@@ -12,6 +12,12 @@ export interface AuthUserRow {
   scope: string;
   profile_handle: string | null;
   created_at: string;
+  email_verified?: number;
+  email_verification_token?: string | null;
+  email_verification_expires_at?: string | null;
+  mission_instagram_claimed?: number;
+  /** Nome escolhido no cadastro (ex.: assinante). */
+  display_name?: string | null;
 }
 
 export class AuthDb {
@@ -87,44 +93,85 @@ export class AuthDb {
         ALTER TABLE auth_profile_verification_new RENAME TO auth_profile_verification;
       `);
     }
+    // Colunas para verificação de e-mail e missão Instagram (assinante)
+    const addColIfMissing = (col: string, sql: string) => {
+      const cols = this.db.prepare(`PRAGMA table_info(auth_user)`).all() as { name: string }[];
+      if (!cols.some((c) => c.name === col)) this.db.exec(sql);
+    };
+    addColIfMissing('email_verified', 'ALTER TABLE auth_user ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1');
+    addColIfMissing('email_verification_token', 'ALTER TABLE auth_user ADD COLUMN email_verification_token TEXT');
+    addColIfMissing('email_verification_expires_at', 'ALTER TABLE auth_user ADD COLUMN email_verification_expires_at TEXT');
+    addColIfMissing('mission_instagram_claimed', 'ALTER TABLE auth_user ADD COLUMN mission_instagram_claimed INTEGER NOT NULL DEFAULT 0');
+    addColIfMissing('display_name', 'ALTER TABLE auth_user ADD COLUMN display_name TEXT');
   }
+
+  private authUserSelect = 'id, username, password_hash, scope, profile_handle, created_at, COALESCE(email_verified, 1) AS email_verified, email_verification_token, email_verification_expires_at, COALESCE(mission_instagram_claimed, 0) AS mission_instagram_claimed, display_name';
 
   getByUsername(username: string): AuthUserRow | undefined {
     const u = username.trim().toLowerCase().replace(/@/g, '');
     if (!u) return undefined;
-    const row = this.db.prepare('SELECT id, username, password_hash, scope, profile_handle, created_at FROM auth_user WHERE LOWER(TRIM(REPLACE(username, \'@\', \'\'))) = ?').get(u) as AuthUserRow | undefined;
+    const row = this.db.prepare(`SELECT ${this.authUserSelect} FROM auth_user WHERE LOWER(TRIM(REPLACE(username, '@', ''))) = ?`).get(u) as AuthUserRow | undefined;
     return row;
   }
 
   getById(id: number): AuthUserRow | undefined {
-    const row = this.db.prepare('SELECT id, username, password_hash, scope, profile_handle, created_at FROM auth_user WHERE id = ?').get(id) as AuthUserRow | undefined;
+    const row = this.db.prepare(`SELECT ${this.authUserSelect} FROM auth_user WHERE id = ?`).get(id) as AuthUserRow | undefined;
     return row;
   }
 
-  createUser(username: string, passwordHash: string, scope: AuthScope, profileHandle: string | null = null): number {
+  createUser(username: string, passwordHash: string, scope: AuthScope, profileHandle: string | null = null, displayName?: string | null): number {
     const u = username.replace(/^@/, '').trim().toLowerCase();
     if (!u) throw new Error('Username inválido');
     const stmt = this.db.prepare(`
-      INSERT INTO auth_user (username, password_hash, scope, profile_handle)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO auth_user (username, password_hash, scope, profile_handle, display_name)
+      VALUES (?, ?, ?, ?, ?)
     `);
-    const info = stmt.run(u, passwordHash, scope, profileHandle ?? null);
+    const info = stmt.run(u, passwordHash, scope, profileHandle ?? null, displayName != null && displayName !== '' ? displayName.trim() : null);
     return info.lastInsertRowid as number;
   }
 
+  setEmailVerification(userId: number, token: string, expiresAt: string): void {
+    this.db.prepare(
+      'UPDATE auth_user SET email_verified = 0, email_verification_token = ?, email_verification_expires_at = ? WHERE id = ?'
+    ).run(token, expiresAt, userId);
+  }
+
+  getUserIdByEmailVerificationToken(token: string): number | null {
+    const row = this.db.prepare(
+      'SELECT id FROM auth_user WHERE email_verification_token = ? AND (email_verification_expires_at IS NULL OR email_verification_expires_at > datetime(\'now\'))'
+    ).get(token.trim()) as { id: number } | undefined;
+    return row ? row.id : null;
+  }
+
+  setEmailVerified(userId: number): void {
+    this.db.prepare(
+      'UPDATE auth_user SET email_verified = 1 WHERE id = ?'
+    ).run(userId);
+  }
+
+  isMissionInstagramClaimed(userId: number): boolean {
+    const row = this.db.prepare('SELECT COALESCE(mission_instagram_claimed, 0) AS v FROM auth_user WHERE id = ?').get(userId) as { v: number } | undefined;
+    return row ? row.v === 1 : false;
+  }
+
+  setMissionInstagramClaimed(userId: number): void {
+    this.db.prepare('UPDATE auth_user SET mission_instagram_claimed = 1 WHERE id = ?').run(userId);
+  }
+
   listUsers(): Omit<AuthUserRow, 'password_hash'>[] {
-    const rows = this.db.prepare('SELECT id, username, scope, profile_handle, created_at FROM auth_user ORDER BY id').all() as (Omit<AuthUserRow, 'password_hash'> & { password_hash?: string })[];
+    const rows = this.db.prepare(`SELECT id, username, scope, profile_handle, created_at, COALESCE(email_verified, 1) AS email_verified, COALESCE(mission_instagram_claimed, 0) AS mission_instagram_claimed FROM auth_user ORDER BY id`).all() as (Omit<AuthUserRow, 'password_hash'> & { password_hash?: string })[];
     return rows;
   }
 
-  updateUser(id: number, updates: { username?: string; password_hash?: string; scope?: AuthScope; profile_handle?: string | null }): void {
+  updateUser(id: number, updates: { username?: string; password_hash?: string; scope?: AuthScope; profile_handle?: string | null; display_name?: string | null }): void {
     const user = this.getById(id);
     if (!user) throw new Error('User not found');
     const username = updates.username !== undefined ? updates.username.replace(/^@/, '').trim().toLowerCase() : user.username;
     const password_hash = updates.password_hash !== undefined ? updates.password_hash : user.password_hash;
     const scope = updates.scope !== undefined ? updates.scope : user.scope;
     const profile_handle = updates.profile_handle !== undefined ? updates.profile_handle : user.profile_handle;
-    this.db.prepare('UPDATE auth_user SET username = ?, password_hash = ?, scope = ?, profile_handle = ? WHERE id = ?').run(username, password_hash, scope, profile_handle, id);
+    const display_name = updates.display_name !== undefined ? (updates.display_name == null || String(updates.display_name).trim() === '' ? null : String(updates.display_name).trim()) : (user as AuthUserRow).display_name ?? null;
+    this.db.prepare('UPDATE auth_user SET username = ?, password_hash = ?, scope = ?, profile_handle = ?, display_name = ? WHERE id = ?').run(username, password_hash, scope, profile_handle, display_name, id);
   }
 
   deleteUser(id: number): void {
@@ -165,7 +212,7 @@ export class AuthDb {
     const h = handle.replace(/^@/, '').trim().toLowerCase();
     if (!h) return undefined;
     const row = this.db.prepare(
-      `SELECT id, username, password_hash, scope, profile_handle, created_at FROM auth_user
+      `SELECT ${this.authUserSelect} FROM auth_user
        WHERE LOWER(TRIM(REPLACE(username, '@', ''))) = ? OR (profile_handle IS NOT NULL AND LOWER(TRIM(REPLACE(profile_handle, '@', ''))) = ?)`
     ).get(h, h) as AuthUserRow | undefined;
     return row;

@@ -10,6 +10,7 @@ import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import Logo from './components/Logo'
 import ThemeFooterButton from './components/ThemeFooterButton'
+import MissionsBar from './components/MissionsBar/MissionsBar'
 import { Grid } from 'antd'
 
 const { Content } = AntLayout
@@ -78,7 +79,9 @@ export default function Layout() {
       const allowed =
         path === base || path === `${base}/` ||
         path.startsWith(`${base}/campaigns`) ||
-        path.startsWith(`${base}/payments`)
+        path.startsWith(`${base}/payments`) ||
+        path.startsWith(`${base}/profile`) ||
+        path.startsWith(`${base}/missions`)
       if (!allowed) navigate(base, { replace: true })
     }
   }, [user?.scope, location.pathname, navigate])
@@ -231,9 +234,8 @@ export default function Layout() {
                         <Dropdown
                           menu={{
                             items: [
-                              ...(myProfilePath
-                                ? [{ key: 'profile', label: 'Meu perfil', onClick: () => navigate(myProfilePath) }]
-                                : []),
+                              { key: 'edit-profile', label: 'Editar perfil', onClick: () => navigate('/app/profile') },
+
                               ...(isAssinante ? [{ key: 'campaigns/create', label: 'Buscar Influencer', onClick: () => navigate('/app/campaigns/create') }] : []),
                               ...(isAdm ? [{ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') }] : []),
                               ...(user ? [{ key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') }] : []),
@@ -253,7 +255,7 @@ export default function Layout() {
                             style={{
                               display: 'flex',
                               alignItems: 'flex-end',
-                              gap: 8,
+                              gap: 0,
                               height: 36,
                               padding: 0,
                               border: 'none',
@@ -266,9 +268,12 @@ export default function Layout() {
                           >
                             {!isMobile && (() => {
                               const isEmail = user.username.includes('@')
-                              const displayName = (myHandle && headerProfileName && headerProfileName !== user.username)
-                                ? headerProfileName
-                                : (isEmail ? user.username.slice(0, user.username.indexOf('@')).replace(/^./, (c: string) => c.toUpperCase()) : (headerProfileName ?? user.username))
+                              const nomeDoPerfil = user.displayName != null && String(user.displayName).trim() !== '' ? String(user.displayName).trim() : null
+                              const displayName = nomeDoPerfil
+                                ?? (myHandle && headerProfileName && headerProfileName !== user.username ? headerProfileName : null)
+                                ?? (isEmail ? user.username.slice(0, user.username.indexOf('@')).replace(/^./, (c: string) => c.toUpperCase()) : null)
+                                ?? headerProfileName
+                                ?? user.username
                               const displaySubtext = myHandle ? `@${myHandle}` : (isEmail ? user.username : null)
                               return (
                                 <div
@@ -292,6 +297,7 @@ export default function Layout() {
                                 </div>
                               )
                             })()}
+                            <CaretDownFilled style={{ fontSize: 14, color: 'var(--app-header-text)', opacity: 0.95, marginBottom: -6, marginLeft: -2, marginRight: -2 }} />
                             <span
                               style={{
                                 display: 'flex',
@@ -317,7 +323,6 @@ export default function Layout() {
                                 <UserOutlined style={{ fontSize: 18 }} />
                               )}
                             </span>
-                            <CaretDownFilled style={{ fontSize: 14, color: 'var(--app-header-text)', opacity: 0.95, marginLeft: -6, marginBottom: -2 }} />
                           </button>
                         </Dropdown>
                         {creditsState != null && (
@@ -472,6 +477,7 @@ export default function Layout() {
         </>
       )}
       <Content className="app-layout-content" style={{ overflowX: 'hidden' }}>
+        {user && <MissionsBar />}
         <div className="app-page">
           <Outlet />
         </div>
