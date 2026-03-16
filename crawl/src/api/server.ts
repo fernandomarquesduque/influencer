@@ -3093,6 +3093,12 @@ function requireProfileOrCampaign(
       next();
       return;
     }
+    // Adm ou próprio influenciador: não exige X-Campaign-Id (permitir ativação e visualização de perfil).
+    if (canEditProfile(req.user, handle)) {
+      (req as RequestWithAuth).allowedCampaignId = undefined;
+      next();
+      return;
+    }
     const loggedHandle = normalizeHandle(req.user.profile_handle ?? '');
     if (loggedHandle && loggedHandle === handle) {
       (req as RequestWithAuth).allowedCampaignId = undefined;

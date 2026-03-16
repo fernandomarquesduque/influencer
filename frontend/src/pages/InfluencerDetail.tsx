@@ -25,6 +25,7 @@ import {
   LockOutlined,
   HeartOutlined,
   HeartFilled,
+  CheckCircleOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
@@ -127,9 +128,6 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     }
   }, [requireCampaignId, campaignId, params.campaignId, navigate])
 
-  if (requireCampaignId && campaignId == null) {
-    return <ReportSkeleton />
-  }
   const { user, isPublic, canEditProfile, isAdm, loading: authLoading } = useAuth()
 
   const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
@@ -400,6 +398,35 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     }
   }, [mediaByType.posts, mediaByType.reels, mediaByType.tagged, followersCount])
 
+  /** Quando o usuário informou preços na ativação, sobrescreve o valor estimado por tipo com o valor informado. (Hook antes de qualquer return.) */
+  const valorEstimadoPorTipoExibir = useMemo(() => {
+    const rocks = reportInsights?.valorEstimadoPorTipo
+    if (!rocks) return rocks ?? undefined
+    const p = activation?.pricing as Record<string, string | number | undefined> | undefined
+    const parseNum = (v: string | number | undefined): number | null => {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v
+      if (typeof v === 'string') {
+        const n = parseInt(v.replace(/\D/g, ''), 10)
+        return Number.isFinite(n) && n > 0 ? n : null
+      }
+      return null
+    }
+    const keyMap = { feed: 'post' as const, reels: 'reels' as const, story: 'stories' as const, destaque: 'destaque' as const }
+    const out = { ...rocks }
+    for (const [actKey, tipoKey] of Object.entries(keyMap)) {
+      const val = p ? parseNum(p[actKey]) : null
+      if (val != null) {
+        const original = (rocks as Record<string, { min: number; max: number; porque?: string }>)[tipoKey]
+        ;(out as Record<string, { min: number; max: number; porque?: string }>)[tipoKey] = {
+          min: val,
+          max: val,
+          porque: original?.porque ?? '',
+        }
+      }
+    }
+    return out
+  }, [reportInsights?.valorEstimadoPorTipo, activation?.pricing])
+
   const showSkeleton = (profileLoading && !profile) || (postsLoading && posts.length === 0)
   if (showSkeleton) {
     return (
@@ -474,6 +501,10 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     return { min: 80, max: 150, porque: 'estimativa por seguidores e engajamento' }
   }
   const { min: valorEstimadoMin, max: valorEstimadoMax, porque: valorEstimadoPorque } = valorEstimadoFromPricing()
+
+  if (requireCampaignId && campaignId == null) {
+    return <ReportSkeleton />
+  }
 
   const cardStyle = {
     borderRadius: r,
@@ -585,6 +616,20 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                     aria-label="Atualizar Instagram"
                   >
                     Atualizar
+                  </Button>
+                </Tooltip>
+              )}
+              {isAdm && handle && (
+                <Tooltip title="Abrir fluxo de ativação do cadastro do influenciador">
+                  <Button
+                    type="primary"
+                    size="large"
+                    icon={<CheckCircleOutlined />}
+                    onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                    style={{ borderRadius: r, minHeight: 44 }}
+                    aria-label="Ativar influenciador"
+                  >
+                    Ativar
                   </Button>
                 </Tooltip>
               )}
@@ -1003,7 +1048,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                       >
                         <ValorEpublicoSection
                           valorEstimado={{ min: valorEstimadoMin, max: valorEstimadoMax, porque: valorEstimadoPorque }}
-                          valorEstimadoPorTipo={reportInsights.valorEstimadoPorTipo}
+                          valorEstimadoPorTipo={valorEstimadoPorTipoExibir ?? reportInsights.valorEstimadoPorTipo}
                           hideCta={layout.showMainCta === 'final'}
                           ctaLabel={mediaKitCtaShortLabel}
                           rowGutter={rowGutter}

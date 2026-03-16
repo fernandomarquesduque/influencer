@@ -39,7 +39,7 @@ export const PRICING_FIELD_DESCRIPTIONS: Record<PricingFieldKey, string> = {
 /**
  * Multiplicador em relação ao "feed" (base = 1).
  */
-const FORMAT_MULTIPLIER: Record<PricingFieldKey, number> = {
+export const FORMAT_MULTIPLIER: Record<PricingFieldKey, number> = {
   feed: 1,
   reels: 1.2,
   story: 0.25,
@@ -83,4 +83,20 @@ export function getSuggestedPricingFromFollowers(
     result[key] = valueToBucketValue(Math.max(0, value))
   }
   return result
+}
+
+/** Faixa de preço (min/max/sugerido) em reais para o feed, baseada no tamanho do perfil. */
+export function getPricingRangeFromFollowers(followersCount: number): {
+  min: number
+  max: number
+  suggestedFeed: number
+} {
+  const base = getBaseValueFromFollowers(Math.max(0, followersCount))
+  const min = Math.max(0, Math.floor(base * 0.4))
+  const max = Math.min(15000, Math.ceil(base * 2.5))
+  return {
+    min: min < 50 ? 0 : min,
+    max: Math.max(100, max),
+    suggestedFeed: base,
+  }
 }

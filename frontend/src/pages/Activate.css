@@ -1,0 +1,92 @@
+/* Etapa de preços — barras premium, sem overflow */
+.activate-pricing-step .activate-pricing-intro {
+  margin-bottom: 24px;
+  color: var(--app-text-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+  max-width: 100%;
+}
+
+.activate-pricing-step .activate-pricing-intro p {
+  margin: 0 0 8px 0;
+}
+
+.activate-pricing-step .activate-pricing-intro p:last-child {
+  margin-bottom: 0;
+}
+
+.activate-pricing-bar {
+  background: var(--app-card-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 14px;
+  padding: 22px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.activate-pricing-bar:hover {
+  border-color: var(--app-primary-muted, rgba(22, 119, 255, 0.25));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.07);
+}
+
+.activate-pricing-bar-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.activate-pricing-bar-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--app-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activate-pricing-bar-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--app-primary);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.activate-pricing-segmented.ant-segmented {
+  width: 100%;
+  min-width: 0;
+}
+
+.activate-pricing-segmented .ant-segmented-group {
+  width: 100%;
+}
+
+.activate-pricing-segmented .ant-segmented-item {
+  flex: 1;
+  text-align: center;
+  font-weight: 500;
+}
+
+/* Cores do selecionado: Baixo = amarelo, Ideal = verde, Alto = vermelho */
+.activate-pricing-segmented .ant-segmented-item-selected:nth-child(1) {
+  background: #faad14 !important;
+  color: #000 !important;
+}
+
+.activate-pricing-segmented .ant-segmented-item-selected:nth-child(2) {
+  background: #52c41a !important;
+  color: #fff !important;
+}
+
+.activate-pricing-segmented .ant-segmented-item-selected:nth-child(3) {
+  background: #ff4d4f !important;
+  color: #fff !important;
+}

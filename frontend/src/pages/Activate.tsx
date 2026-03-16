@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card,
@@ -16,6 +16,7 @@ import {
   Space,
   Divider,
   Radio,
+  Segmented,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -38,9 +39,11 @@ import {
 } from '../api'
 import { fetchAddressByCep } from '../utils/viaCep'
 import { CONTENT_TYPE_OPTIONS } from '../constants/contentTypes'
-import { PRICING_FIELD_KEYS } from '../constants/pricingBuckets'
-import type { ProfileItem } from '../api'
+import { PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, getPricingRangeFromFollowers, FORMAT_MULTIPLIER } from '../constants/pricingBuckets'
+import { getValorEstimadoPorTipoRocksDB } from '../utils/reportInsights'
+import type { ProfileItem, EngagementStats } from '../api'
 import { useAuth } from '../contexts/AuthContext'
+import './Activate.css'
 
 const { Title, Text } = Typography
 
@@ -81,10 +84,12 @@ const AUDIENCE_GENDER_OPTIONS = [
 
 const ACTIVATE_DRAFT_KEY = (h: string) => `activate_draft_${h}`
 
+const MAX_STEP = 3
+
 function parseStepFromHash(): number {
   const m = window.location.hash.match(/^#step-(\d)$/)
   const n = m ? parseInt(m[1], 10) : 0
-  return Number.isFinite(n) && n >= 0 && n <= 2 ? n : 0
+  return Number.isFinite(n) && n >= 0 && n <= MAX_STEP ? n : 0
 }
 
 function normalizeUrl(value: string | undefined): string {
@@ -109,6 +114,79 @@ function parseWhatsAppDigits(value: string | undefined): string {
   return value.replace(/\D/g, '')
 }
 
+/** Alto = valor máximo da faixa + 30%. */
+function getAltoValue(max: number): number {
+  return Math.round(max * 1.3)
+}
+
+/** Converte valor em reais no nível 0=Baixo, 1=Ideal, 2=Alto. Baixo=min da faixa, Ideal=max da faixa, Alto=max+30%. */
+function valueToLevel(val: number | undefined, min: number, _suggested: number, max: number): 0 | 1 | 2 {
+  const v = Number(val)
+  if (!Number.isFinite(v)) return 1
+  const high = getAltoValue(max)
+  if (v <= min) return 0
+  if (v >= high) return 2
+  if (v <= max) return (v - min) <= (max - v) ? 0 : 1
+  return (v - max) <= (high - v) ? 1 : 2
+}
+
+/** Converte nível 0/1/2 no valor em reais: Baixo=min, Ideal=max (valor máximo sugerido), Alto=max+30%. */
+function levelToValue(level: number, min: number, _suggested: number, max: number): number {
+  if (level <= 0) return min
+  if (level >= 2) return getAltoValue(max)
+  return max
+}
+
+/** Engagement vazio para calcular valor estimado só com perfil (seguidores, verificado). Na ativação não temos posts. */
+const EMPTY_ENGAGEMENT: EngagementStats = {
+  posts_count: 0,
+  total_likes: 0,
+  total_comments: 0,
+  total_views: 0,
+  avg_likes: 0,
+  avg_comments: 0,
+  avg_views: 0,
+  engagement_rate: 0,
+}
+
+/** Mapeia campo de preço da ativação para chave do valor estimado por tipo. */
+const PRICING_KEY_TO_VALOR_TIPO = { feed: 'post' as const, reels: 'reels' as const, story: 'stories' as const, destaque: 'destaque' as const }
+
+const PRICING_LEVEL_OPTIONS: { label: string; value: 0 | 1 | 2 }[] = [
+  { label: 'Baixo', value: 0 },
+  { label: 'Ideal', value: 1 },
+  { label: 'Alto', value: 2 },
+]
+
+/** Seleção discreta Baixo / Médio / Alto: armazena valor em reais no form. */
+function PricingLevelSegmented({
+  value,
+  onChange,
+  min,
+  suggested,
+  max,
+}: {
+  value?: number
+  onChange?: (n: number) => void
+  min: number
+  suggested: number
+  max: number
+}) {
+  const level = valueToLevel(value, min, suggested, max)
+  return (
+    <Segmented
+      options={PRICING_LEVEL_OPTIONS}
+      value={level}
+      onChange={(v) => {
+        const l = v as 0 | 1 | 2
+        onChange?.(levelToValue(l, min, suggested, max))
+      }}
+      block
+      className="activate-pricing-segmented"
+    />
+  )
+}
+
 export default function Activate() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
@@ -122,11 +200,14 @@ export default function Activate() {
   const firstFieldStep0Ref = useRef<HTMLDivElement>(null)
   const firstFieldStep1Ref = useRef<HTMLDivElement>(null)
   const firstFieldStep2Ref = useRef<HTMLDivElement>(null)
+  const firstFieldStep3Ref = useRef<HTMLDivElement>(null)
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
   const [profilePicError, setProfilePicError] = useState(false)
   const [profilePicLoading, setProfilePicLoading] = useState(false)
   const [cepLoading, setCepLoading] = useState(false)
+  const [followersCount, setFollowersCount] = useState<number>(0)
+  const [profile, setProfile] = useState<ProfileItem | null>(null)
 
   useEffect(() => {
     if (!handle) return
@@ -143,13 +224,22 @@ export default function Activate() {
     ]).then(([profile, activation]) => {
       if (cancelled) return
       if (profile) {
+        setProfile(profile)
         setProfileName((profile.full_name as string) || (profile.username as string) || handle)
+        setFollowersCount((profile as ProfileItem).followers_count ?? 0)
         const pic = getProfilePicUrl(profile)
         const picUrl = pic ? proxyImageUrl(pic) : undefined
         setProfilePic(picUrl)
         setProfilePicLoading(!!picUrl)
       }
       const act = (activation || {}) as ProfileActivation
+      const followers = (profile as ProfileItem | null)?.followers_count ?? 0
+      const range = getPricingRangeFromFollowers(followers)
+      const valorPorTipo = profile
+        ? getValorEstimadoPorTipoRocksDB(profile as ProfileItem, EMPTY_ENGAGEMENT)
+        : followers > 0
+          ? getValorEstimadoPorTipoRocksDB({ key: '', followers_count: followers } as ProfileItem, EMPTY_ENGAGEMENT)
+          : null
       const pricingForm: Record<string, number | undefined> = {}
       if (act.pricing && typeof act.pricing === 'object') {
         for (const k of PRICING_FIELD_KEYS) {
@@ -158,6 +248,22 @@ export default function Activate() {
             const n = Number(v)
             if (Number.isFinite(n)) pricingForm[k] = n
           }
+        }
+      }
+      const hasNoPricing =
+        Object.keys(pricingForm).length === 0 ||
+        PRICING_FIELD_KEYS.every((k) => (Number(pricingForm[k]) || 0) === 0)
+      if (hasNoPricing) {
+        if (valorPorTipo) {
+          pricingForm.feed = valorPorTipo.post.max
+          pricingForm.reels = valorPorTipo.reels.max
+          pricingForm.story = valorPorTipo.stories.max
+          pricingForm.destaque = valorPorTipo.destaque.max
+        } else {
+          pricingForm.feed = Math.max(10, range.suggestedFeed)
+          pricingForm.reels = Math.max(10, Math.round(range.suggestedFeed * 1.2))
+          pricingForm.story = Math.max(10, Math.round(range.suggestedFeed * 0.25))
+          pricingForm.destaque = Math.max(10, Math.round(range.suggestedFeed * 0.5))
         }
       }
       // Preço sugerido (quando usuário não informou) já vem como default na API (GET activation).
@@ -203,6 +309,17 @@ export default function Activate() {
       } catch {
         // ignora rascunho inválido
       }
+      // Garantir que pricing nunca fique vazio/zerado: usar sugestão da plataforma como fallback
+      const draftPricing = valuesToSet.pricing as Record<string, unknown> | undefined
+      const pricingEmptyOrZero =
+        !draftPricing ||
+        typeof draftPricing !== 'object' ||
+        PRICING_FIELD_KEYS.every(
+          (k) => draftPricing[k] === undefined || draftPricing[k] === null || draftPricing[k] === '' || Number(draftPricing[k]) === 0
+        )
+      if (pricingEmptyOrZero) {
+        valuesToSet = { ...valuesToSet, pricing: { ...pricingForm } }
+      }
       // Se a descrição ficou vazia (ex.: rascunho com ""), preenche com a bio do perfil como sugestão
       const desc = valuesToSet.description
       if ((!desc || typeof desc !== 'string' || !desc.trim()) && suggestedBio) {
@@ -237,7 +354,7 @@ export default function Activate() {
   }, [])
 
   useEffect(() => {
-    const refs = [firstFieldStep0Ref, firstFieldStep1Ref, firstFieldStep2Ref]
+    const refs = [firstFieldStep0Ref, firstFieldStep1Ref, firstFieldStep2Ref, firstFieldStep3Ref]
     const el = refs[step]?.current
     if (!el) return
     const focusable = el.querySelector<HTMLElement>('input:not([type="hidden"]), textarea, .ant-select-selector, [role="combobox"]')
@@ -292,6 +409,20 @@ export default function Activate() {
   }
 
   const informarEnderecoCompleto = Form.useWatch('informar_endereco_completo', form)
+  const pricingValues = Form.useWatch('pricing', form) as Record<string, number> | undefined
+  const pricingRange = useMemo(
+    () => getPricingRangeFromFollowers(followersCount),
+    [followersCount]
+  )
+  /** Ranges por formato (feed, reels, story, destaque) iguais ao valor estimado do detalhe do influenciador. Usa perfil completo ou perfil sintético (só seguidores) quando perfil ainda não carregou. */
+  const valorEstimadoPorTipo = useMemo(() => {
+    if (profile) return getValorEstimadoPorTipoRocksDB(profile, EMPTY_ENGAGEMENT)
+    if (followersCount > 0) {
+      const synthetic: ProfileItem = { key: '', followers_count: followersCount }
+      return getValorEstimadoPorTipoRocksDB(synthetic, EMPTY_ENGAGEMENT)
+    }
+    return null
+  }, [profile, followersCount])
 
   const scrollToFirstError = () => {
     setTimeout(() => {
@@ -324,7 +455,12 @@ export default function Activate() {
       }
       form.validateFields(['zip_code', 'informar_endereco_completo', 'address', 'address_number']).then(() => setStep((s) => s + 1)).catch(onError)
     } else if (step === 2) {
-      form.validateFields(['whatsapp']).then(() => setStep((s) => s + 1)).catch(onError)
+      // Preços: opcional, pode seguir sem validar
+      setStep((s) => s + 1)
+    } else if (step === 3) {
+      form.validateFields(['whatsapp']).then(() => {
+        form.submit()
+      }).catch(onError)
     }
   }
 
@@ -367,15 +503,28 @@ export default function Activate() {
     )
   }
 
+  if (!profile) {
+    return (
+      <div style={{ padding: 24 }}>
+        <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
+          Voltar
+        </Button>
+        <Title level={4}>Não foi possível carregar o perfil.</Title>
+        <Text type="secondary">Verifique o usuário e tente novamente.</Text>
+      </div>
+    )
+  }
+
   const steps = [
     { title: 'Essencial', description: '' },
     { title: 'Local', description: '' },
+    { title: 'Preços', description: '' },
     { title: 'Contato', description: '' },
   ]
 
   return (
-    <div style={{ minHeight: '100vh' }}>
-      <div style={{ margin: '0 auto' }}>
+    <div style={{ maxWidth: 720, margin: '0 auto' }}>
+      <div>
         <Button
           type="link"
           icon={<ArrowLeftOutlined />}
@@ -452,7 +601,7 @@ export default function Activate() {
             )}
             <div style={{ flex: 1 }}>
               <Title level={4} style={{ margin: 0, fontWeight: 600 }}>
-                Finalizar cadastro
+                Perfil do influencer
               </Title>
               <Text type="secondary" style={{ fontSize: 14 }}>
                 @{handle}
@@ -736,8 +885,51 @@ export default function Activate() {
               </>
             </div>
 
-            {/* Passo 2: Redes & Contato */}
-            <div ref={firstFieldStep2Ref} style={{ display: step === 2 ? 'block' : 'none' }}>
+            {/* Passo 2: Preços — seleção Baixo / Médio / Alto por formato */}
+            <div ref={firstFieldStep2Ref} className="activate-pricing-step" style={{ display: step === 2 ? 'block' : 'none' }}>
+              <div className="activate-pricing-intro">
+                <p>Marcas e agências usam esse valor para encontrar criadores nas buscas da plataforma.</p>
+                <p>Influenciadores que posicionam bem seu preço recebem mais convites para campanhas e parcerias.</p>
+              </div>
+              <Row gutter={[16, 0]}>
+                {PRICING_FIELD_KEYS.map((key) => {
+                  const tipoKey = PRICING_KEY_TO_VALOR_TIPO[key]
+                  const useValorEstimado = valorEstimadoPorTipo != null && tipoKey
+                  const min = useValorEstimado
+                    ? valorEstimadoPorTipo[tipoKey].min
+                    : Math.max(10, Math.round(key === 'feed' ? pricingRange.min : pricingRange.min * FORMAT_MULTIPLIER[key]))
+                  const max = useValorEstimado
+                    ? valorEstimadoPorTipo[tipoKey].max
+                    : Math.round(key === 'feed' ? pricingRange.max : pricingRange.max * FORMAT_MULTIPLIER[key])
+                  const suggested = useValorEstimado
+                    ? Math.round((valorEstimadoPorTipo[tipoKey].min + valorEstimadoPorTipo[tipoKey].max) / 2)
+                    : key === 'feed' ? pricingRange.suggestedFeed : Math.round(pricingRange.suggestedFeed * FORMAT_MULTIPLIER[key])
+                  const suggestedClamped = Math.max(min, Math.min(max, Math.max(10, suggested)))
+                  const currentVal = Number(pricingValues?.[key]) || max
+                  return (
+                    <Col xs={24} sm={12} key={key}>
+                      <div className="activate-pricing-bar">
+                        <div className="activate-pricing-bar-header">
+                          <span className="activate-pricing-bar-title">{PRICING_FIELD_LABELS[key]}</span>
+                          <span className="activate-pricing-bar-value">R$ {currentVal.toLocaleString('pt-BR')}</span>
+                        </div>
+                        <Form.Item name={['pricing', key]} style={{ marginBottom: 0 }} noStyle>
+                          <PricingLevelSegmented
+                            value={currentVal}
+                            min={min}
+                            suggested={suggestedClamped}
+                            max={max}
+                          />
+                        </Form.Item>
+                      </div>
+                    </Col>
+                  )
+                })}
+              </Row>
+            </div>
+
+            {/* Passo 3: Redes & Contato */}
+            <div ref={firstFieldStep3Ref} style={{ display: step === 3 ? 'block' : 'none' }}>
               <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
                 Coloca redes e contato pra marca falar com você
               </Text>
@@ -825,18 +1017,21 @@ export default function Activate() {
                   Voltar
                 </Button>
               )}
-              {step < 2 && (
+              {step < MAX_STEP && (
                 <Button type="primary" onClick={goToNextStep}>
                   Próximo
                 </Button>
               )}
-              {step === 2 && (
+              {step === MAX_STEP && (
                 <Button
                   type="primary"
-                  htmlType="submit"
+                  htmlType="button"
                   icon={<CheckCircleOutlined />}
                   loading={saving}
                   size="large"
+                  onClick={() => {
+                    form.validateFields(['whatsapp']).then(() => form.submit()).catch(() => scrollToFirstError())
+                  }}
                 >
                   Ativar cadastro
                 </Button>

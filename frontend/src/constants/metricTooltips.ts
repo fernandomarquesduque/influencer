@@ -5,31 +5,31 @@ export const METRIC_TOOLTIPS = {
   seguidores:
     'Quantos seguidores o perfil tem no Instagram (dado que vem direto da rede).',
 
-  er: 'Taxa de engajamento: a gente pega curtidas + comentários, divide pelos seguidores e vira porcentagem. Mostra quanto sua galera reage de verdade nos posts.',
+  er: 'Taxa de engajamento: curtidas + comentários divididos pelos seguidores, em porcentagem. Mostra quanto a audiência reage de verdade nos posts.',
 
   postsPerSemana:
-    'Quantos posts em média saem por semana: a gente conta tudo que foi postado e divide pelas semanas do período. Assim você vê se o perfil é consistente ou sumido.',
+    'Quantos posts em média saem por semana: conta-se tudo que foi postado e divide pelas semanas do período. Indica se o perfil é consistente ou sumido.',
 
   score:
-    'É a nota geral do perfil (0 a 100). A gente junta: quanto sua audiência interage (comunidade), se você posta com frequência (consistência), alcance dos posts, se o perfil passa confiança (autoridade) e qualidade do conteúdo. Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias.',
+    'Nota geral do perfil (0 a 100). Considera: interação da audiência (comunidade), frequência de posts (consistência), alcance, confiança que o perfil passa (autoridade) e qualidade do conteúdo. Quanto maior a nota, mais o perfil está pronto para marcas e parcerias.',
 
   topPercentil:
-    'Você está no topo da sua faixa. A gente compara seu engajamento com outros perfis do mesmo tamanho (Nano, Micro, Mid, Macro). Top 90% = você engaja mais que a maioria da galera.',
+    'O perfil está no topo da faixa. Compara-se o engajamento com outros perfis do mesmo tamanho (Nano, Micro, Mid, Macro). Top 90% = o perfil engaja mais que a maioria.',
 
   selo:
     'Conquistas do perfil: "Comunidade Forte" (nota alta e muita conversa), "Alta Consistência" (postando direto), "Potencial Alto", "Audiência Envolvida" (muita gente comentando) ou "Em crescimento".',
 
   conversacao:
-    'Sua audiência comenta ou só curte? A gente vê a fatia de comentários no total de interações. Quanto mais comentários, mais sua galera participa de verdade.',
+    'A audiência comenta ou só curte? Mostra a fatia de comentários no total de interações. Quanto mais comentários, mais a audiência participa de verdade.',
 
   valorEstimado:
-    'Quanto o mercado costuma pagar por um post no feed. A base leva em conta seguidores e engajamento; aí entram bônus (perfil verificado, conta pro, audiência que comenta) e o alcance. A faixa é uma estimativa para você ter uma ideia.',
+    'Quanto o mercado costuma pagar por um post no feed. A base leva em conta seguidores e engajamento; entram bônus (perfil verificado, conta pro, audiência que comenta) e o alcance. A faixa é uma estimativa de referência.',
 
   valorEstimadoDestaque:
     'Destaque (Highlights) é o catálogo fixo no perfil por 30 dias. O valor sugerido é um adicional de 10% a 25% sobre o Reels contratado, conforme negociação.',
 
   postsPorSemanaUltimas8:
-    'Quantos posts saíram em cada uma das últimas 8 semanas. Assim você vê se a pessoa está postando de verdade ou sumida.',
+    'Quantos posts saíram em cada uma das últimas 8 semanas. Indica se o perfil está postando de verdade ou sumido.',
 
   melhorDiaHora:
     'Dia e horário em que mais posts foram publicados nas últimas 8 semanas. Dá para saber quando o perfil costuma estar no ar.',
@@ -44,10 +44,10 @@ export const METRIC_TOOLTIPS = {
     'Quantas vezes cada hashtag apareceu nos posts. Dá para ver o que a pessoa mais usa.',
 
   hashtagsPerformam:
-    'Engajamento médio dos posts em que a hashtag aparece. Assim você vê quais hashtags estão ligadas a posts que bombam.',
+    'Engajamento médio dos posts em que a hashtag aparece. Indica quais hashtags estão ligadas a posts que performam melhor.',
 
   totalCurtidas:
-    'Soma de todas as curtidas nos posts que a gente analisou (até os últimos 100).',
+    'Soma de todas as curtidas nos posts analisados (até os últimos 100).',
 
   totalComentarios:
     'Soma de todos os comentários nos posts analisados (até os últimos 100).',
@@ -56,10 +56,10 @@ export const METRIC_TOOLTIPS = {
     'Média de curtidas por post: total de curtidas dividido pelo número de posts. Dá uma noção do que o perfil costuma fazer.',
 
   totalPosts:
-    'Quantos posts entraram na análise (o período que a gente considerou).',
+    'Quantos posts entraram na análise (período considerado).',
 
   engajamentoPorTipo:
-    'Engajamento separado por tipo: posts do feed, reels e quando o perfil foi marcado. Assim você vê qual tipo de conteúdo mais engaja.',
+    'Engajamento separado por tipo: posts do feed, reels e quando o perfil foi marcado. Mostra qual tipo de conteúdo mais engaja.',
 
   evolucaoPorSemana:
     'Engajamento e total de interações por semana nas últimas 8. Barras mais altas = semana em que o perfil mandou bem.',
@@ -71,7 +71,7 @@ export const METRIC_TOOLTIPS = {
     'Soma de todas as visualizações nos posts em que o perfil foi marcado.',
 
   viralizacaoReel:
-    'Views do último reel dividido pelos seguidores. Mostra se o vídeo estourou além da sua base.',
+    'Views do último reel dividido pelos seguidores. Mostra se o vídeo estourou além da base de seguidores.',
 
   totalViewsReels:
     'Visualizações apenas em reels/vídeos. Curtidas e comentários são de todos os posts (feed + reels); por isso curtidas podem ser maiores que views.',
@@ -80,7 +80,7 @@ export const METRIC_TOOLTIPS = {
     'Média de views por reel. Dá para ver se os vídeos costumam performar.',
 
   erPorSeguidoresEViews:
-    'Aqui a gente mostra o engajamento de duas formas: em relação aos seguidores e em relação a quem viu (views). Em reels, as views costumam ser bem maiores.',
+    'Engajamento em duas formas: em relação aos seguidores e em relação a quem viu (views). Em reels, as views costumam ser bem maiores.',
 
   somaItensDestaques:
     'Soma de todos os itens (stories) que estão em todos os destaques do perfil.',
