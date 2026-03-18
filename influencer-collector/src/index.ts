@@ -17,6 +17,7 @@ import type { Page } from 'playwright';
 import { InstagramClient } from './instagram.js';
 import { loadConfig } from './config.js';
 import { startServer } from './server.js';
+import { getCollectorApiBase, isRemoteIngestConfigured } from './serverIngest.js';
 
 /** Grava cookies no disco quando estiver logado — após navegar, a cada poucos minutos e ao sair (Ctrl+C). */
 function setupSessionPersistence(client: InstagramClient, page: Page, authStatePath: string): void {
@@ -71,6 +72,12 @@ async function main(): Promise<void> {
   const config = loadConfig();
   console.log('Influencer Collector — iniciando browser no Instagram...');
   console.log('Min seguidores:', config.minFollowersToSave, '| Min curtidas por post:', config.minPostLikesToSave, '| Posts com min curtidas:', config.minPostsWithMinLikesToSave);
+  if (isRemoteIngestConfigured()) {
+    console.log('Perfis serão enviados para a API (RocksDB no servidor):', getCollectorApiBase());
+    console.log('Extração completa: timeline + abas Reels e Marcados (métricas/ER no site) — ~1–2 min por perfil.');
+  } else {
+    console.log('API remota não configurada — perfis só na lista local. Veja COLLECTOR_API_BASE e COLLECTOR_INGEST_KEY no .env.');
+  }
   console.log('');
 
   const client = new InstagramClient({

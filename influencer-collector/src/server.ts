@@ -4,7 +4,8 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { getProfiles, removeProfile } from './memoryStorage.js';
+import { getLedger, removeProfile } from './memoryStorage.js';
+import { getProcessingState } from './processingStatus.js';
 import * as runner from './runner.js';
 import { loadConfig } from './config.js';
 import type { InstagramClient } from './instagram.js';
@@ -168,19 +169,65 @@ export function createCollectorRequestHandler(
     }
 
     if (url === '/api/list' || url === '/list') {
-      const profiles = getProfiles();
-      const list = profiles.map((p) => {
-        const raw = p.profile as Record<string, unknown>;
-        return {
-          handle: p.handle,
-          handleKey: p.handle.replace(/^@/, '').trim().toLowerCase(),
-          full_name: raw.full_name,
-          followers_count: raw.followers_count,
-          collectedAt: p.collectedAt,
-        };
+      const L = getLedger();
+      const row = (p: { handle: string; profile: Record<string, unknown>; collectedAt: string }) => ({
+        handle: p.handle,
+        handleKey: String(p.handle).replace(/^@/, '').trim().toLowerCase(),
+        full_name: p.profile.full_name,
+        followers_count: p.profile.followers_count,
+        collectedAt: p.collectedAt,
       });
+      const hostFromEndpoint = (u: string): string => {
+        try {
+          return new URL(u).host;
+        } catch {
+          return '';
+        }
+      };
+      const integrados = L.integrados.map((p) => ({
+        ...row(p),
+        integratedAt: p.integratedAt,
+        apiHost: p.apiHost ?? '',
+        rocksDbVerified: p.rocksDbVerified ?? '',
+      }));
+      const problemas = L.problemas.map((x) => ({
+        handle: x.handle,
+        handleKey: x.handleKey,
+        kind: x.kind,
+        kindLabel:
+          x.kind === 'extracao'
+            ? 'Extração'
+            : x.kind === 'regra'
+              ? 'Regra'
+              : 'Erro API',
+        detail: x.detail ?? '',
+        at: x.at,
+        full_name: x.full_name,
+        followers_count: x.followers_count,
+        attemptedEndpoint: x.attemptedEndpoint ?? '',
+        attemptedHost: hostFromEndpoint(x.attemptedEndpoint ?? ''),
+      }));
+      const processing = getProcessingState();
       res.writeHead(200, JSON_HEADERS);
-      res.end(JSON.stringify({ count: list.length, influencers: list }, null, 2));
+      res.end(
+        JSON.stringify(
+          {
+            counts: {
+              coletados: L.coletados.length,
+              problemas: L.problemas.length,
+              integrados: L.integrados.length,
+              emProcessamento: processing ? 1 : 0,
+            },
+            processing,
+            coletados: L.coletados.map(row),
+            problemas,
+            integrados,
+            influencers: [...L.coletados.map(row), ...L.integrados.map(row)],
+          },
+          null,
+          2
+        )
+      );
       return;
     }
 
@@ -194,7 +241,8 @@ export function createCollectorRequestHandler(
   <title>Influencer Collector</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 1rem; background: #1a1a1a; color: #e0e0e0; }
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 1rem; background: #1a1a1a; color: #e0e0e0; }
+    .table-scroll { overflow-x: auto; margin: 0.5rem 0 1.25rem; -webkit-overflow-scrolling: touch; }
     h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
     .sub { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
     .controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; }
@@ -206,12 +254,29 @@ export function createCollectorRequestHandler(
     .btn-stop:hover:not(:disabled) { background: #e53e3e; }
     .btn-remove { padding: 0.35rem 0.65rem; font-size: 0.8rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
     .btn-remove:hover { background: #450a0a; color: #fca5a5; }
+    tr.row-processing { background: linear-gradient(90deg, #1e3a2f 0%, #1a2e24 100%); outline: 1px solid #2d6a4f; }
+    tr.row-processing td { color: #86efac !important; }
+    code.ep { font-size: 0.72rem; word-break: break-all; display: block; max-width: 24rem; color: #a7f3d0; background: #0f172a; padding: 0.35rem 0.5rem; border-radius: 4px; }
+    td.verify-cell { font-size: 0.82rem; line-height: 1.4; max-width: 26rem; color: #cbd5e1; }
+    .verify-ok { color: #4ade80; font-weight: 600; }
+    .verify-warn { color: #fbbf24; }
+    .verify-skip { color: #94a3b8; }
+    .pulse-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4ade80; margin-right: 8px; animation: pulse 1.2s ease-in-out infinite; vertical-align: middle; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:0.5;transform:scale(0.85);} }
     label { display: flex; align-items: center; gap: 0.5rem; }
     select, input { padding: 0.5rem; border-radius: 4px; border: 1px solid #444; background: #2d2d2d; color: #e0e0e0; }
     .count { font-size: 1.1rem; margin-bottom: 1rem; }
     .count strong { color: #4ade80; }
+    .count .n-pend { color: #fbbf24; }
+    .count .n-err { color: #f87171; }
+    .count .n-ok { color: #4ade80; }
+    h2.section { font-size: 1.05rem; margin: 1.25rem 0 0.5rem; color: #a3a3a3; border-bottom: 1px solid #333; padding-bottom: 0.35rem; }
+    .kind-erro { color: #f87171; }
+    .kind-regra { color: #fb923c; }
+    .kind-ext { color: #38bdf8; }
     table { width: 100%; border-collapse: collapse; }
     th, td { border: 1px solid #333; padding: 0.6rem 0.8rem; text-align: left; }
+    #rowsProblemas td:nth-child(4) { max-width: 420px; white-space: normal; word-break: break-word; line-height: 1.35; font-size: 0.88rem; }
     th { background: #2d2d2d; }
     tr:hover { background: #252525; }
     .status { padding: 0.5rem; border-radius: 4px; margin-bottom: 1rem; }
@@ -251,10 +316,29 @@ export function createCollectorRequestHandler(
     <button type="button" id="btnStart" class="btn-start">Iniciar coleta</button>
     <button type="button" id="btnStop" class="btn-stop" disabled>Parar coleta</button>
   </div>
-  <div class="count">Total: <strong id="count">0</strong> influenciadores (atualiza a cada 5s)</div>
+  <div class="count">
+    <strong id="countC" class="n-pend">0</strong> coletados (aguardando API ou sem API)
+    · <strong id="countI" class="n-ok">0</strong> integrados
+    · <strong id="countP" class="n-err">0</strong> erros — atualiza a cada 5s
+  </div>
+  <h2 class="section">1 — Coletados</h2>
+  <p class="hint" style="margin-top:0">Inclui <strong>em processamento agora</strong> (linha destacada) e perfis já extraídos aguardando API; com API OK, o perfil vai para Integrados.</p>
   <table>
-    <thead><tr><th>#</th><th>Handle</th><th>Nome</th><th>Seguidores</th><th>Coletado em</th><th></th></tr></thead>
-    <tbody id="rows"></tbody>
+    <thead><tr><th>#</th><th>Handle</th><th>Status / nome</th><th>Seguidores</th><th>Desde</th><th></th></tr></thead>
+    <tbody id="rowsColetados"></tbody>
+  </table>
+  <h2 class="section">2 — Integrados com sucesso (API / RocksDB)</h2>
+  <p class="hint" style="margin-top:0"><strong>Confirmação no RocksDB</strong> = resposta do GET <code>collector-verify-profile</code> feito logo após o ingest (se a API tiver essa rota).</p>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>#</th><th>Handle</th><th>Nome</th><th>Seguidores</th><th>Host (API)</th><th>Confirmação (consulta pós-ingest)</th><th>Integrado em</th><th></th></tr></thead>
+    <tbody id="rowsIntegrados"></tbody>
+  </table>
+  </div>
+  <h2 class="section">3 — Erro (após processamento)</h2>
+  <table>
+    <thead><tr><th>#</th><th>Handle</th><th>Tipo</th><th>Detalhe</th><th>Host</th><th>POST tentado</th><th>Quando</th></tr></thead>
+    <tbody id="rowsProblemas"></tbody>
   </table>
   <script>
 (function() {
@@ -316,34 +400,73 @@ export function createCollectorRequestHandler(
           return r.json();
         })
         .then(function(d) {
-          var rows = Array.isArray(d.influencers) ? d.influencers : [];
-          var n = typeof d.count === 'number' ? d.count : rows.length;
-          document.getElementById('count').textContent = n;
-          var t = document.getElementById('rows');
-          t.innerHTML = rows.map(function(x, i) {
+          var c = d.counts || {};
+          document.getElementById('countC').textContent = c.coletados != null ? c.coletados : 0;
+          document.getElementById('countP').textContent = c.problemas != null ? c.problemas : 0;
+          document.getElementById('countI').textContent = c.integrados != null ? c.integrados : 0;
+          var coletados = Array.isArray(d.coletados) ? d.coletados : [];
+          var problemas = Array.isArray(d.problemas) ? d.problemas : [];
+          var integrados = Array.isArray(d.integrados) ? d.integrados : [];
+          var proc = d.processing && d.processing.handle ? d.processing : null;
+          function rowProcessing(p) {
+            var t = '';
+            try { t = p.since ? new Date(p.since).toLocaleString('pt-BR') : ''; } catch (e) { t = String(p.since || ''); }
+            return '<tr class="row-processing"><td>…</td><td>@' + escapeAttr(p.handle) + '</td><td><span class="pulse-dot"></span><strong>Em processamento</strong> — ' + escapeAttr(p.stage || '') + '</td><td>—</td><td>' + escapeAttr(t) + '</td><td>—</td></tr>';
+          }
+          function rowColetado(x, i) {
             var hk = x.handleKey || String(x.handle).replace(/^@/,'').toLowerCase();
-            return '<tr><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + escapeAttr(x.collectedAt || '') + '</td><td><button type="button" class="btn-remove" data-handle="' + escapeAttr(hk) + '" title="Remover da lista">Excluir</button></td></tr>';
-          }).join('');
+            return '<tr><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + escapeAttr(x.collectedAt || '') + '</td><td><button type="button" class="btn-remove" data-bucket="coletado" data-handle="' + escapeAttr(hk) + '">Excluir</button></td></tr>';
+          }
+          function rowProb(x, i) {
+            var cls = x.kind === 'erro_api' ? 'kind-erro' : (x.kind === 'regra' ? 'kind-regra' : 'kind-ext');
+            var hostP = x.attemptedHost ? '<strong>' + escapeAttr(x.attemptedHost) + '</strong>' : '—';
+            var urlP = x.attemptedEndpoint ? '<code class="ep">' + escapeAttr(x.attemptedEndpoint) + '</code>' : '—';
+            return '<tr><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td class="' + cls + '">' + escapeAttr(x.kindLabel || x.kind) + '</td><td>' + escapeAttr(x.detail || '') + '</td><td>' + hostP + '</td><td>' + urlP + '</td><td>' + escapeAttr(x.at || '') + '</td></tr>';
+          }
+          function rowInt(x, i) {
+            var hk = x.handleKey || String(x.handle).replace(/^@/,'').toLowerCase();
+            var host = x.apiHost ? '<strong>' + escapeAttr(x.apiHost) + '</strong>' : '<span style="color:#888">—</span>';
+            var v = x.rocksDbVerified;
+            var conf = '<span style="color:#888">—</span> <small>(registro antigo)</small>';
+            if (v === 'confirmed') {
+              conf = '<span class="verify-ok">Sim</span> — GET <code>collector-verify-profile</code> encontrou o perfil no RocksDB após o ingest.';
+            } else if (v === 'unavailable') {
+              conf = '<span class="verify-warn">Não confirmado</span> — ingest OK, mas a consulta de verificação não respondeu (rota antiga, rede ou outro worker IIS).';
+            } else if (v === 'skipped') {
+              conf = '<span class="verify-skip">Não executada</span> — <code>COLLECTOR_SKIP_VERIFY</code> ou fluxo sem verificação.';
+            }
+            return '<tr><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + host + '</td><td class="verify-cell">' + conf + '</td><td>' + escapeAttr(x.integratedAt || '') + '</td><td><button type="button" class="btn-remove" data-bucket="integrado" data-handle="' + escapeAttr(hk) + '">Excluir</button></td></tr>';
+          }
+          var rowsC = [];
+          if (proc) rowsC.push(rowProcessing(proc));
+          coletados.forEach(function(x, i) { rowsC.push(rowColetado(x, i)); });
+          document.getElementById('rowsColetados').innerHTML = rowsC.length ? rowsC.join('') : '<tr><td colspan="6" style="color:#666">Nenhum nesta lista (nem em processamento).</td></tr>';
+          document.getElementById('rowsProblemas').innerHTML = problemas.length ? problemas.map(rowProb).join('') : '<tr><td colspan="7" style="color:#666">Nenhum.</td></tr>';
+          document.getElementById('rowsIntegrados').innerHTML = integrados.length ? integrados.map(rowInt).join('') : '<tr><td colspan="8" style="color:#666">Nenhum ainda.</td></tr>';
         })
         .catch(function() {
-          document.getElementById('count').textContent = '?';
+          document.getElementById('countC').textContent = '?';
+          document.getElementById('countP').textContent = '?';
+          document.getElementById('countI').textContent = '?';
           showApiErr('Lista não atualizou — confira se o collector está ativo nesta mesma porta (' + window.location.port + ').');
         });
     }
-    document.getElementById('rows').addEventListener('click', function(e) {
+    function onRemoveClick(e) {
       var btn = e.target.closest('.btn-remove');
       if (!btn) return;
       var h = btn.getAttribute('data-handle');
-      if (!h || !confirm('Remover @' + h + ' da lista?')) return;
+      if (!h || !confirm('Remover @' + h + ' desta lista?')) return;
       fetch(apiUrl('/api/remove'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: h }) })
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.removed) refreshList();
           else alert(d.error || 'Não foi possível remover.');
         });
-    });
+    }
+    document.getElementById('rowsColetados').addEventListener('click', onRemoveClick);
+    document.getElementById('rowsIntegrados').addEventListener('click', onRemoveClick);
     refreshList();
-    setInterval(refreshList, 5000);
+    setInterval(refreshList, 2000);
 
     btnStartEl.addEventListener('click', function(ev) {
       ev.preventDefault();

@@ -59,11 +59,29 @@ async function runHttpSmoke(): Promise<void> {
     assert.ok(html.includes('btnStart'), 'HTML deve conter botão Iniciar');
     assert.ok(html.includes('/api/start'), 'HTML deve chamar /api/start');
     assert.ok(html.includes('startRequestInFlight'), 'lógica anti-corrida do clique');
+    assert.ok(html.includes('rowsColetados'), 'três tabelas: coletados');
+    assert.ok(html.includes('rowsIntegrados'), 'três tabelas: integrados');
 
     r = await fetch(`${base}/api/list`);
     assert.equal(r.ok, true);
-    const list = (await r.json()) as { influencers?: unknown[]; count?: number };
+    const list = (await r.json()) as {
+      influencers?: unknown[];
+      coletados?: unknown[];
+      problemas?: unknown[];
+      integrados?: unknown[];
+      processing?: unknown;
+      counts?: Record<string, number>;
+    };
     assert.ok(Array.isArray(list.influencers));
+    assert.ok(Array.isArray(list.coletados));
+    assert.ok(Array.isArray(list.problemas));
+    assert.ok(Array.isArray(list.integrados));
+    assert.ok(list.counts && typeof list.counts.coletados === 'number');
+    assert.ok(
+      list.processing === null || (typeof list.processing === 'object' && list.processing),
+      'processing null ou objeto'
+    );
+    assert.ok(typeof list.counts!.emProcessamento === 'number');
 
     r = await fetch(`${base}/api/stop`, { method: 'POST' });
     assert.equal(r.ok, true);

@@ -3,6 +3,7 @@
  */
 
 import type { Page } from 'playwright';
+import { coletaLog } from './coletaLog.js';
 import { getFollowersFromEntity } from './entityRules.js';
 
 const PROFILE_RESPONSE_URL = /graphql\/query/i;
@@ -235,6 +236,289 @@ export async function extractProfile(
       _collected_at: new Date().toISOString(),
     };
     return { profile, posts: allPosts };
+  } finally {
+    page.off('response', onResponse);
+  }
+}
+
+const REELS_EDGES_PATHS = [
+  'data.xdt_api__v1__feed__reels_media_graphql_connection.edges',
+  'data.reels_media.edges',
+  'data.user.edge_felix_video_timeline.edges',
+];
+
+const TAGGED_EDGES_PATHS = [
+  'data.xdt_api__v1__usertags__user_id__feed_connection.edges',
+  'data.xdt_api__v1__feed__user_tagged_posts_connection.edges',
+  'data.user.edge_owner_to_tagged_media.edges',
+  'data.user.edge_web_feed_timeline.edges',
+];
+
+function getEdgesAtPath(raw: unknown, dotPath: string): unknown[] {
+  if (raw == null || typeof raw !== 'object') return [];
+  const cur = getIn(raw as Record<string, unknown>, dotPath);
+  return Array.isArray(cur) ? cur : [];
+}
+
+function bodyWorthCapturing(body: Record<string, unknown>): boolean {
+  if (hasDataUser(body)) return true;
+  if (getEdgesFromRaw(body).length > 0) return true;
+  for (const p of REELS_EDGES_PATHS) {
+    if (getEdgesAtPath(body, p).length > 0) return true;
+  }
+  for (const p of TAGGED_EDGES_PATHS) {
+    if (getEdgesAtPath(body, p).length > 0) return true;
+  }
+  return false;
+}
+
+function isReelProductType(node: Record<string, unknown>): boolean {
+  const pt = String(node.product_type ?? '').toLowerCase();
+  return pt === 'clips' || pt === 'reel' || pt.includes('reel');
+}
+
+export interface ExtractedProfileFull {
+  profile: Record<string, unknown>;
+  /** Nós GraphQL do feed (posts, não reels) */
+  feedMedia: Record<string, unknown>[];
+  reelMedia: Record<string, unknown>[];
+  taggedMedia: Record<string, unknown>[];
+  /** Posts da timeline para regras (curtidas mínimas) */
+  postsForRules: Record<string, unknown>[];
+}
+
+/**
+ * Extrai perfil + timeline (scroll) + abas Reels e Marcados (GraphQL).
+ * Usado para envio completo à API do crawl (métricas / ER no site).
+ */
+export async function extractProfileFull(
+  page: Page,
+  handle: string,
+  profileUrl: string,
+  options?: { pageAlreadyOnProfile?: boolean }
+): Promise<ExtractedProfileFull | null> {
+  const keyHandle = handle.replace(/^@/, '').trim().toLowerCase();
+  const captured: Record<string, unknown>[] = [];
+  const onResponse = async (response: import('playwright').Response) => {
+    const url = response.url();
+    if (!/graphql\/query/i.test(url) || response.status() >= 400) return;
+    const ct = response.headers()['content-type'] ?? '';
+    if (!ct.includes('application/json')) return;
+    try {
+      const body = (await response.json()) as Record<string, unknown>;
+      if (body != null && bodyWorthCapturing(body)) {
+        captured.push(body);
+      }
+    } catch {
+      // ignore
+    }
+  };
+  page.on('response', onResponse);
+
+  const clickTab = async (index: number): Promise<boolean> => {
+    const tabList = page.locator('[role="tablist"]').first();
+    if ((await tabList.count()) === 0) return false;
+    const links = tabList.locator('a[href]');
+    const n = await links.count();
+    if (index >= n) return false;
+    try {
+      await links.nth(index).scrollIntoViewIfNeeded().catch(() => null);
+      await links.nth(index).click({ timeout: 8000 });
+      await page.waitForTimeout(2600);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const clickHrefTab = async (part: string): Promise<boolean> => {
+    const selectors = [
+      `a[href*="/${keyHandle}/${part}/"]`,
+      `a[href*="/${keyHandle}/${part}"]`,
+      `a[href*="/${part}/"]`,
+    ];
+    for (const sel of selectors) {
+      const link = page.locator(sel).first();
+      if ((await link.count()) === 0) continue;
+      try {
+        await link.scrollIntoViewIfNeeded().catch(() => null);
+        await link.click({ timeout: 8000 });
+        await page.waitForTimeout(2600);
+        return true;
+      } catch {
+        continue;
+      }
+    }
+    return false;
+  };
+
+  try {
+    coletaLog(`@${keyHandle} [full] abrindo perfil + aguardando GraphQL…`);
+    if (options?.pageAlreadyOnProfile) {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 });
+    } else {
+      await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    }
+    await page.waitForTimeout(2800);
+
+    coletaLog(`@${keyHandle} [full] rolando timeline (8×) para carregar mais posts…`);
+    for (let s = 0; s < 8; s++) {
+      await page.mouse.wheel(0, 950);
+      await page.waitForTimeout(1300);
+    }
+
+    let reelsOk = await clickTab(1);
+    if (!reelsOk) reelsOk = await clickHrefTab('reels');
+    coletaLog(`@${keyHandle} [full] aba Reels ${reelsOk ? 'OK' : 'não achada'} → scroll…`);
+    if (reelsOk) {
+      for (let s = 0; s < 6; s++) {
+        await page.mouse.wheel(0, 900);
+        await page.waitForTimeout(1100);
+      }
+    }
+
+    coletaLog(`@${keyHandle} [full] voltando ao perfil para aba Marcados…`);
+    await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 22000 }).catch(() => null);
+    await page.waitForTimeout(2200);
+
+    let taggedOk = await clickTab(3);
+    if (!taggedOk) taggedOk = await clickTab(2);
+    if (!taggedOk) taggedOk = await clickHrefTab('tagged');
+    coletaLog(`@${keyHandle} [full] aba Marcados ${taggedOk ? 'OK' : 'não achada'} → scroll…`);
+    if (taggedOk) {
+      for (let s = 0; s < 5; s++) {
+        await page.mouse.wheel(0, 900);
+        await page.waitForTimeout(1100);
+      }
+    }
+
+    let profileRaw: Record<string, unknown> | null = null;
+    for (const body of captured) {
+      if (hasDataUser(body)) {
+        profileRaw = body;
+        break;
+      }
+    }
+    if (!profileRaw) {
+      for (const body of captured) {
+        const edges = getEdgesFromRaw(body);
+        if (edges.length > 0) {
+          const first = edges[0];
+          if (first != null && typeof first === 'object') {
+            const node = (first as Record<string, unknown>).node;
+            const u =
+              node != null && typeof node === 'object'
+                ? (node as Record<string, unknown>).user
+                : null;
+            if (u != null && typeof u === 'object') {
+              profileRaw = { data: { user: u } } as Record<string, unknown>;
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (!profileRaw) {
+      coletaLog(`@${keyHandle} [full] ERRO: nenhum body GraphQL com dados de usuário.`);
+      return null;
+    }
+
+    coletaLog(`@${keyHandle} [full] montando listas (${captured.length} respostas GraphQL capturadas)…`);
+
+    const seenFeed = new Set<string>();
+    const seenReel = new Set<string>();
+    const seenTagged = new Set<string>();
+    const feedMedia: Record<string, unknown>[] = [];
+    const reelMedia: Record<string, unknown>[] = [];
+    const taggedMedia: Record<string, unknown>[] = [];
+    const postsForRules: Record<string, unknown>[] = [];
+    const seenRules = new Set<string>();
+
+    const pushNode = (
+      node: Record<string, unknown>,
+      bucket: 'timeline' | 'reelOnly' | 'taggedOnly'
+    ): void => {
+      const code = String(node.shortcode ?? node.code ?? '');
+      if (!code) return;
+      if (bucket === 'taggedOnly') {
+        if (!seenTagged.has(code)) {
+          seenTagged.add(code);
+          taggedMedia.push(node);
+        }
+        return;
+      }
+      if (bucket === 'reelOnly') {
+        if (!seenReel.has(code)) {
+          seenReel.add(code);
+          reelMedia.push(node);
+        }
+        return;
+      }
+      if (!seenRules.has(code)) {
+        seenRules.add(code);
+        const syntheticEdge = { node };
+        const p = nodeToPost(syntheticEdge);
+        if (p) postsForRules.push(p);
+      }
+      if (isReelProductType(node)) {
+        if (!seenReel.has(code)) {
+          seenReel.add(code);
+          reelMedia.push(node);
+        }
+      } else {
+        if (!seenFeed.has(code)) {
+          seenFeed.add(code);
+          feedMedia.push(node);
+        }
+      }
+    };
+
+    for (const body of captured) {
+      for (const path of TIMELINE_EDGES_PATHS) {
+        for (const edge of getEdgesAtPath(body, path)) {
+          if (edge == null || typeof edge !== 'object') continue;
+          const node = (edge as Record<string, unknown>).node;
+          if (node != null && typeof node === 'object') {
+            pushNode(node as Record<string, unknown>, 'timeline');
+          }
+        }
+      }
+      for (const path of REELS_EDGES_PATHS) {
+        for (const edge of getEdgesAtPath(body, path)) {
+          if (edge == null || typeof edge !== 'object') continue;
+          const node = (edge as Record<string, unknown>).node;
+          if (node != null && typeof node === 'object') {
+            pushNode(node as Record<string, unknown>, 'reelOnly');
+          }
+        }
+      }
+      for (const path of TAGGED_EDGES_PATHS) {
+        for (const edge of getEdgesAtPath(body, path)) {
+          if (edge == null || typeof edge !== 'object') continue;
+          const node = (edge as Record<string, unknown>).node;
+          if (node != null && typeof node === 'object') {
+            pushNode(node as Record<string, unknown>, 'taggedOnly');
+          }
+        }
+      }
+    }
+
+    const user = extractUserFromRaw(profileRaw);
+    const profile: Record<string, unknown> = {
+      ...profileRaw,
+      handle: keyHandle,
+      username: keyHandle,
+      ...(user ?? {}),
+      _collected_at: new Date().toISOString(),
+    };
+
+    return {
+      profile,
+      feedMedia,
+      reelMedia,
+      taggedMedia,
+      postsForRules,
+    };
   } finally {
     page.off('response', onResponse);
   }

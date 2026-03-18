@@ -85,7 +85,7 @@ export function containsRejectedKeyword(text: string): boolean {
   return false;
 }
 
-export function hasRejectedProfileKeyword(entity: Record<string, unknown>): boolean {
+function profileSearchText(entity: Record<string, unknown>): string {
   const toSearch = [
     getIn(entity, 'handle', 'username', 'data.user.username'),
     getIn(entity, 'data.user.full_name', 'full_name'),
@@ -94,7 +94,85 @@ export function hasRejectedProfileKeyword(entity: Record<string, unknown>): bool
   ]
     .filter((v) => v != null && String(v).trim() !== '')
     .map((v) => String(v).trim());
-  return containsRejectedKeyword(toSearch.join(' '));
+  return toSearch.join(' ');
+}
+
+export function hasRejectedProfileKeyword(entity: Record<string, unknown>): boolean {
+  return containsRejectedKeyword(profileSearchText(entity));
+}
+
+/** Motivo legível quando há palavra da lista REJECTED_PROFILE_KEYWORDS. */
+export function explainRejectedProfileKeyword(entity: Record<string, unknown>): string {
+  const n = normalize(profileSearchText(entity));
+  for (const kw of REJECTED_PROFILE_KEYWORDS) {
+    const kn = normalize(kw);
+    if (kn && n.includes(kn)) {
+      return `Lista de rejeição: o termo «${kw}» aparece no @, nome, bio ou categoria`;
+    }
+  }
+  return 'Lista de rejeição: termo bloqueado no @, nome, bio ou categoria';
+}
+
+/** Motivo legível quando isBusinessFromEntity (estabelecimento/comercial). */
+export function explainCommercialOrEstablishment(entity: Record<string, unknown>): string {
+  const checks: { label: string; text: string }[] = [
+    { label: '@', text: getHandleOrUsername(entity) },
+    { label: 'nome', text: getFullNameNormalized(entity) },
+    { label: 'bio', text: getBioNormalized(entity) },
+    { label: 'categoria', text: normalizeCategory(getIn(entity, 'data.user.category', 'category')) },
+  ];
+  for (const { label, text } of checks) {
+    if (!text || text.length < 2) continue;
+    const nt = normalize(text);
+    for (const kw of ESTABLISHMENT_KEYWORDS_RAW) {
+      const kn = normalize(kw);
+      if (kn.length >= 2 && nt.includes(kn)) {
+        return `Indício de negócio/estabelecimento no ${label}: «${kw}»`;
+      }
+    }
+  }
+  const cat = getIn(entity, 'data.user.category', 'category');
+  const catStr = cat != null ? String(cat) : '';
+  const isBiz =
+    getIn(entity, 'data.user.is_business_account', 'is_business_account', 'is_business') === true;
+  if (isBiz && catStr) {
+    return `Conta comercial no Instagram · categoria: «${catStr}»`;
+  }
+  if (catStr) {
+    return `Categoria «${catStr}» indica serviço/estabelecimento (filtro do coletor)`;
+  }
+  if (isBiz) {
+    return 'Conta marcada como comercial no Instagram e não passa no filtro de influenciador';
+  }
+  return 'Classificado como perfil de empresa/estabelecimento pelas regras do coletor';
+}
+
+/** Por que não atende qualifiesAsInfluencer (seguidores × tipo de conta). */
+export function explainNotQualifiesAsInfluencer(
+  entity: Record<string, unknown>,
+  minFollowers: number
+): string {
+  const followers = getFollowersFromEntity(entity);
+  const type = getAccountType(entity);
+  let minimo: number;
+  let tipoTxt: string;
+  if (minFollowers <= 0) {
+    return `Seguidores: ${followers.toLocaleString('pt-BR')} (regra de tipo de conta)`;
+  }
+  if (type === ACCOUNT_TYPE_CREATOR) {
+    minimo = minFollowers;
+    tipoTxt = 'Conta criador';
+  } else if (type === ACCOUNT_TYPE_BUSINESS) {
+    minimo = minFollowers;
+    tipoTxt = 'Conta empresa';
+  } else if (type === ACCOUNT_TYPE_PERSONAL) {
+    minimo = minFollowers * 2;
+    tipoTxt = 'Conta pessoal';
+  } else {
+    minimo = minFollowers * 3;
+    tipoTxt = 'Tipo de conta desconhecido ou misto';
+  }
+  return `${tipoTxt}: precisa de pelo menos ${minimo.toLocaleString('pt-BR')} seguidores; este perfil tem ${followers.toLocaleString('pt-BR')}.`;
 }
 
 // --- Estabelecimento (empresa/negócio) — palavras-chave de filtro ---

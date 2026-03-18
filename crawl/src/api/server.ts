@@ -54,6 +54,8 @@ import { signJwt, getJwtSecret } from '../auth/jwt.js';
 import { verifyPassword, hashPassword } from '../auth/password.js';
 import type { AuthScope } from '../auth/types.js';
 import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
+import { createCollectorController } from './controllers/collectorController.js';
+import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
 import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
 
 const require = createRequire(import.meta.url);
@@ -66,7 +68,15 @@ const rocksPath = process.env.STORAGE_DB_PATH ?? './data/rocksdb';
 const sqlitePath = process.env.SQLITE_DB_PATH ?? './data/influencer.db';
 
 const app = express();
-app.use(express.json());
+const jsonDefault = express.json({ limit: '2mb' });
+const jsonCollectorFull = express.json({ limit: '80mb' });
+app.use((req, res, next) => {
+  const p = req.url?.split('?')[0] ?? '';
+  if (req.method === 'POST' && p.includes('collector-ingest-full')) {
+    return jsonCollectorFull(req, res, next);
+  }
+  return jsonDefault(req, res, next);
+});
 
 /** iisnode: a Application IIS em /api repassa só o path relativo (ex.: /profiles/search). Prefixa /api para as rotas. */
 app.use((req, _res, next) => {
@@ -86,6 +96,8 @@ process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) =>
 const rocks = new RocksDBStorage({ dbPath: rocksPath });
 const sqlite = new SqliteSync(sqlitePath);
 const db = new CompositeStorage(rocks, sqlite, (storage) => scheduleSearchCacheRewarm(storage));
+const collectorController = createCollectorController(db);
+app.use('/api/crawl', createCollectorCrawlRouter(collectorController));
 const authDb = new AuthDb(sqlitePath);
 const creditsCampaignsDb = new CreditsCampaignsDb(sqlitePath);
 const paymentsDb = new PaymentsDb(sqlitePath);

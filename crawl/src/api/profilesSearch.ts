@@ -14,8 +14,11 @@ let searchDataCache: {
   postsRaw: { key: string; value: Record<string, unknown> }[];
 } | null = null;
 
-let warmInProgress = false;
-let rewarmPending = false;
+/**
+ * Geração do cache: só a carga cuja geração ainda é a atual aplica resultado.
+ * Evita que um rewarm antigo (ex.: antes do último save) sobrescreva dados novos.
+ */
+let searchCacheGeneration = 0;
 
 /** Carrega perfis e posts do storage (para reaquecimento em background). */
 async function loadSearchCacheData(db: CompositeStorage): Promise<{
@@ -29,40 +32,35 @@ async function loadSearchCacheData(db: CompositeStorage): Promise<{
   return { profilesRaw, postsRaw };
 }
 
-/**
- * Agenda reaquecimento do cache em background. Não zera o cache atual: as buscas continuam
- * rápidas com os dados antigos até o novo carregamento terminar, quando o cache é substituído.
- * Recebe db para ser chamado como callback do storage após save/savePosts.
- */
-export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
-  if (warmInProgress) {
-    rewarmPending = true;
-    return;
+function applySearchCacheIfCurrent(
+  gen: number,
+  data: { profilesRaw: { key: string; value: Record<string, unknown> }[]; postsRaw: { key: string; value: Record<string, unknown> }[] }
+): void {
+  if (gen === searchCacheGeneration) {
+    searchDataCache = data;
   }
-  warmInProgress = true;
-  void (async () => {
-    try {
-      const { profilesRaw, postsRaw } = await loadSearchCacheData(db);
-      searchDataCache = { profilesRaw, postsRaw };
-    } finally {
-      warmInProgress = false;
-      if (rewarmPending) {
-        rewarmPending = false;
-        scheduleSearchCacheRewarm(db);
-      }
-    }
-  })();
 }
 
-/** Invalida o cache da busca (zera). Preferir scheduleSearchCacheRewarm(db) para não ter lentidão no front. */
+/**
+ * Agenda reaquecimento do cache em background. Várias chamadas seguidas disparam cargas em paralelo;
+ * apenas a que termina por último com a geração atual aplica (evita snapshot stale).
+ */
+export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
+  const gen = ++searchCacheGeneration;
+  void loadSearchCacheData(db).then((data) => applySearchCacheIfCurrent(gen, data));
+}
+
+/** Invalida o cache da busca (próxima busca recarrega do RocksDB). */
 export function clearSearchCache(): void {
+  searchCacheGeneration += 1;
   searchDataCache = null;
 }
 
 /** Aquece o cache carregando perfis e posts do storage. Chamar na subida da API para a 1ª busca já ser rápida. */
 export async function warmSearchCache(db: CompositeStorage): Promise<void> {
-  const { profilesRaw, postsRaw } = await loadSearchCacheData(db);
-  searchDataCache = { profilesRaw, postsRaw };
+  const gen = ++searchCacheGeneration;
+  const data = await loadSearchCacheData(db);
+  applySearchCacheIfCurrent(gen, data);
 }
 
 function getIn(obj: unknown, ...paths: string[]): unknown {

@@ -7,6 +7,7 @@ import type { InstagramClient } from './instagram.js';
 import { loadConfig, mergeCollectorConfig } from './config.js';
 import { discoverByHashtag, discoverByFeed, discoverByExplore } from './discovery.js';
 import type { DiscoveryMode } from './discovery.js';
+import { coletaLog } from './coletaLog.js';
 
 let collecting = false;
 /** true entre “Iniciar” na API e o runCollection de fato começar — evita duplo clique e libera a resposta HTTP antes do Playwright. */
@@ -98,6 +99,9 @@ export async function runCollection(
       excludeBusinessProfiles: options.excludeBusinessProfiles,
     });
     const maxProfiles = options.limit ?? base.maxProfiles;
+    coletaLog(
+      `INÍCIO modo=${options.mode} limite_salvar=${maxProfiles} minSeguidores=${config.minFollowersToSave} minCurtidasPost=${config.minPostLikesToSave}`
+    );
 
     const discoveryOptions = {
       mode: options.mode,
@@ -120,6 +124,7 @@ export async function runCollection(
         const remaining = maxProfiles - totalSaved;
         if (remaining <= 0) break;
         const tag = tagList[i]!;
+        coletaLog(`Hashtag ${i + 1}/${tagList.length}: #${tag} — faltam salvar até ${remaining} perfil(is)`);
         statusMessage = `Hashtag ${i + 1}/${tagList.length}: #${tag} — restam ${remaining} perfil(is)`;
         const r = await discoverByHashtag(client, page, tag, {
           ...discoveryOptions,
@@ -127,24 +132,34 @@ export async function runCollection(
         });
         totalSaved += r.saved;
         totalProcessed += r.processed;
+        coletaLog(`#${tag} → +${r.saved} salvos (rodada) | total acumulado: ${totalSaved} salvos, ${totalProcessed} processados`);
       }
       result = { saved: totalSaved, processed: totalProcessed };
     } else if (options.mode === 'feed') {
+      coletaLog(`Modo FEED — limite ${maxProfiles}`);
       statusMessage = `Feed — limite ${maxProfiles}`;
       result = await discoverByFeed(client, page, discoveryOptions);
     } else {
+      coletaLog(`Modo EXPLORE — limite ${maxProfiles}`);
       statusMessage = `Explore — limite ${maxProfiles}`;
       result = await discoverByExplore(client, page, discoveryOptions);
     }
   } catch (err) {
     console.error('[coleta] Falha:', err);
+    coletaLog(`ERRO: ${err instanceof Error ? err.message : String(err)}`);
     statusMessage = `Erro: ${err instanceof Error ? err.message : String(err)}`;
   } finally {
+    const userParou = abortRequested;
     collecting = false;
     collectionStartScheduled = false;
     abortRequested = false;
     if (!statusMessage.startsWith('Erro:')) {
       statusMessage = `Concluído: ${result.saved} salvos, ${result.processed} processados.`;
+    }
+    if (userParou) {
+      coletaLog(`INTERROMPIDO pelo usuário (Parar) → ${result.saved} salvos, ${result.processed} processados`);
+    } else if (!statusMessage.startsWith('Erro:')) {
+      coletaLog(`FIM → ${result.saved} salvos, ${result.processed} processados (veja também UI)`);
     }
   }
   return result;

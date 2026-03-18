@@ -16,9 +16,12 @@ export class CompositeStorage {
     private readonly onInvalidateSearch?: (db: CompositeStorage) => void
   ) { }
 
-  async save(entity: Entity & { handle: string }): Promise<{ path: string; bytes: number }> {
+  async save(
+    entity: Entity & { handle: string },
+    opts?: { skipSearchInvalidation?: boolean }
+  ): Promise<{ path: string; bytes: number }> {
     const result = await this.rocks.save(entity);
-    this.onInvalidateSearch?.(this);
+    if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
     return result;
   }
 
@@ -38,15 +41,26 @@ export class CompositeStorage {
     this.onInvalidateSearch?.(this);
   }
 
-  async savePosts(profileHandle: string, posts: Entity[], collectedAt: string): Promise<number> {
+  async savePosts(
+    profileHandle: string,
+    posts: Entity[],
+    collectedAt: string,
+    opts?: { skipSearchInvalidation?: boolean }
+  ): Promise<number> {
     const n = await this.rocks.savePosts(profileHandle, posts, collectedAt);
-    this.onInvalidateSearch?.(this);
+    if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
     return n;
   }
 
-  async saveMedia(profileHandle: string, mediaKind: MediaKind, items: Entity[], collectedAt: string): Promise<number> {
+  async saveMedia(
+    profileHandle: string,
+    mediaKind: MediaKind,
+    items: Entity[],
+    collectedAt: string,
+    opts?: { skipSearchInvalidation?: boolean }
+  ): Promise<number> {
     const n = await this.rocks.saveMedia(profileHandle, mediaKind, items, collectedAt);
-    this.onInvalidateSearch?.(this);
+    if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
     return n;
   }
 

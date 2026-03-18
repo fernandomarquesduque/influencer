@@ -224,6 +224,87 @@
         }
       }
     },
+    "/api/crawl/collector-ingest-profile": {
+      "post": {
+        "summary": "Grava/atualiza perfil slim no RocksDB (collector local)",
+        "description": "Recebe JSON do **influencer-collector** (máquina local). Autenticação: header **X-Collector-Key** igual a **COLLECTOR_INGEST_SECRET** no servidor. Faz merge com perfil já existente.",
+        "tags": ["Collector"],
+        "parameters": [
+          {
+            "name": "X-Collector-Key",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Mesmo valor de COLLECTOR_INGEST_SECRET"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["handle"],
+                "description": "Perfil slim (handle, followers_count, biography, _collected_at, etc.)",
+                "properties": {
+                  "handle": { "type": "string" },
+                  "followers_count": { "type": "integer" },
+                  "full_name": { "type": "string" },
+                  "biography": { "type": "string" },
+                  "_collected_at": { "type": "string" },
+                  "_discovered_by": { "type": "string" },
+                  "_discovered_value": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Gravado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "handle": { "type": "string" },
+                    "updated": { "type": "boolean", "description": "true se já existia no RocksDB" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Body ou handle inválido" },
+          "401": { "description": "X-Collector-Key ausente ou incorreto" },
+          "503": { "description": "COLLECTOR_INGEST_SECRET não configurado" },
+          "500": { "description": "Erro ao gravar" }
+        }
+      }
+    },
+    "/api/crawl/collector-ingest-status": {
+      "get": {
+        "summary": "Indica se o ingest do collector está habilitado",
+        "description": "Público. Não exige chave. Útil para validar deploy antes de rodar o collector.",
+        "tags": ["Collector"],
+        "responses": {
+          "200": {
+            "description": "ingestEnabled = secret configurado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ingestEnabled": { "type": "boolean" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/crawl/extract-profile": {
       "post": {
         "summary": "Extrai um perfil específico por URL ou handle",
@@ -313,6 +394,7 @@
     { "name": "Posts", "description": "Posts armazenados no RocksDB" },
     { "name": "Buckets", "description": "Chaves por bucket (profile, post)" },
     { "name": "Crawl", "description": "Crawl por hashtag (grava no RocksDB)" },
-    { "name": "Sistema", "description": "Health e utilitários" }
+    { "name": "Sistema", "description": "Health e utilitários" },
+    { "name": "Collector", "description": "Ingest do influencer-collector → RocksDB no servidor" }
   ]
 }
