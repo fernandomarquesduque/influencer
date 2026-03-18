@@ -1,0 +1,44 @@
+# Gera o pacote macOS (Chromium do Playwright = binários Apple).
+# Rode manualmente: Actions → "Influencer Collector — release macOS" → Run workflow.
+
+name: Influencer Collector — release macOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - 'influencer-collector/**'
+      - '.github/workflows/influencer-collector-release-macos.yml'
+
+jobs:
+  package-macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: influencer-collector
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: influencer-collector/package-lock.json
+
+      - name: Empacotar (package-mac.sh)
+        run: |
+          chmod +x scripts/package-mac.sh
+          ./scripts/package-mac.sh
+
+      - name: Zip para download
+        run: |
+          cd release
+          zip -r ../influencer-collector-macos.zip influencer-collector-macos
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: influencer-collector-macos
+          path: influencer-collector/influencer-collector-macos.zip
+          retention-days: 30

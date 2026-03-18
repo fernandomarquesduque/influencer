@@ -6,6 +6,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "package:mac": "bash scripts/package-mac.sh",
+    "package:mac-share": "pwsh -ExecutionPolicy Bypass -File scripts/package-mac-share.ps1",
+    "package:windows": "pwsh -ExecutionPolicy Bypass -File scripts/package-win.ps1",
     "start": "tsx src/index.ts",
     "collect": "tsx src/index.ts",
     "verify": "tsx src/scripts/verify.ts",

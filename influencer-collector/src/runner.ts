@@ -79,7 +79,8 @@ export interface StartOptions {
 
 export async function runCollection(
   client: InstagramClient,
-  page: Page,
+  pageRef: { page: Page },
+  rebindPersistence: (newPage: Page) => void,
   options: StartOptions
 ): Promise<{ saved: number; processed: number }> {
   if (collecting) {
@@ -89,7 +90,17 @@ export async function runCollection(
   collectionStartScheduled = false;
   abortRequested = false;
   let result = { saved: 0, processed: 0 };
+  let page = pageRef.page;
   try {
+    const recovered = await client.ensurePageForCollection(page);
+    if (recovered !== page) {
+      pageRef.page = recovered;
+      rebindPersistence(recovered);
+      page = recovered;
+      coletaLog(
+        '[coleta] Janela do Instagram foi recriada (browser/aba tinha fechado). Nova aba aberta — faça login se aparecer.'
+      );
+    }
     const base = loadConfig();
     const config = mergeCollectorConfig(base, {
       minFollowersToSave: options.minFollowers,
@@ -126,7 +137,7 @@ export async function runCollection(
         const tag = tagList[i]!;
         coletaLog(`Hashtag ${i + 1}/${tagList.length}: #${tag} — faltam salvar até ${remaining} perfil(is)`);
         statusMessage = `Hashtag ${i + 1}/${tagList.length}: #${tag} — restam ${remaining} perfil(is)`;
-        const r = await discoverByHashtag(client, page, tag, {
+        const r = await discoverByHashtag(client, pageRef.page, tag, {
           ...discoveryOptions,
           maxProfiles: remaining,
         });
@@ -138,11 +149,11 @@ export async function runCollection(
     } else if (options.mode === 'feed') {
       coletaLog(`Modo FEED — limite ${maxProfiles}`);
       statusMessage = `Feed — limite ${maxProfiles}`;
-      result = await discoverByFeed(client, page, discoveryOptions);
+      result = await discoverByFeed(client, pageRef.page, discoveryOptions);
     } else {
       coletaLog(`Modo EXPLORE — limite ${maxProfiles}`);
       statusMessage = `Explore — limite ${maxProfiles}`;
-      result = await discoverByExplore(client, page, discoveryOptions);
+      result = await discoverByExplore(client, pageRef.page, discoveryOptions);
     }
   } catch (err) {
     console.error('[coleta] Falha:', err);

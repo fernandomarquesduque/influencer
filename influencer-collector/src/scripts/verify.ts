@@ -17,9 +17,11 @@ const mockClient = {} as InstagramClient;
 const mockPage = {
   url: () => 'https://www.instagram.com/',
 } as unknown as Page;
+const mockPageRef = { page: mockPage };
+const noopRebind = (_p: Page): void => {};
 
 async function runHttpSmoke(): Promise<void> {
-  const handler = createCollectorRequestHandler(mockClient, mockPage);
+  const handler = createCollectorRequestHandler(mockClient, mockPageRef, noopRebind);
   const server = createServer((req, res) => {
     void handler(req, res);
   });

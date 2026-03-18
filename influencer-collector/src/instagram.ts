@@ -88,6 +88,40 @@ export class InstagramClient {
     return ctx.newPage();
   }
 
+  /**
+   * Garante uma página utilizável para a coleta (goto etc.).
+   * Se o usuário fechou o Chromium ou a aba, relança browser e/ou abre nova aba com sessão do disco.
+   */
+  async ensurePageForCollection(current: Page | null): Promise<Page> {
+    const needLaunch = !this.browser || !this.browser.isConnected();
+    if (needLaunch) {
+      await this.close();
+      await this.init();
+      const p = await this.newPage();
+      await p.goto(InstagramClient.homeFeedUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
+      return p;
+    }
+    if (current && !current.isClosed()) {
+      try {
+        await current.evaluate(() => true);
+        return current;
+      } catch {
+        /* corrida: fechou durante o evaluate */
+      }
+    }
+    try {
+      const ctx = await this.getContext();
+      const p = await ctx.newPage();
+      await p.goto(InstagramClient.homeFeedUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
+      return p;
+    } catch {
+      this.context = null;
+      const p = await this.newPage();
+      await p.goto(InstagramClient.homeFeedUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
+      return p;
+    }
+  }
+
   async saveAuthState(): Promise<void> {
     if (!this.context) return;
     const dir = dirname(this.authStatePath);

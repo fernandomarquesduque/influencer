@@ -10,9 +10,9 @@ import * as runner from './runner.js';
 import { loadConfig } from './config.js';
 import type { InstagramClient } from './instagram.js';
 import type { Page } from 'playwright';
+import { freePortForUi } from './freeUiPort.js';
 
 const PORT = Number(process.env.COLLECTOR_UI_PORT) || 3967;
-const PORT_TRY_MAX = 15;
 
 /** Porta em que a UI está escutando (após startServer subir). */
 export let uiListenPort = PORT;
@@ -44,7 +44,8 @@ function sendJson(res: ServerResponse, status: number, data: object): void {
 
 export function createCollectorRequestHandler(
   client: InstagramClient,
-  page: Page
+  pageRef: { page: Page },
+  rebindPersistence: (newPage: Page) => void
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url?.split('?')[0] ?? '/';
@@ -62,7 +63,7 @@ export function createCollectorRequestHandler(
         minPostLikesToSave: n(c.minPostLikesToSave, 200),
         minPostsWithMinLikesToSave: n(c.minPostsWithMinLikesToSave, 4),
         maxPostsPerTag: n(c.maxPostsPerTag, 30),
-        maxProfiles: n(c.maxProfiles, 20),
+        maxProfiles: n(c.maxProfiles, 19999),
         excludeBusinessProfiles: !!c.excludeBusinessProfiles,
       });
       return;
@@ -138,7 +139,7 @@ export function createCollectorRequestHandler(
         }
         setImmediate(() => {
           runner
-            .runCollection(client, page, runOpts)
+            .runCollection(client, pageRef, rebindPersistence, runOpts)
             .then((r) => {
               console.log(`[coleta] ${r.saved} salvos, ${r.processed} processados.`);
             })
@@ -304,10 +305,10 @@ export function createCollectorRequestHandler(
       <label>Mín. curtidas por post <input type="number" id="minPostLikes" min="0" step="10" value="200"></label>
       <label>Qtd. posts com essa curtida <input type="number" id="minPostsWithMinLikes" min="1" max="50" step="1" value="4"></label>
       <label>Máx. posts na hashtag <input type="number" id="maxPostsPerTag" min="1" max="200" step="1" value="30"></label>
-      <label>Limite de perfis nesta rodada <input type="number" id="limit" min="1" max="200" step="1" value="20"></label>
+      <label>Limite de perfis nesta rodada <input type="number" id="limit" min="1" max="100000" step="1" value="19999"></label>
     </div>
     <label style="margin-top:0.75rem;"><input type="checkbox" id="excludeBusiness" checked> Excluir perfis de empresa / estabelecimento</label>
-    <p class="hint">Esses valores são usados só nesta execução; altere e clique em Iniciar coleta.</p>
+    <p class="hint">Esses valores são usados na coleta; <strong>modo, tags e regras ficam salvos neste navegador</strong> (localStorage).</p>
   </fieldset>
   <div class="controls">
     <label>Modo: <select id="mode"><option value="hashtag">Hashtag</option><option value="feed">Feed</option><option value="explore">Explore</option></select></label>
@@ -357,6 +358,69 @@ export function createCollectorRequestHandler(
       return;
     }
     var startRequestInFlight = false;
+    var FILTER_STORAGE_KEY = 'influencerCollector.uiFilters.v1';
+    function saveUiFilters() {
+      try {
+        var tagsEl = document.getElementById('tags');
+        localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+          minFollowers: document.getElementById('minFollowers') && document.getElementById('minFollowers').value,
+          minPostLikes: document.getElementById('minPostLikes') && document.getElementById('minPostLikes').value,
+          minPostsWithMinLikes: document.getElementById('minPostsWithMinLikes') && document.getElementById('minPostsWithMinLikes').value,
+          maxPostsPerTag: document.getElementById('maxPostsPerTag') && document.getElementById('maxPostsPerTag').value,
+          limit: document.getElementById('limit') && document.getElementById('limit').value,
+          excludeBusiness: !!(document.getElementById('excludeBusiness') && document.getElementById('excludeBusiness').checked),
+          mode: modeEl.value,
+          tags: tagsEl ? String(tagsEl.value) : ''
+        }));
+      } catch (e) { /* private mode / quota */ }
+    }
+    function loadUiFilters() {
+      try {
+        var raw = localStorage.getItem(FILTER_STORAGE_KEY);
+        if (!raw) return null;
+        var o = JSON.parse(raw);
+        return o && typeof o === 'object' ? o : null;
+      } catch (e) { return null; }
+    }
+    function applyUiFilters(s) {
+      if (!s) return;
+      function setNum(id, v) {
+        if (v === undefined || v === null || v === '') return;
+        var n = typeof v === 'number' ? v : parseInt(String(v), 10);
+        if (!Number.isFinite(n)) return;
+        var el = document.getElementById(id);
+        if (el) el.value = String(n);
+      }
+      setNum('minFollowers', s.minFollowers);
+      setNum('minPostLikes', s.minPostLikes);
+      setNum('minPostsWithMinLikes', s.minPostsWithMinLikes);
+      setNum('maxPostsPerTag', s.maxPostsPerTag);
+      setNum('limit', s.limit);
+      if (typeof s.excludeBusiness === 'boolean') {
+        var ex = document.getElementById('excludeBusiness');
+        if (ex) ex.checked = s.excludeBusiness;
+      }
+      if (s.mode === 'hashtag' || s.mode === 'feed' || s.mode === 'explore') modeEl.value = s.mode;
+      if (typeof s.tags === 'string') {
+        var te = document.getElementById('tags');
+        if (te) te.value = s.tags;
+      }
+      tagLabel.style.display = modeEl.value === 'hashtag' ? '' : 'none';
+    }
+    function bindFilterPersistence() {
+      ['minFollowers', 'minPostLikes', 'minPostsWithMinLikes', 'maxPostsPerTag', 'limit'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('input', saveUiFilters);
+          el.addEventListener('change', saveUiFilters);
+        }
+      });
+      var ex = document.getElementById('excludeBusiness');
+      if (ex) ex.addEventListener('change', saveUiFilters);
+      var tagsEl = document.getElementById('tags');
+      if (tagsEl) tagsEl.addEventListener('input', saveUiFilters);
+    }
+    bindFilterPersistence();
     function numFromInput(id, defVal) {
       var el = document.getElementById(id);
       var v = el ? parseInt(String(el.value).trim(), 10) : NaN;
@@ -364,6 +428,7 @@ export function createCollectorRequestHandler(
     }
     modeEl.addEventListener('change', function() {
       tagLabel.style.display = this.value === 'hashtag' ? '' : 'none';
+      saveUiFilters();
     });
     tagLabel.style.display = modeEl.value === 'hashtag' ? '' : 'none';
 
@@ -382,12 +447,16 @@ export function createCollectorRequestHandler(
         setNum('minPostLikes', d.minPostLikesToSave, 200);
         setNum('minPostsWithMinLikes', d.minPostsWithMinLikesToSave, 4);
         setNum('maxPostsPerTag', d.maxPostsPerTag, 30);
-        setNum('limit', d.maxProfiles, 20);
+        setNum('limit', d.maxProfiles, 19999);
         var ex = document.getElementById('excludeBusiness');
         if (ex) ex.checked = d.excludeBusinessProfiles !== false;
+        var saved = loadUiFilters();
+        if (saved) applyUiFilters(saved);
       })
       .catch(function() {
         showApiErr('Não foi possível carregar regras do servidor — usando valores exibidos nos campos. Verifique se o app (npm start) está rodando.');
+        var saved = loadUiFilters();
+        if (saved) applyUiFilters(saved);
       });
 
     function escapeAttr(s) {
@@ -488,7 +557,7 @@ export function createCollectorRequestHandler(
         var payload = {
           mode: mode,
           tags: tags.length ? tags : undefined,
-          limit: numFromInput('limit', 20),
+          limit: numFromInput('limit', 19999),
           minFollowers: numFromInput('minFollowers', 5000),
           minPostLikes: numFromInput('minPostLikes', 200),
           minPostsWithMinLikes: numFromInput('minPostsWithMinLikes', 4),
@@ -595,38 +664,51 @@ export function createCollectorRequestHandler(
   };
 }
 
-export function startServer(client: InstagramClient, page: Page): void {
-  const server = createServer(createCollectorRequestHandler(client, page));
+export function startServer(
+  client: InstagramClient,
+  pageRef: { page: Page },
+  rebindPersistence: (newPage: Page) => void
+): void {
+  const handler = createCollectorRequestHandler(client, pageRef, rebindPersistence);
 
-  const attemptListen = (port: number): void => {
+  const attemptListen = (retriedAfterKill: boolean): void => {
+    const server = createServer(handler);
     const onError = (err: NodeJS.ErrnoException): void => {
-      server.off('error', onError);
-      if (err.code === 'EADDRINUSE' && port < PORT + PORT_TRY_MAX) {
-        console.warn(`[Collector] Porta ${port} em uso — tentando ${port + 1}...`);
-        attemptListen(port + 1);
+      server.removeListener('error', onError);
+      try {
+        server.close();
+      } catch {
+        /* */
+      }
+      if (err.code === 'EADDRINUSE' && !retriedAfterKill) {
+        console.warn(
+          `[Collector] Porta ${PORT} ainda em uso — encerrando processo(s) na porta e tentando de novo...`
+        );
+        freePortForUi(PORT);
+        setTimeout(() => attemptListen(true), 600);
         return;
       }
       console.error(
         '\n[Collector] Não foi possível abrir a interface HTTP.',
         err.code === 'EADDRINUSE'
-          ? `\n  Feche o outro programa na porta ${PORT} ou defina COLLECTOR_UI_PORT=3970 no .env\n`
+          ? `\n  A porta ${PORT} continua ocupada (outro app ou sem permissão para encerrar o processo).\n  Feche manualmente ou altere COLLECTOR_UI_PORT no .env\n`
           : err.message
       );
       process.exit(1);
     };
     server.on('error', onError);
-    server.listen(port, '0.0.0.0', () => {
-      server.off('error', onError);
-      uiListenPort = port;
+    server.listen(PORT, '0.0.0.0', () => {
+      server.removeListener('error', onError);
+      uiListenPort = PORT;
       console.log('\n' + '='.repeat(56));
       console.log('[Collector] Abra no navegador:');
-      console.log(`   http://127.0.0.1:${port}/`);
-      console.log(`   http://localhost:${port}/`);
-      if (port !== PORT) {
-        console.log(`   (porta ${PORT} estava ocupada — usando ${port})`);
-      }
+      console.log(`   http://127.0.0.1:${PORT}/`);
+      console.log(`   http://localhost:${PORT}/`);
       console.log('='.repeat(56) + '\n');
     });
   };
-  attemptListen(PORT);
+
+  console.log(`[Collector] Garantindo porta ${PORT} da interface (encerrando listener anterior, se houver)...`);
+  freePortForUi(PORT);
+  setTimeout(() => attemptListen(false), 400);
 }

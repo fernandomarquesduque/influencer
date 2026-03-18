@@ -13,14 +13,21 @@ if (existsSync(resolve(root, '.env'))) {
   dotenv.config({ path: resolve(root, '.env') });
 }
 
-import type { Page } from 'playwright';
+import type { Frame, Page } from 'playwright';
 import { InstagramClient } from './instagram.js';
 import { loadConfig } from './config.js';
 import { startServer } from './server.js';
 import { getCollectorApiBase, isRemoteIngestConfigured } from './serverIngest.js';
 
-/** Grava cookies no disco quando estiver logado — após navegar, a cada poucos minutos e ao sair (Ctrl+C). */
-function setupSessionPersistence(client: InstagramClient, page: Page, authStatePath: string): void {
+/**
+ * Grava cookies no disco quando estiver logado.
+ * Retorna função para reassociar o listener quando `pageRef.page` for trocada (browser reaberto).
+ */
+function setupSessionPersistence(
+  client: InstagramClient,
+  pageRef: { page: Page },
+  authStatePath: string
+): (newPage: Page) => void {
   let debounce: ReturnType<typeof setTimeout> | null = null;
   let lastSaveLog = 0;
 
@@ -44,9 +51,21 @@ function setupSessionPersistence(client: InstagramClient, page: Page, authStateP
     }, 10_000);
   };
 
-  page.on('framenavigated', (frame) => {
-    if (frame === page.mainFrame()) scheduleDebounced();
-  });
+  const onFrame = (frame: Frame): void => {
+    try {
+      const p = pageRef.page;
+      if (p.isClosed()) return;
+      if (frame === p.mainFrame()) scheduleDebounced();
+    } catch {
+      /* */
+    }
+  };
+
+  const attach = (p: Page): void => {
+    p.on('framenavigated', onFrame);
+  };
+
+  attach(pageRef.page);
 
   setInterval(() => {
     void trySave('automático (3 min)');
@@ -66,6 +85,16 @@ function setupSessionPersistence(client: InstagramClient, page: Page, authStateP
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  return (newPage: Page) => {
+    try {
+      pageRef.page.off('framenavigated', onFrame);
+    } catch {
+      /* */
+    }
+    pageRef.page = newPage;
+    attach(newPage);
+  };
 }
 
 async function main(): Promise<void> {
@@ -86,10 +115,10 @@ async function main(): Promise<void> {
   });
 
   await client.init();
-  const page = await client.newPage();
-  await page.goto(InstagramClient.homeFeedUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+  const pageRef: { page: Page } = { page: await client.newPage() };
+  await pageRef.page.goto(InstagramClient.homeFeedUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-  const currentUrl = page.url();
+  const currentUrl = pageRef.page.url();
   if (currentUrl.includes('/accounts/login/') || currentUrl.includes('/challenge/')) {
     console.log('Faça login manualmente na janela do browser que abriu.');
     console.log('A sessão será salva automaticamente em:', config.authStatePath);
@@ -98,8 +127,8 @@ async function main(): Promise<void> {
     console.log('Instagram aberto (sessão restaurada). Navegue à vontade.');
   }
 
-  setupSessionPersistence(client, page, config.authStatePath);
-  startServer(client, page);
+  const rebindPersistence = setupSessionPersistence(client, pageRef, config.authStatePath);
+  startServer(client, pageRef, rebindPersistence);
   console.log('Sessão: gravada ao navegar, a cada ~3 min e ao sair com Ctrl+C.');
   console.log('Para encerrar: Ctrl+C (recomendado para salvar antes de fechar).');
 }

@@ -30,7 +30,7 @@ export function loadConfig(): CollectorConfig {
     DEFAULT_MIN_POSTS_WITH_LIKES;
 
   const maxPostsPerTag = parseInt(process.env.MAX_POSTS_PER_TAG ?? '30', 10) || 30;
-  const maxProfiles = parseInt(process.env.MAX_PROFILES ?? '100', 10) || 100;
+  const maxProfiles = parseInt(process.env.MAX_PROFILES ?? '19999', 10) || 19999;
   /** Por padrão o browser abre visível (login manual no Instagram). HEADLESS=true para ocultar. */
   const headless = process.env.HEADLESS === 'true';
   const authStatePath = process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json';
@@ -82,7 +82,7 @@ export function mergeCollectorConfig(
         : base.maxPostsPerTag,
     maxProfiles:
       overrides.maxProfiles !== undefined
-        ? clamp(overrides.maxProfiles, 1, 500)
+        ? clamp(overrides.maxProfiles, 1, 100_000)
         : base.maxProfiles,
     excludeBusinessProfiles:
       overrides.excludeBusinessProfiles !== undefined
