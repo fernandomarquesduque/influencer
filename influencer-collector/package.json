@@ -1,0 +1,26 @@
+{
+  "name": "influencer-collector",
+  "version": "1.0.0",
+  "description": "Coletor de influenciadores em memória — browser abre no Instagram; usuário navega e liga a coleta quando quiser (Mac/Windows)",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "collect": "tsx src/index.ts",
+    "verify": "tsx src/scripts/verify.ts",
+    "test": "npm run build && npm run verify"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.49.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
