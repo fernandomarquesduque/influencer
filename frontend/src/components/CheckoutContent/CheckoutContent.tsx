@@ -126,9 +126,6 @@ export default function CheckoutContent({
   const totalCents = pricePreview?.amountCents ?? 0
   const priceReady = pricePreview != null
 
-  /** Usuário pode seguir para pagamento se e-mail está validado. Backend pode não enviar email_verified; tratamos undefined como permitido (compatibilidade). */
-  const canProceedToPayment = user?.emailVerified !== false
-
   const handleSignup = async () => {
     setError(null)
     if (!guestEmail.trim() || !guestEmail.includes('@')) {
@@ -158,7 +155,7 @@ export default function CheckoutContent({
         displayName: res.user.display_name ?? null,
         emailVerified: res.user.email_verified,
       })
-      setGuestStep('verify-email')
+      setGuestStep('payment')
       void refreshCredits()
     } catch (e) {
       setError((e as Error).message)
@@ -246,7 +243,7 @@ export default function CheckoutContent({
     setError(null)
     setLoading(true)
     try {
-      const res = await createCampaign(query, { maxHandles: desiredCount, expiresAt })
+      const res = await createCampaign(query, { maxHandles: desiredCount, expiresAt, name: query.q?.trim() || undefined })
       if (res.campaignId && onSuccess) {
         void refreshCredits()
         onSuccess(res.campaignId)
@@ -455,30 +452,6 @@ export default function CheckoutContent({
           </Button>
           <Button block type="link" size="small" onClick={handleTrocarEmail}>
             Trocar e-mail
-          </Button>
-          {!embed && <Button block onClick={onCancel}>Fechar</Button>}
-        </Space>
-      </div>
-    )
-  }
-
-  // ——— Usuário logado mas e-mail não validado: bloquear pagamento
-  if (user && !canProceedToPayment && guestStep !== 'verify-email') {
-    return (
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
-        <Alert
-          type="warning"
-          message="Você precisa validar seu e-mail antes de concluir a compra."
-          description="Valide sua conta pelo link enviado ao seu e-mail para continuar."
-          showIcon
-          style={{ marginBottom: 20 }}
-        />
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Button type="primary" block loading={loading} onClick={handleAlreadyVerified}>
-            Já validei meu e-mail
-          </Button>
-          <Button block loading={loading} onClick={handleResendVerification}>
-            Reenviar e-mail de validação
           </Button>
           {!embed && <Button block onClick={onCancel}>Fechar</Button>}
         </Space>

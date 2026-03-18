@@ -17,6 +17,8 @@ export function isCampaignIdGuid(id: string): boolean {
   return typeof id === 'string' && UUID_REGEX.test(id);
 }
 
+export type CampaignPaymentStatus = 'pending' | 'paid';
+
 export interface CampaignRow {
   id: string;
   user_id: number;
@@ -27,6 +29,7 @@ export interface CampaignRow {
   credits_used: number;
   created_at: string;
   expires_at: string;
+  payment_status: CampaignPaymentStatus;
 }
 
 export class CreditsCampaignsDb {
@@ -71,6 +74,14 @@ export class CreditsCampaignsDb {
     this.migrateCampaignIdToGuid();
     this.migrateCampaignDescription();
     this.migrateCampaignExpiresAt();
+    this.migrateCampaignPaymentStatus();
+  }
+
+  /** Adiciona payment_status: 'pending' (nova campanha) | 'paid'. Campanhas existentes = 'paid'. */
+  private migrateCampaignPaymentStatus(): void {
+    const info = this.db.prepare('PRAGMA table_info(campaign)').all() as { name: string }[];
+    if (info.some((c) => c.name === 'payment_status')) return;
+    this.db.exec('ALTER TABLE campaign ADD COLUMN payment_status TEXT NOT NULL DEFAULT \'paid\'');
   }
 
   /** Adiciona coluna expires_at se não existir; backfill com 1 ano após created_at. */
@@ -152,10 +163,17 @@ export class CreditsCampaignsDb {
     const handlesJson = JSON.stringify(handles);
     const expires = expiresAt && /^\d{4}-\d{2}-\d{2}$/.test(expiresAt) ? expiresAt : this.defaultExpiresAt();
     this.db.prepare(`
-      INSERT INTO campaign (id, user_id, name, description, handles_json, handles_count, credits_used, created_at, expires_at)
-      VALUES (?, ?, ?, NULL, ?, ?, ?, datetime('now'), ?)
+      INSERT INTO campaign (id, user_id, name, description, handles_json, handles_count, credits_used, created_at, expires_at, payment_status)
+      VALUES (?, ?, ?, NULL, ?, ?, ?, datetime('now'), ?, 'pending')
     `).run(id, userId, name ?? null, handlesJson, handles.length, creditsUsed, expires);
     return id;
+  }
+
+  setCampaignPaymentStatus(campaignId: string, userId: number, status: CampaignPaymentStatus): boolean {
+    const result = this.db.prepare(`
+      UPDATE campaign SET payment_status = ? WHERE id = ? AND user_id = ?
+    `).run(status, campaignId, userId);
+    return result.changes > 0;
   }
 
   private defaultExpiresAt(): string {
@@ -166,18 +184,28 @@ export class CreditsCampaignsDb {
 
   getCampaign(campaignId: string, userId: number): CampaignRow | null {
     const row = this.db.prepare(`
-      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at
+      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
       FROM campaign WHERE id = ? AND user_id = ?
     `).get(campaignId, userId) as CampaignRow | undefined;
     return row ?? null;
   }
 
-  /** Retorna a campanha apenas se ainda estiver ativa (não expirada). Usado para autorizar acesso a dados. */
+  /** Retorna a campanha apenas se ainda estiver ativa (não expirada). Inclui pendentes de pagamento. */
   getCampaignIfActive(campaignId: string, userId: number): CampaignRow | null {
     const row = this.db.prepare(`
-      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at
+      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
       FROM campaign
       WHERE id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at >= date('now'))
+    `).get(campaignId, userId) as CampaignRow | undefined;
+    return row ?? null;
+  }
+
+  /** Retorna a campanha apenas se ativa e paga. Usado para autorizar acesso a relatório (perfis, BI). */
+  getCampaignIfActiveAndPaid(campaignId: string, userId: number): CampaignRow | null {
+    const row = this.db.prepare(`
+      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
+      FROM campaign
+      WHERE id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at >= date('now')) AND (payment_status IS NULL OR payment_status = 'paid')
     `).get(campaignId, userId) as CampaignRow | undefined;
     return row ?? null;
   }
@@ -230,7 +258,7 @@ export class CreditsCampaignsDb {
     }
   }
 
-  /** Retorna os handles apenas se a campanha estiver ativa (não expirada). Usado para autorizar acesso. */
+  /** Retorna os handles apenas se a campanha estiver ativa (não expirada). Usado para checkout e listagem. */
   getCampaignHandlesIfActive(campaignId: string, userId: number): string[] | null {
     const camp = this.getCampaignIfActive(campaignId, userId);
     if (!camp) return null;
@@ -242,9 +270,21 @@ export class CreditsCampaignsDb {
     }
   }
 
+  /** Retorna os handles apenas se a campanha estiver ativa e paga. Usado para acesso ao relatório. */
+  getCampaignHandlesIfActiveAndPaid(campaignId: string, userId: number): string[] | null {
+    const camp = this.getCampaignIfActiveAndPaid(campaignId, userId);
+    if (!camp) return null;
+    try {
+      const arr = JSON.parse(camp.handles_json) as string[];
+      return Array.isArray(arr) ? arr : null;
+    } catch {
+      return null;
+    }
+  }
+
   listCampaigns(userId: number): CampaignRow[] {
     return this.db.prepare(`
-      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at
+      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
       FROM campaign WHERE user_id = ? AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY created_at DESC
     `).all(userId) as CampaignRow[];
   }
@@ -253,5 +293,12 @@ export class CreditsCampaignsDb {
   deleteCampaign(campaignId: string, userId: number): boolean {
     const result = this.db.prepare('DELETE FROM campaign WHERE id = ? AND user_id = ?').run(campaignId, userId);
     return result.changes > 0;
+  }
+
+  /** LGPD: remove todos os dados do usuário (transações, campanhas, saldo) antes de excluir auth_user. */
+  deleteAllByUserId(userId: number): void {
+    this.db.prepare('DELETE FROM credit_transaction WHERE user_id = ?').run(userId);
+    this.db.prepare('DELETE FROM campaign WHERE user_id = ?').run(userId);
+    this.db.prepare('DELETE FROM user_credits WHERE user_id = ?').run(userId);
   }
 }

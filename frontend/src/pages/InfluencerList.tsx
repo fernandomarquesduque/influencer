@@ -561,34 +561,6 @@ export default function InfluencerList() {
     })
   }
 
-  if (!hasMandatoryFilters) {
-    return (
-      <div>
-        <SearchWizard
-          initialFacets={wizardInitialFacets}
-          initialSearchTerm={parsedUrl.q ?? ''}
-          initialFilters={
-            (parsedUrl.q || parsedUrl.categories?.length)
-              ? {
-                q: parsedUrl.q ?? undefined,
-                categories: parsedUrl.categories?.length ? (Array.isArray(parsedUrl.categories) ? parsedUrl.categories : [parsedUrl.categories]) : undefined,
-                minFollowers: parsedUrl.minFollowers,
-                maxFollowers: parsedUrl.maxFollowers,
-                excludePrivate: parsedUrl.excludePrivate,
-                accountTypeFilter: parsedUrl.accountTypeFilter,
-                activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
-              }
-              : undefined
-          }
-          onSearchTermChange={handleWizardSearchTermChange}
-          onFiltersChange={handleWizardFiltersChange}
-          onEstimate={handleWizardEstimate}
-          onComplete={handleWizardComplete}
-        />
-      </div>
-    )
-  }
-
   const showDashboard = hasMandatoryFilters && listViewFromHash === 'dashboard'
 
   const doCreateCampaignAndRedirect = useCallback(() => {
@@ -596,7 +568,7 @@ export default function InfluencerList() {
     expiresAt.setFullYear(expiresAt.getFullYear() + 1)
     const expiresAtStr = expiresAt.toISOString().slice(0, 10)
     setCreatingCampaign(true)
-    return createCampaign(query, { maxHandles: total, expiresAt: expiresAtStr })
+    return createCampaign(query, { maxHandles: total, expiresAt: expiresAtStr, name: query.q?.trim() || undefined })
       .then((res) => {
         if (res.campaignId) {
           setReportModalOpen(false)
@@ -611,15 +583,15 @@ export default function InfluencerList() {
 
   const handleViewListAndReport = useCallback(() => {
     if (total < 1 || creatingCampaign) return
-    setSignupError(null)
-    setReportModalOpen(true)
-  }, [total, creatingCampaign])
-
-  const handleReportModalSubmit = useCallback(async () => {
     if (user) {
       doCreateCampaignAndRedirect()
       return
     }
+    setSignupError(null)
+    setReportModalOpen(true)
+  }, [total, creatingCampaign, user, doCreateCampaignAndRedirect])
+
+  const handleReportModalSubmit = useCallback(async () => {
     setSignupError(null)
     if (!signupEmail.trim() || !signupEmail.includes('@')) {
       setSignupError('Informe um e-mail válido.')
@@ -654,7 +626,35 @@ export default function InfluencerList() {
     } finally {
       setSignupLoading(false)
     }
-  }, [user, signupEmail, signupName, signupPassword, signupPasswordConfirm, loginWithToken, doCreateCampaignAndRedirect])
+  }, [signupEmail, signupName, signupPassword, signupPasswordConfirm, loginWithToken, doCreateCampaignAndRedirect])
+
+  if (!hasMandatoryFilters) {
+    return (
+      <div>
+        <SearchWizard
+          initialFacets={wizardInitialFacets}
+          initialSearchTerm={parsedUrl.q ?? ''}
+          initialFilters={
+            (parsedUrl.q || parsedUrl.categories?.length)
+              ? {
+                q: parsedUrl.q ?? undefined,
+                categories: parsedUrl.categories?.length ? (Array.isArray(parsedUrl.categories) ? parsedUrl.categories : [parsedUrl.categories]) : undefined,
+                minFollowers: parsedUrl.minFollowers,
+                maxFollowers: parsedUrl.maxFollowers,
+                excludePrivate: parsedUrl.excludePrivate,
+                accountTypeFilter: parsedUrl.accountTypeFilter,
+                activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
+              }
+              : undefined
+          }
+          onSearchTermChange={handleWizardSearchTermChange}
+          onFiltersChange={handleWizardFiltersChange}
+          onEstimate={handleWizardEstimate}
+          onComplete={handleWizardComplete}
+        />
+      </div>
+    )
+  }
 
   if (showDashboard) {
     return (
@@ -694,7 +694,7 @@ export default function InfluencerList() {
           loading={loading}
         />
         <Modal
-          title={user ? 'Criar relatório e ver lista' : 'Cadastre-se para acessar o relatório'}
+          title="Cadastre-se para acessar o relatório"
           open={reportModalOpen}
           onCancel={() => {
             if (!signupLoading && !creatingCampaign) setReportModalOpen(false)
@@ -703,17 +703,7 @@ export default function InfluencerList() {
           destroyOnClose
           width={420}
         >
-          {user ? (
-            <div style={{ padding: '8px 0' }}>
-              <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                Será criada uma campanha com até {total.toLocaleString('pt-BR')} perfis. Você poderá ver a lista completa e acessar o relatório.
-              </Text>
-              <Button type="primary" size="large" block loading={creatingCampaign} onClick={handleReportModalSubmit} style={{ borderRadius: 8 }}>
-                Criar relatório e ver lista
-              </Button>
-            </div>
-          ) : (
-            <Form layout="vertical" style={{ marginTop: 8 }}>
+          <Form layout="vertical" style={{ marginTop: 8 }}>
               <Form.Item label="Nome">
                 <Input
                   placeholder="Seu nome"
@@ -765,7 +755,6 @@ export default function InfluencerList() {
                 Cadastrar e criar relatório
               </Button>
             </Form>
-          )}
         </Modal>
       </div>
     )

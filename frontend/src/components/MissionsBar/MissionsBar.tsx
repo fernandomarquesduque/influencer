@@ -1,5 +1,5 @@
 import { Button, message } from 'antd'
-import { MailOutlined, InstagramOutlined, CheckCircleOutlined, GiftOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, GiftOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { resendVerificationEmail } from '../../api'
@@ -113,8 +113,12 @@ export default function MissionsBar() {
                 style={{ fontSize: 12, height: 28, fontWeight: 600 }}
                 onClick={async () => {
                   try {
-                    await resendVerificationEmail()
-                    message.success('E-mail reenviado.')
+                    const { email_sent } = await resendVerificationEmail()
+                    if (email_sent !== false) {
+                      message.success('E-mail reenviado. Verifique a caixa de entrada e a pasta de spam.')
+                    } else {
+                      message.warning('Não foi possível enviar o e-mail. Tente novamente mais tarde.')
+                    }
                   } catch (e) {
                     message.error(e instanceof Error ? e.message : 'Falha ao reenviar')
                   }

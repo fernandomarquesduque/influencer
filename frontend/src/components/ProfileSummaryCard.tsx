@@ -365,7 +365,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
               {location}
             </div>
           )}
-          {variant !== 'list' && ((item.activation?.content_type && item.activation.content_type.length > 0) || categories.length > 0 || ((item as { account_type?: number }).account_type != null && (item as { account_type?: number }).account_type >= 1 && (item as { account_type?: number }).account_type <= 3)) && (
+          {variant !== 'list' && ((item.activation?.content_type && item.activation.content_type.length > 0) || (categories?.length ?? 0) > 0 || (() => { const at = (item as { account_type?: number }).account_type; return at != null && at >= 1 && at <= 3; })()) && (
             <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 4, marginTop: 8 }}>
               {item.activation?.content_type && item.activation.content_type.length > 0
                 ? (() => {
@@ -384,8 +384,8 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                     </>
                   )
                 })()
-                : categories.length > 0
-                  ? categories.slice(0, 3).map((c, i) => {
+                : (categories?.length ?? 0) > 0
+                  ? (categories ?? []).slice(0, 3).map((c, i) => {
                     const tagColors = ['blue', 'green', 'orange'] as const
                     return (
                       <Tag key={c} color={tagColors[i % 3]} style={{ margin: 0, fontSize: 10, borderRadius: 4 }}>

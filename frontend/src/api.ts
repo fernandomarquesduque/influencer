@@ -566,7 +566,12 @@ export async function createCampaign(
   const res = await fetch(`${API_BASE}/campaigns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ query, name: options?.name, maxHandles: options?.maxHandles, expiresAt: options?.expiresAt }),
+    body: JSON.stringify({
+      query,
+      name: options?.name ?? (query?.q ? String(query.q).trim() || undefined : undefined),
+      maxHandles: options?.maxHandles,
+      expiresAt: options?.expiresAt,
+    }),
     signal: options?.signal,
   })
   const data = await res.json().catch(() => ({}))
@@ -605,8 +610,11 @@ export interface CampaignInfo {
   description: string | null
   handlesCount: number
   credits_used: number
+  /** Quando campanha está paga, igual a credits_used; quando pendente, 0. Use para calcular quantidade não paga. */
+  creditsPaid?: number
   created_at: string
   expires_at: string
+  paymentStatus?: 'pending' | 'paid'
   pendingPayment?: {
     status: string
     billingType: string | null
@@ -866,6 +874,7 @@ export async function fetchCampaignProfiles(
   if (query.pricingStory?.length) params.set('pricingStory', query.pricingStory.join(','))
   if (query.pricingDestaque?.length) params.set('pricingDestaque', query.pricingDestaque.join(','))
   if (query.costTierFilter?.length) params.set('costTierFilter', query.costTierFilter.join(','))
+  if (query.sizeFilter?.length) params.set('sizeFilter', query.sizeFilter.join(','))
   if (query.sort) params.set('sort', query.sort)
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))
@@ -1537,7 +1546,7 @@ export async function saveProfileActivation(handle: string, data: Omit<ProfileAc
  * CONTRATO BACKEND: ao criar o usuário, o backend deve disparar e-mail de validação e marcar o usuário como email_verified: false.
  * O endpoint GET /api/auth/me deve retornar user.email_verified (boolean) para o frontend bloquear pagamento até validação.
  */
-export async function registerAssinanteApi(params: { email: string; password: string; name?: string }): Promise<{ token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null } }> {
+export async function registerAssinanteApi(params: { email: string; password: string; name?: string }): Promise<{ token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null }; email_sent?: boolean }> {
   const res = await fetch(`${API_BASE}/auth/register-assinante`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1549,21 +1558,21 @@ export async function registerAssinanteApi(params: { email: string; password: st
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao cadastrar')
-  return data as { token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null } }
+  return data as { token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null }; email_sent?: boolean }
 }
 
 /** Onboarding por e-mail no checkout: apenas cadastro (nome, e-mail, senha). Não cria pagamento.
  * Usa registerAssinanteApi. Backend deve enviar e-mail de validação ao criar a conta.
  */
-export async function registerCheckoutUser(params: { email: string; password: string; name?: string }): Promise<{ token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null } }> {
+export async function registerCheckoutUser(params: { email: string; password: string; name?: string }): Promise<{ token: string; user: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean; display_name?: string | null }; email_sent?: boolean }> {
   return registerAssinanteApi(params)
 }
 
 /** Reenviar e-mail de validação para o usuário logado.
  * CONTRATO BACKEND: POST /api/auth/resend-verification (Authorization: Bearer token).
- * Resposta esperada: { ok: true } ou { error: string }.
+ * Resposta: { ok: true, email_sent?: boolean } ou { error: string }.
  */
-export async function resendVerificationEmail(options?: { signal?: AbortSignal }): Promise<void> {
+export async function resendVerificationEmail(options?: { signal?: AbortSignal }): Promise<{ email_sent?: boolean }> {
   const res = await fetch(`${API_BASE}/auth/resend-verification`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -1571,6 +1580,7 @@ export async function resendVerificationEmail(options?: { signal?: AbortSignal }
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao reenviar e-mail')
+  return { email_sent: (data as { email_sent?: boolean }).email_sent }
 }
 
 /** Valida e-mail pelo token (link no e-mail). Backend concede 10 créditos (missão 1). */

@@ -381,6 +381,11 @@ export class SqliteSync {
     return !!row;
   }
 
+  /** LGPD: remove todos os favoritos do usuário antes de excluir auth_user. */
+  deleteAllFavoritesByUserId(userId: number): void {
+    this.db.prepare('DELETE FROM user_favorite WHERE user_id = ?').run(userId);
+  }
+
   /** Remove candidaturas do perfil em projetos (LGPD: exclusão de conta). */
   deleteProjectApplicationsByHandle(profileHandle: string): void {
     const handle = profileHandle.toLowerCase().replace(/^@/, '');
@@ -751,6 +756,13 @@ export class SqliteSync {
   deleteAllDirectQueue(): number {
     const info = this.db.prepare('DELETE FROM direct_queue').run();
     return info.changes;
+  }
+
+  /** LGPD: remove todas as entradas da fila de DM associadas ao handle (exclusão de conta). */
+  deleteDirectQueueByHandle(profileHandle: string): void {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    if (!handle) return;
+    this.db.prepare('DELETE FROM direct_queue WHERE profile_handle = ?').run(handle);
   }
 
   /** Remove um item da fila por id. Retorna true se removeu. */

@@ -471,6 +471,8 @@ export interface ProfilesSearchQuery {
   pricingDestaque?: number[];
   /** Filtro por faixa de preço: low = abaixo da média, medium = normal, high | very_high = acima da média. */
   costTierFilter?: string[];
+  /** Filtro por tamanho (seguidores): nano (<10k), micro (10k–50k), mid/medio (50k–200k), macro (200k+). */
+  sizeFilter?: string[];
   /** Ordenação: relevance_desc | engagement_desc | engagement_asc | followers_desc | followers_asc | avg_likes_desc | avg_likes_asc | total_likes_desc | total_likes_asc */
   sort?: string;
   limit?: number;
@@ -612,6 +614,8 @@ export interface SearchProfilesOptions {
   restrictToHandles?: string[];
   /** Quando definido, usa esta lista em vez de carregar do DB (filtros/ordenação/facets aplicados em cima). */
   initialItems?: ProfileListItem[];
+  /** Permite limit até 10000 numa única chamada (ex.: criação de campanha). Evita loop de paginação. */
+  allowLargeLimit?: boolean;
 }
 
 /** Filtra e ordena perfis; retorna lista com engajamento e facets para sumarização. */
@@ -624,7 +628,7 @@ export async function searchProfiles(
     ? new Set(options.restrictToHandles.map((h) => String(h).toLowerCase().replace(/^@/, '')))
     : null;
   const isCampaignScope = !!(options?.restrictToHandles?.length || options?.initialItems?.length);
-  const limitCap = isCampaignScope ? 10000 : 200;
+  const limitCap = options?.allowLargeLimit ? 10000 : isCampaignScope ? 10000 : 200;
   const limit = Math.min(Math.max(0, Number(query.limit) || 50), limitCap);
   const offset = Math.max(0, Number(query.offset) || 0);
   const sort = (query.sort || 'engagement_desc').toLowerCase();
@@ -665,6 +669,10 @@ export async function searchProfiles(
   const costTierFilter = costTierFilterRaw.filter((s): s is CostTier =>
     (['low', 'medium', 'high', 'very_high'] as const).includes(s as CostTier)
   ) as CostTier[];
+  const sizeFilterRaw = parseStringArray(query.sizeFilter).map((s) => s.toLowerCase());
+  const sizeFilterSet = sizeFilterRaw.length > 0
+    ? new Set(sizeFilterRaw.map((s) => (s === 'mid' ? 'medio' : s)))
+    : null;
   const includeFacets = query.includeFacets !== false;
 
   const useInitialItems = options?.initialItems != null && options.initialItems.length > 0;
@@ -934,6 +942,18 @@ export async function searchProfiles(
         tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
       }
       return tier != null && tierSet.has(tier);
+    });
+  }
+
+  if (sizeFilterSet != null && sizeFilterSet.size > 0) {
+    filteredItems = filteredItems.filter((i) => {
+      const fc = i.followers_count ?? 0;
+      const key =
+        fc < 10_000 ? 'nano'
+        : fc < 50_000 ? 'micro'
+        : fc < 200_000 ? 'medio'
+        : 'macro';
+      return sizeFilterSet.has(key);
     });
   }
 

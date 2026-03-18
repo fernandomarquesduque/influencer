@@ -119,14 +119,14 @@ export class AuthDb {
     return row;
   }
 
-  createUser(username: string, passwordHash: string, scope: AuthScope, profileHandle: string | null = null, displayName?: string | null): number {
+  createUser(username: string, passwordHash: string, scope: AuthScope, profileHandle: string | null = null, displayName?: string | null, emailVerified: number = 1): number {
     const u = username.replace(/^@/, '').trim().toLowerCase();
     if (!u) throw new Error('Username inválido');
     const stmt = this.db.prepare(`
-      INSERT INTO auth_user (username, password_hash, scope, profile_handle, display_name)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO auth_user (username, password_hash, scope, profile_handle, display_name, email_verified)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
-    const info = stmt.run(u, passwordHash, scope, profileHandle ?? null, displayName != null && displayName !== '' ? displayName.trim() : null);
+    const info = stmt.run(u, passwordHash, scope, profileHandle ?? null, displayName != null && displayName !== '' ? displayName.trim() : null, emailVerified);
     return info.lastInsertRowid as number;
   }
 
@@ -222,6 +222,11 @@ export class AuthDb {
   clearProfileVerification(handle: string): void {
     const h = handle.replace(/^@/, '').trim().toLowerCase();
     this.db.prepare('DELETE FROM auth_profile_verification WHERE handle = ?').run(h);
+  }
+
+  /** LGPD: remove códigos de verificação associados ao user_id antes de excluir auth_user. */
+  clearProfileVerificationByUserId(userId: number): void {
+    this.db.prepare('DELETE FROM auth_profile_verification WHERE user_id = ?').run(userId);
   }
 
   close(): void {

@@ -18,7 +18,8 @@
     "create-admin:server": "node dist/scripts/create-admin.js",
     "seed-projects": "tsx scripts/seed-projects.ts",
     "router-port-forward": "tsx src/scripts/router-port-forward.ts",
-    "test:request-code": "tsx scripts/test-request-code-with-extract.ts"
+    "test:request-code": "tsx scripts/test-request-code-with-extract.ts",
+    "test:email": "tsx src/scripts/test-email.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^4.17.21",
+    "@types/nodemailer": "^6.4.16",
     "@types/node": "^22.10.0",
     "@types/swagger-ui-express": "^4.1.6",
     "tsx": "^4.19.2",

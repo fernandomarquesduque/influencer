@@ -591,11 +591,12 @@ export default function CampaignInfluencers() {
   const maxQuantity = pendingPayment
     ? Math.max(1, total > 0 ? total : (campaignInfo?.handlesCount ?? 1))
     : 1
-  const creditsUsed = campaignInfo?.credits_used ?? 0
-  const unpaidQuantity = Math.max(0, maxQuantity - creditsUsed)
+  const creditsPaid = campaignInfo?.creditsPaid ?? campaignInfo?.credits_used ?? 0
+  const unpaidQuantity = Math.max(0, maxQuantity - creditsPaid)
   const balance = creditsContext?.balance ?? 0
-  const canPayFullWithCredits = unpaidQuantity > 0 && balance >= unpaidQuantity
-  const creditsToApply = canPayFullWithCredits ? unpaidQuantity : 0
+  const creditsToApply = pendingPayment && unpaidQuantity > 0 && balance > 0
+    ? Math.min(balance, unpaidQuantity)
+    : 0
 
   useEffect(() => {
     if (!authLoading && !user) {

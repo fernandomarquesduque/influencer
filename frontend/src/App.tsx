@@ -1,8 +1,7 @@
 import { useEffect } from 'react'
-import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { CreditsProvider } from './contexts/CreditsContext'
-import { ListCacheProvider } from './contexts/ListCacheContext'
 import { RequireAuth } from './components/RequireAuth'
 import Layout from './Layout'
 
@@ -40,7 +39,6 @@ import Login from './pages/Login'
 import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
 import ListAndDetailModal from './pages/ListAndDetailModal'
-import Checkout from './pages/Checkout'
 import MyCampaigns from './pages/MyCampaigns'
 import CampaignInfluencers from './pages/CampaignInfluencers'
 import InfluencerDetail from './pages/InfluencerDetail'
@@ -50,7 +48,6 @@ import ExtractProfile from './pages/ExtractProfile'
 import Activate from './pages/Activate'
 import Auth from './pages/Auth'
 import AuthPassword from './pages/AuthPassword'
-import AuthRejected from './pages/AuthRejected'
 import MediaKit from './pages/MediaKit'
 import SendMessage from './pages/SendMessage'
 import BulkMessage from './pages/BulkMessage'
@@ -61,17 +58,6 @@ import VerifyEmail from './pages/VerifyEmail'
 import MissionReward from './pages/MissionReward'
 import LinkInstagramMission from './pages/LinkInstagramMission'
 import Logo from './components/Logo'
-
-function RedirectInfluencerToApp() {
-  const { handle } = useParams<{ handle: string }>()
-  return <Navigate to={handle ? `/app/influencer/${handle}` : '/app'} replace />
-}
-
-function RedirectValidarToCreate() {
-  const location = useLocation()
-  const search = location.search || ''
-  return <Navigate to={`/app/create${search}`} replace />
-}
 
 export default function App() {
   return (

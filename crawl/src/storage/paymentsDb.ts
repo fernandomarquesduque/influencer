@@ -93,6 +93,11 @@ export class PaymentsDb {
     }
   }
 
+  /** LGPD: remove todos os pagamentos do usuário antes de excluir auth_user. */
+  deleteAllByUserId(userId: number): void {
+    this.db.prepare('DELETE FROM payment WHERE user_id = ?').run(userId);
+  }
+
   createPayment(params: {
     userId: number;
     asaasPaymentId: string | null;

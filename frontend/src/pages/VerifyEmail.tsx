@@ -9,8 +9,6 @@ export default function VerifyEmail() {
   const token = searchParams.get('token') ?? ''
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
   const [errorMsg, setErrorMsg] = useState<string>('')
-  const [credits, setCredits] = useState<number>(0)
-
   useEffect(() => {
     if (!token) {
       setStatus('error')
@@ -21,7 +19,6 @@ export default function VerifyEmail() {
     verifyEmailByToken(token)
       .then((data) => {
         if (cancelled) return
-        setCredits(data.credits)
         setStatus('success')
         navigate(`/missions/reward?type=email&credits=${data.credits}`, { replace: true })
       })
@@ -45,7 +42,7 @@ export default function VerifyEmail() {
   if (status === 'error') {
     return (
       <div style={{ maxWidth: 400, margin: '60px auto', padding: 24 }}>
-        <Alert type="error" message="Não foi possível validar" description={errorMsg} showIcon style={{ marginBottom: 16 }} />
+        <Alert type="error" message="Não foi possível validar" description={<><div>{errorMsg}</div><div style={{ marginTop: 8, fontSize: 13, color: 'var(--app-text-secondary)' }}>Se não recebeu o e-mail, verifique a pasta de spam. Dentro do app você pode usar &quot;Reenviar link&quot; na barra de recompensas.</div></>} showIcon style={{ marginBottom: 16 }} />
         <Button type="primary" block onClick={() => navigate('/')}>Ir para o início</Button>
       </div>
     )

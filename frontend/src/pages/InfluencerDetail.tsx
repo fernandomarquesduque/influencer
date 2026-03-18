@@ -416,8 +416,8 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     for (const [actKey, tipoKey] of Object.entries(keyMap)) {
       const val = p ? parseNum(p[actKey]) : null
       if (val != null) {
-        const original = (rocks as Record<string, { min: number; max: number; porque?: string }>)[tipoKey]
-        ;(out as Record<string, { min: number; max: number; porque?: string }>)[tipoKey] = {
+        const original = (rocks as unknown as Record<string, { min: number; max: number; porque?: string }>)[tipoKey]
+        ;(out as unknown as Record<string, { min: number; max: number; porque?: string }>)[tipoKey] = {
           min: val,
           max: val,
           porque: original?.porque ?? '',
