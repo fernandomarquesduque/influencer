@@ -1,8 +1,8 @@
 /**
- * Descoberta de perfis por hashtag, feed ou explore.
+ * Descoberta de perfis por hashtag, feed, explore ou busca Google (site:instagram.com).
  */
 
-import type { Page } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
 import { InstagramClient } from './instagram.js';
 import {
   getFollowersAndMinimalProfile,
@@ -22,19 +22,27 @@ import {
   explainRejectedProfileKeyword,
   explainCommercialOrEstablishment,
   explainNotQualifiesAsInfluencer,
+  explainRejectedEstablishmentKeywordInBio,
   type Entity,
 } from './entityRules.js';
+import { explainBioNotBrazilianPortuguese } from './bioLanguageBr.js';
 import {
+  addToGoogleQueue,
   listHandles,
   recordDuplicate,
   recordIssue,
   registerCollectedWithIntegration,
+  setLastGoogleSerpExtraction,
+  takeNextFromGoogleQueue,
 } from './memoryStorage.js';
 import {
   isRemoteIngestConfigured,
   pushProfileFullToServer,
   pushProfileToServerRocksDb,
 } from './serverIngest.js';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { dirname } from 'path';
+import { existsSync } from 'fs';
 import type { CollectorConfig } from './config.js';
 import { coletaLog } from './coletaLog.js';
 import { setProcessingState } from './processingStatus.js';
@@ -51,21 +59,16 @@ async function countGridPostLinks(page: Page): Promise<number> {
 }
 
 /**
- * Garante URL da hashtag + grade com posts suficientes (lazy load).
- * Depois de visitar perfil, o Instagram muitas vezes não mostra mais a grade — precisa goto + scroll.
+ * Hashtag abre por `tagUrl` = `/explore/search/keyword/?q=…` ou o IG usa `/explore/tags/…`.
+ * Reconhecer os dois evita `goto` a cada post (reload desnecessário da grade).
  */
-async function ensureHashtagGridReady(
-  page: Page,
-  tagUrl: string,
-  tag: string,
-  neededCount: number
-): Promise<void> {
+function isOnHashtagGridPage(url: string, tag: string): boolean {
   const tagKey = tag.replace(/^#/, '').trim().toLowerCase();
-
-  function isOnTagExplorePage(url: string): boolean {
-    try {
-      const path = new URL(url).pathname.toLowerCase();
-      if (!path.includes('/explore/tags/')) return false;
+  if (!tagKey) return false;
+  try {
+    const u = new URL(url);
+    const path = u.pathname.toLowerCase();
+    if (path.includes('/explore/tags/')) {
       const seg = path.split('/explore/tags/')[1]?.split('/')[0] ?? '';
       let decoded = seg;
       try {
@@ -73,13 +76,29 @@ async function ensureHashtagGridReady(
       } catch {
         /* keep seg */
       }
-      return decoded.toLowerCase() === tagKey;
-    } catch {
-      return false;
+      return decoded.toLowerCase().replace(/^#/, '') === tagKey;
     }
+    if (path.includes('/explore/search/keyword')) {
+      const q = (u.searchParams.get('q') ?? '').trim().replace(/^#/, '').toLowerCase();
+      return q === tagKey;
+    }
+    return false;
+  } catch {
+    return false;
   }
+}
 
-  if (!isOnTagExplorePage(page.url())) {
+/**
+ * Garante URL da hashtag + grade com posts suficientes (lazy load).
+ * Modo hashtag: a grade fica na aba principal; post/perfil abrem em abas novas (evita reload da grade).
+ */
+async function ensureHashtagGridReady(
+  page: Page,
+  tagUrl: string,
+  tag: string,
+  neededCount: number
+): Promise<void> {
+  if (!isOnHashtagGridPage(page.url(), tag)) {
     coletaLog(`#${tag}: abrindo página da hashtag (grade precisa estar visível)…`);
     await page.goto(tagUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
     await randomDelay(1800, 2800);
@@ -133,15 +152,27 @@ const profileHrefRe = /^\/[^/]+\/?$/;
 const isProfileHref = (h: string) =>
   profileHrefRe.test(h.replace(/\?.*$/, '')) && !h.includes('/p/') && !h.includes('/reel/');
 
-export type DiscoveryMode = 'hashtag' | 'feed' | 'explore';
+export type DiscoveryMode = 'hashtag' | 'feed' | 'explore' | 'google';
 
 export interface DiscoveryOptions {
   mode: DiscoveryMode;
   tag?: string;
+  /** Modo Google: consulta completa (ex.: site:instagram.com ("pai" OR "mãe") mario). */
+  googleQuery?: string;
+  /** Modo Google: filtro de tempo do Google (qdr). Valores principais: h/d/w/m/y. Default: w. */
+  googleQdr?: string;
+  /** Máximo de páginas SERP do Google a extrair por consulta (padrão 20). */
+  maxSerpPages?: number;
+  /** Valores udm para rodar a busca (ex.: ['39', '7', ''] = udm 39, depois 7, depois sem udm). Vazio = só uma busca sem parâmetro udm. */
+  udmValues?: string[];
   maxProfiles: number;
   config: CollectorConfig;
   shouldAbort: () => boolean;
   onCollected?: (handle: string, followers: number) => void;
+  /** Perfis já visitados nesta coleta (várias hashtags / feed / explore) + opc. problemas — não reabrir na grade. */
+  sessionTriedHandles?: Set<string>;
+  /** Caminho para salvar/carregar cookies do Google (evita captcha na próxima vez). */
+  googleSessionPath?: string;
 }
 
 async function processOneProfile(
@@ -151,7 +182,7 @@ async function processOneProfile(
   existingHandles: Set<string>,
   discoveredBy: string,
   discoveredValue: string,
-  options?: { pageAlreadyOnProfile?: boolean },
+  options?: { pageAlreadyOnProfile?: boolean; skipGate?: boolean },
   onCollected?: (handle: string, followers: number) => void
 ): Promise<boolean> {
   const handleLower = handle.toLowerCase();
@@ -162,11 +193,13 @@ async function processOneProfile(
   }
 
   const hk = handle.replace(/^@/, '').trim().toLowerCase();
+  setProcessingState({ handle: hk, stage: 'Validando perfil…', since: new Date().toISOString() });
   const proc = (stage: string) =>
     setProcessingState({ handle: hk, stage, since: new Date().toISOString() });
 
   const profileUrl = InstagramClient.profileUrl(handle);
   const pageAlready = options?.pageAlreadyOnProfile ?? false;
+  const skipGate = options?.skipGate ?? false;
   const useRemote = isRemoteIngestConfigured();
 
   let rawProfile: Record<string, unknown>;
@@ -177,83 +210,131 @@ async function processOneProfile(
     tagged: Record<string, unknown>[];
   } | null = null;
 
+  if (!skipGate) {
+    /** Bio (lista de rejeição + pt-BR se ativo) SEMPRE antes de timeline/Reels — se falhar, não inicia extração pesada. */
+    coletaLog(`@${handle}: validando bio antes de coletar timeline/Reels…`);
+    let gateSnap = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: pageAlready });
+    if (!gateSnap.minimalProfile && pageAlready) {
+      await randomDelay(1200, 2200);
+      gateSnap = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: true });
+    }
+    if (gateSnap.minimalProfile) {
+      const minimal = gateSnap.minimalProfile as Record<string, unknown>;
+      const rejEst = explainRejectedEstablishmentKeywordInBio(minimal);
+      if (rejEst) {
+        recordIssue(handle, 'regra', rejEst);
+        return false;
+      }
+      if (config.requireBioBrazilianPortuguese) {
+        const gateEntity = {
+          handle,
+          username: handle,
+          ...minimal,
+          followers_count: gateSnap.followers ?? getFollowersFromEntity(minimal),
+        } as Record<string, unknown>;
+        const rejLang = explainBioNotBrazilianPortuguese(gateEntity);
+        if (rejLang) {
+          recordIssue(handle, 'regra', rejLang);
+          return false;
+        }
+      }
+    }
+  } else {
+    coletaLog(`@${handle}: gate já validado (pipeline) → extraindo perfil completo uma vez.`);
+  }
+
   proc('Extraindo dados no Instagram…');
 
   try {
-  if (useRemote) {
-    coletaLog(`@${handle}: extração COMPLETA (timeline + Reels + Marcados)…`);
-    proc('Capturando timeline, Reels e marcados (pode levar 1–3 min)…');
-    const full = await extractProfileFull(page, handle, profileUrl, {
-      pageAlreadyOnProfile: pageAlready,
-    });
-    if (full) {
-      rawProfile = full.profile;
-      posts = full.postsForRules as Entity[];
-      mediaBundle = {
-        feed: full.feedMedia,
-        reel: full.reelMedia,
-        tagged: full.taggedMedia,
-      };
-      coletaLog(
-        `@${handle}: captura OK → feed=${full.feedMedia.length} reels=${full.reelMedia.length} marcados=${full.taggedMedia.length} itens GraphQL`
-      );
+    if (useRemote) {
+      coletaLog(`@${handle}: extração COMPLETA (timeline + Reels + Marcados)…`);
+      proc('Capturando timeline, Reels e marcados (pode levar 1–3 min)…');
+      const full = await extractProfileFull(page, handle, profileUrl, {
+        pageAlreadyOnProfile: pageAlready,
+      });
+      if (full) {
+        rawProfile = full.profile;
+        posts = full.postsForRules as Entity[];
+        mediaBundle = {
+          feed: full.feedMedia,
+          reel: full.reelMedia,
+          tagged: full.taggedMedia,
+        };
+        coletaLog(
+          `@${handle}: captura OK → feed=${full.feedMedia.length} reels=${full.reelMedia.length} marcados=${full.taggedMedia.length} itens GraphQL`
+        );
+      } else {
+        coletaLog(`@${handle}: extração completa falhou → tentando extração rápida…`);
+        proc('Extração rápida (fallback)…');
+        const extracted = await extractProfile(page, handle, profileUrl, {
+          pageAlreadyOnProfile: pageAlready,
+        });
+        if (!extracted) {
+          recordIssue(handle, 'extracao', 'Não foi possível extrair dados do perfil');
+          coletaLog(`@${handle}: falha na extração rápida também.`);
+          return false;
+        }
+        rawProfile = extracted.profile;
+        posts = extracted.posts as Entity[];
+      }
     } else {
-      coletaLog(`@${handle}: extração completa falhou → tentando extração rápida…`);
-      proc('Extração rápida (fallback)…');
+      coletaLog(`@${handle}: extração rápida (sem API remota configurada)…`);
+      proc('Extração rápida do perfil…');
       const extracted = await extractProfile(page, handle, profileUrl, {
         pageAlreadyOnProfile: pageAlready,
       });
       if (!extracted) {
         recordIssue(handle, 'extracao', 'Não foi possível extrair dados do perfil');
-        coletaLog(`@${handle}: falha na extração rápida também.`);
         return false;
       }
       rawProfile = extracted.profile;
       posts = extracted.posts as Entity[];
     }
-  } else {
-    coletaLog(`@${handle}: extração rápida (sem API remota configurada)…`);
-    proc('Extração rápida do perfil…');
-    const extracted = await extractProfile(page, handle, profileUrl, {
-      pageAlreadyOnProfile: pageAlready,
-    });
-    if (!extracted) {
-      recordIssue(handle, 'extracao', 'Não foi possível extrair dados do perfil');
+    proc('Validando regras (seguidores, curtidas, tipo de perfil)…');
+    const raw = rawProfile as Record<string, unknown>;
+    const followers = getFollowersFromEntity(raw);
+
+    if (config.maxFollowersToSave > 0 && followers > config.maxFollowersToSave) {
+      recordIssue(
+        handle,
+        'regra',
+        `Máximo de seguidores: ${config.maxFollowersToSave.toLocaleString('pt-BR')}; @${handle} tem ${followers.toLocaleString('pt-BR')}.`
+      );
       return false;
     }
-    rawProfile = extracted.profile;
-    posts = extracted.posts as Entity[];
-  }
-  proc('Validando regras (seguidores, curtidas, tipo de perfil)…');
-  const raw = rawProfile as Record<string, unknown>;
-  const followers = getFollowersFromEntity(raw);
 
-  if (isPrivateFromEntity(raw)) {
-    recordIssue(
-      handle,
-      'regra',
-      'Perfil privado — não dá para validar posts/seguidores para o filtro do coletor.'
-    );
-    return false;
-  }
-  if (hasRejectedProfileKeyword(raw)) {
-    recordIssue(handle, 'regra', explainRejectedProfileKeyword(raw));
-    return false;
-  }
-  if (isBusinessFromEntity(raw)) {
-    recordIssue(handle, 'regra', explainCommercialOrEstablishment(raw));
-    return false;
-  }
-  if (config.excludeBusinessProfiles && !qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
-    recordIssue(
-      handle,
-      'regra',
-      explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave)
-    );
-    return false;
-  }
-  if (!config.excludeBusinessProfiles) {
-    if (!qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
+    /** Lista de rejeição na bio (sempre no perfil já extraído, antes da API) — evita contar como “falha de API”. */
+    const rejListaPosExtract = explainRejectedEstablishmentKeywordInBio(raw);
+    if (rejListaPosExtract) {
+      recordIssue(handle, 'regra', rejListaPosExtract);
+      coletaLog(`@${handle}: rejeitado por bio (lista) após leitura do perfil — não envia à API.`);
+      return false;
+    }
+
+    if (config.requireBioBrazilianPortuguese) {
+      const bioRegra = explainBioNotBrazilianPortuguese(raw);
+      if (bioRegra) {
+        recordIssue(handle, 'regra', bioRegra);
+        return false;
+      }
+    }
+    if (isPrivateFromEntity(raw)) {
+      recordIssue(
+        handle,
+        'regra',
+        'Perfil privado — não dá para validar posts/seguidores para o filtro do coletor.'
+      );
+      return false;
+    }
+    if (hasRejectedProfileKeyword(raw)) {
+      recordIssue(handle, 'regra', explainRejectedProfileKeyword(raw));
+      return false;
+    }
+    if (isBusinessFromEntity(raw)) {
+      recordIssue(handle, 'regra', explainCommercialOrEstablishment(raw));
+      return false;
+    }
+    if (config.excludeBusinessProfiles && !qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
       recordIssue(
         handle,
         'regra',
@@ -261,59 +342,68 @@ async function processOneProfile(
       );
       return false;
     }
-  }
-  if (
-    config.minPostLikesToSave > 0 &&
-    !hasPostWithMinLikes(posts, config.minPostLikesToSave, config.minPostsWithMinLikesToSave)
-  ) {
-    recordIssue(handle, 'regra', `Posts sem curtidas suficientes (mín. ${config.minPostLikesToSave})`);
-    return false;
-  }
-  if (isBlocklistedHandle(handle)) {
-    recordIssue(handle, 'regra', `Handle @${handle} está na lista de bloqueio interna do coletor.`);
-    return false;
-  }
+    if (!config.excludeBusinessProfiles) {
+      if (!qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
+        recordIssue(
+          handle,
+          'regra',
+          explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave)
+        );
+        return false;
+      }
+    }
+    if (
+      config.minPostLikesToSave > 0 &&
+      !hasPostWithMinLikes(posts, config.minPostLikesToSave, config.minPostsWithMinLikesToSave)
+    ) {
+      recordIssue(handle, 'regra', `Posts sem curtidas suficientes (mín. ${config.minPostLikesToSave})`);
+      return false;
+    }
+    if (isBlocklistedHandle(handle)) {
+      recordIssue(handle, 'regra', `Handle @${handle} está na lista de bloqueio interna do coletor.`);
+      return false;
+    }
 
-  const slim = buildSlimProfile(
-    raw,
-    handle,
-    followers,
-    posts,
-    discoveredBy,
-    discoveredValue
-  );
-  const nMedia =
-    mediaBundle != null
-      ? mediaBundle.feed.length + mediaBundle.reel.length + mediaBundle.tagged.length
-      : 0;
-  coletaLog(
-    `@${handle}: enviando para API (${nMedia > 0 ? `ingest-full ~${nMedia} mídias` : 'só perfil slim'})…`
-  );
-  proc(
-    nMedia > 0
-      ? `Enviando para API (~${nMedia} itens de mídia)…`
-      : 'Enviando perfil para API…'
-  );
-  const pushResult = await registerCollectedWithIntegration(
-    slim as Record<string, unknown> & { handle: string },
-    mediaBundle,
-    pushProfileFullToServer,
-    pushProfileToServerRocksDb
-  );
-  if (pushResult.skipped) {
+    const slim = buildSlimProfile(
+      raw,
+      handle,
+      followers,
+      posts,
+      discoveredBy,
+      discoveredValue
+    );
+    const nMedia =
+      mediaBundle != null
+        ? mediaBundle.feed.length + mediaBundle.reel.length + mediaBundle.tagged.length
+        : 0;
+    coletaLog(
+      `@${handle}: enviando para API (${nMedia > 0 ? `ingest-full ~${nMedia} mídias` : 'só perfil slim'})…`
+    );
+    proc(
+      nMedia > 0
+        ? `Enviando para API (~${nMedia} itens de mídia)…`
+        : 'Enviando perfil para API…'
+    );
+    const pushResult = await registerCollectedWithIntegration(
+      slim as Record<string, unknown> & { handle: string },
+      mediaBundle,
+      pushProfileFullToServer,
+      pushProfileToServerRocksDb
+    );
+    if (pushResult.skipped) {
+      existingHandles.add(handleLower);
+      onCollected?.(handle, followers);
+      return true;
+    }
+    if (!pushResult.ok) {
+      coletaLog(
+        `@${handle}: API falhou — NÃO contado como salvo no servidor. Endpoint: ${pushResult.endpoint ?? '—'}`
+      );
+      return false;
+    }
     existingHandles.add(handleLower);
     onCollected?.(handle, followers);
     return true;
-  }
-  if (!pushResult.ok) {
-    coletaLog(
-      `@${handle}: API falhou — NÃO contado como salvo no servidor. Endpoint: ${pushResult.endpoint ?? '—'}`
-    );
-    return false;
-  }
-  existingHandles.add(handleLower);
-  onCollected?.(handle, followers);
-  return true;
   } finally {
     setProcessingState(null);
   }
@@ -346,6 +436,704 @@ async function getAuthorFromPostPage(page: Page): Promise<string | null> {
   return null;
 }
 
+const IG_GOOGLE_RESERVED = new Set([
+  'p',
+  'reel',
+  'reels',
+  'stories',
+  'explore',
+  'accounts',
+  'direct',
+  'tv',
+  'legal',
+  'about',
+  'support',
+  'privacy',
+  'help',
+  'developer',
+  'nametag',
+  'professional_dashboard',
+  'www',
+]);
+
+function normalizeGoogleQdr(qdr?: string): string | '' {
+  const allowed = new Set(['h', 'd', 'w', 'm', 'y']);
+  if (qdr == null) return 'w';
+  const t = qdr.trim().toLowerCase();
+  if (t === '') return '';
+  return allowed.has(t) ? t : 'w';
+}
+
+/** Monta a URL de busca no Google. udm opcional: '39', '7' ou '' (vazio = busca geral sem udm). qdr opcional: h/d/w/m/y. */
+function googleSearchUrl(query: string, udm?: string, qdr?: string): string {
+  const q = query.trim();
+  const qParam =
+    /site:\s*instagram\.com/i.test(q) ? q : `site:instagram.com ${q}`;
+  const params = new URLSearchParams({
+    q: qParam,
+    num: '100',
+    hl: 'pt-BR',
+  });
+  const qdrNorm = normalizeGoogleQdr(qdr);
+  // Google usa o filtro de tempo dentro de `tbs`, ex.: `tbs=qdr:w`
+  if (qdrNorm) params.set('tbs', `qdr:${qdrNorm}`);
+  if (udm != null && udm !== '') params.set('udm', udm);
+  return `https://www.google.com/search?${params.toString()}`;
+}
+
+export interface SerpHandleItem {
+  handle: string;
+  snippet: string;
+}
+
+/** Reel/post URL que não tem handle na SERP — é preciso abrir a página do Instagram para obter o @. */
+export interface SerpReelToResolve {
+  reelUrl: string;
+  snippet: string;
+}
+
+export interface SerpScrapeResult {
+  handles: SerpHandleItem[];
+  reelUrls: SerpReelToResolve[];
+}
+
+/**
+ * Extrai handles e URLs de reel/post dos resultados do Google.
+ * - Links diretos: instagram.com/username → handle.
+ * - Reels/posts com link de perfil no bloco → handle.
+ * - Reels/posts sem link de perfil (só "Instagram · Nome" no snippet) → reelUrl para resolver depois no Instagram.
+ * Script em string para evitar __name do bundler no page.evaluate (roda no browser).
+ */
+async function scrapeInstagramHandlesFromGoogleSerp(page: Page): Promise<SerpScrapeResult> {
+  const reserved = [...IG_GOOGLE_RESERVED];
+  const scriptBody = `
+    var blocked = new Set(R);
+    var order = [];
+    var reelUrls = [];
+    var seen = new Set();
+    var reelSeen = new Set();
+    function add(seg, snippet) {
+      var u = String(seg).toLowerCase().replace(/^@/, '').replace(/\\.$/, '').trim();
+      if (!u || u.length < 2 || u.length > 30 || blocked.has(u) || seen.has(u)) return;
+      if (!/^[a-z0-9._]+$/.test(u)) return;
+      seen.add(u);
+      var sn = (snippet || '').replace(/\\s+/g, ' ').trim().slice(0, 400);
+      order.push({ handle: u, snippet: sn });
+    }
+    function addReelUrl(url, snippet) {
+      try {
+        var u = String(url).trim();
+        if (!u || !/instagram\\.com\\/(reel|p)\\//i.test(u)) return;
+        if (u.indexOf('google.') !== -1) {
+          var parsed = new URL(u, 'https://www.google.com');
+          var q = parsed.searchParams.get('url') || parsed.searchParams.get('q');
+          if (q) u = /^https?:/i.test(q) ? q : 'https://' + q;
+        }
+        if (reelSeen.has(u)) return;
+        reelSeen.add(u);
+        var sn = (snippet || '').replace(/\\s+/g, ' ').trim().slice(0, 400);
+        reelUrls.push({ reelUrl: u, snippet: sn });
+      } catch (e) {}
+    }
+    function ingestLink(raw) {
+      if (!raw || !/instagram/i.test(raw)) return;
+      try {
+        var s = String(raw).trim();
+        if (/^\\/\\//.test(s)) s = 'https:' + s;
+        if (s.indexOf('google.') !== -1 && (s.indexOf('url?') !== -1 || s.indexOf('/url') !== -1)) {
+          var u = new URL(s, 'https://www.google.com');
+          var q = u.searchParams.get('q') || u.searchParams.get('url');
+          if (q) s = /^https?:/i.test(q) ? q : 'https://' + q;
+        }
+        var dec;
+        try { dec = decodeURIComponent(s); } catch (e) { dec = s; }
+        var m = dec.match(/instagram\\.com\\/([^/?#]+)/i);
+        if (!m) return;
+        var seg = m[1].toLowerCase();
+        if (seg === 'p' || seg === 'reel' || seg === 'reels' || seg === 'tv') return;
+        add(seg, '');
+      } catch (e) {}
+    }
+    document.querySelectorAll('a[href]').forEach(function(a) { ingestLink(a.href); });
+    document.querySelectorAll('[data-url], [cite]').forEach(function(el) {
+      ingestLink(el.getAttribute('data-url') || el.getAttribute('cite') || '');
+    });
+    var postReelLinks = document.querySelectorAll('a[href*="instagram.com/p/"], a[href*="instagram.com/reel/"]');
+    for (var i = 0; i < postReelLinks.length; i++) {
+      var el = postReelLinks[i];
+      var block = el;
+      var foundProfile = false;
+      for (var up = 0; up < 20 && block && block !== document.body; up++) {
+        if (block.innerText && /Instagram/i.test(block.innerText)) {
+          var blockSnip = (block.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 400);
+          var profileLink = block.querySelector('a[href*="instagram.com/"]');
+          if (profileLink) {
+            var href = profileLink.getAttribute('href') || '';
+            try {
+              if (href.indexOf('google.') !== -1) {
+                var u = new URL(href, 'https://www.google.com');
+                var q = u.searchParams.get('url') || u.searchParams.get('q');
+                if (q) href = q;
+              }
+              var segMatch = href.match(/instagram\\.com\\/([^/?#]+)/i);
+              if (segMatch) {
+                var seg = segMatch[1].toLowerCase();
+                if (seg !== 'p' && seg !== 'reel' && seg !== 'reels' && seg !== 'tv') { add(seg, blockSnip); foundProfile = true; break; }
+              }
+            } catch (e) {}
+          }
+          if (!foundProfile) {
+            var reelLink = block.querySelector('a[href*="instagram.com/reel/"], a[href*="instagram.com/p/"]');
+            var href = reelLink ? (reelLink.getAttribute('href') || '') : (el.href || '');
+            if (href) addReelUrl(href, blockSnip);
+          }
+          break;
+        }
+        block = block.parentElement;
+      }
+    }
+    return { handles: order, reelUrls: reelUrls };
+  `;
+  return page.evaluate(new Function('R', scriptBody) as (R: string[]) => SerpScrapeResult, reserved);
+}
+
+/**
+ * Abre a URL do reel/post no Instagram e extrai o handle do autor da página (não confia no snippet do Google).
+ */
+async function resolveHandleFromReelUrl(
+  ctx: BrowserContext,
+  reelUrl: string,
+  shouldAbort: () => boolean
+): Promise<string | null> {
+  let tab: Page | null = null;
+  try {
+    tab = await ctx.newPage();
+    const resolved = await tab.goto(reelUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    const finalUrl = resolved?.url() ?? tab.url();
+    const pathMatch = finalUrl.match(/instagram\.com\/([^/]+)/i);
+    if (pathMatch) {
+      const seg = pathMatch[1]!.toLowerCase();
+      if (seg !== 'p' && seg !== 'reel' && seg !== 'reels' && seg !== 'tv' && seg.length >= 2 && seg.length <= 30) {
+        return seg;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+    const handleFromLink = await tab.evaluate(() => {
+      const links = document.querySelectorAll('a[href^="/"]');
+      for (let i = 0; i < links.length; i++) {
+        const a = links[i];
+        const href = (a as HTMLAnchorElement).getAttribute('href');
+        if (!href) continue;
+        const pathPart = (href.split('?')[0] ?? '').replace(/^\//, '');
+        const segments = pathPart.split('/').filter(Boolean);
+        if (segments.length >= 2) {
+          const first = segments[0].toLowerCase();
+          const second = segments[1].toLowerCase();
+          if ((second === 'reels' || second === 'reel' || second === 'p') && /^[a-z0-9._]+$/.test(first) && first.length >= 2 && first.length <= 30) {
+            return first;
+          }
+        }
+      }
+      return null;
+    });
+    return handleFromLink;
+  } catch (e) {
+    coletaLog(`Reel: falha ao resolver handle de ${reelUrl.slice(0, 60)}… — ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  } finally {
+    if (tab) await tab.close().catch(() => { });
+  }
+}
+
+/** Rola a página do Google para baixo para carregar mais resultados (infinite scroll, ex.: udm=7 vídeos). */
+async function scrollGoogleSerpToLoadMore(page: Page, rounds: number = 5): Promise<void> {
+  for (let r = 0; r < rounds; r++) {
+    await page.evaluate(() => {
+      window.scrollBy(0, window.innerHeight * 0.8);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1500 + Math.random() * 800));
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await new Promise((resolve) => setTimeout(resolve, 600));
+}
+
+async function clickGoogleNextPage(page: Page): Promise<boolean> {
+  const next = page.locator('#pnnext, a#pnnext, a[aria-label="Next"], a[aria-label="Próxima"]').first();
+  try {
+    if ((await next.count()) === 0) return false;
+    await next.click({ timeout: 12000 });
+    await page.waitForTimeout(2400);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Abre instagram.com/handle em nova aba, pré-filtros + processOneProfile (igual fluxo hashtag).
+ */
+async function profileExtractionPipelineNewTab(
+  ctx: BrowserContext,
+  handle: string,
+  config: CollectorConfig,
+  existingHandles: Set<string>,
+  triedInSession: Set<string>,
+  sess: Set<string> | undefined,
+  discoveredBy: string,
+  discoveredValue: string,
+  onCollected: ((h: string, f: number) => void) | undefined,
+  logCtx: string
+): Promise<{ saved: number; processed: number }> {
+  const handleLower = handle.toLowerCase();
+  setProcessingState({
+    handle: handleLower,
+    stage: 'Abrindo perfil no Instagram…',
+    since: new Date().toISOString(),
+  });
+  const profileUrlFull = InstagramClient.profileUrl(handle);
+  const profileTab = await ctx.newPage();
+  let saved = 0;
+  let processed = 0;
+  try {
+    try {
+      await profileTab.goto(profileUrlFull, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    } catch {
+      coletaLog(`${logCtx}: @${handle}: falha ao abrir perfil no Instagram.`);
+      return { saved: 0, processed: 0 };
+    }
+    await randomDelay(1200, 2000);
+
+    let snapH = await getFollowersAndMinimalProfile(profileTab, profileUrlFull, {
+      skipGoto: true,
+      quickGate: true,
+    });
+    if (!snapH.minimalProfile) {
+      await randomDelay(800, 1500);
+      snapH = await getFollowersAndMinimalProfile(profileTab, profileUrlFull, {
+        skipGoto: true,
+        quickGate: true,
+      });
+    }
+    if (snapH.minimalProfile) {
+      const rejBioH = explainRejectedEstablishmentKeywordInBio(
+        snapH.minimalProfile as Record<string, unknown>
+      );
+      if (rejBioH) {
+        recordIssue(handle, 'regra', rejBioH, {
+          followers_count: snapH.followers ?? undefined,
+        });
+        triedInSession.add(handleLower);
+        return { saved: 0, processed: 1 };
+      }
+    }
+    if (config.maxFollowersToSave > 0) {
+      const fol =
+        snapH.followers ??
+        (snapH.minimalProfile
+          ? getFollowersFromEntity(snapH.minimalProfile as Record<string, unknown>)
+          : null);
+      if (fol != null && fol > config.maxFollowersToSave) {
+        recordIssue(
+          handle,
+          'regra',
+          `Máximo de seguidores: ${config.maxFollowersToSave.toLocaleString('pt-BR')}; @${handle} tem ${fol.toLocaleString('pt-BR')}.`,
+          { followers_count: fol }
+        );
+        triedInSession.add(handleLower);
+        return { saved: 0, processed: 1 };
+      }
+    }
+
+    if (config.minFollowersToSave > 0) {
+      const followers = snapH.followers;
+      if (followers == null || followers < config.minFollowersToSave) {
+        recordIssue(
+          handle,
+          'regra',
+          `Antes de extrair o perfil completo: exige pelo menos ${config.minFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${followers != null ? followers.toLocaleString('pt-BR') : '—'}.`,
+          { followers_count: followers ?? undefined }
+        );
+        triedInSession.add(handleLower);
+        return { saved: 0, processed: 1 };
+      }
+      const bioEarlyHashtag =
+        config.requireBioBrazilianPortuguese && snapH.minimalProfile
+          ? explainBioNotBrazilianPortuguese({
+            handle,
+            username: handle,
+            ...snapH.minimalProfile,
+            followers_count: followers,
+          } as Record<string, unknown>)
+          : null;
+      if (bioEarlyHashtag) {
+        recordIssue(handle, 'regra', bioEarlyHashtag, {
+          followers_count: followers,
+        });
+        triedInSession.add(handleLower);
+        return { saved: 0, processed: 1 };
+      }
+      if (config.excludeBusinessProfiles && snapH.minimalProfile) {
+        const entity = {
+          handle,
+          username: handle,
+          ...snapH.minimalProfile,
+          followers_count: followers,
+        } as Record<string, unknown>;
+        if (hasRejectedProfileKeyword(entity)) {
+          recordIssue(handle, 'regra', explainRejectedProfileKeyword(entity), {
+            followers_count: followers,
+          });
+          triedInSession.add(handleLower);
+          return { saved: 0, processed: 1 };
+        }
+        if (isBusinessFromEntity(entity)) {
+          recordIssue(handle, 'regra', explainCommercialOrEstablishment(entity), {
+            followers_count: followers,
+          });
+          triedInSession.add(handleLower);
+          return { saved: 0, processed: 1 };
+        }
+        if (!qualifiesAsInfluencer(entity, config.minFollowersToSave)) {
+          recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(entity, config.minFollowersToSave), {
+            followers_count: followers,
+          });
+          triedInSession.add(handleLower);
+          return { saved: 0, processed: 1 };
+        }
+      }
+    } else {
+      if (config.requireBioBrazilianPortuguese && snapH.minimalProfile) {
+        const bioEarly0 = explainBioNotBrazilianPortuguese({
+          handle,
+          username: handle,
+          ...snapH.minimalProfile,
+        } as Record<string, unknown>);
+        if (bioEarly0) {
+          recordIssue(handle, 'regra', bioEarly0);
+          triedInSession.add(handleLower);
+          return { saved: 0, processed: 1 };
+        }
+      }
+      if (config.excludeBusinessProfiles && snapH.minimalProfile) {
+        const fol = snapH.followers ?? getFollowersFromEntity(snapH.minimalProfile as Record<string, unknown>);
+        const entity = {
+          handle,
+          username: handle,
+          ...snapH.minimalProfile,
+          followers_count: fol,
+        } as Record<string, unknown>;
+        if (hasRejectedProfileKeyword(entity)) {
+          recordIssue(handle, 'regra', explainRejectedProfileKeyword(entity));
+          triedInSession.add(handleLower);
+          return { saved: 0, processed: 1 };
+        }
+        if (isBusinessFromEntity(entity)) {
+          recordIssue(handle, 'regra', explainCommercialOrEstablishment(entity));
+          triedInSession.add(handleLower);
+          return { saved: 0, processed: 1 };
+        }
+        if (!qualifiesAsInfluencer(entity, config.minFollowersToSave)) {
+          recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(entity, config.minFollowersToSave));
+          triedInSession.add(handleLower);
+          return { saved: 0, processed: 1 };
+        }
+      }
+    }
+
+    triedInSession.add(handleLower);
+    processed = 1;
+    // Só pula o gate em processOneProfile se já validamos bio (estabelecimento) aqui; senão deixa o gate rodar
+    const gateAlreadyValidated = !!snapH.minimalProfile;
+    coletaLog(`@${handle}: pré-filtros OK → extraindo (${logCtx}) em aba secundária (uma vez).`);
+    const ok = await processOneProfile(
+      profileTab,
+      handle,
+      config,
+      existingHandles,
+      discoveredBy,
+      discoveredValue,
+      { pageAlreadyOnProfile: true, skipGate: gateAlreadyValidated },
+      onCollected
+    );
+    if (ok) saved = 1;
+    return { saved, processed: 1 };
+  } finally {
+    setProcessingState(null);
+    sess?.add(handleLower);
+    await profileTab.close().catch(() => { });
+  }
+}
+
+/** Descoberta via Google: busca site:instagram.com…, extrai @ da SERP, abre cada perfil em nova aba. */
+export async function discoverByGoogle(
+  client: InstagramClient,
+  page: Page,
+  options: DiscoveryOptions
+): Promise<{ saved: number; processed: number }> {
+  const query = (options.googleQuery ?? '').trim();
+  if (!query) {
+    coletaLog(
+      'Modo Google: defina a consulta (ex.: site:instagram.com ("pai" OR "mãe") mario).'
+    );
+    return { saved: 0, processed: 0 };
+  }
+
+  const { config, shouldAbort, sessionTriedHandles: sess, googleSessionPath } = options;
+  const existingHandles = listHandles();
+  const triedInSession = new Set<string>();
+  const serpSeen = new Set<string>();
+  const maxPages = Math.max(1, Math.min(50, options.maxSerpPages ?? 20));
+  const ctx = page.context();
+
+  if (googleSessionPath && existsSync(googleSessionPath)) {
+    try {
+      const raw = await readFile(googleSessionPath, 'utf-8');
+      const data = JSON.parse(raw) as { cookies?: Array<{ name: string; value: string; domain?: string; path?: string }> };
+      if (Array.isArray(data.cookies) && data.cookies.length > 0) {
+        await ctx.addCookies(data.cookies);
+        coletaLog(`Google: sessão carregada (${data.cookies.length} cookie(s)) — evita captcha se ainda válida.`);
+      }
+    } catch (e) {
+      coletaLog(`Google: não foi possível carregar sessão: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const udmValues = options.udmValues ?? ['39', '7', ''];
+  const googleQdr = normalizeGoogleQdr(options.googleQdr);
+  coletaLog(`Google: busca → ${query.slice(0, 120)}${query.length > 120 ? '…' : ''} (${udmValues.length} tipo(s) de SERP: udm ${udmValues.map((u) => (u === '' ? 'geral' : u)).join(', ')})`);
+  coletaLog(`Google: filtro de tempo → qdr=${googleQdr || '(sem filtro)'}`);
+  coletaLog(
+    'Google: usando aba dedicada para o Google; reels abrem em abas temporárias. A aba principal do Instagram não é alterada.'
+  );
+
+  let addedToQueue = 0;
+  let googleTab: Page | null = null;
+  try {
+    googleTab = await ctx.newPage();
+    for (const udm of udmValues) {
+      if (shouldAbort()) break;
+      let addedThisUdm = 0;
+      const udmLabel = udm === '' ? '(geral)' : udm;
+      coletaLog(`Google: abrindo SERP udm=${udmLabel}… (limite: ${options.maxProfiles} por fluxo)`);
+      await googleTab.goto(googleSearchUrl(query, udm, googleQdr), { waitUntil: 'domcontentloaded', timeout: 35000 });
+      await randomDelay(2500, 4000);
+
+      try {
+        const accept = googleTab
+          .locator(
+            'button:has-text("Aceitar tudo"), button:has-text("Accept all"), button:has-text("Aceitar"), form[action*="consent"] button'
+          )
+          .first();
+        if ((await accept.count()) > 0) await accept.click({ timeout: 4000 }).catch(() => { });
+      } catch {
+        /* */
+      }
+      await randomDelay(1000, 2000);
+
+      coletaLog(
+        'Google: aguardando página de resultados (ou resolva captcha/verificação na aba do Google — até 90s).'
+      );
+      try {
+        await googleTab.waitForSelector('div#search, div#rso, #rcnt, a[href*="instagram.com"]', {
+          timeout: 90_000,
+        });
+      } catch {
+        coletaLog('Google: timeout aguardando resultados; pode ter captcha. Tente iniciar de novo após resolver.');
+        break;
+      }
+      await randomDelay(1500, 3000);
+
+      for (let pageNum = 0; pageNum < maxPages && !shouldAbort(); pageNum++) {
+        if (addedThisUdm >= options.maxProfiles) {
+          coletaLog(`Google: udm=${udmLabel} — limite de ${options.maxProfiles} por fluxo atingido.`);
+          break;
+        }
+        if (udm === '7' || udm === '39') {
+          coletaLog(`Google: udm=${udm} — rolando a página para carregar mais resultados…`);
+          await scrollGoogleSerpToLoadMore(googleTab, 5);
+        }
+        const result = await scrapeInstagramHandlesFromGoogleSerp(googleTab);
+        const allHandles = result.handles.map((x) => x.handle);
+        setLastGoogleSerpExtraction(pageNum + 1, allHandles);
+        coletaLog(
+          `Google: udm=${udmLabel} página SERP ${pageNum + 1}/${maxPages} — ${result.handles.length} handle(s) + ${result.reelUrls.length} reel(s) a resolver.`
+        );
+
+        for (const item of result.handles) {
+          if (shouldAbort() || addedThisUdm >= options.maxProfiles) break;
+          const hl = item.handle.toLowerCase();
+          if (serpSeen.has(hl)) continue;
+          serpSeen.add(hl);
+          if (existingHandles.has(hl) || triedInSession.has(hl) || sess?.has(hl)) continue;
+          if (isBlocklistedHandle(item.handle) || containsRejectedKeyword(item.handle)) {
+            sess?.add(hl);
+            triedInSession.add(hl);
+            continue;
+          }
+          if (addToGoogleQueue(item.handle, item.snippet)) { addedToQueue++; addedThisUdm++; }
+        }
+
+        for (const { reelUrl, snippet } of result.reelUrls) {
+          if (shouldAbort() || addedThisUdm >= options.maxProfiles) break;
+          const resolved = await resolveHandleFromReelUrl(ctx, reelUrl, shouldAbort);
+          if (resolved) {
+            const hl = resolved.toLowerCase();
+            if (serpSeen.has(hl)) continue;
+            serpSeen.add(hl);
+            if (existingHandles.has(hl) || triedInSession.has(hl) || sess?.has(hl)) continue;
+            if (isBlocklistedHandle(resolved) || containsRejectedKeyword(resolved)) {
+              sess?.add(hl);
+              triedInSession.add(hl);
+              continue;
+            }
+            if (addToGoogleQueue(resolved, snippet)) { addedToQueue++; addedThisUdm++; }
+          }
+          await randomDelay(400, 800);
+        }
+
+        if (shouldAbort() || addedThisUdm >= options.maxProfiles) break;
+        let advanced = await clickGoogleNextPage(googleTab);
+        if (!advanced && (udm === '7' || udm === '39')) {
+          const maxScrollRounds = 3;
+          for (let scrollRound = 0; scrollRound < maxScrollRounds && !shouldAbort() && addedThisUdm < options.maxProfiles; scrollRound++) {
+            coletaLog(`Google: udm=${udm} — sem botão "Próxima"; rolando para carregar mais (rodada ${scrollRound + 1}/${maxScrollRounds})…`);
+            await scrollGoogleSerpToLoadMore(googleTab, 4);
+            const more = await scrapeInstagramHandlesFromGoogleSerp(googleTab);
+            let gotNew = 0;
+            for (const item of more.handles) {
+              if (addedThisUdm >= options.maxProfiles) break;
+              const hl = item.handle.toLowerCase();
+              if (serpSeen.has(hl)) continue;
+              serpSeen.add(hl);
+              if (existingHandles.has(hl) || triedInSession.has(hl) || sess?.has(hl)) continue;
+              if (isBlocklistedHandle(item.handle) || containsRejectedKeyword(item.handle)) {
+                sess?.add(hl);
+                triedInSession.add(hl);
+                continue;
+              }
+              if (addToGoogleQueue(item.handle, item.snippet)) { addedToQueue++; addedThisUdm++; gotNew++; }
+            }
+            for (const { reelUrl, snippet } of more.reelUrls) {
+              if (shouldAbort() || addedThisUdm >= options.maxProfiles) break;
+              const resolved = await resolveHandleFromReelUrl(ctx, reelUrl, shouldAbort);
+              if (resolved) {
+                const hl = resolved.toLowerCase();
+                if (serpSeen.has(hl)) continue;
+                serpSeen.add(hl);
+                if (existingHandles.has(hl) || triedInSession.has(hl) || sess?.has(hl)) continue;
+                if (isBlocklistedHandle(resolved) || containsRejectedKeyword(resolved)) {
+                  sess?.add(hl);
+                  triedInSession.add(hl);
+                  continue;
+                }
+                if (addToGoogleQueue(resolved, snippet)) { addedToQueue++; addedThisUdm++; gotNew++; }
+              }
+              await randomDelay(400, 800);
+            }
+            coletaLog(`Google: udm=${udm} após scroll — +${gotNew} novo(s) na fila.`);
+            if (gotNew === 0) break;
+          }
+          break;
+        }
+        if (!advanced) {
+          coletaLog(`Google: udm=${udmLabel} fim dos resultados (sem próxima página).`);
+          break;
+        }
+      }
+      if (addedThisUdm >= options.maxProfiles) {
+        coletaLog(`Google: udm=${udmLabel} — limite por fluxo (${options.maxProfiles}) atingido; avançando para o próximo tipo de SERP.`);
+      }
+    }
+    coletaLog(`Google: ${addedToQueue} handle(s) adicionado(s) à fila. O processamento no Instagram ocorre em seguida, 1 perfil por vez.`);
+  } finally {
+    if (googleTab) {
+      await googleTab.close().catch(() => { });
+      coletaLog('Google: aba do Google fechada; aba principal do Instagram permanece inalterada.');
+    }
+    if (googleSessionPath) {
+      try {
+        const allCookies = await ctx.cookies();
+        const googleCookies = allCookies.filter(
+          (c) => c.domain && (c.domain.includes('google.com') || c.domain.includes('google.com.br'))
+        );
+        if (googleCookies.length > 0) {
+          const dir = dirname(googleSessionPath);
+          await mkdir(dir, { recursive: true });
+          await writeFile(
+            googleSessionPath,
+            JSON.stringify({
+              cookies: googleCookies,
+              savedAt: new Date().toISOString(),
+            }),
+            'utf-8'
+          );
+          coletaLog(`Google: sessão salva (${googleCookies.length} cookie(s)) em ${googleSessionPath}.`);
+        }
+      } catch (e) {
+        coletaLog(`Google: não foi possível salvar sessão: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  return { saved: 0, processed: 0 };
+}
+
+/**
+ * Processa a fila Google no Instagram: 1 perfil por vez, de forma assíncrona.
+ * Deve ser chamado após discoverByGoogle (com a página já no Instagram).
+ */
+export async function processGoogleQueue(
+  _client: InstagramClient,
+  page: Page,
+  options: DiscoveryOptions
+): Promise<{ saved: number; processed: number }> {
+  const { config, shouldAbort, onCollected, sessionTriedHandles: sess } = options;
+  const ctx = page.context();
+  const triedInSession = new Set<string>();
+  let saved = 0;
+  let processed = 0;
+  const query = (options.googleQuery ?? '').trim().slice(0, 500);
+
+  while (!shouldAbort() && saved < options.maxProfiles) {
+    const item = takeNextFromGoogleQueue();
+    if (!item) break;
+    const existingHandles = listHandles();
+    let r: { saved: number; processed: number };
+    try {
+      r = await profileExtractionPipelineNewTab(
+        ctx,
+        item.handle,
+        config,
+        existingHandles,
+        triedInSession,
+        sess,
+        'google',
+        query,
+        onCollected,
+        'Google (fila)'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
+      if (isClosed) {
+        coletaLog(`Google (fila): @${item.handle} — janela/aba fechada, indo para o próximo.`);
+      } else {
+        coletaLog(`Google (fila): @${item.handle} — erro: ${msg}`);
+      }
+      recordIssue(item.handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
+      r = { saved: 0, processed: 1 };
+    }
+    saved += r.saved;
+    processed += r.processed;
+    if (r.saved) {
+      coletaLog(`Google (fila): @${item.handle} salvo (${saved}/${options.maxProfiles}).`);
+    }
+    await randomDelay(600, 1200);
+  }
+
+  return { saved, processed };
+}
+
 /** Descoberta por hashtag: abre posts da grade, pega autor, extrai perfil. */
 export async function discoverByHashtag(
   client: InstagramClient,
@@ -353,15 +1141,19 @@ export async function discoverByHashtag(
   tag: string,
   options: DiscoveryOptions
 ): Promise<{ saved: number; processed: number }> {
-  const { config, shouldAbort, onCollected } = options;
+  const { config, shouldAbort, onCollected, sessionTriedHandles: sess } = options;
   const existingHandles = listHandles();
   const triedInSession = new Set<string>();
   let saved = 0;
   let processed = 0;
 
   const url = InstagramClient.tagUrl(tag);
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await randomDelay(2000, 4000);
+  if (!isOnHashtagGridPage(page.url(), tag)) {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await randomDelay(2000, 4000);
+  } else {
+    await randomDelay(400, 900);
+  }
 
   const currentUrl = page.url();
   if (currentUrl.includes('/accounts/login/') || currentUrl.includes('/challenge/')) {
@@ -430,10 +1222,14 @@ export async function discoverByHashtag(
 
     if (authorFromGrid) {
       const lower = authorFromGrid.toLowerCase();
-      if (existingHandles.has(lower) || triedInSession.has(lower)) {
+      if (existingHandles.has(lower) || triedInSession.has(lower) || sess?.has(lower)) {
         if (existingHandles.has(lower)) {
           recordDuplicate(authorFromGrid);
           coletaLog(`post ${postIndex + 1}: @${authorFromGrid} duplicado (já na base), pulando.`);
+        } else if (sess?.has(lower)) {
+          coletaLog(
+            `post ${postIndex + 1}: @${authorFromGrid} já processado nesta coleta (outra hashtag ou Problemas), pulando.`
+          );
         } else {
           coletaLog(`post ${postIndex + 1}: @${authorFromGrid} já tentado nesta rodada #${tag}, pulando.`);
         }
@@ -442,163 +1238,84 @@ export async function discoverByHashtag(
       }
       if (isBlocklistedHandle(authorFromGrid) || containsRejectedKeyword(authorFromGrid)) {
         triedInSession.add(lower);
+        sess?.add(lower);
         coletaLog(`post ${postIndex + 1}: @${authorFromGrid} bloqueado/lista, pulando.`);
         continue;
       }
     }
 
     await randomDelay(1500, 3500);
-    try {
-      await postLink.scrollIntoViewIfNeeded();
-      await postLink.click({ force: true, timeout: 15000 });
-      await page.waitForURL(/\/p\//, { timeout: 20000 });
-    } catch {
-      coletaLog(`post ${postIndex + 1}: não abriu o post (clique/URL), próximo.`);
-      await randomDelay(1000, 2000);
+    await postLink.scrollIntoViewIfNeeded().catch(() => { });
+    const postHrefAttr = await postLink.getAttribute('href').catch(() => null);
+    const postAbsolute =
+      postHrefAttr && /\/(p|reel)\//.test(postHrefAttr)
+        ? InstagramClient.absoluteUrl(postHrefAttr)
+        : null;
+    if (!postAbsolute) {
+      coletaLog(`post ${postIndex + 1}: sem URL de post/reel, próximo.`);
+      await randomDelay(800, 1500);
       continue;
     }
-    await randomDelay(1000, 2000);
 
-    let handle = await getAuthorFromPostPage(page);
-    if (!handle) {
-      coletaLog(`post ${postIndex + 1}: não achei autor na página do post, voltando à hashtag.`);
-      try {
-        await page.goBack({ timeout: 15000 });
-      } catch {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      }
+    const ctx = page.context();
+    let postTab: Page | null = null;
+    let handle: string | null = null;
+    try {
+      postTab = await ctx.newPage();
+      await postTab.goto(postAbsolute, { waitUntil: 'domcontentloaded', timeout: 20000 });
       await randomDelay(1000, 2000);
+      handle = await getAuthorFromPostPage(postTab);
+    } catch {
+      coletaLog(`post ${postIndex + 1}: falha ao abrir post em nova aba, próximo.`);
+      handle = null;
+    } finally {
+      if (postTab) await postTab.close().catch(() => { });
+    }
+
+    if (!handle) {
+      coletaLog(`post ${postIndex + 1}: não achei autor no post (aba fechada — grade intacta na aba principal).`);
+      await randomDelay(800, 1500);
       continue;
     }
 
     const handleLower = handle.toLowerCase();
-    if (existingHandles.has(handleLower) || triedInSession.has(handleLower)) {
+    if (existingHandles.has(handleLower) || triedInSession.has(handleLower) || sess?.has(handleLower)) {
       if (existingHandles.has(handleLower)) {
         recordDuplicate(handle);
-        coletaLog(`@${handle}: duplicado após abrir post, voltando.`);
+        coletaLog(`@${handle}: duplicado após abrir post, pulando.`);
+      } else if (sess?.has(handleLower)) {
+        coletaLog(`@${handle}: já processado nesta coleta, pulando (não reabre perfil).`);
       } else {
-        coletaLog(`@${handle}: já tentado nesta sessão na grade, voltando.`);
+        coletaLog(`@${handle}: já tentado nesta sessão na grade, pulando.`);
       }
-      try {
-        await page.goBack({ timeout: 15000 });
-        await page.goBack({ timeout: 15000 });
-      } catch {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      }
-      await randomDelay(1000, 2000);
+      await randomDelay(800, 1500);
       continue;
     }
 
-    if (config.minFollowersToSave > 0) {
-      const result = await getFollowersAndMinimalProfile(page, InstagramClient.profileUrl(handle), {
-        doNavigate: async () => {
-          const authorLink = page.locator(`a[href^="/${handle}"]`).first();
-          await authorLink.click({ force: true, timeout: 15000 });
-          await page.waitForURL(profileUrlRe, { timeout: 20000 });
-        },
-      });
-      const followers = result.followers;
-      if (followers == null || followers < config.minFollowersToSave) {
-        recordIssue(
-          handle,
-          'regra',
-          `Antes de extrair o perfil completo: exige pelo menos ${config.minFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${followers != null ? followers.toLocaleString('pt-BR') : '—'}.`,
-          { followers_count: followers ?? undefined }
-        );
-        triedInSession.add(handleLower);
-        processed++;
-        try {
-          await page.goBack({ timeout: 15000 });
-          await page.goBack({ timeout: 15000 });
-        } catch {
-          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        }
-        await randomDelay(1000, 2000);
-        continue;
-      }
-      if (config.excludeBusinessProfiles && result.minimalProfile) {
-        const entity = {
-          handle,
-          username: handle,
-          ...result.minimalProfile,
-          followers_count: followers,
-        } as Record<string, unknown>;
-        if (hasRejectedProfileKeyword(entity)) {
-          recordIssue(handle, 'regra', explainRejectedProfileKeyword(entity), {
-            followers_count: followers,
-          });
-          triedInSession.add(handleLower);
-          try {
-            await page.goBack({ timeout: 15000 });
-            await page.goBack({ timeout: 15000 });
-          } catch {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-          }
-          await randomDelay(1000, 2000);
-          continue;
-        }
-        if (isBusinessFromEntity(entity)) {
-          recordIssue(handle, 'regra', explainCommercialOrEstablishment(entity), {
-            followers_count: followers,
-          });
-          triedInSession.add(handleLower);
-          try {
-            await page.goBack({ timeout: 15000 });
-            await page.goBack({ timeout: 15000 });
-          } catch {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-          }
-          await randomDelay(1000, 2000);
-          continue;
-        }
-        if (!qualifiesAsInfluencer(entity, config.minFollowersToSave)) {
-          recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(entity, config.minFollowersToSave), {
-            followers_count: followers,
-          });
-          triedInSession.add(handleLower);
-          try {
-            await page.goBack({ timeout: 15000 });
-            await page.goBack({ timeout: 15000 });
-          } catch {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-          }
-          await randomDelay(1000, 2000);
-          continue;
-        }
-      }
-    } else {
-      const authorLink = page.locator(`a[href^="/${handle}"]`).first();
-      await authorLink.click({ force: true, timeout: 15000 });
-      await page.waitForURL(profileUrlRe, { timeout: 20000 });
-      await randomDelay(1500, 2500);
-    }
-
-    triedInSession.add(handleLower);
-    processed++;
-    coletaLog(`@${handle}: pré-filtros OK → extraindo perfil (pode levar 1–3 min com API completa)…`);
-    const alreadyOnProfile = config.minFollowersToSave > 0;
-    const ok = await processOneProfile(
-      page,
+    const rPipe = await profileExtractionPipelineNewTab(
+      ctx,
       handle,
       config,
       existingHandles,
+      triedInSession,
+      sess,
       'hashtag',
       tag,
-      { pageAlreadyOnProfile: alreadyOnProfile },
-      onCollected
+      onCollected,
+      `#${tag}`
     );
-    if (ok) {
-      saved++;
+    saved += rPipe.saved;
+    processed += rPipe.processed;
+    if (rPipe.saved) {
       coletaLog(`@${handle}: concluído e contabilizado (${saved}/${options.maxProfiles} salvos nesta hashtag).`);
-    } else {
+    } else if (rPipe.processed) {
       coletaLog(`@${handle}: não entrou como salvo (regra/erro — veja tabela Problemas na UI).`);
     }
 
-    coletaLog(`#${tag}: indo à URL da hashtag de novo (goBack não garante a grade após perfil completo)…`);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-    await randomDelay(1000, 1800);
-    coletaLog(`#${tag}: hashtag carregada — na próxima volta da fila: post ${postIndex + 2}/${toProcess}`);
-    await randomDelay(1500, 3000);
+    coletaLog(
+      `#${tag}: aba do perfil fechada — próximo post ${postIndex + 2}/${toProcess} (sem recarregar a grade na aba principal)`
+    );
+    await randomDelay(800, 1600);
   }
 
   return { saved, processed };
@@ -610,7 +1327,7 @@ export async function discoverByFeed(
   page: Page,
   options: DiscoveryOptions
 ): Promise<{ saved: number; processed: number }> {
-  const { config, shouldAbort, onCollected } = options;
+  const { config, shouldAbort, onCollected, sessionTriedHandles: sess } = options;
   const existingHandles = listHandles();
   const skipped = new Set<string>();
   let saved = 0;
@@ -651,13 +1368,18 @@ export async function discoverByFeed(
       continue;
     }
     const handle = authorHref.replace(/^\//, '').split('/')[0]?.trim().split('?')[0] ?? '';
-    if (!handle || skipped.has(handle.toLowerCase()) || existingHandles.has(handle.toLowerCase())) {
-      if (handle && existingHandles.has(handle.toLowerCase())) recordDuplicate(handle);
+    const hlFeed = handle.toLowerCase();
+    if (!handle || skipped.has(hlFeed) || existingHandles.has(hlFeed) || sess?.has(hlFeed)) {
+      if (handle && existingHandles.has(hlFeed)) recordDuplicate(handle);
+      if (handle && sess?.has(hlFeed) && !existingHandles.has(hlFeed) && !skipped.has(hlFeed)) {
+        coletaLog(`Feed: @${handle} já visto nesta coleta / Problemas, pulando.`);
+      }
       await page.evaluate(() => window.scrollBy(0, 400));
       continue;
     }
     if (isBlocklistedHandle(handle) || containsRejectedKeyword(handle)) {
-      skipped.add(handle.toLowerCase());
+      skipped.add(hlFeed);
+      sess?.add(hlFeed);
       await page.evaluate(() => window.scrollBy(0, 400));
       continue;
     }
@@ -671,10 +1393,30 @@ export async function discoverByFeed(
     }
     await randomDelay(1500, 2500);
 
+    const profileUrlFeed = InstagramClient.profileUrl(handle);
+    let snapF = await getFollowersAndMinimalProfile(page, profileUrlFeed, { skipGoto: true });
+    if (!snapF.minimalProfile) {
+      await randomDelay(1200, 2200);
+      snapF = await getFollowersAndMinimalProfile(page, profileUrlFeed, { skipGoto: true });
+    }
+    if (snapF.minimalProfile) {
+      const rejBioF = explainRejectedEstablishmentKeywordInBio(
+        snapF.minimalProfile as Record<string, unknown>
+      );
+      if (rejBioF) {
+        recordIssue(handle, 'regra', `No feed: ${rejBioF}`, {
+          followers_count: snapF.followers ?? undefined,
+        });
+        skipped.add(hlFeed);
+        sess?.add(hlFeed);
+        processed++;
+        await page.goBack({ timeout: 15000 });
+        continue;
+      }
+    }
+
     if (config.minFollowersToSave > 0) {
-      const result = await getFollowersAndMinimalProfile(page, InstagramClient.profileUrl(handle), {
-        skipGoto: true,
-      });
+      const result = snapF;
       if (
         result.followers == null ||
         result.followers < config.minFollowersToSave
@@ -685,7 +1427,41 @@ export async function discoverByFeed(
           `No feed: exige ≥${config.minFollowersToSave.toLocaleString('pt-BR')} seguidores para abrir o perfil; @${handle} tem ${result.followers != null ? result.followers.toLocaleString('pt-BR') : '—'}.`,
           { followers_count: result.followers ?? undefined }
         );
-        skipped.add(handle.toLowerCase());
+        skipped.add(hlFeed);
+        sess?.add(hlFeed);
+        processed++;
+        await page.goBack({ timeout: 15000 });
+        continue;
+      }
+      if (
+        config.maxFollowersToSave > 0 &&
+        result.followers != null &&
+        result.followers > config.maxFollowersToSave
+      ) {
+        recordIssue(handle, 'regra', `No feed: máximo ${config.maxFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${result.followers.toLocaleString('pt-BR')}.`, {
+          followers_count: result.followers,
+        });
+        skipped.add(hlFeed);
+        sess?.add(hlFeed);
+        processed++;
+        await page.goBack({ timeout: 15000 });
+        continue;
+      }
+      const bioEarlyFeed =
+        config.requireBioBrazilianPortuguese && result.minimalProfile
+          ? explainBioNotBrazilianPortuguese({
+            handle,
+            username: handle,
+            ...result.minimalProfile,
+            followers_count: result.followers,
+          } as Record<string, unknown>)
+          : null;
+      if (bioEarlyFeed) {
+        recordIssue(handle, 'regra', `No feed: ${bioEarlyFeed}`, {
+          followers_count: result.followers,
+        });
+        skipped.add(hlFeed);
+        sess?.add(hlFeed);
         processed++;
         await page.goBack({ timeout: 15000 });
         continue;
@@ -709,7 +1485,48 @@ export async function discoverByFeed(
           recordIssue(handle, 'regra', `No feed: ${feedDetail}`, {
             followers_count: result.followers,
           });
-          skipped.add(handle.toLowerCase());
+          skipped.add(hlFeed);
+          sess?.add(hlFeed);
+          await page.goBack({ timeout: 15000 });
+          continue;
+        }
+      }
+    } else {
+      if (config.requireBioBrazilianPortuguese && snapF.minimalProfile) {
+        const bioF0 = explainBioNotBrazilianPortuguese({
+          handle,
+          username: handle,
+          ...snapF.minimalProfile,
+        } as Record<string, unknown>);
+        if (bioF0) {
+          recordIssue(handle, 'regra', `No feed: ${bioF0}`);
+          skipped.add(hlFeed);
+          sess?.add(hlFeed);
+          processed++;
+          await page.goBack({ timeout: 15000 });
+          continue;
+        }
+      }
+      if (config.excludeBusinessProfiles && snapF.minimalProfile) {
+        const fol = snapF.followers ?? getFollowersFromEntity(snapF.minimalProfile as Record<string, unknown>);
+        const entity = {
+          handle,
+          username: handle,
+          ...snapF.minimalProfile,
+          followers_count: fol,
+        } as Record<string, unknown>;
+        let feedDetail = '';
+        if (hasRejectedProfileKeyword(entity)) {
+          feedDetail = explainRejectedProfileKeyword(entity);
+        } else if (isBusinessFromEntity(entity)) {
+          feedDetail = explainCommercialOrEstablishment(entity);
+        } else if (!qualifiesAsInfluencer(entity, config.minFollowersToSave)) {
+          feedDetail = explainNotQualifiesAsInfluencer(entity, config.minFollowersToSave);
+        }
+        if (feedDetail) {
+          recordIssue(handle, 'regra', `No feed: ${feedDetail}`);
+          skipped.add(hlFeed);
+          sess?.add(hlFeed);
           await page.goBack({ timeout: 15000 });
           continue;
         }
@@ -728,7 +1545,8 @@ export async function discoverByFeed(
       onCollected
     );
     if (ok) saved++;
-    skipped.add(handle.toLowerCase());
+    skipped.add(hlFeed);
+    sess?.add(hlFeed);
 
     await page.goBack({ timeout: 15000 });
     await randomDelay(1000, 2000);
@@ -743,7 +1561,7 @@ export async function discoverByExplore(
   page: Page,
   options: DiscoveryOptions
 ): Promise<{ saved: number; processed: number }> {
-  const { config, shouldAbort, onCollected } = options;
+  const { config, shouldAbort, onCollected, sessionTriedHandles: sess } = options;
   const existingHandles = listHandles();
   const skipped = new Set<string>();
   let saved = 0;
@@ -789,8 +1607,11 @@ export async function discoverByExplore(
     }
 
     const handleLower = handle.toLowerCase();
-    if (existingHandles.has(handleLower) || skipped.has(handleLower)) {
+    if (existingHandles.has(handleLower) || skipped.has(handleLower) || sess?.has(handleLower)) {
       if (existingHandles.has(handleLower)) recordDuplicate(handle);
+      if (sess?.has(handleLower) && !existingHandles.has(handleLower) && !skipped.has(handleLower)) {
+        coletaLog(`Explore: @${handle} já visto nesta coleta / Problemas, pulando.`);
+      }
       try {
         await page.goBack({ timeout: 15000 });
       } catch {
@@ -801,6 +1622,7 @@ export async function discoverByExplore(
     }
     if (isBlocklistedHandle(handle) || containsRejectedKeyword(handle)) {
       skipped.add(handleLower);
+      sess?.add(handleLower);
       try {
         await page.goBack({ timeout: 15000 });
       } catch {
@@ -818,6 +1640,27 @@ export async function discoverByExplore(
           await page.waitForURL(profileUrlRe, { timeout: 20000 });
         },
       });
+      if (result.minimalProfile) {
+        const rejBioE = explainRejectedEstablishmentKeywordInBio(
+          result.minimalProfile as Record<string, unknown>
+        );
+        if (rejBioE) {
+          recordIssue(handle, 'regra', `No Explore: ${rejBioE}`, {
+            followers_count: result.followers ?? undefined,
+          });
+          skipped.add(handleLower);
+          sess?.add(handleLower);
+          processed++;
+          try {
+            await page.goBack({ timeout: 15000 });
+            await page.goBack({ timeout: 15000 });
+          } catch {
+            await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+          }
+          await randomDelay(1000, 2000);
+          continue;
+        }
+      }
       if (
         result.followers == null ||
         result.followers < config.minFollowersToSave
@@ -829,6 +1672,52 @@ export async function discoverByExplore(
           { followers_count: result.followers ?? undefined }
         );
         skipped.add(handleLower);
+        sess?.add(handleLower);
+        processed++;
+        try {
+          await page.goBack({ timeout: 15000 });
+          await page.goBack({ timeout: 15000 });
+        } catch {
+          await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+        }
+        await randomDelay(1000, 2000);
+        continue;
+      }
+      if (
+        config.maxFollowersToSave > 0 &&
+        result.followers != null &&
+        result.followers > config.maxFollowersToSave
+      ) {
+        recordIssue(handle, 'regra', `No Explore: máximo ${config.maxFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${result.followers.toLocaleString('pt-BR')}.`, {
+          followers_count: result.followers,
+        });
+        skipped.add(handleLower);
+        sess?.add(handleLower);
+        processed++;
+        try {
+          await page.goBack({ timeout: 15000 });
+          await page.goBack({ timeout: 15000 });
+        } catch {
+          await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+        }
+        await randomDelay(1000, 2000);
+        continue;
+      }
+      const bioEarlyExp =
+        config.requireBioBrazilianPortuguese && result.minimalProfile
+          ? explainBioNotBrazilianPortuguese({
+            handle,
+            username: handle,
+            ...result.minimalProfile,
+            followers_count: result.followers,
+          } as Record<string, unknown>)
+          : null;
+      if (bioEarlyExp) {
+        recordIssue(handle, 'regra', `No Explore: ${bioEarlyExp}`, {
+          followers_count: result.followers,
+        });
+        skipped.add(handleLower);
+        sess?.add(handleLower);
         processed++;
         try {
           await page.goBack({ timeout: 15000 });
@@ -859,6 +1748,7 @@ export async function discoverByExplore(
             followers_count: result.followers,
           });
           skipped.add(handleLower);
+          sess?.add(handleLower);
           try {
             await page.goBack({ timeout: 15000 });
             await page.goBack({ timeout: 15000 });
@@ -880,6 +1770,87 @@ export async function discoverByExplore(
       await randomDelay(1500, 2500);
     }
 
+    if (config.minFollowersToSave <= 0) {
+      let sExp = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: true });
+      if (!sExp.minimalProfile) {
+        await randomDelay(1200, 2200);
+        sExp = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: true });
+      }
+      if (sExp.minimalProfile) {
+        const rjExp = explainRejectedEstablishmentKeywordInBio(
+          sExp.minimalProfile as Record<string, unknown>
+        );
+        if (rjExp) {
+          recordIssue(handle, 'regra', `No Explore: ${rjExp}`, {
+            followers_count: sExp.followers ?? undefined,
+          });
+          skipped.add(handleLower);
+          sess?.add(handleLower);
+          processed++;
+          try {
+            await page.goBack({ timeout: 15000 });
+            await page.goBack({ timeout: 15000 });
+          } catch {
+            await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+          }
+          await randomDelay(1000, 2000);
+          continue;
+        }
+      }
+      if (config.requireBioBrazilianPortuguese && sExp.minimalProfile) {
+        const bioE0 = explainBioNotBrazilianPortuguese({
+          handle,
+          username: handle,
+          ...sExp.minimalProfile,
+        } as Record<string, unknown>);
+        if (bioE0) {
+          recordIssue(handle, 'regra', `No Explore: ${bioE0}`);
+          skipped.add(handleLower);
+          sess?.add(handleLower);
+          processed++;
+          try {
+            await page.goBack({ timeout: 15000 });
+            await page.goBack({ timeout: 15000 });
+          } catch {
+            await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+          }
+          await randomDelay(1000, 2000);
+          continue;
+        }
+      }
+      if (config.excludeBusinessProfiles && sExp.minimalProfile) {
+        const fol =
+          sExp.followers ?? getFollowersFromEntity(sExp.minimalProfile as Record<string, unknown>);
+        const entity = {
+          handle,
+          username: handle,
+          ...sExp.minimalProfile,
+          followers_count: fol,
+        } as Record<string, unknown>;
+        let expDetail0 = '';
+        if (hasRejectedProfileKeyword(entity)) {
+          expDetail0 = explainRejectedProfileKeyword(entity);
+        } else if (isBusinessFromEntity(entity)) {
+          expDetail0 = explainCommercialOrEstablishment(entity);
+        } else if (!qualifiesAsInfluencer(entity, config.minFollowersToSave)) {
+          expDetail0 = explainNotQualifiesAsInfluencer(entity, config.minFollowersToSave);
+        }
+        if (expDetail0) {
+          recordIssue(handle, 'regra', `No Explore: ${expDetail0}`);
+          skipped.add(handleLower);
+          sess?.add(handleLower);
+          try {
+            await page.goBack({ timeout: 15000 });
+            await page.goBack({ timeout: 15000 });
+          } catch {
+            await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+          }
+          await randomDelay(1000, 2000);
+          continue;
+        }
+      }
+    }
+
     processed++;
     const ok = await processOneProfile(
       page,
@@ -893,6 +1864,7 @@ export async function discoverByExplore(
     );
     if (ok) saved++;
     skipped.add(handleLower);
+    sess?.add(handleLower);
 
     try {
       await page.goBack({ timeout: 15000 });

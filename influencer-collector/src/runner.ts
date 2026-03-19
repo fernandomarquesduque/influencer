@@ -5,7 +5,14 @@
 import type { Page } from 'playwright';
 import type { InstagramClient } from './instagram.js';
 import { loadConfig, mergeCollectorConfig } from './config.js';
-import { discoverByHashtag, discoverByFeed, discoverByExplore } from './discovery.js';
+import {
+  discoverByHashtag,
+  discoverByFeed,
+  discoverByExplore,
+  discoverByGoogle,
+  processGoogleQueue,
+} from './discovery.js';
+import { issueHandleKeysSet } from './memoryStorage.js';
 import type { DiscoveryMode } from './discovery.js';
 import { coletaLog } from './coletaLog.js';
 
@@ -14,6 +21,18 @@ let collecting = false;
 let collectionStartScheduled = false;
 let abortRequested = false;
 let statusMessage = '';
+
+/** Estado das linhas de busca Google (para a UI mostrar qual está em execução e as próximas). */
+export interface GoogleQueriesState {
+  queries: string[];
+  currentIndex: number;
+  phase: 'discover' | 'process';
+}
+let googleQueriesState: GoogleQueriesState | null = null;
+
+export function getGoogleQueriesState(): GoogleQueriesState | null {
+  return googleQueriesState;
+}
 
 export function isRunning(): boolean {
   return collecting;
@@ -68,13 +87,23 @@ export interface StartOptions {
   tag?: string;
   /** Lista explícita de tags (tem prioridade sobre tag). */
   tags?: string[];
+  /** Modo google: consulta ou várias (uma por linha); após terminar uma, vai para a próxima. */
+  googleQuery?: string;
+  /** Modo google: máx. páginas SERP por consulta. */
+  maxSerpPages?: number;
+  /** Modo google: tipos de SERP a buscar — ex. ['39', '7', ''] para udm=39, udm=7 e busca geral. */
+  udmValues?: string[];
+  /** Modo google: filtro de tempo do Google (qdr: h/d/w/m/y). */
+  googleQdr?: string;
   limit?: number;
   /** Regras escolhidas na UI (sobrescrevem .env para esta execução). */
   minFollowers?: number;
+  maxFollowers?: number;
   minPostLikes?: number;
   minPostsWithMinLikes?: number;
   maxPostsPerTag?: number;
   excludeBusinessProfiles?: boolean;
+  requireBioBrazilianPortuguese?: boolean;
 }
 
 export async function runCollection(
@@ -104,22 +133,31 @@ export async function runCollection(
     const base = loadConfig();
     const config = mergeCollectorConfig(base, {
       minFollowersToSave: options.minFollowers,
+      maxFollowersToSave: options.maxFollowers,
       minPostLikesToSave: options.minPostLikes,
       minPostsWithMinLikesToSave: options.minPostsWithMinLikes,
       maxPostsPerTag: options.maxPostsPerTag,
       excludeBusinessProfiles: options.excludeBusinessProfiles,
+      requireBioBrazilianPortuguese: options.requireBioBrazilianPortuguese,
     });
     const maxProfiles = options.limit ?? base.maxProfiles;
     coletaLog(
       `INÍCIO modo=${options.mode} limite_salvar=${maxProfiles} minSeguidores=${config.minFollowersToSave} minCurtidasPost=${config.minPostLikesToSave}`
     );
 
+    const sessionTriedHandles = new Set<string>(issueHandleKeysSet());
     const discoveryOptions = {
       mode: options.mode,
       tag: options.tag,
+      googleQuery: options.googleQuery,
+      maxSerpPages: options.maxSerpPages,
+      udmValues: options.udmValues,
+      googleQdr: options.googleQdr,
+      googleSessionPath: base.googleSessionPath,
       maxProfiles,
       config,
       shouldAbort,
+      sessionTriedHandles,
       onCollected(handle: string, followers: number) {
         statusMessage = `@${handle} (${followers.toLocaleString('pt-BR')} seguidores)`;
         console.log(`[coleta] ${statusMessage}`);
@@ -150,6 +188,42 @@ export async function runCollection(
       coletaLog(`Modo FEED — limite ${maxProfiles}`);
       statusMessage = `Feed — limite ${maxProfiles}`;
       result = await discoverByFeed(client, pageRef.page, discoveryOptions);
+    } else if (options.mode === 'google') {
+      const queryRaw = (options.googleQuery ?? '').trim();
+      const queryList = queryRaw
+        ? queryRaw.split(/\r?\n/).map((q) => q.trim()).filter(Boolean)
+        : [];
+      const queries = queryList.length > 0 ? queryList : (queryRaw ? [queryRaw] : []);
+      if (queries.length === 0) {
+        coletaLog('Modo Google: defina ao menos uma consulta (uma por linha para múltiplas).');
+        result = { saved: 0, processed: 0 };
+      } else {
+        let totalSaved = 0;
+        let totalProcessed = 0;
+        googleQueriesState = { queries, currentIndex: 0, phase: 'discover' };
+        try {
+          for (let i = 0; i < queries.length; i++) {
+            if (shouldAbort()) break;
+            const remaining = maxProfiles - totalSaved;
+            if (remaining <= 0) break;
+            const q = queries[i]!;
+            googleQueriesState.currentIndex = i;
+            googleQueriesState.phase = 'discover';
+            coletaLog(`Google ${i + 1}/${queries.length}: "${q.slice(0, 60)}${q.length > 60 ? '…' : ''}" — restam ${remaining} perfil(is) a salvar.`);
+            statusMessage = `Google ${i + 1}/${queries.length} — preenchendo fila…`;
+            await discoverByGoogle(client, pageRef.page, { ...discoveryOptions, googleQuery: q, maxProfiles: remaining });
+            googleQueriesState.phase = 'process';
+            statusMessage = `Google ${i + 1}/${queries.length} — processando fila (1 perfil por vez)…`;
+            const r = await processGoogleQueue(client, pageRef.page, { ...discoveryOptions, googleQuery: q, maxProfiles: remaining });
+            totalSaved += r.saved;
+            totalProcessed += r.processed;
+            coletaLog(`Google consulta ${i + 1} → +${r.saved} salvos | total acumulado: ${totalSaved} salvos, ${totalProcessed} processados.`);
+          }
+        } finally {
+          googleQueriesState = null;
+        }
+        result = { saved: totalSaved, processed: totalProcessed };
+      }
     } else {
       coletaLog(`Modo EXPLORE — limite ${maxProfiles}`);
       statusMessage = `Explore — limite ${maxProfiles}`;

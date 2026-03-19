@@ -72,6 +72,7 @@ O login é gravado automaticamente no arquivo indicado por `AUTH_STATE_PATH` (pa
 | `MIN_POST_LIKES` | Mínimo de curtidas por post (padrão 200) |
 | `MIN_POSTS_WITH_MIN_LIKES` | Quantidade mínima de posts com essa curtida (padrão 4) |
 | `EXCLUDE_BUSINESS_PROFILES` | Excluir empresas (padrão true) |
+| `COLLECTOR_REQUIRE_BIO_PT_BR` | Exigir bio em português brasileiro com `franc` + heurísticas (padrão: ligado; `false` desliga) |
 | `HEADLESS` | `true` para rodar sem mostrar o browser (padrão: janela visível) |
 | `COLLECTOR_UI_PORT` | Porta da interface (padrão 3967) |
 
@@ -82,6 +83,7 @@ Todo o código está dentro de `influencer-collector` (projeto autocontido):
 - `config.ts` — configuração a partir do env
 - `instagram.ts` — browser Playwright e URLs do Instagram
 - `entityRules.ts` — regras (blocklist, empresa, qualificação, curtidas)
+- `bioLanguageBr.ts` — validação de bio em pt-BR (biblioteca `franc`)
 - `profileExtractor.ts` — extração de perfil e posts via API
 - `slimProfile.ts` — perfil enxuto para exibição
 - `discovery.ts` — descoberta por hashtag, feed e explore

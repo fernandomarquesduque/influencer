@@ -65,7 +65,7 @@ export function getFollowersFromEntity(entity: Record<string, unknown>): number 
 
 // --- Blocklist e palavras rejeitadas ---
 export const BLOCKLIST_HANDLES = new Set<string>(['franya910']);
-export const REJECTED_PROFILE_KEYWORDS = new Set<string>(['jornal']);
+
 
 export function isBlocklistedHandle(handle: string): boolean {
   if (!handle || typeof handle !== 'string') return false;
@@ -79,7 +79,7 @@ export function containsRejectedKeyword(text: string): boolean {
     .normalize('NFD')
     .replace(/\u0300-\u036f/g, '');
   if (!normalized) return false;
-  for (const kw of REJECTED_PROFILE_KEYWORDS) {
+  for (const kw of ESTABLISHMENT_KEYWORDS_RAW) {
     if (normalized.includes(kw.toLowerCase())) return true;
   }
   return false;
@@ -90,7 +90,7 @@ function profileSearchText(entity: Record<string, unknown>): string {
     getIn(entity, 'handle', 'username', 'data.user.username'),
     getIn(entity, 'data.user.full_name', 'full_name'),
     getIn(entity, 'data.user.category', 'category'),
-    getIn(entity, 'data.user.biography', 'biography'),
+    collectBioRawText(entity),
   ]
     .filter((v) => v != null && String(v).trim() !== '')
     .map((v) => String(v).trim());
@@ -104,7 +104,7 @@ export function hasRejectedProfileKeyword(entity: Record<string, unknown>): bool
 /** Motivo legível quando há palavra da lista REJECTED_PROFILE_KEYWORDS. */
 export function explainRejectedProfileKeyword(entity: Record<string, unknown>): string {
   const n = normalize(profileSearchText(entity));
-  for (const kw of REJECTED_PROFILE_KEYWORDS) {
+  for (const kw of ESTABLISHMENT_KEYWORDS_RAW) {
     const kn = normalize(kw);
     if (kn && n.includes(kn)) {
       return `Lista de rejeição: o termo «${kw}» aparece no @, nome, bio ou categoria`;
@@ -177,11 +177,47 @@ export function explainNotQualifiesAsInfluencer(
 
 // --- Estabelecimento (empresa/negócio) — palavras-chave de filtro ---
 const ESTABLISHMENT_KEYWORDS_RAW = [
-  'loja', 'lojas', 'restaurante', 'bar ', 'lanchonete', 'padaria', 'hotel', 'clinic', 'clinica',
-  'academia', 'gym', 'farmácia', 'farmacia', 'mercado', 'pizzaria', 'sorvete', 'confeitaria',
-  'imobiliária', 'imobiliaria', 'company', 'ltda', 's.a.', 'official', 'brand', 'business',
-  'store', 'shop', 'turismo', 'agência', 'agencia', 'studio', 'estudio',
+  'governo', 'banco', 'politica', 'política',
+  'agência', 'cinema', 'teatro',
+  'condominio', 'condomínio',
+  'mensagem', 'prefeitura',
+  'noticia', 'notícia', 'noticias', 'notícias',
+  'universidade', 'escola', 'radio', 'rádio',
+  'clinica', 'clínica', 'studio', 'estudio', 'estúdio',
+  'lanche', 'lanches', 'ifood', 'finanças',
+  'loja', 'lanchonete',
+  'padaria', 'bakery', 'hotel', 'pousada', 'clinic',
+  'academia', 'farmácia', 'farmacia', 'pharmacy',
+  'mercado', 'pizzaria', 'hamburgueria', 'sorvete',
+  'confeitaria', 'balada', 'nightclub',
+  'cervejaria',
+  'gastrobar', 'gastropub', 'gastronomy',
+  'bistro', 'brasserie', 'steakhouse', 'grill',
+  'kitchen', 'rooftop', 'lounge',
+
+  'imobiliária', 'imobiliaria', 'imóveis', 'imoveis',
+
+  'gazeta', 'jornal',
 ];
+
+/**
+ * Bio contém termo da lista de estabelecimento/negócio — usar antes da validação de idioma.
+ */
+export function explainRejectedEstablishmentKeywordInBio(
+  entity: Record<string, unknown>
+): string | null {
+  const raw = collectBioRawText(entity).trim();
+  if (!raw) return null;
+  const n = normalize(raw);
+  for (const kw of ESTABLISHMENT_KEYWORDS_RAW) {
+    const kn = normalize(kw);
+    if (!kn) continue;
+    if (n.includes(kn)) {
+      return `Bio: termo da lista de rejeição «${kw}» (antes da validação de idioma)`;
+    }
+  }
+  return null;
+}
 
 function normalize(s: string): string {
   return String(s)
@@ -208,9 +244,41 @@ function getFullNameNormalized(entity: Record<string, unknown>): string {
   return name != null ? normalize(String(name)) : '';
 }
 
+/**
+ * Junta todo texto de bio que a API do Instagram pode enviar (campos variam por endpoint).
+ * Exportado para regras de idioma e outras checagens alinhadas à mesma fonte.
+ */
+export function collectBioRawText(entity: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const push = (v: unknown) => {
+    if (v == null) return;
+    const s = String(v).trim();
+    if (s) parts.push(s);
+  };
+  push(getIn(entity, 'data.user.biography', 'biography', 'bio'));
+  const bwe = getIn(entity, 'data.user.biography_with_entities', 'biography_with_entities');
+  if (bwe != null && typeof bwe === 'object') {
+    const o = bwe as Record<string, unknown>;
+    push(o.text);
+    push(o.raw_text);
+  }
+  const links = getIn(entity, 'data.user.bio_links', 'bio_links');
+  if (Array.isArray(links)) {
+    for (const item of links) {
+      if (item != null && typeof item === 'object') {
+        const L = item as Record<string, unknown>;
+        push(L.title);
+        push(L.name);
+        push(L.link_title);
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
 function getBioNormalized(entity: Record<string, unknown>): string {
-  const bio = getIn(entity, 'data.user.biography', 'biography', 'bio');
-  return bio != null ? normalize(String(bio)) : '';
+  const raw = collectBioRawText(entity);
+  return raw ? normalize(raw) : '';
 }
 
 function normalizeCategory(cat: unknown): string {

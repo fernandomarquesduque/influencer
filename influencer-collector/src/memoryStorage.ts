@@ -48,10 +48,20 @@ export interface IntegrationPushResult {
 }
 
 const MAX_ISSUES = 2000;
+const MAX_GOOGLE_QUEUE = 5000;
 
 const pending = new Map<string, PendingRow>();
 const integrated = new Map<string, IntegratedRow>();
 const issues: IssueRow[] = [];
+
+/** Fila de handles descobertos pelo Google — processamento no Instagram é assíncrono, 1 por vez. */
+export interface GoogleQueueItem {
+  handle: string;
+  addedAt: string;
+  /** Trecho/descrição do resultado Google onde o handle foi encontrado (palavra-chave em contexto). */
+  snippet?: string;
+}
+const googleQueue: GoogleQueueItem[] = [];
 
 /** Evita spam de “duplicado” para o mesmo @ na mesma sessão. */
 const duplicateLogged = new Set<string>();
@@ -71,6 +81,74 @@ function pushIssue(row: IssueRow): void {
 /** Handles já coletados ou integrados (evita reprocessar). */
 export function listHandles(): Set<string> {
   return new Set([...pending.keys(), ...integrated.keys()]);
+}
+
+/** Adiciona handle à fila Google (evita duplicata por handle normalizado). snippet = trecho/descrição do resultado Google. */
+export function addToGoogleQueue(handle: string, snippet?: string): boolean {
+  const k = norm(handle);
+  if (!k) return false;
+  if (googleQueue.some((x) => norm(x.handle) === k)) return false;
+  if (googleQueue.length >= MAX_GOOGLE_QUEUE) return false;
+  googleQueue.push({ handle: k, addedAt: new Date().toISOString(), snippet: snippet?.trim() || undefined });
+  return true;
+}
+
+/** Lista completa da fila Google (para exibir na UI). */
+export function getGoogleQueue(): GoogleQueueItem[] {
+  return [...googleQueue];
+}
+
+/** Remove e retorna o próximo da fila (para processamento 1 a 1). */
+export function takeNextFromGoogleQueue(): GoogleQueueItem | null {
+  return googleQueue.shift() ?? null;
+}
+
+/** Remove um handle específico da fila Google (por exemplo, para excluir da UI). */
+export function removeFromGoogleQueue(handle: string): boolean {
+  const k = norm(handle);
+  if (!k) return false;
+  const idx = googleQueue.findIndex((x) => norm(x.handle) === k);
+  if (idx === -1) return false;
+  googleQueue.splice(idx, 1);
+  return true;
+}
+
+/** Quantidade de itens na fila Google. */
+export function googleQueueLength(): number {
+  return googleQueue.length;
+}
+
+/** Esvazia a fila Google (só a fila; coletados/integrados/problemas não são alterados). Retorna quantos itens foram removidos. */
+export function clearGoogleQueue(): number {
+  const n = googleQueue.length;
+  googleQueue.length = 0;
+  return n;
+}
+
+/** Última extração SERP (atualizada a cada página) — para a UI mostrar links extraídos em tempo real. */
+export interface LastSerpExtraction {
+  page: number;
+  handles: string[];
+  at: string;
+}
+let lastSerpExtraction: LastSerpExtraction = { page: 0, handles: [], at: '' };
+
+export function setLastGoogleSerpExtraction(page: number, handles: string[]): void {
+  lastSerpExtraction = { page, handles: [...handles], at: new Date().toISOString() };
+}
+
+export function getLastGoogleSerpExtraction(): LastSerpExtraction {
+  return { ...lastSerpExtraction };
+}
+
+/** Handles que já constam em Problemas (regra/extração/erro) — não reabrir na grade na mesma coleta. */
+export function issueHandleKeysSet(): Set<string> {
+  const s = new Set<string>();
+  for (const row of issues) {
+    const k = norm(row.handleKey || row.handle);
+    if (k) s.add(k);
+  }
+  return s;
 }
 
 /** Duplicados não aparecem na tabela de problemas (só log no console). */
@@ -203,5 +281,6 @@ export function clearAll(): void {
   pending.clear();
   integrated.clear();
   issues.length = 0;
+  googleQueue.length = 0;
   duplicateLogged.clear();
 }

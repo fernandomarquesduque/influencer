@@ -145,11 +145,11 @@ export class InstagramClient {
 
   async close(): Promise<void> {
     if (this.context) {
-      await this.context.close().catch(() => {});
+      await this.context.close().catch(() => { });
       this.context = null;
     }
     if (this.browser) {
-      await this.browser.close().catch(() => {});
+      await this.browser.close().catch(() => { });
       this.browser = null;
     }
   }
@@ -161,7 +161,14 @@ export class InstagramClient {
 
   static tagUrl(tag: string): string {
     const clean = tag.replace(/^#/, '').trim();
-    return `${INSTAGRAM_ORIGIN}/explore/tags/${encodeURIComponent(clean)}/`;
+    return `${INSTAGRAM_ORIGIN}/explore/search/keyword/?q=${encodeURIComponent(clean)}`;
+  }
+
+  /** href relativo ou absoluto → URL completa (post/reel/perfil). */
+  static absoluteUrl(href: string): string {
+    const path = href.split('?')[0] ?? href;
+    if (path.startsWith('http')) return path;
+    return INSTAGRAM_ORIGIN + (path.startsWith('/') ? path : `/${path}`);
   }
 
   static homeFeedUrl(): string {

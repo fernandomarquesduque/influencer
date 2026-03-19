@@ -4,7 +4,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { getLedger, removeProfile } from './memoryStorage.js';
+import { getLedger, getGoogleQueue, removeFromGoogleQueue, clearGoogleQueue, removeProfile } from './memoryStorage.js';
 import { getProcessingState } from './processingStatus.js';
 import * as runner from './runner.js';
 import { loadConfig } from './config.js';
@@ -60,11 +60,14 @@ export function createCollectorRequestHandler(
       const n = (x: number, fb: number) => (Number.isFinite(x) ? Math.floor(x) : fb);
       sendJson(res, 200, {
         minFollowersToSave: n(c.minFollowersToSave, 5000),
+        maxFollowersToSave: n(c.maxFollowersToSave, 1000000),
         minPostLikesToSave: n(c.minPostLikesToSave, 200),
         minPostsWithMinLikesToSave: n(c.minPostsWithMinLikesToSave, 4),
         maxPostsPerTag: n(c.maxPostsPerTag, 30),
         maxProfiles: n(c.maxProfiles, 19999),
+        maxSerpPages: 20,
         excludeBusinessProfiles: !!c.excludeBusinessProfiles,
+        requireBioBrazilianPortuguese: !!c.requireBioBrazilianPortuguese,
       });
       return;
     }
@@ -109,6 +112,7 @@ export function createCollectorRequestHandler(
         };
         const limit = num(body.limit, baseCfg.maxProfiles);
         const minFollowers = num(body.minFollowers, baseCfg.minFollowersToSave);
+        const maxFollowers = num(body.maxFollowers, baseCfg.maxFollowersToSave);
         const minPostLikes = num(body.minPostLikes, baseCfg.minPostLikesToSave);
         const minPostsWithMinLikes = num(body.minPostsWithMinLikes, baseCfg.minPostsWithMinLikesToSave);
         const maxPostsPerTag = num(body.maxPostsPerTag, baseCfg.maxPostsPerTag);
@@ -116,16 +120,36 @@ export function createCollectorRequestHandler(
           typeof body.excludeBusinessProfiles === 'boolean'
             ? body.excludeBusinessProfiles
             : baseCfg.excludeBusinessProfiles;
+        const requireBioBrazilianPortuguese =
+          typeof body.requireBioBrazilianPortuguese === 'boolean'
+            ? body.requireBioBrazilianPortuguese
+            : baseCfg.requireBioBrazilianPortuguese;
+        const googleQuery =
+          typeof body.googleQuery === 'string' ? String(body.googleQuery).trim() : undefined;
+        const googleQdrRaw = typeof body.googleQdr === 'string' ? String(body.googleQdr).trim().toLowerCase() : undefined;
+        const googleQdr =
+          googleQdrRaw && ['h', 'd', 'w', 'm', 'y'].includes(googleQdrRaw) ? googleQdrRaw : undefined;
+        const maxSerpPages = num(body.maxSerpPages, 20);
+        const udmValuesRaw = Array.isArray(body.udmValues) ? body.udmValues : undefined;
+        const udmValues =
+          udmValuesRaw?.map((u) => (u === null || u === undefined ? '' : String(u).trim())).filter((u) => u !== undefined) ??
+          ['39', '7', ''];
         const runOpts = {
-          mode: mode as 'hashtag' | 'feed' | 'explore',
+          mode: mode as 'hashtag' | 'feed' | 'explore' | 'google',
           tag,
           tags,
+          googleQuery: googleQuery || undefined,
+          googleQdr,
+          maxSerpPages: Math.max(1, Math.min(50, maxSerpPages)),
+          udmValues: udmValues.length > 0 ? udmValues : ['39', '7', ''],
           limit,
           minFollowers,
+          maxFollowers,
           minPostLikes,
           minPostsWithMinLikes,
           maxPostsPerTag,
           excludeBusinessProfiles,
+          requireBioBrazilianPortuguese,
         };
         if (!runner.tryScheduleCollection()) {
           sendJson(res, 200, { started: false, error: 'Não foi possível iniciar (tente de novo).' });
@@ -169,8 +193,35 @@ export function createCollectorRequestHandler(
       return;
     }
 
+    if (url === '/api/remove-google-queue' && req.method === 'POST') {
+      try {
+        const body = await parseBody(req);
+        const handle = typeof body.handle === 'string' ? body.handle : '';
+        const removed = removeFromGoogleQueue(handle);
+        sendJson(res, removed ? 200 : 404, {
+          ok: removed,
+          removed,
+          error: removed ? undefined : 'Handle não encontrado na fila Google.',
+        });
+      } catch (e) {
+        sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+      return;
+    }
+
+    if (url === '/api/clear-google-queue' && req.method === 'POST') {
+      try {
+        const count = clearGoogleQueue();
+        sendJson(res, 200, { cleared: true, count });
+      } catch (e) {
+        sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+      return;
+    }
+
     if (url === '/api/list' || url === '/list') {
       const L = getLedger();
+      const googleQueue = getGoogleQueue();
       const row = (p: { handle: string; profile: Record<string, unknown>; collectedAt: string }) => ({
         handle: p.handle,
         handleKey: String(p.handle).replace(/^@/, '').trim().toLowerCase(),
@@ -209,6 +260,7 @@ export function createCollectorRequestHandler(
         attemptedHost: hostFromEndpoint(x.attemptedEndpoint ?? ''),
       }));
       const processing = getProcessingState();
+      const googleQueriesState = runner.getGoogleQueriesState();
       res.writeHead(200, JSON_HEADERS);
       res.end(
         JSON.stringify(
@@ -217,12 +269,21 @@ export function createCollectorRequestHandler(
               coletados: L.coletados.length,
               problemas: L.problemas.length,
               integrados: L.integrados.length,
+              googleQueue: googleQueue.length,
               emProcessamento: processing ? 1 : 0,
             },
             processing,
+            googleQueriesState: googleQueriesState
+              ? {
+                  queries: googleQueriesState.queries,
+                  currentIndex: googleQueriesState.currentIndex,
+                  phase: googleQueriesState.phase,
+                }
+              : null,
             coletados: L.coletados.map(row),
             problemas,
             integrados,
+            googleQueue: googleQueue.map((x) => ({ handle: x.handle, addedAt: x.addedAt, snippet: x.snippet })),
             influencers: [...L.coletados.map(row), ...L.integrados.map(row)],
           },
           null,
@@ -243,7 +304,7 @@ export function createCollectorRequestHandler(
   <style>
     * { box-sizing: border-box; }
     body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 1rem; background: #1a1a1a; color: #e0e0e0; }
-    .table-scroll { overflow-x: auto; margin: 0.5rem 0 1.25rem; -webkit-overflow-scrolling: touch; }
+    .table-scroll { overflow: auto; max-height: 420px; margin: 0.5rem 0 1.25rem; -webkit-overflow-scrolling: touch; }
     h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
     .sub { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
     .controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; }
@@ -253,10 +314,22 @@ export function createCollectorRequestHandler(
     .btn-stop { background: #c53030; color: #fff; }
     .btn-start:hover:not(:disabled) { background: #0d9c52; }
     .btn-stop:hover:not(:disabled) { background: #e53e3e; }
-    .btn-remove { padding: 0.35rem 0.65rem; font-size: 0.8rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
-    .btn-remove:hover { background: #450a0a; color: #fca5a5; }
+    .row-clickable { cursor: pointer; }
+    .row-clickable:hover { background: rgba(255,255,255,0.04); }
+    .btn-remove-queue { padding: 0.3rem 0.6rem; font-size: 0.8rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
+    .btn-remove-queue:hover { background: #450a0a; color: #fca5a5; }
+    .btn-clear-queue { margin-left: 0.5rem; padding: 0.35rem 0.75rem; font-size: 0.85rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
+    .btn-clear-queue:hover { background: #450a0a; color: #fca5a5; }
+    #udmOptionsWrap { margin-top: 0.5rem; }
+    #udmOptionsWrap label { margin-right: 1rem; font-weight: normal; }
+    td.snippet-cell { max-width: 28rem; word-break: break-word; color: #94a3b8; font-size: 0.9rem; }
     tr.row-processing { background: linear-gradient(90deg, #1e3a2f 0%, #1a2e24 100%); outline: 1px solid #2d6a4f; }
     tr.row-processing td { color: #86efac !important; }
+    tr.row-search-current { background: linear-gradient(90deg, #1e3a2f 0%, #1a2e24 100%); outline: 1px solid #2d6a4f; }
+    tr.row-search-current td { color: #86efac !important; }
+    tr.row-search-done td { color: #94a3b8; }
+    tr.row-search-pending td { color: #64748b; }
+    td.query-cell { font-size: 0.85rem; word-break: break-all; max-width: 32rem; }
     code.ep { font-size: 0.72rem; word-break: break-all; display: block; max-width: 24rem; color: #a7f3d0; background: #0f172a; padding: 0.35rem 0.5rem; border-radius: 4px; }
     td.verify-cell { font-size: 0.82rem; line-height: 1.4; max-width: 26rem; color: #cbd5e1; }
     .verify-ok { color: #4ade80; font-weight: 600; }
@@ -271,6 +344,7 @@ export function createCollectorRequestHandler(
     .count .n-pend { color: #fbbf24; }
     .count .n-err { color: #f87171; }
     .count .n-ok { color: #4ade80; }
+    .count .n-queue { color: #38bdf8; }
     h2.section { font-size: 1.05rem; margin: 1.25rem 0 0.5rem; color: #a3a3a3; border-bottom: 1px solid #333; padding-bottom: 0.35rem; }
     .kind-erro { color: #f87171; }
     .kind-regra { color: #fb923c; }
@@ -290,57 +364,101 @@ export function createCollectorRequestHandler(
     .rules-grid input[type="number"] { width: 100%; max-width: 120px; }
     .hint { font-size: 0.75rem; color: #666; margin-top: 0.35rem; }
     #tagLabel { flex-direction: column; align-items: flex-start; width: 100%; max-width: 420px; }
+    #googleLabel { flex: 1 0 100%; flex-direction: column; align-items: flex-start; width: 100%; }
+    #googleLabel #googleQuery { width: 100%; display: block; }
+    #qdrLabel { flex: 0 0 auto; }
     #tags { width: 100%; min-height: 88px; padding: 0.5rem; border-radius: 4px; border: 1px solid #444; background: #2d2d2d; color: #e0e0e0; font-family: inherit; resize: vertical; }
   </style>
 </head>
 <body>
   <h1>Influencer Collector</h1>
-  <p class="sub">Browser já está no Instagram. Ajuste as regras abaixo e inicie a coleta quando quiser.</p>
+  <p class="sub">Browser já está no Instagram. No modo <strong>Google</strong>, a aba principal mostra a busca; perfis abrem em abas novas. Depois a aba volta ao Instagram.</p>
   <div id="status" class="status idle">Parado — clique em &quot;Iniciar coleta&quot; para começar.</div>
   <p id="apiHint" style="color:#f59e0b;font-size:0.85rem;margin:0 0 0.75rem;display:none;"></p>
   <fieldset>
     <legend>Regras da coleta (valores iniciais vêm do .env se existir)</legend>
     <div class="rules-grid">
       <label>Mín. seguidores <input type="number" id="minFollowers" min="0" step="100" value="5000"></label>
+      <label>Máx. seguidores (0 = sem limite) <input type="number" id="maxFollowers" min="0" step="1000" value="1000000"></label>
       <label>Mín. curtidas por post <input type="number" id="minPostLikes" min="0" step="10" value="200"></label>
       <label>Qtd. posts com essa curtida <input type="number" id="minPostsWithMinLikes" min="1" max="50" step="1" value="4"></label>
       <label>Máx. posts na hashtag <input type="number" id="maxPostsPerTag" min="1" max="200" step="1" value="30"></label>
       <label>Limite de perfis nesta rodada <input type="number" id="limit" min="1" max="100000" step="1" value="19999"></label>
     </div>
     <label style="margin-top:0.75rem;"><input type="checkbox" id="excludeBusiness" checked> Excluir perfis de empresa / estabelecimento</label>
-    <p class="hint">Esses valores são usados na coleta; <strong>modo, tags e regras ficam salvos neste navegador</strong> (localStorage).</p>
+    <label style="margin-top:0.5rem;"><input type="checkbox" id="requireBioPtBr" checked> Exigir bio em português brasileiro (rejeita outros idiomas e pt-PT sem sinais de BR)</label>
+    <p class="hint">Bio com menos de ~22 caracteres úteis não é filtrada por idioma. Desligue no .env: <code>COLLECTOR_REQUIRE_BIO_PT_BR=false</code>. Valores salvos no navegador (localStorage).</p>
   </fieldset>
   <div class="controls">
-    <label>Modo: <select id="mode"><option value="hashtag">Hashtag</option><option value="feed">Feed</option><option value="explore">Explore</option></select></label>
+    <label>Modo: <select id="mode"><option value="hashtag">Hashtag</option><option value="feed">Feed</option><option value="explore">Explore</option><option value="google">Google (site:instagram.com…)</option></select></label>
     <label id="tagLabel">Tags (modo Hashtag — uma por linha ou separadas por vírgula):
     <textarea id="tags" rows="4" placeholder="moda&#10;beleza&#10;lifestylebr">microinfluencerbr</textarea></label>
+    <label id="googleLabel" style="display:none;">Consulta(s) Google — uma por linha (ex.: <code>site:instagram.com mae mario</code>); após terminar uma, vai para a próxima:
+    <textarea id="googleQuery" rows="3" placeholder="site:instagram.com mae mario&#10;site:instagram.com pai nintendo"></textarea></label>
+    <label id="qdrLabel" style="display:none;">Filtro de tempo (qdr):
+      <select id="qdr">
+        <option value="h">Última hora</option>
+        <option value="d">Últimas 24 horas</option>
+        <option value="w" selected>Última semana</option>
+        <option value="m">Último mês</option>
+        <option value="y">Último ano</option>
+      </select>
+    </label>
+    <label id="serpPagesLabel" style="display:none;">Páginas SERP (Google) <input type="number" id="maxSerpPages" min="1" max="50" step="1" value="20"></label>
+    <div id="udmOptionsWrap" style="display:none;">
+      <span class="udm-options-label">Tipos de SERP (udm):</span>
+      <label><input type="checkbox" id="udm39" checked> udm=39</label>
+      <label><input type="checkbox" id="udm7" checked> udm=7 (vídeos/reels)</label>
+      <label><input type="checkbox" id="udmNone" checked> Sem udm (geral)</label>
+    </div>
     <button type="button" id="btnStart" class="btn-start">Iniciar coleta</button>
     <button type="button" id="btnStop" class="btn-stop" disabled>Parar coleta</button>
   </div>
   <div class="count">
     <strong id="countC" class="n-pend">0</strong> coletados (aguardando API ou sem API)
     · <strong id="countI" class="n-ok">0</strong> integrados
-    · <strong id="countP" class="n-err">0</strong> erros — atualiza a cada 5s
+    · <strong id="countP" class="n-err">0</strong> erros
+    · <strong id="countG" class="n-queue">0</strong> na fila Google — atualiza a cada 5s
+  </div>
+  <h2 class="section">Linhas da busca (progresso)</h2>
+  <p class="hint" style="margin-top:0">Qual consulta está em execução e as próximas — atualiza durante a coleta no modo Google.</p>
+  <div class="table-scroll" id="searchLinesWrap" style="margin-bottom:1.25rem">
+  <table>
+    <thead><tr><th>#</th><th>Linha da busca (consulta)</th><th>Status</th></tr></thead>
+    <tbody id="rowsSearchLines"></tbody>
+  </table>
+  </div>
+  <h2 class="section">Fila Google (aguardando processamento no Instagram)</h2>
+  <p class="hint" style="margin-top:0">Handles descobertos na busca Google; o processamento no Instagram ocorre em seguida, <strong>1 perfil por vez</strong>. <button type="button" id="btnClearGoogleQueue" class="btn-clear-queue">Apagar tudo</button></p>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>#</th><th>Handle</th><th>Descrição Google (trecho / palavra-chave)</th><th>Adicionado em</th><th></th></tr></thead>
+    <tbody id="rowsGoogleQueue"></tbody>
+  </table>
   </div>
   <h2 class="section">1 — Coletados</h2>
   <p class="hint" style="margin-top:0">Inclui <strong>em processamento agora</strong> (linha destacada) e perfis já extraídos aguardando API; com API OK, o perfil vai para Integrados.</p>
+  <div class="table-scroll">
   <table>
-    <thead><tr><th>#</th><th>Handle</th><th>Status / nome</th><th>Seguidores</th><th>Desde</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th>Handle</th><th>Status / nome</th><th>Seguidores</th><th>Desde</th></tr></thead>
     <tbody id="rowsColetados"></tbody>
   </table>
+  </div>
   <h2 class="section">2 — Integrados com sucesso (API / RocksDB)</h2>
   <p class="hint" style="margin-top:0"><strong>Confirmação no RocksDB</strong> = resposta do GET <code>collector-verify-profile</code> feito logo após o ingest (se a API tiver essa rota).</p>
   <div class="table-scroll">
   <table>
-    <thead><tr><th>#</th><th>Handle</th><th>Nome</th><th>Seguidores</th><th>Host (API)</th><th>Confirmação (consulta pós-ingest)</th><th>Integrado em</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th>Handle</th><th>Nome</th><th>Seguidores</th><th>Host (API)</th><th>Confirmação (consulta pós-ingest)</th><th>Integrado em</th></tr></thead>
     <tbody id="rowsIntegrados"></tbody>
   </table>
   </div>
   <h2 class="section">3 — Erro (após processamento)</h2>
+  <div class="table-scroll">
   <table>
     <thead><tr><th>#</th><th>Handle</th><th>Tipo</th><th>Detalhe</th><th>Host</th><th>POST tentado</th><th>Quando</th></tr></thead>
     <tbody id="rowsProblemas"></tbody>
   </table>
+  </div>
   <script>
 (function() {
   var API = window.location.origin;
@@ -352,6 +470,8 @@ export function createCollectorRequestHandler(
   function initUi() {
     var modeEl = document.getElementById('mode');
     var tagLabel = document.getElementById('tagLabel');
+    var googleLabel = document.getElementById('googleLabel');
+    var qdrLabel = document.getElementById('qdrLabel');
     var btnStartEl = document.getElementById('btnStart');
     if (!modeEl || !tagLabel || !btnStartEl) {
       showApiErr('Erro interno: recarregue a página (Ctrl+F5).');
@@ -364,13 +484,21 @@ export function createCollectorRequestHandler(
         var tagsEl = document.getElementById('tags');
         localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
           minFollowers: document.getElementById('minFollowers') && document.getElementById('minFollowers').value,
+          maxFollowers: document.getElementById('maxFollowers') && document.getElementById('maxFollowers').value,
           minPostLikes: document.getElementById('minPostLikes') && document.getElementById('minPostLikes').value,
           minPostsWithMinLikes: document.getElementById('minPostsWithMinLikes') && document.getElementById('minPostsWithMinLikes').value,
           maxPostsPerTag: document.getElementById('maxPostsPerTag') && document.getElementById('maxPostsPerTag').value,
           limit: document.getElementById('limit') && document.getElementById('limit').value,
           excludeBusiness: !!(document.getElementById('excludeBusiness') && document.getElementById('excludeBusiness').checked),
+          requireBioPtBr: !!(document.getElementById('requireBioPtBr') && document.getElementById('requireBioPtBr').checked),
           mode: modeEl.value,
-          tags: tagsEl ? String(tagsEl.value) : ''
+          tags: tagsEl ? String(tagsEl.value) : '',
+          googleQuery: (document.getElementById('googleQuery') && document.getElementById('googleQuery').value) || '',
+          googleQdr: (document.getElementById('qdr') && document.getElementById('qdr').value) || 'w',
+          maxSerpPages: document.getElementById('maxSerpPages') && document.getElementById('maxSerpPages').value,
+          udm39: !!(document.getElementById('udm39') && document.getElementById('udm39').checked),
+          udm7: !!(document.getElementById('udm7') && document.getElementById('udm7').checked),
+          udmNone: !!(document.getElementById('udmNone') && document.getElementById('udmNone').checked)
         }));
       } catch (e) { /* private mode / quota */ }
     }
@@ -392,23 +520,46 @@ export function createCollectorRequestHandler(
         if (el) el.value = String(n);
       }
       setNum('minFollowers', s.minFollowers);
+      setNum('maxFollowers', s.maxFollowers);
       setNum('minPostLikes', s.minPostLikes);
       setNum('minPostsWithMinLikes', s.minPostsWithMinLikes);
       setNum('maxPostsPerTag', s.maxPostsPerTag);
       setNum('limit', s.limit);
+      setNum('maxSerpPages', s.maxSerpPages);
       if (typeof s.excludeBusiness === 'boolean') {
         var ex = document.getElementById('excludeBusiness');
         if (ex) ex.checked = s.excludeBusiness;
       }
-      if (s.mode === 'hashtag' || s.mode === 'feed' || s.mode === 'explore') modeEl.value = s.mode;
+      if (typeof s.requireBioPtBr === 'boolean') {
+        var rb = document.getElementById('requireBioPtBr');
+        if (rb) rb.checked = s.requireBioPtBr;
+      }
+      if (s.mode === 'hashtag' || s.mode === 'feed' || s.mode === 'explore' || s.mode === 'google') modeEl.value = s.mode;
       if (typeof s.tags === 'string') {
         var te = document.getElementById('tags');
         if (te) te.value = s.tags;
       }
+      if (typeof s.googleQuery === 'string') {
+        var gq = document.getElementById('googleQuery');
+        if (gq) gq.value = s.googleQuery;
+      }
+      if (typeof s.googleQdr === 'string') {
+        var qdrEl = document.getElementById('qdr');
+        if (qdrEl) qdrEl.value = s.googleQdr;
+      }
       tagLabel.style.display = modeEl.value === 'hashtag' ? '' : 'none';
+      if (googleLabel) googleLabel.style.display = modeEl.value === 'google' ? '' : 'none';
+      var serpPagesLabel = document.getElementById('serpPagesLabel');
+      if (serpPagesLabel) serpPagesLabel.style.display = modeEl.value === 'google' ? '' : 'none';
+      if (qdrLabel) qdrLabel.style.display = modeEl.value === 'google' ? '' : 'none';
+      var udmWrap = document.getElementById('udmOptionsWrap');
+      if (udmWrap) udmWrap.style.display = modeEl.value === 'google' ? '' : 'none';
+      if (typeof s.udm39 === 'boolean') { var u39 = document.getElementById('udm39'); if (u39) u39.checked = s.udm39; }
+      if (typeof s.udm7 === 'boolean') { var u7 = document.getElementById('udm7'); if (u7) u7.checked = s.udm7; }
+      if (typeof s.udmNone === 'boolean') { var uN = document.getElementById('udmNone'); if (uN) uN.checked = s.udmNone; }
     }
     function bindFilterPersistence() {
-      ['minFollowers', 'minPostLikes', 'minPostsWithMinLikes', 'maxPostsPerTag', 'limit'].forEach(function(id) {
+      ['minFollowers', 'maxFollowers', 'minPostLikes', 'minPostsWithMinLikes', 'maxPostsPerTag', 'limit', 'maxSerpPages'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) {
           el.addEventListener('input', saveUiFilters);
@@ -417,10 +568,22 @@ export function createCollectorRequestHandler(
       });
       var ex = document.getElementById('excludeBusiness');
       if (ex) ex.addEventListener('change', saveUiFilters);
+      var rb = document.getElementById('requireBioPtBr');
+      if (rb) rb.addEventListener('change', saveUiFilters);
       var tagsEl = document.getElementById('tags');
       if (tagsEl) tagsEl.addEventListener('input', saveUiFilters);
+      var gqEl = document.getElementById('googleQuery');
+      if (gqEl) gqEl.addEventListener('input', saveUiFilters);
+      var qdrEl = document.getElementById('qdr');
+      if (qdrEl) qdrEl.addEventListener('change', saveUiFilters);
+      ['udm39', 'udm7', 'udmNone'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('change', saveUiFilters);
+      });
     }
     bindFilterPersistence();
+    var udmOptionsWrap = document.getElementById('udmOptionsWrap');
+    if (udmOptionsWrap) udmOptionsWrap.style.display = modeEl.value === 'google' ? '' : 'none';
     function numFromInput(id, defVal) {
       var el = document.getElementById(id);
       var v = el ? parseInt(String(el.value).trim(), 10) : NaN;
@@ -428,9 +591,26 @@ export function createCollectorRequestHandler(
     }
     modeEl.addEventListener('change', function() {
       tagLabel.style.display = this.value === 'hashtag' ? '' : 'none';
+      if (googleLabel) googleLabel.style.display = this.value === 'google' ? '' : 'none';
+      var serpPagesLabel = document.getElementById('serpPagesLabel');
+      if (serpPagesLabel) serpPagesLabel.style.display = this.value === 'google' ? '' : 'none';
+      var qdrLabelCh = document.getElementById('qdrLabel');
+      if (qdrLabelCh) qdrLabelCh.style.display = this.value === 'google' ? '' : 'none';
+      var udmWrapCh = document.getElementById('udmOptionsWrap');
+      if (udmWrapCh) udmWrapCh.style.display = this.value === 'google' ? '' : 'none';
+      var searchLinesWrapCh = document.getElementById('searchLinesWrap');
+      if (searchLinesWrapCh) searchLinesWrapCh.style.display = this.value === 'google' ? '' : 'none';
       saveUiFilters();
     });
     tagLabel.style.display = modeEl.value === 'hashtag' ? '' : 'none';
+    if (googleLabel) googleLabel.style.display = modeEl.value === 'google' ? '' : 'none';
+    if (qdrLabel) qdrLabel.style.display = modeEl.value === 'google' ? '' : 'none';
+    var serpPagesLabelInit = document.getElementById('serpPagesLabel');
+    if (serpPagesLabelInit) serpPagesLabelInit.style.display = modeEl.value === 'google' ? '' : 'none';
+    var udmWrapInit = document.getElementById('udmOptionsWrap');
+    if (udmWrapInit) udmWrapInit.style.display = modeEl.value === 'google' ? '' : 'none';
+    var searchLinesWrapInit = document.getElementById('searchLinesWrap');
+    if (searchLinesWrapInit) searchLinesWrapInit.style.display = modeEl.value === 'google' ? '' : 'none';
 
     fetch(apiUrl('/api/defaults'), { cache: 'no-store' })
       .then(function(r) {
@@ -444,12 +624,16 @@ export function createCollectorRequestHandler(
           if (el) el.value = String(Number.isFinite(n) ? n : fb);
         }
         setNum('minFollowers', d.minFollowersToSave, 5000);
+        setNum('maxFollowers', d.maxFollowersToSave, 1000000);
         setNum('minPostLikes', d.minPostLikesToSave, 200);
         setNum('minPostsWithMinLikes', d.minPostsWithMinLikesToSave, 4);
         setNum('maxPostsPerTag', d.maxPostsPerTag, 30);
         setNum('limit', d.maxProfiles, 19999);
+        setNum('maxSerpPages', d.maxSerpPages, 20);
         var ex = document.getElementById('excludeBusiness');
         if (ex) ex.checked = d.excludeBusinessProfiles !== false;
+        var rb = document.getElementById('requireBioPtBr');
+        if (rb) rb.checked = d.requireBioBrazilianPortuguese !== false;
         var saved = loadUiFilters();
         if (saved) applyUiFilters(saved);
       })
@@ -473,24 +657,53 @@ export function createCollectorRequestHandler(
           document.getElementById('countC').textContent = c.coletados != null ? c.coletados : 0;
           document.getElementById('countP').textContent = c.problemas != null ? c.problemas : 0;
           document.getElementById('countI').textContent = c.integrados != null ? c.integrados : 0;
+          var countGEl = document.getElementById('countG');
+          if (countGEl) countGEl.textContent = c.googleQueue != null ? c.googleQueue : 0;
           var coletados = Array.isArray(d.coletados) ? d.coletados : [];
           var problemas = Array.isArray(d.problemas) ? d.problemas : [];
           var integrados = Array.isArray(d.integrados) ? d.integrados : [];
+          var googleQueue = Array.isArray(d.googleQueue) ? d.googleQueue : [];
           var proc = d.processing && d.processing.handle ? d.processing : null;
+          var gqState = d.googleQueriesState && Array.isArray(d.googleQueriesState.queries) ? d.googleQueriesState : null;
+          var searchLinesEl = document.getElementById('rowsSearchLines');
+          var searchLinesWrap = document.getElementById('searchLinesWrap');
+          if (searchLinesEl) {
+            if (gqState) {
+              var qs = gqState.queries;
+              var cur = typeof gqState.currentIndex === 'number' ? gqState.currentIndex : -1;
+              var phase = gqState.phase || 'discover';
+              searchLinesEl.innerHTML = qs.map(function(q, i) {
+                var status = '';
+                var rowClass = '';
+                if (i < cur) { status = 'Concluído'; rowClass = 'row-search-done'; }
+                else if (i === cur) {
+                  status = phase === 'process' ? 'Processando fila…' : 'Preenchendo fila…';
+                  rowClass = 'row-search-current';
+                } else { status = 'Aguardando'; rowClass = 'row-search-pending'; }
+                var qShort = (q || '').length > 80 ? (q.slice(0, 77) + '…') : (q || '');
+                return '<tr class="' + rowClass + '"><td>' + (i + 1) + '</td><td class="query-cell"><code>' + escapeAttr(qShort) + '</code></td><td>' + escapeAttr(status) + '</td></tr>';
+              }).join('');
+            } else {
+              searchLinesEl.innerHTML = '<tr><td colspan="3" style="color:#888">Nenhuma execução em andamento. Inicie a coleta no modo Google para ver o progresso das linhas de busca.</td></tr>';
+            }
+          }
+          if (searchLinesWrap) searchLinesWrap.style.display = modeEl && modeEl.value === 'google' ? '' : 'none';
           function rowProcessing(p) {
             var t = '';
             try { t = p.since ? new Date(p.since).toLocaleString('pt-BR') : ''; } catch (e) { t = String(p.since || ''); }
-            return '<tr class="row-processing"><td>…</td><td>@' + escapeAttr(p.handle) + '</td><td><span class="pulse-dot"></span><strong>Em processamento</strong> — ' + escapeAttr(p.stage || '') + '</td><td>—</td><td>' + escapeAttr(t) + '</td><td>—</td></tr>';
+            var hk = String(p.handle || '').replace(/^@/,'').toLowerCase();
+            return '<tr class="row-processing row-clickable" data-handle="' + escapeAttr(hk) + '"><td>…</td><td>@' + escapeAttr(p.handle) + '</td><td><span class="pulse-dot"></span><strong>Em processamento</strong> — ' + escapeAttr(p.stage || '') + '</td><td>—</td><td>' + escapeAttr(t) + '</td></tr>';
           }
           function rowColetado(x, i) {
             var hk = x.handleKey || String(x.handle).replace(/^@/,'').toLowerCase();
-            return '<tr><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + escapeAttr(x.collectedAt || '') + '</td><td><button type="button" class="btn-remove" data-bucket="coletado" data-handle="' + escapeAttr(hk) + '">Excluir</button></td></tr>';
+            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + escapeAttr(x.collectedAt || '') + '</td></tr>';
           }
           function rowProb(x, i) {
             var cls = x.kind === 'erro_api' ? 'kind-erro' : (x.kind === 'regra' ? 'kind-regra' : 'kind-ext');
             var hostP = x.attemptedHost ? '<strong>' + escapeAttr(x.attemptedHost) + '</strong>' : '—';
             var urlP = x.attemptedEndpoint ? '<code class="ep">' + escapeAttr(x.attemptedEndpoint) + '</code>' : '—';
-            return '<tr><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td class="' + cls + '">' + escapeAttr(x.kindLabel || x.kind) + '</td><td>' + escapeAttr(x.detail || '') + '</td><td>' + hostP + '</td><td>' + urlP + '</td><td>' + escapeAttr(x.at || '') + '</td></tr>';
+            var hk = x.handleKey || String(x.handle || '').replace(/^@/,'').toLowerCase();
+            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td class="' + cls + '">' + escapeAttr(x.kindLabel || x.kind) + '</td><td>' + escapeAttr(x.detail || '') + '</td><td>' + hostP + '</td><td>' + urlP + '</td><td>' + escapeAttr(x.at || '') + '</td></tr>';
           }
           function rowInt(x, i) {
             var hk = x.handleKey || String(x.handle).replace(/^@/,'').toLowerCase();
@@ -504,36 +717,76 @@ export function createCollectorRequestHandler(
             } else if (v === 'skipped') {
               conf = '<span class="verify-skip">Não executada</span> — <code>COLLECTOR_SKIP_VERIFY</code> ou fluxo sem verificação.';
             }
-            return '<tr><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + host + '</td><td class="verify-cell">' + conf + '</td><td>' + escapeAttr(x.integratedAt || '') + '</td><td><button type="button" class="btn-remove" data-bucket="integrado" data-handle="' + escapeAttr(hk) + '">Excluir</button></td></tr>';
+            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + host + '</td><td class="verify-cell">' + conf + '</td><td>' + escapeAttr(x.integratedAt || '') + '</td></tr>';
+          }
+          function rowGoogleQueue(x, i) {
+            var h = (x.handle || '').toLowerCase();
+            var added = '';
+            try { added = x.addedAt ? new Date(x.addedAt).toLocaleString('pt-BR') : ''; } catch (e) { added = escapeAttr(x.addedAt || ''); }
+            var snip = (x.snippet || '').trim();
+            if (snip.length > 180) snip = snip.slice(0, 177) + '…';
+            return '<tr class="row-clickable" data-handle="' + escapeAttr(h) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td class="snippet-cell">' + escapeAttr(snip) + '</td><td>' + escapeAttr(added) + '</td><td><button type="button" class="btn-remove-queue" data-handle="' + escapeAttr(h) + '">Excluir</button></td></tr>';
           }
           var rowsC = [];
           if (proc) rowsC.push(rowProcessing(proc));
           coletados.forEach(function(x, i) { rowsC.push(rowColetado(x, i)); });
-          document.getElementById('rowsColetados').innerHTML = rowsC.length ? rowsC.join('') : '<tr><td colspan="6" style="color:#666">Nenhum nesta lista (nem em processamento).</td></tr>';
+          document.getElementById('rowsColetados').innerHTML = rowsC.length ? rowsC.join('') : '<tr><td colspan="5" style="color:#666">Nenhum nesta lista (nem em processamento).</td></tr>';
+          var gqEl = document.getElementById('rowsGoogleQueue');
+          if (gqEl) gqEl.innerHTML = googleQueue.length ? googleQueue.map(rowGoogleQueue).join('') : '<tr><td colspan="5" style="color:#666">Nenhum. Use o modo Google para preencher a fila.</td></tr>';
           document.getElementById('rowsProblemas').innerHTML = problemas.length ? problemas.map(rowProb).join('') : '<tr><td colspan="7" style="color:#666">Nenhum.</td></tr>';
-          document.getElementById('rowsIntegrados').innerHTML = integrados.length ? integrados.map(rowInt).join('') : '<tr><td colspan="8" style="color:#666">Nenhum ainda.</td></tr>';
+          document.getElementById('rowsIntegrados').innerHTML = integrados.length ? integrados.map(rowInt).join('') : '<tr><td colspan="7" style="color:#666">Nenhum ainda.</td></tr>';
         })
         .catch(function() {
           document.getElementById('countC').textContent = '?';
           document.getElementById('countP').textContent = '?';
           document.getElementById('countI').textContent = '?';
+          var countGEl = document.getElementById('countG');
+          if (countGEl) countGEl.textContent = '?';
           showApiErr('Lista não atualizou — confira se o collector está ativo nesta mesma porta (' + window.location.port + ').');
         });
     }
-    function onRemoveClick(e) {
-      var btn = e.target.closest('.btn-remove');
-      if (!btn) return;
-      var h = btn.getAttribute('data-handle');
-      if (!h || !confirm('Remover @' + h + ' desta lista?')) return;
-      fetch(apiUrl('/api/remove'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: h }) })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          if (d.removed) refreshList();
-          else alert(d.error || 'Não foi possível remover.');
-        });
+    function onRowClick(e) {
+      var tr = e.target.closest('tr');
+      if (!tr) return;
+      var handle = tr.getAttribute('data-handle');
+      if (!handle) return;
+      window.open('https://www.instagram.com/' + handle + '/', '_blank');
     }
-    document.getElementById('rowsColetados').addEventListener('click', onRemoveClick);
-    document.getElementById('rowsIntegrados').addEventListener('click', onRemoveClick);
+    function onGoogleQueueClick(e) {
+      var btn = e.target.closest('.btn-remove-queue');
+      if (btn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var h = btn.getAttribute('data-handle');
+        if (!h) return;
+        fetch(apiUrl('/api/remove-google-queue'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: h }) })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.removed) refreshList();
+            else if (d.error) alert(d.error);
+          })
+          .catch(function() { alert('Não foi possível excluir da fila.'); });
+        return;
+      }
+      onRowClick(e);
+    }
+    document.getElementById('rowsColetados').addEventListener('click', onRowClick);
+    document.getElementById('rowsGoogleQueue').addEventListener('click', onGoogleQueueClick);
+    document.getElementById('rowsProblemas').addEventListener('click', onRowClick);
+    document.getElementById('rowsIntegrados').addEventListener('click', onRowClick);
+    var btnClearGq = document.getElementById('btnClearGoogleQueue');
+    if (btnClearGq) {
+      btnClearGq.addEventListener('click', function() {
+        if (!confirm('Apagar todos os itens da Fila Google?')) return;
+        fetch(apiUrl('/api/clear-google-queue'), { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.cleared) { refreshList(); }
+            else if (d.error) alert(d.error);
+          })
+          .catch(function() { alert('Não foi possível limpar a fila.'); });
+      });
+    }
     refreshList();
     setInterval(refreshList, 2000);
 
@@ -554,15 +807,35 @@ export function createCollectorRequestHandler(
           .split(/[\\n,;]+/)
           .map(function(t) { return t.replace(/^#/, '').trim(); })
           .filter(function(t) { return t.length > 0; });
+        var gq = (document.getElementById('googleQuery') && document.getElementById('googleQuery').value || '').trim();
+        if (mode === 'google' && !gq) {
+          startRequestInFlight = false;
+          btnS.disabled = false;
+          st.className = 'status idle';
+          st.textContent = 'Preencha a consulta Google (site:instagram.com…).';
+          return;
+        }
+        var udmValues = [];
+        if (mode === 'google') {
+          if (document.getElementById('udm39') && document.getElementById('udm39').checked) udmValues.push('39');
+          if (document.getElementById('udm7') && document.getElementById('udm7').checked) udmValues.push('7');
+          if (document.getElementById('udmNone') && document.getElementById('udmNone').checked) udmValues.push('');
+        }
         var payload = {
           mode: mode,
           tags: tags.length ? tags : undefined,
+          googleQuery: mode === 'google' ? gq : undefined,
+          googleQdr: mode === 'google' ? ((document.getElementById('qdr') && document.getElementById('qdr').value) || undefined) : undefined,
+          maxSerpPages: numFromInput('maxSerpPages', 20),
+          udmValues: mode === 'google' && udmValues.length > 0 ? udmValues : undefined,
           limit: numFromInput('limit', 19999),
           minFollowers: numFromInput('minFollowers', 5000),
+          maxFollowers: numFromInput('maxFollowers', 1000000),
           minPostLikes: numFromInput('minPostLikes', 200),
           minPostsWithMinLikes: numFromInput('minPostsWithMinLikes', 4),
           maxPostsPerTag: numFromInput('maxPostsPerTag', 30),
-          excludeBusinessProfiles: !!(document.getElementById('excludeBusiness') && document.getElementById('excludeBusiness').checked)
+          excludeBusinessProfiles: !!(document.getElementById('excludeBusiness') && document.getElementById('excludeBusiness').checked),
+          requireBioBrazilianPortuguese: !!(document.getElementById('requireBioPtBr') && document.getElementById('requireBioPtBr').checked)
         };
         var ctrl = new AbortController();
         var to = setTimeout(function() { ctrl.abort(); }, 120000);

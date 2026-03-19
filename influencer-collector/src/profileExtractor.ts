@@ -4,7 +4,7 @@
 
 import type { Page } from 'playwright';
 import { coletaLog } from './coletaLog.js';
-import { getFollowersFromEntity } from './entityRules.js';
+import { collectBioRawText, getFollowersFromEntity } from './entityRules.js';
 
 const PROFILE_RESPONSE_URL = /graphql\/query/i;
 const TIMEOUT_MS = 25_000;
@@ -65,6 +65,33 @@ async function readFollowersFromDOM(page: Page): Promise<number | null> {
 export interface GetFollowersOptions {
   doNavigate?: () => Promise<void>;
   skipGoto?: boolean;
+  /** Só validação rápida: espera mínima, sem scrolls (evita duplicar extração pesada). */
+  quickGate?: boolean;
+}
+
+/** Entre várias respostas GraphQL com `data.user`, usa a que tiver a bio mais completa (a primeira costuma vir truncada). */
+function pickGraphqlBodyWithRichestBio(bodies: Record<string, unknown>[]): Record<string, unknown> | null {
+  if (bodies.length === 0) return null;
+  let best = bodies[0]!;
+  let bestLen = collectBioRawText(best).trim().length;
+  for (let i = 1; i < bodies.length; i++) {
+    const b = bodies[i]!;
+    const n = collectBioRawText(b).trim().length;
+    if (n > bestLen) {
+      best = b;
+      bestLen = n;
+    }
+  }
+  return best;
+}
+
+function maxFollowersFromBodies(bodies: Record<string, unknown>[]): number {
+  let m = 0;
+  for (const b of bodies) {
+    const f = getFollowersFromEntity(b);
+    if (f > m) m = f;
+  }
+  return m;
 }
 
 export async function getFollowersAndMinimalProfile(
@@ -72,46 +99,70 @@ export async function getFollowersAndMinimalProfile(
   profileUrl: string,
   options?: GetFollowersOptions
 ): Promise<{ followers: number | null; minimalProfile: Record<string, unknown> | null }> {
-  let capturedBody: Record<string, unknown> | null = null;
+  const capturedBodies: Record<string, unknown>[] = [];
   const onResponse = async (response: import('playwright').Response) => {
-    if (capturedBody != null) return;
     const url = response.url();
     if (!PROFILE_RESPONSE_URL.test(url) || response.status() >= 400) return;
     const ct = response.headers()['content-type'] ?? '';
     if (!ct.includes('application/json')) return;
     try {
       const body = (await response.json()) as Record<string, unknown>;
-      if (body != null && hasDataUser(body)) capturedBody = body;
+      if (body != null && hasDataUser(body)) capturedBodies.push(body);
     } catch {
       // ignore
     }
   };
   page.on('response', onResponse);
   try {
-    if (options?.skipGoto) {
-      await page.waitForTimeout(800);
+    const finalize = async (): Promise<{
+      followers: number | null;
+      minimalProfile: Record<string, unknown> | null;
+    }> => {
+      const minimalProfile = pickGraphqlBodyWithRichestBio(capturedBodies);
+      const fromApi = maxFollowersFromBodies(capturedBodies);
       const followers =
-        capturedBody != null
-          ? getFollowersFromEntity(capturedBody)
-          : await readFollowersFromDOM(page);
+        fromApi > 0 ? fromApi : await readFollowersFromDOM(page);
       return {
         followers: followers != null && followers > 0 ? followers : null,
-        minimalProfile: capturedBody,
+        minimalProfile,
       };
+    };
+
+    if (options?.skipGoto) {
+      if (options.quickGate) {
+        await page.waitForTimeout(700);
+        return finalize();
+      }
+      await page.waitForTimeout(450);
+      await page.mouse.wheel(0, 300).catch(() => {});
+      await page.waitForTimeout(1100);
+      await page.mouse.wheel(0, 350).catch(() => {});
+      await page.waitForTimeout(1400);
+      await page.mouse.wheel(0, 300).catch(() => {});
+      await page.waitForTimeout(1100);
+      /* Sem reload: é aba secundária de perfil; reload aqui só atrapalha e não deve afetar a grade. */
+      if (capturedBodies.length === 0) {
+        await page.waitForTimeout(2000);
+        await page.mouse.wheel(0, 500).catch(() => {});
+        await page.waitForTimeout(1800);
+      }
+      return finalize();
     }
     if (options?.doNavigate) {
       await options.doNavigate();
     } else {
       await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
     }
-    await page.waitForTimeout(2500);
-    const fromApi = capturedBody != null ? getFollowersFromEntity(capturedBody) : 0;
-    const followers =
-      fromApi > 0 ? fromApi : await readFollowersFromDOM(page);
-    return {
-      followers: followers != null && followers > 0 ? followers : null,
-      minimalProfile: capturedBody,
-    };
+    if (options?.quickGate) {
+      await page.waitForTimeout(1800);
+      return finalize();
+    }
+    await page.waitForTimeout(1800);
+    await page.mouse.wheel(0, 450).catch(() => {});
+    await page.waitForTimeout(1400);
+    await page.mouse.wheel(0, 400).catch(() => {});
+    await page.waitForTimeout(1200);
+    return finalize();
   } finally {
     page.off('response', onResponse);
   }
