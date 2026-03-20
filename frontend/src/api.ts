@@ -199,6 +199,9 @@ export type ProfilesSort =
   | 'favorite_desc'
   | 'favorite_asc'
 
+/** Tipo de mídia no índice (feed, reels, marcados, destaques). */
+export type MediaKind = 'post' | 'reel' | 'tagged' | 'highlight'
+
 export interface ProfilesSearchQuery {
   q?: string
   minFollowers?: number
@@ -225,6 +228,8 @@ export interface ProfilesSearchQuery {
   accountTypeFilter?: number[]
   /** Tipo de conteúdo (perfis ativados). */
   contentTypes?: string[]
+  /** Galeria Origem (posts): filtrar por tipo de mídia no índice (feed, reels, marcados, destaques). */
+  originMediaKinds?: MediaKind[]
   /** Faixas de preço por formato (valores em reais: 0, 50, 100, 250, 500, 1000, 2500, 5000, 15000). */
   pricingFeed?: number[]
   pricingReels?: number[]
@@ -955,9 +960,6 @@ export interface PostMetrics {
   view_count?: number
 }
 
-/** Tipo de mídia do perfil: post (feed), reel, tagged (marcados), highlight (destaques). */
-export type MediaKind = 'post' | 'reel' | 'tagged' | 'highlight'
-
 export interface PostItem {
   key: string
   profile_handle?: string
@@ -1006,12 +1008,12 @@ export interface PostsResponse {
 /** Posts dos perfis da campanha onde `q` bate em legenda/hashtags (dados atuais). */
 export async function fetchCampaignPostMatches(
   campaignId: string,
-  params: { q?: string; type?: MediaKind; limit?: number; offset?: number },
+  params: { q?: string; mediaKinds?: MediaKind[]; limit?: number; offset?: number },
   options?: { signal?: AbortSignal }
-): Promise<PostsResponse & { q?: string }> {
+): Promise<PostsResponse & { q?: string; mediaKindCounts?: Partial<Record<MediaKind, number>> }> {
   const p = new URLSearchParams()
   if (params.q?.trim()) p.set('q', params.q.trim())
-  if (params.type) p.set('type', params.type)
+  if (params.mediaKinds?.length) p.set('type', params.mediaKinds.join(','))
   p.set('limit', String(params.limit ?? 48))
   p.set('offset', String(params.offset ?? 0))
   const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/post-matches?${p}`, {
@@ -1746,6 +1748,20 @@ export async function deleteAdminUser(id: number): Promise<void> {
     headers: { ...authHeaders() },
   })
   if (!res.ok) throw new Error('Falha ao excluir usuário')
+}
+
+/** Admin: excluir influenciador por completo (dados locais + S3 + usuário se existir). */
+export async function adminPurgeInfluencer(handle: string): Promise<{ ok: boolean; s3ObjectsRemoved?: number }> {
+  const h = handle.replace(/^@/, '').trim()
+  const res = await fetch(`${API_BASE}/admin/influencers/${encodeURIComponent(h)}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err?.error || 'Falha ao excluir influenciador')
+  }
+  return (await res.json().catch(() => ({}))) as { ok: boolean; s3ObjectsRemoved?: number }
 }
 
 /** LGPD: excluir conta. Influencer: própria conta. Adm: pode passar handle para excluir conta de outro usuário. */

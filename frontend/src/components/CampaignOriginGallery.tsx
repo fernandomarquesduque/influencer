@@ -15,8 +15,38 @@ import {
 import { PostPreviewMedia } from './PostPreviewCard'
 import ProfileAvatar from './ProfileAvatar'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
+import {
+  getInfluencerTierGradientCss,
+  getInfluencerTierShort,
+  getInfluencerTierTooltip,
+} from '../utils/influencerTier'
 
 const { Text } = Typography
+
+/** Selo Nano/Micro/Mid/Macro — mesmo padrão da tabela de influenciadores da campanha. */
+function InfluencerTierPill({ followers }: { followers: number | undefined | null }) {
+  const short = getInfluencerTierShort(followers)
+  if (short === '—') return null
+  return (
+    <Tooltip title={getInfluencerTierTooltip(followers)}>
+      <span
+        style={{
+          fontSize: 9,
+          fontWeight: 600,
+          color: '#fff',
+          padding: '1px 5px',
+          borderRadius: 8,
+          flexShrink: 0,
+          background: getInfluencerTierGradientCss(short),
+          lineHeight: 1.2,
+          display: 'inline-block',
+        }}
+      >
+        {short}
+      </span>
+    </Tooltip>
+  )
+}
 
 const PAGE = 24
 
@@ -167,12 +197,15 @@ export default function CampaignOriginGallery({
   campaignId,
   textQuery,
   viewMode = 'list',
+  mediaKinds,
 }: {
   campaignId: string
   /** Termo da URL / busca; vazio = todo conteúdo indexado dos perfis da campanha. */
   textQuery: string
   /** Lista: card horizontal (legenda). Grade: mosaico 3 colunas como feed de perfil no Instagram. */
   viewMode?: OriginGalleryViewMode
+  /** Filtro por tipo(s) de mídia (feed, reels, marcados, destaques); vazio = todos. */
+  mediaKinds?: MediaKind[]
 }) {
   const [items, setItems] = useState<PostItem[]>([])
   const [total, setTotal] = useState(0)
@@ -181,12 +214,15 @@ export default function CampaignOriginGallery({
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
 
+  const kindsKey = mediaKinds?.length ? [...mediaKinds].sort().join(',') : ''
+
   const reload = useCallback(async () => {
     setFailedPostImages(new Set())
     setLoading(true)
     try {
       const res = await fetchCampaignPostMatches(campaignId, {
         q: textQuery.trim() || undefined,
+        mediaKinds: mediaKinds?.length ? mediaKinds : undefined,
         limit: PAGE,
         offset: 0,
       })
@@ -198,7 +234,7 @@ export default function CampaignOriginGallery({
     } finally {
       setLoading(false)
     }
-  }, [campaignId, textQuery])
+  }, [campaignId, textQuery, kindsKey])
 
   useEffect(() => {
     void reload()
@@ -210,6 +246,7 @@ export default function CampaignOriginGallery({
     try {
       const res = await fetchCampaignPostMatches(campaignId, {
         q: textQuery.trim() || undefined,
+        mediaKinds: mediaKinds?.length ? mediaKinds : undefined,
         limit: PAGE,
         offset: items.length,
       })
@@ -219,7 +256,7 @@ export default function CampaignOriginGallery({
     } finally {
       setLoadingMore(false)
     }
-  }, [campaignId, textQuery, items.length, total, loadingMore, loading])
+  }, [campaignId, textQuery, kindsKey, items.length, total, loadingMore, loading])
 
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current
@@ -269,6 +306,7 @@ export default function CampaignOriginGallery({
                   }
                 }
                 const igUrl = getInstagramPostUrl(post)
+                const followersCount = post.influencer?.followers_count
                 const mediaShellStyle: CSSProperties = {
                   position: 'relative',
                   width: '100%',
@@ -330,7 +368,7 @@ export default function CampaignOriginGallery({
                       onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
                       style={{
                         display: 'flex',
-                        alignItems: 'center',
+                        alignItems: 'flex-start',
                         gap: 8,
                         padding: '8px 10px',
                         borderTop: '1px solid var(--app-border, #f0f0f0)',
@@ -339,15 +377,30 @@ export default function CampaignOriginGallery({
                         cursor: handle !== '—' ? 'pointer' : 'default',
                       }}
                     >
-                      <ProfileAvatar
-                        src={bar.avatarSrc}
-                        stableBackgroundUrl={bar.avatarStable}
-                        handle={handle !== '—' ? handle : undefined}
-                        size={32}
-                        fallbackIconSize={16}
-                        queueOnError={false}
-                      />
-                      <div style={{ minWidth: 0, flex: 1 }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          flexShrink: 0,
+                          width: 32,
+                        }}
+                      >
+                        <ProfileAvatar
+                          src={bar.avatarSrc}
+                          stableBackgroundUrl={bar.avatarStable}
+                          handle={handle !== '—' ? handle : undefined}
+                          size={32}
+                          fallbackIconSize={16}
+                          queueOnError={false}
+                        />
+                        {getInfluencerTierShort(followersCount) !== '—' ? (
+                          <div style={{ marginTop: 6, display: 'flex', justifyContent: 'center', width: '100%' }}>
+                            <InfluencerTierPill followers={followersCount} />
+                          </div>
+                        ) : null}
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1, paddingTop: 2 }}>
                         <div
                           style={{
                             fontSize: 12,
@@ -369,6 +422,7 @@ export default function CampaignOriginGallery({
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
+                            marginTop: 2,
                           }}
                         >
                           {bar.atLine}
@@ -389,7 +443,8 @@ export default function CampaignOriginGallery({
                 const handle = bar.handleKey
                 const ct = (post.content_type || 'post') as MediaKind
                 const er = getPostEngagementRatePercent(post)
-                const followersLabel = formatFollowersShort(post.influencer?.followers_count)
+                const fc = post.influencer?.followers_count
+                const followersLabel = formatFollowersShort(fc)
                 const openInfluencerDetail = () => {
                   if (handle !== '—') {
                     const path = `/app/campaigns/${campaignId}/influencer/${encodeURIComponent(handle)}`
@@ -487,15 +542,30 @@ export default function CampaignOriginGallery({
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                            <ProfileAvatar
-                              src={bar.avatarSrc}
-                              stableBackgroundUrl={bar.avatarStable}
-                              handle={handle !== '—' ? handle : undefined}
-                              size={36}
-                              fallbackIconSize={16}
-                              queueOnError={false}
-                            />
-                            <div style={{ flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                flexShrink: 0,
+                                width: 36,
+                              }}
+                            >
+                              <ProfileAvatar
+                                src={bar.avatarSrc}
+                                stableBackgroundUrl={bar.avatarStable}
+                                handle={handle !== '—' ? handle : undefined}
+                                size={36}
+                                fallbackIconSize={16}
+                                queueOnError={false}
+                              />
+                              {getInfluencerTierShort(fc) !== '—' ? (
+                                <div style={{ marginTop: 6, display: 'flex', justifyContent: 'center', width: '100%' }}>
+                                  <InfluencerTierPill followers={fc} />
+                                </div>
+                              ) : null}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
                               <div
                                 style={{
                                   fontSize: 13,

@@ -386,6 +386,13 @@ export class SqliteSync {
     this.db.prepare('DELETE FROM user_favorite WHERE user_id = ?').run(userId);
   }
 
+  /** Admin: remove o perfil das listas de favoritos de todos os usuários. */
+  deleteAllFavoritesByProfileHandle(profileHandle: string): void {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
+    if (!handle) return;
+    this.db.prepare('DELETE FROM user_favorite WHERE profile_handle = ?').run(handle);
+  }
+
   /** Remove candidaturas do perfil em projetos (LGPD: exclusão de conta). */
   deleteProjectApplicationsByHandle(profileHandle: string): void {
     const handle = profileHandle.toLowerCase().replace(/^@/, '');

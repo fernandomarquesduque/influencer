@@ -12,6 +12,7 @@ import {
   Collapse,
   message,
   Skeleton,
+  Modal,
 } from 'antd'
 import {
   EditOutlined,
@@ -27,9 +28,11 @@ import {
   HeartOutlined,
   HeartFilled,
   CheckCircleOutlined,
+  DeleteOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
-import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
+import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, adminPurgeInfluencer, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { buildReportInsights, getWeekdayName, getPostsByWeekday } from '../utils/reportInsights'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
@@ -60,6 +63,67 @@ import { PrivateProfileMessage } from '../components/PrivateProfileMessage'
 
 const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh, typography: typ, layout: lay } = t
+
+/** Base comum + tons pastéis para botões da faixa de ações (perfil). */
+const detailActionBtnShell = () => ({
+  borderRadius: r,
+  minHeight: 44,
+  fontWeight: 600 as const,
+})
+
+const DETAIL_SUBTLE_ACTION = {
+  favorite: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #fff5f7 0%, #ffe8f2 100%)',
+    border: '1px solid #fbcfe8',
+    color: '#9d174d',
+    boxShadow: '0 1px 4px rgba(157, 23, 77, 0.06)',
+  },
+  instagram: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%)',
+    border: '1px solid #e9d5ff',
+    color: '#6b21a8',
+    boxShadow: '0 1px 4px rgba(107, 33, 168, 0.06)',
+  },
+  reports: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%)',
+    border: '1px solid #99f6e4',
+    color: '#0f766e',
+    boxShadow: '0 1px 4px rgba(15, 118, 110, 0.07)',
+  },
+  adminSync: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)',
+    border: '1px solid #cbd5e1',
+    color: '#475569',
+    boxShadow: '0 1px 4px rgba(71, 85, 105, 0.06)',
+  },
+  adminActivate: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #eef2ff 0%, #e0e7ff 100%)',
+    border: '1px solid #c7d2fe',
+    color: '#4338ca',
+    boxShadow: '0 1px 4px rgba(67, 56, 202, 0.07)',
+  },
+  adminMessage: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)',
+    border: '1px solid #bfdbfe',
+    color: '#1d4ed8',
+    boxShadow: '0 1px 4px rgba(29, 78, 216, 0.06)',
+  },
+  adminPurge: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #fff1f2 0%, #ffe4e6 100%)',
+    border: '1px solid #fecdd3',
+    color: '#be123c',
+    boxShadow: '0 1px 4px rgba(190, 18, 60, 0.07)',
+  },
+}
+
+const DETAIL_ACTION_BTN_CLASS = 'detail-action-btn-subtle'
 
 function formatPricingValue(val: string | number | undefined | null): string {
   if (val === undefined || val === null || val === '') return '—'
@@ -126,6 +190,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
   }, [requireCampaignId, campaignId, params.campaignId, navigate])
 
   const { user, isPublic, canEditProfile, isAdm, loading: authLoading } = useAuth()
+  const showMeusRelatoriosCta = !user || user.scope !== 'influencer'
 
   const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
   const canEdit = handle ? canEditProfile(handle) : false
@@ -570,80 +635,176 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
       <div style={{ width: '100%', padding: `0 ${isMobile ? (lay.contentPaddingMobile ?? s.md) : 0}px ${isMobile ? 160 : s.xl}px`, position: 'relative', zIndex: 1, background: c.pageBg }}>
         {!isRedacted && (
           <>
-            {/* Ações da tela: acima do perfil */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', justifyContent: 'center', marginBottom: s.md, paddingLeft: isMobile ? 0 : 0, paddingRight: isMobile ? 0 : 0 }}>
-
-              {user && handle && (
-                <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
-                  <Button
-                    type="default"
-                    size="large"
-                    icon={isFavorite ? <HeartFilled style={{ color: 'var(--app-primary)' }} /> : <HeartOutlined />}
-                    onClick={handleFavoriteToggle}
-                    style={{ borderRadius: r, minHeight: 44 }}
-                    aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
-                  >
-                    {isFavorite ? 'Favoritado' : 'Favoritar'}
-                  </Button>
-                </Tooltip>
-              )}
-              {handle && (
-                <Tooltip title="Abrir perfil no Instagram">
-                  <Button
-                    type="default"
-                    size="large"
-                    icon={<InstagramOutlined />}
-                    onClick={() => window.open(`https://www.instagram.com/${encodeURIComponent(handle)}/`, '_blank', 'noopener,noreferrer')}
-                    style={{ borderRadius: r, minHeight: 44 }}
-                    aria-label="Abrir Instagram"
-                  >
-                    Abrir Instagram
-                  </Button>
-                </Tooltip>
-              )}
-              {user && (isAdm || user.scope === 'assinante') && handle && (
-                <Button
-                  type="default"
-                  size="large"
-                  icon={<MessageOutlined />}
-                  onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}/send-message`)}
-                  style={{ borderRadius: r, minHeight: 44 }}
-                  aria-label="Enviar mensagem"
+            {/* Ações da tela: acima do perfil — bloco admin separado (cor / borda distintas) */}
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: isMobile ? s.md : s.lg,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: s.md,
+                flexDirection: isMobile ? 'column' : 'row',
+              }}
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', justifyContent: 'center' }}>
+                {user && handle && (
+                  <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={isFavorite ? <HeartFilled style={{ color: '#db2777' }} /> : <HeartOutlined />}
+                      onClick={handleFavoriteToggle}
+                      style={DETAIL_SUBTLE_ACTION.favorite}
+                      aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
+                    >
+                      {isFavorite ? 'Favoritado' : 'Favoritar'}
+                    </Button>
+                  </Tooltip>
+                )}
+                {handle && (
+                  <Tooltip title="Abrir perfil no Instagram">
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={<InstagramOutlined />}
+                      onClick={() => window.open(`https://www.instagram.com/${encodeURIComponent(handle)}/`, '_blank', 'noopener,noreferrer')}
+                      style={DETAIL_SUBTLE_ACTION.instagram}
+                      aria-label="Abrir Instagram"
+                    >
+                      Abrir Instagram
+                    </Button>
+                  </Tooltip>
+                )}
+                {showMeusRelatoriosCta && (
+                  <Tooltip title={user ? 'Campanhas e relatórios que você comprou' : 'Entre para ver seus relatórios'}>
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={<FolderOpenOutlined />}
+                      onClick={() => navigate('/app/campaigns')}
+                      style={DETAIL_SUBTLE_ACTION.reports}
+                      aria-label="Meus relatórios"
+                    >
+                      Meus relatórios
+                    </Button>
+                  </Tooltip>
+                )}
+              </div>
+              {isAdm && handle && (
+                <div
+                  role="group"
+                  aria-label="Ações de administrador"
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: s.sm,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: `${s.sm}px ${s.md}px`,
+                    borderRadius: r,
+                    background: 'color-mix(in srgb, var(--app-primary) 12%, var(--app-card-bg))',
+                    border: '1px solid color-mix(in srgb, var(--app-primary) 32%, var(--app-border))',
+                    boxShadow: 'inset 0 1px 0 color-mix(in srgb, var(--app-primary) 12%, transparent)',
+                  }}
                 >
-                  Mensagem
-                </Button>
-              )}
-              {isAdm && handle && (
-                <Tooltip title="Força re-extração do perfil no Instagram (prioritária, só admin)">
-                  <Button
-                    type="default"
-                    size="large"
-                    icon={<SyncOutlined />}
-                    onClick={async () => {
-                      const res = await queueRefreshProfile(handle, { priority: true })
-                      if (res.queued) message.success(res.message)
-                      else message.warning(res.message)
+                  <Text
+                    type="secondary"
+                    style={{
+                      width: '100%',
+                      textAlign: 'center',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      color: 'color-mix(in srgb, var(--app-primary) 55%, var(--app-text-secondary))',
                     }}
-                    style={{ borderRadius: r, minHeight: 44 }}
-                    aria-label="Atualizar Instagram"
                   >
-                    Atualizar
-                  </Button>
-                </Tooltip>
-              )}
-              {isAdm && handle && (
-                <Tooltip title="Abrir fluxo de ativação do cadastro do influenciador">
-                  <Button
-                    type="primary"
-                    size="large"
-                    icon={<CheckCircleOutlined />}
-                    onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-                    style={{ borderRadius: r, minHeight: 44 }}
-                    aria-label="Ativar influenciador"
-                  >
-                    Ativar
-                  </Button>
-                </Tooltip>
+                    Administrador
+                  </Text>
+                  <Tooltip title="Força re-extração do perfil no Instagram (prioritária, só admin)">
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={<SyncOutlined />}
+                      onClick={async () => {
+                        const res = await queueRefreshProfile(handle, { priority: true })
+                        if (res.queued) message.success(res.message)
+                        else message.warning(res.message)
+                      }}
+                      style={DETAIL_SUBTLE_ACTION.adminSync}
+                      aria-label="Atualizar Instagram"
+                    >
+                      Atualizar
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="Abrir fluxo de ativação do cadastro do influenciador">
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={<CheckCircleOutlined />}
+                      onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                      style={DETAIL_SUBTLE_ACTION.adminActivate}
+                      aria-label="Ativar influenciador"
+                    >
+                      Ativar
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="Enviar mensagem pelo Direct do Instagram (via sistema)">
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={<MessageOutlined />}
+                      onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}/send-message`)}
+                      style={DETAIL_SUBTLE_ACTION.adminMessage}
+                      aria-label="Enviar mensagem"
+                    >
+                      Mensagem
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="Apaga perfil, posts, cadastro, fila, favoritos, referências em campanhas, arquivos no S3 e conta de usuário (se houver). Irreversível.">
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={<DeleteOutlined />}
+                      style={DETAIL_SUBTLE_ACTION.adminPurge}
+                      aria-label="Excluir influenciador completamente"
+                      onClick={() => {
+                        Modal.confirm({
+                          title: 'Excluir este influenciador por completo?',
+                          content: `Isso remove dados do perfil e mídias, cadastro/ativação, fila de mensagens, favoritos que apontam para @${handle}, o handle nas campanhas, objetos no S3 (avatar e capas) e a conta de usuário vinculada, se existir. Não dá para desfazer.`,
+                          okText: 'Excluir tudo',
+                          okType: 'danger',
+                          cancelText: 'Cancelar',
+                          onOk: async () => {
+                            try {
+                              const out = await adminPurgeInfluencer(handle)
+                              const n = out?.s3ObjectsRemoved
+                              message.success(
+                                typeof n === 'number' && n > 0
+                                  ? `Removido. ${n} arquivo(s) apagados no S3.`
+                                  : 'Influenciador removido.',
+                              )
+                              navigate(campaignId ? `/app/campaigns/${campaignId}` : '/app')
+                            } catch (e) {
+                              message.error(e instanceof Error ? e.message : 'Falha ao excluir')
+                              throw e
+                            }
+                          },
+                        })
+                      }}
+                    >
+                      Excluir completamente
+                    </Button>
+                  </Tooltip>
+                </div>
               )}
             </div>
             <ReportHero
@@ -1343,11 +1504,21 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
           isMobile={isMobile}
           primaryLabel={mediaKitCtaShortLabel}
           onPrimary={goToMediaKitOrLogin}
-          secondaryLabel={undefined}
-          onSecondary={user && (isAdm || user.scope === 'assinante') && handle ? () => navigate(`/app/influencer/${encodeURIComponent(handle!)}/send-message`) : undefined}
         />
 
         <style>{`
+        .detail-action-btn-subtle.ant-btn {
+          transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+        }
+        .detail-action-btn-subtle.ant-btn:hover {
+          transform: translateY(-1px);
+          filter: brightness(1.03);
+        }
+        .detail-action-btn-subtle.ant-btn:focus-visible {
+          outline: 2px solid color-mix(in srgb, var(--app-primary) 40%, transparent);
+          outline-offset: 2px;
+        }
+
         .report-card {
           transition: transform 0.2s ease, box-shadow 0.2s ease;
         }

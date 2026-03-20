@@ -7,6 +7,32 @@
   border-radius: 12px;
 }
 
+/* Toolbar campanha em viewport estreito: abas ocupam a largura e não empurram CTAs para fora da tela. */
+.campaign-main-tabs--full-width.ant-segmented {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.campaign-main-tabs--full-width .ant-segmented-group {
+  width: 100%;
+  display: flex;
+}
+
+.campaign-main-tabs--full-width .ant-segmented-item {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+}
+
+.campaign-main-tabs--full-width .ant-segmented-item-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .campaign-main-tabs .ant-segmented-item {
   border-radius: 10px;
   transition: all 0.2s ease;

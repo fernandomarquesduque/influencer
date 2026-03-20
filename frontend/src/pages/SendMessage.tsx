@@ -8,6 +8,7 @@ import { Button, Card, Input, Space, Typography, message as antMessage } from 'a
 import { ArrowLeftOutlined, SendOutlined, SmileOutlined, PictureOutlined, DeleteOutlined } from '@ant-design/icons'
 import { fetchProfile, sendDirectMessageToInfluencer, getProfilePicUrl, proxyImageUrl } from '../api'
 import type { ProfileItem } from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import { reportTokens as t } from './reportTokens'
 import ProfileAvatar from '../components/ProfileAvatar'
 
@@ -37,6 +38,7 @@ function fileToBase64(file: File): Promise<string> {
 export default function SendMessage() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
+  const { user, isAdm, loading: authLoading } = useAuth()
   const [profile, setProfile] = useState<ProfileItem | null>(null)
   const [loadingProfile, setLoadingProfile] = useState(true)
   const [message, setMessage] = useState('')
@@ -56,6 +58,19 @@ export default function SendMessage() {
       .catch(() => setProfile(null))
       .finally(() => setLoadingProfile(false))
   }, [handle])
+
+  useEffect(() => {
+    if (authLoading) return
+    if (!user) {
+      antMessage.warning('Faça login para continuar.')
+      navigate('/login', { replace: true })
+      return
+    }
+    if (!isAdm) {
+      antMessage.warning('Apenas administradores podem enviar mensagens pelo sistema.')
+      navigate(handle ? `/app/influencer/${encodeURIComponent(handle)}` : '/app', { replace: true })
+    }
+  }, [authLoading, user, isAdm, navigate, handle])
 
   const insertEmoji = (emoji: string) => {
     const ta = textareaRef.current
@@ -126,6 +141,16 @@ export default function SendMessage() {
   const detailPath = handle ? `/app/influencer/${encodeURIComponent(handle)}` : '/app'
   const profilePic = profile ? proxyImageUrl(getProfilePicUrl(profile)) : undefined
   const displayName = (profile?.full_name ?? profile?.username ?? handle ?? '').trim() || `@${handle}`
+
+  if (authLoading || !user || !isAdm) {
+    return (
+      <div style={{ padding: s.lg, maxWidth: 640, margin: '0 auto', background: c.pageBg, minHeight: '100vh' }}>
+        <Card loading={authLoading} style={{ borderRadius: r.lg }}>
+          {!authLoading ? <Text type="secondary">Redirecionando…</Text> : null}
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div style={{ padding: s.lg, maxWidth: 640, margin: '0 auto', background: c.pageBg, minHeight: '100vh' }}>

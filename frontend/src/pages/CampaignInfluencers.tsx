@@ -28,6 +28,8 @@ import {
   type ProfilesSearchResponse,
   type ProfilesSort,
   type CampaignInfo,
+  type MediaKind,
+  fetchCampaignPostMatches,
 } from '../api'
 import { useCreditsOptional } from '../contexts/CreditsContext'
 import { filterAndSortCampaignItems, computeFacetsFromItems } from '../utils/campaignFilterClient'
@@ -53,6 +55,24 @@ const CAMPAIGN_MAIN_COLUMN_GAP_PX = 24
 
 const CAMPAIGN_ID_GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+const ORIGIN_MEDIA_KIND_ORDER: MediaKind[] = ['post', 'reel', 'tagged', 'highlight']
+const ORIGIN_MEDIA_KIND_LABELS: Record<MediaKind, string> = {
+  post: 'Feed',
+  reel: 'Reels',
+  tagged: 'Marcados',
+  highlight: 'Destaques',
+}
+const ORIGIN_MEDIA_KIND_SET = new Set<string>(ORIGIN_MEDIA_KIND_ORDER)
+
+function parseOriginMediaKindsParam(s: string | null): MediaKind[] | undefined {
+  if (!s?.trim()) return undefined
+  const arr = s
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter((x): x is MediaKind => ORIGIN_MEDIA_KIND_SET.has(x))
+  return arr.length ? arr : undefined
+}
+
 function campaignQueryToUrlParams(query: Partial<ProfilesSearchQuery>): Record<string, string> {
   const params: Record<string, string> = {}
   if (query.q?.trim()) params.q = query.q.trim()
@@ -60,6 +80,7 @@ function campaignQueryToUrlParams(query: Partial<ProfilesSearchQuery>): Record<s
   if (query.sizeFilter?.length) params.sizeFilter = query.sizeFilter.join(',')
   if (query.accountTypeFilter?.length) params.accountTypeFilter = query.accountTypeFilter.map(String).join(',')
   if (query.contentTypes?.length) params.contentTypes = query.contentTypes.join(',')
+  if (query.originMediaKinds?.length) params.originMediaKinds = query.originMediaKinds.join(',')
   if (query.activationFilter?.length) params.activationFilter = query.activationFilter.join(',')
   if (query.cities?.length) params.cities = query.cities.join(',')
   if (query.states?.length) params.states = query.states.join(',')
@@ -85,6 +106,7 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
     sizeFilter: parseStrList(params.get('sizeFilter')),
     accountTypeFilter: parseNumList(params.get('accountTypeFilter')),
     contentTypes: parseStrList(params.get('contentTypes')),
+    originMediaKinds: parseOriginMediaKindsParam(params.get('originMediaKinds')),
     activationFilter: parseStrList(params.get('activationFilter')),
     cities: parseStrList(params.get('cities')),
     states: parseStrList(params.get('states')),
@@ -306,6 +328,7 @@ export default function CampaignInfluencers() {
   const [campaignMainTab, setCampaignMainTab] = useState<'influencers' | 'origin'>(() =>
     searchParams.get('tab') === 'influencers' ? 'influencers' : 'origin'
   )
+  const [originPostKindCounts, setOriginPostKindCounts] = useState<Partial<Record<MediaKind, number>> | null>(null)
   const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '')
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const [favoriteHandles, setFavoriteHandles] = useState<Set<string>>(new Set())
@@ -400,7 +423,7 @@ export default function CampaignInfluencers() {
     setData(filteredList.slice(0, displayedCount))
   }, [filteredList, displayedCount])
 
-  const updateOneProfileInContext = useRef<(handle: string, profile: Record<string, unknown>) => void>(() => {})
+  const updateOneProfileInContext = useRef<(handle: string, profile: Record<string, unknown>) => void>(() => { })
   updateOneProfileInContext.current = (handle: string, profile: Record<string, unknown>) => {
     const h = String(handle).toLowerCase().replace(/^@/, '')
     const mergeItem = (item: ProfileListItem): ProfileListItem => {
@@ -462,7 +485,7 @@ export default function CampaignInfluencers() {
               counts.delete(pendingHandle)
             }
           })
-          .catch(() => {})
+          .catch(() => { })
       })
     }, REFETCH_INTERVAL_MS)
   }
@@ -517,6 +540,26 @@ export default function CampaignInfluencers() {
     },
     [campaignId, pendingPayment, query]
   )
+
+  useEffect(() => {
+    if (!campaignId || !user || pendingPayment) {
+      setOriginPostKindCounts(null)
+      return
+    }
+    const ac = new AbortController()
+    fetchCampaignPostMatches(
+      campaignId,
+      { q: query.q?.trim() || undefined, limit: 0, offset: 0 },
+      { signal: ac.signal }
+    )
+      .then((r) => {
+        if (!ac.signal.aborted) setOriginPostKindCounts(r.mediaKindCounts ?? null)
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setOriginPostKindCounts(null)
+      })
+    return () => ac.abort()
+  }, [campaignId, user, pendingPayment, query.q])
 
   const updateFilter = useCallback(
     (overrides: Partial<ProfilesSearchQuery>) => {
@@ -778,6 +821,7 @@ export default function CampaignInfluencers() {
   const selectedStates = (query.states ?? []) as string[]
   const selectedSocial = (query.socialNetworks ?? []) as string[]
   const selectedContentTypes = (query.contentTypes ?? []) as string[]
+  const selectedOriginMediaKinds = (query.originMediaKinds ?? []) as MediaKind[]
   const selectedSizeFilter = (query.sizeFilter ?? []) as string[]
   const selectedAccountTypeFilter = (query.accountTypeFilter ?? []) as number[]
   const hasActiveFilters =
@@ -787,6 +831,7 @@ export default function CampaignInfluencers() {
     selectedStates.length > 0 ||
     selectedSocial.length > 0 ||
     selectedContentTypes.length > 0 ||
+    selectedOriginMediaKinds.length > 0 ||
     selectedSizeFilter.length > 0 ||
     selectedAccountTypeFilter.length > 0
 
@@ -897,17 +942,18 @@ export default function CampaignInfluencers() {
       <div
         style={{
           display: 'flex',
-          alignItems: 'center',
+          flexDirection: isMobile ? 'column' : 'row',
+          alignItems: isMobile ? 'stretch' : 'center',
           gap: CAMPAIGN_MAIN_COLUMN_GAP_PX,
           marginBottom: 12,
           minWidth: 0,
-          flexWrap: 'wrap',
+          flexWrap: isMobile ? 'nowrap' : 'wrap',
         }}
       >
         <div
           style={{
             ...(isMobile
-              ? { flex: '1 1 140px', minWidth: 0 }
+              ? { width: '100%', minWidth: 0 }
               : { width: CAMPAIGN_BI_PANEL_WIDTH_PX, flexShrink: 0 }),
           }}
         >
@@ -925,18 +971,29 @@ export default function CampaignInfluencers() {
         </div>
         <div
           style={{
-            flex: 1,
-            minWidth: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            flexWrap: 'wrap',
+            ...(isMobile
+              ? {
+                  width: '100%',
+                  minWidth: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'stretch',
+                  gap: 10,
+                }
+              : {
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }),
           }}
         >
           {!pendingPayment ? (
             <Segmented
-              className="campaign-main-tabs"
+              className={`campaign-main-tabs${isMobile ? ' campaign-main-tabs--full-width' : ''}`}
               value={campaignMainTab}
               onChange={(v) => {
                 const nextTab = v as 'influencers' | 'origin'
@@ -951,11 +1008,22 @@ export default function CampaignInfluencers() {
           ) : (
             <span aria-hidden style={{ width: 0, overflow: 'hidden' }} />
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: isMobile ? 'column' : 'row',
+              alignItems: isMobile ? 'stretch' : 'center',
+              gap: 8,
+              flexWrap: isMobile ? 'nowrap' : 'wrap',
+              width: isMobile ? '100%' : undefined,
+              minWidth: 0,
+            }}
+          >
             <Button
               type="primary"
               onClick={() => navigate('/app/campaigns')}
               style={{
+                ...(isMobile ? { width: '100%' } : {}),
                 background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark, #6b21a8) 100%)',
                 border: 'none',
                 boxShadow: 'var(--app-shadow-cta, 0 2px 8px rgba(124, 58, 237, 0.35))',
@@ -967,6 +1035,7 @@ export default function CampaignInfluencers() {
               type="primary"
               onClick={() => navigate('/search')}
               style={{
+                ...(isMobile ? { width: '100%' } : {}),
                 background: 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
                 border: 'none',
                 boxShadow: '0 2px 8px rgba(8, 145, 178, 0.35)',
@@ -1012,6 +1081,7 @@ export default function CampaignInfluencers() {
                   avgEngagementRate: pricePreview.avgEngagementRate ?? 0,
                   count: total > 0 ? total : (campaignInfo?.handlesCount ?? 0),
                 } : undefined}
+                originMediaKindCounts={originPostKindCounts}
               />
             </div>
           )}
@@ -1112,6 +1182,7 @@ export default function CampaignInfluencers() {
                       query.q?.trim() ||
                       (typeof campaignInfo?.savedQuery?.q === 'string' ? campaignInfo.savedQuery.q.trim() : '')
                     }
+                    mediaKinds={selectedOriginMediaKinds.length ? selectedOriginMediaKinds : undefined}
                   />
                 ) : (
                   <>
@@ -1180,6 +1251,28 @@ export default function CampaignInfluencers() {
                             maxTagCount={1}
                           />
                         )}
+                        {campaignMainTab === 'origin' &&
+                          originPostKindCounts &&
+                          ORIGIN_MEDIA_KIND_ORDER.some((k) => (originPostKindCounts[k] ?? 0) > 0) && (
+                            <Select
+                              mode="multiple"
+                              size="small"
+                              placeholder="Tipo post"
+                              allowClear
+                              value={selectedOriginMediaKinds.length ? selectedOriginMediaKinds : undefined}
+                              options={ORIGIN_MEDIA_KIND_ORDER.filter((k) => (originPostKindCounts[k] ?? 0) > 0).map(
+                                (k) => ({
+                                  value: k,
+                                  label: `${ORIGIN_MEDIA_KIND_LABELS[k]} (${originPostKindCounts[k]})`,
+                                })
+                              )}
+                              onChange={(vals) =>
+                                updateFilter({ originMediaKinds: vals?.length ? (vals as MediaKind[]) : undefined })
+                              }
+                              style={{ width: 150 }}
+                              maxTagCount={1}
+                            />
+                          )}
                         {facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0) && (
                           <Select
                             mode="multiple"

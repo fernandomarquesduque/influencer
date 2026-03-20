@@ -80,13 +80,13 @@ export function PostPreviewMedia({
   const mediaBox: CSSProperties = fill
     ? { position: 'relative', width: '100%', height: '100%', minHeight: 0, overflow: 'hidden', background: c.borderLight, ...style }
     : {
-        position: 'relative',
-        width: '100%',
-        aspectRatio,
-        overflow: 'hidden',
-        background: c.borderLight,
-        ...style,
-      }
+      position: 'relative',
+      width: '100%',
+      aspectRatio,
+      overflow: 'hidden',
+      background: c.borderLight,
+      ...style,
+    }
 
   const mediaLayerFill: CSSProperties = {
     position: 'absolute',

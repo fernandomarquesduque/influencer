@@ -318,4 +318,29 @@ export class CreditsCampaignsDb {
     this.db.prepare('DELETE FROM campaign WHERE user_id = ?').run(userId);
     this.db.prepare('DELETE FROM user_credits WHERE user_id = ?').run(userId);
   }
+
+  /** Admin: retira o handle de todas as campanhas (JSON), atualizando handles_count. */
+  removeHandleFromAllCampaigns(normalizedHandle: string): number {
+    const h = normalizedHandle.toLowerCase().replace(/^@/, '').trim();
+    if (!h) return 0;
+    const rows = this.db
+      .prepare('SELECT id, user_id, handles_json FROM campaign')
+      .all() as { id: string; user_id: number; handles_json: string }[];
+    let updated = 0;
+    for (const row of rows) {
+      try {
+        const arr = JSON.parse(row.handles_json) as unknown;
+        if (!Array.isArray(arr)) continue;
+        const next = arr.filter((x) => String(x).toLowerCase().replace(/^@/, '').trim() !== h);
+        if (next.length === arr.length) continue;
+        this.db
+          .prepare('UPDATE campaign SET handles_json = ?, handles_count = ? WHERE id = ? AND user_id = ?')
+          .run(JSON.stringify(next), next.length, row.id, row.user_id);
+        updated += 1;
+      } catch {
+        continue;
+      }
+    }
+    return updated;
+  }
 }

@@ -142,8 +142,7 @@
 }
 
 .campaign-bi-section {
-  margin-top: 4px;
-  padding-top: 4px;
+  padding: 6px 0px;
   border-top: 1px solid rgba(0, 0, 0, 0.06);
 }
 
@@ -179,6 +178,16 @@
   flex-wrap: wrap;
   gap: 3px;
   font-size: 10px;
+}
+
+/* Tipo de conteúdo (categorias): uma linha com scroll em vez de quebrar pill isolado */
+.campaign-bi-content-scroll {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+  max-width: 100%;
 }
 
 .campaign-bi-price span,

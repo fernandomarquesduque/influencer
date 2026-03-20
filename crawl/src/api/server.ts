@@ -72,7 +72,7 @@ import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
 import { createCollectorController } from './controllers/collectorController.js';
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
 import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
-import { logS3StartupStatus } from '../s3/influencerProfileStorage.js';
+import { logS3StartupStatus, wipeInfluencerS3Prefix } from '../s3/influencerProfileStorage.js';
 
 const require = createRequire(import.meta.url);
 const openApiRocksdb = require('./openapi-rocksdb.json');
@@ -792,8 +792,8 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
   }
 });
 
-/** Envia mensagem Direct do Instagram para um influenciador (handle). Requer scope adm ou assinante. Body: handle, message (opcional se imageBase64), imageBase64 (opcional, data URL ou base64). */
-app.post('/api/direct/send-message', requireScopes('adm', 'assinante'), async (req: RequestWithAuth, res: Response) => {
+/** Envia mensagem Direct do Instagram para um influenciador (handle). Apenas administradores. Body: handle, message (opcional se imageBase64), imageBase64 (opcional, data URL ou base64). */
+app.post('/api/direct/send-message', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
   let tempImagePath: string | null = null;
   try {
     const handle = (req.body?.handle ?? req.body?.nickname ?? '').toString().trim().replace(/^@/, '').toLowerCase();
@@ -1580,6 +1580,63 @@ app.get('/api/admin/db/tables/:table', requireScopes('adm'), (req: Request, res:
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
+});
+
+/**
+ * Admin: apaga influenciador por completo — RocksDB (perfil + mídias), SQLite (ativação, fila, favoritos globais,
+ * retira o handle das campanhas), prefixo S3 `influencers/<handle>/`, e conta auth + pagamentos/créditos se existir.
+ */
+app.delete('/api/admin/influencers/:handle', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
+  const raw = decodeURIComponent(String(req.params.handle ?? '').trim());
+  const handle = raw.replace(/^@+/, '').toLowerCase().trim();
+  if (!handle || handle.length > 200) {
+    res.status(400).json({ error: 'Handle inválido' });
+    return;
+  }
+
+  let s3ObjectsRemoved = 0;
+  try {
+    s3ObjectsRemoved = await wipeInfluencerS3Prefix(handle);
+  } catch (e) {
+    console.error('[DELETE /api/admin/influencers/:handle] S3:', e instanceof Error ? e.message : e);
+  }
+
+  const authUser = authDb.getByProfileHandle(handle);
+  const userId = authUser?.id;
+
+  try {
+    await db.deleteProfileCompletely(handle);
+  } catch (e) {
+    console.error('[DELETE /api/admin/influencers/:handle] storage:', e instanceof Error ? e.message : e);
+    res.status(500).json({ error: 'Falha ao apagar dados locais do perfil' });
+    return;
+  }
+
+  try {
+    sqlite.deleteDirectQueueByHandle(handle);
+    sqlite.deleteAllFavoritesByProfileHandle(handle);
+    authDb.clearProfileVerification(handle);
+    creditsCampaignsDb.removeHandleFromAllCampaigns(handle);
+  } catch (e) {
+    console.error('[DELETE /api/admin/influencers/:handle] sqlite/auth:', e instanceof Error ? e.message : e);
+  }
+
+  if (userId != null && Number.isFinite(userId)) {
+    try {
+      creditsCampaignsDb.deleteAllByUserId(userId);
+      paymentsDb.deleteAllByUserId(userId);
+      sqlite.deleteAllFavoritesByUserId(userId);
+      authDb.clearProfileVerificationByUserId(userId);
+      authDb.deleteUser(userId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[DELETE /api/admin/influencers/:handle] auth user:', msg);
+      res.status(500).json({ error: 'Perfil apagado, mas falhou ao remover usuário vinculado. Verifique logs.' });
+      return;
+    }
+  }
+
+  res.json({ ok: true, s3ObjectsRemoved });
 });
 
 /** Admin: excluir usuário (apenas adm). */
@@ -4249,6 +4306,16 @@ app.get(
 
 const MEDIA_TYPES = ['post', 'reel', 'tagged', 'highlight'] as const;
 
+function parsePostMatchTypeFilters(typeQuery: string | undefined): string[] {
+  if (!typeQuery || typeof typeQuery !== 'string') return [];
+  return typeQuery
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((t): t is (typeof MEDIA_TYPES)[number] =>
+      MEDIA_TYPES.includes(t as (typeof MEDIA_TYPES)[number])
+    );
+}
+
 /** Deriva content_type do item: valor salvo ou chave handle:type:shortcode (retrocompat: handle:shortcode = post). */
 function getContentTypeFromItem(key: string, value: Record<string, unknown>): string {
   const ct = value.content_type;
@@ -4403,8 +4470,11 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
     const handleSet = new Set(handles.map((h) => normalizeHandle(h)));
     const normHandles = Array.from(handleSet);
     const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
-    const typeFilter = (req.query.type as string | undefined)?.toLowerCase();
-    const limit = Math.min(Number(req.query.limit) || 48, 200);
+    const typeFilters = parsePostMatchTypeFilters(req.query.type as string | undefined);
+    const limitRaw = req.query.limit;
+    const limitParsed =
+      limitRaw != null && String(limitRaw).trim() !== '' ? Number(limitRaw) : Number.NaN;
+    const limit = Number.isFinite(limitParsed) ? Math.min(Math.max(0, limitParsed), 200) : 48;
     const offset = Math.max(0, Number(req.query.offset) || 0);
 
     const postsChunks: { key: string; value: Record<string, unknown> }[][] = [];
@@ -4423,9 +4493,6 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
         if (!handleSet.has(h)) continue;
         const item = { ...(value as Record<string, unknown>) };
         const ct = getContentTypeFromItem(key, item);
-        if (typeFilter && MEDIA_TYPES.includes(typeFilter as (typeof MEDIA_TYPES)[number]) && ct !== typeFilter) {
-          continue;
-        }
         const searchable = getPostSearchableNormalized(item);
         if (qRaw) {
           const { match } = matchesQuery(searchable, qRaw);
@@ -4455,8 +4522,17 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
     const sorted = [...deduped.values()].sort(
       (a, b) => b.ts - a.ts || a.key.localeCompare(b.key)
     );
-    const total = sorted.length;
-    const slice = sorted.slice(offset, offset + limit).map(({ key, value, ct }) => {
+
+    const mediaKindCounts: Record<string, number> = {};
+    for (const row of deduped.values()) {
+      const k = row.ct;
+      mediaKindCounts[k] = (mediaKindCounts[k] ?? 0) + 1;
+    }
+
+    const filteredSorted =
+      typeFilters.length > 0 ? sorted.filter((x) => typeFilters.includes(x.ct)) : sorted;
+    const total = filteredSorted.length;
+    const slice = filteredSorted.slice(offset, offset + limit).map(({ key, value, ct }) => {
       const item = value;
       const post = item?.post as Record<string, unknown> | undefined;
       const content = item?.content as Record<string, unknown> | undefined;
@@ -4508,7 +4584,7 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
       };
     }
 
-    res.json({ total, items: slice, q: qRaw || undefined });
+    res.json({ total, items: slice, q: qRaw || undefined, mediaKindCounts });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
