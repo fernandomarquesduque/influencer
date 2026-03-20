@@ -30,8 +30,6 @@ export interface TaggedAnalysisSectionProps {
   getPostImageUrl: (post: PostItem) => string | undefined
   /** Retorna link do post (ex.: Instagram). */
   getPostLink: (post: PostItem) => string
-  /** Aplica proxy na URL da imagem. */
-  proxyImageUrl: (url: string | undefined) => string | undefined
   /** Espaçamento inferior da seção. */
   gap?: number
   /** Quando true, não renderiza o título da seção (para exibir o título fora do blur). */
@@ -45,7 +43,6 @@ export function TaggedAnalysisSection({
   formatShortNum,
   getPostImageUrl,
   getPostLink,
-  proxyImageUrl,
   gap = s.xl,
   contentOnly = false,
 }: TaggedAnalysisSectionProps) {
@@ -270,7 +267,6 @@ export function TaggedAnalysisSection({
               }))}
               getImageUrl={(p) => getPostImageUrl(p as PostItem)}
               getLink={(p) => getPostLink(p as PostItem)}
-              proxyUrl={(url) => proxyImageUrl(url) ?? ''}
               failedImages={failedPostImages}
               formatShortNum={formatShortNum}
               showAuthor
@@ -295,7 +291,6 @@ export function TaggedAnalysisSection({
                 }))}
                 getImageUrl={(p) => getPostImageUrl(p as PostItem)}
                 getLink={(p) => getPostLink(p as PostItem)}
-                proxyUrl={(url) => proxyImageUrl(url) ?? ''}
                 failedImages={failedPostImages}
                 formatShortNum={formatShortNum}
                 showAuthor

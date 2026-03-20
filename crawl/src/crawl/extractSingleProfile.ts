@@ -17,6 +17,7 @@ import {
   type InfluencerRejectionDiagnostic,
 } from '../utils/entityAccess.js';
 import { buildSlimProfile } from '../utils/slimProfile.js';
+import { resyncInfluencerS3AfterDbMediaReset } from '../storage/s3InfluencerImage.js';
 import type { CrawlStorage } from './runCrawl.js';
 
 const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? (parseInt(process.env.MIN_FOLLOWERS, 10) || 0) : 0;
@@ -126,13 +127,15 @@ export async function extractSingleProfileWithPage(
   };
 
   if (options?.forRefresh) {
-    logStep('forRefresh: salvando perfil...');
-    await storage.save(slim as Entity & { handle: string });
     const collectedAt = String(slim._collected_at ?? new Date().toISOString());
     if (typeof storage.deletePostsByHandle === 'function') {
-      logStep('deletando mídia antiga...');
+      logStep('forRefresh: deletando mídia antiga (DB)...');
       await storage.deletePostsByHandle(slim.handle);
     }
+    logStep('forRefresh: S3 wipe + avatar + capas...');
+    await resyncInfluencerS3AfterDbMediaReset(slim, { posts, reels, tagged, highlights });
+    logStep('forRefresh: salvando perfil...');
+    await storage.save(slim as Entity & { handle: string });
     logStep('salvando posts, reels, marcados e highlights...');
     const postsSaved = await saveAllMedia(collectedAt);
     logStep(`pronto (${postsSaved} itens).`);
@@ -228,12 +231,15 @@ export async function extractSingleProfileWithPage(
     };
   }
 
-  logStep('salvando perfil...');
-  await storage.save(slim as Entity & { handle: string });
   const collectedAt = String(slim._collected_at ?? new Date().toISOString());
   if (typeof storage.deletePostsByHandle === 'function') {
+    logStep('deletando mídia antiga (DB)...');
     await storage.deletePostsByHandle(slim.handle);
   }
+  logStep('S3: apaga prefixo influencer + avatar + capas...');
+  await resyncInfluencerS3AfterDbMediaReset(slim, { posts, reels, tagged, highlights });
+  logStep('salvando perfil...');
+  await storage.save(slim as Entity & { handle: string });
   logStep('salvando posts, reels, marcados e highlights...');
   const postsSaved = await saveAllMedia(collectedAt);
   logStep(`pronto (${postsSaved} itens).`);

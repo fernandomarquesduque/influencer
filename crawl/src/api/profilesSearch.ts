@@ -416,6 +416,8 @@ export interface ProfileListItem {
   full_name: string;
   profile_pic_url?: string;
   hd_profile_pic_url?: string;
+  /** Foto estável (S3); não expira como URL do Instagram. */
+  stable_profile_pic_url?: string;
   followers_count: number;
   following_count?: number;
   media_count?: number;

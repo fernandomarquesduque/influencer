@@ -2,7 +2,9 @@ import type { Request, Response } from 'express';
 import { warmSearchCache } from '../profilesSearch.js';
 import type { CompositeStorage } from '../../storage/compositeStorage.js';
 import type { Entity } from '../../types/index.js';
+import { resyncInfluencerS3AfterDbMediaReset } from '../../storage/s3InfluencerImage.js';
 import { buildNormalizedPost } from '../../utils/slimPost.js';
+import type { SlimProfile } from '../../utils/slimProfile.js';
 
 export interface CollectorIngestResponse {
   ok: true;
@@ -150,6 +152,12 @@ export function createCollectorController(storage: CompositeStorage) {
             : { ...flatProfile, handle };
 
         await storage.deletePostsByHandle(handle);
+        await resyncInfluencerS3AfterDbMediaReset(slimMerge as SlimProfile, {
+          posts,
+          reels,
+          tagged,
+          highlights: [],
+        });
         const skip = { skipSearchInvalidation: true } as const;
         await storage.save(slimMerge as Entity & { handle: string }, skip);
 

@@ -4,7 +4,7 @@
  */
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag, Alert, message, Popconfirm, Segmented } from 'antd'
+import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag, Alert, message, Popconfirm, Segmented, Divider } from 'antd'
 import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, BankOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
@@ -20,6 +20,7 @@ import {
   addFavorite,
   removeFavorite,
   getProfilePicUrl,
+  getStableProfilePicUrl,
   proxyImageUrl,
   type ProfileListItem,
   type ProfilesSearchQuery,
@@ -30,6 +31,11 @@ import {
 } from '../api'
 import { useCreditsOptional } from '../contexts/CreditsContext'
 import { filterAndSortCampaignItems, computeFacetsFromItems } from '../utils/campaignFilterClient'
+import {
+  getInfluencerTierGradientCss,
+  getInfluencerTierShort,
+  getInfluencerTierTooltip,
+} from '../utils/influencerTier'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import ProfileAvatar from '../components/ProfileAvatar'
@@ -42,6 +48,8 @@ import { MessageOutlined, VideoCameraOutlined } from '@ant-design/icons'
 const PAGE_SIZE = 100
 /** Quantidade de itens exibidos inicialmente e a cada rodada de scroll (carregamento progressivo). */
 const DISPLAY_PAGE_SIZE = 20
+const CAMPAIGN_BI_PANEL_WIDTH_PX = 240
+const CAMPAIGN_MAIN_COLUMN_GAP_PX = 24
 
 const CAMPAIGN_ID_GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -92,14 +100,6 @@ function formatShortNum(n: number | undefined | null): string {
   return String(n)
 }
 
-function getTierShort(followers: number | undefined | null): string {
-  if (followers == null || !Number.isFinite(followers)) return '—'
-  if (followers < 10_000) return 'Nano'
-  if (followers < 50_000) return 'Micro'
-  if (followers < 500_000) return 'Mid'
-  return 'Macro'
-}
-
 /** Uma linha compacta (modo lista tipo tabela) com dados de ativação. */
 function CampaignListRow({
   item,
@@ -115,6 +115,7 @@ function CampaignListRow({
   onImageRefreshQueued?: (handle: string) => void
 }) {
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
+  const stablePic = getStableProfilePicUrl(item as unknown as Record<string, unknown>)
   const name = (item.full_name || item.handle) as string
   const handle = item.handle ?? item.key
   const eng = item.engagement
@@ -157,6 +158,7 @@ function CampaignListRow({
       <td style={{ verticalAlign: 'middle', padding: '4px 6px', width: 48 }}>
         <ProfileAvatar
           src={pic}
+          stableBackgroundUrl={stablePic}
           handle={handle}
           size={40}
           fallbackIconSize={20}
@@ -196,7 +198,7 @@ function CampaignListRow({
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-            <Tooltip title={Number.isFinite(followers) && followers >= 0 ? (followers < 10_000 ? 'Nano (até 10k seg.)' : followers < 50_000 ? 'Micro (10k–50k)' : followers < 500_000 ? 'Mid (50k–500k)' : 'Macro (500k+)') : undefined}>
+            <Tooltip title={getInfluencerTierTooltip(followers)}>
               <span
                 style={{
                   fontSize: 9,
@@ -205,17 +207,10 @@ function CampaignListRow({
                   padding: '1px 5px',
                   borderRadius: 8,
                   flexShrink: 0,
-                  background: (() => {
-                    const t = getTierShort(followers)
-                    if (t === 'Nano') return 'linear-gradient(90deg, #722ed1, #9254de)'
-                    if (t === 'Micro') return 'linear-gradient(90deg, #1890ff, #40a9ff)'
-                    if (t === 'Mid') return 'linear-gradient(90deg, #13c2c2, #36cfc9)'
-                    if (t === 'Macro') return 'linear-gradient(90deg, #eb2f96, #f759ab)'
-                    return 'rgba(0,0,0,0.25)'
-                  })(),
+                  background: getInfluencerTierGradientCss(getInfluencerTierShort(followers)),
                 }}
               >
-                {getTierShort(followers)}
+                {getInfluencerTierShort(followers)}
               </span>
             </Tooltip>
             <Tooltip title={`@${handle}`}>
@@ -282,6 +277,8 @@ export default function CampaignInfluencers() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT)
   const [viewMode, setViewMode] = useState<CampaignViewMode>('list')
   const effectiveViewMode: CampaignViewMode = isMobile ? 'grid' : viewMode
+  const [originViewMode, setOriginViewMode] = useState<CampaignViewMode>('list')
+  const effectiveOriginViewMode: CampaignViewMode = isMobile ? 'grid' : originViewMode
   const [query, setQuery] = useState<Partial<ProfilesSearchQuery>>(() => ({
     ...defaultQuery,
     ...urlParamsToCampaignQuery(searchParams),
@@ -306,9 +303,9 @@ export default function CampaignInfluencers() {
   const [deletingCampaign, setDeletingCampaign] = useState(false)
   const [filteredList, setFilteredList] = useState<ProfileListItem[]>([])
   const [displayedCount, setDisplayedCount] = useState(DISPLAY_PAGE_SIZE)
-  const [campaignMainTab, setCampaignMainTab] = useState<'influencers' | 'origin'>(() => (
-    searchParams.get('tab') === 'origin' ? 'origin' : 'influencers'
-  ))
+  const [campaignMainTab, setCampaignMainTab] = useState<'influencers' | 'origin'>(() =>
+    searchParams.get('tab') === 'influencers' ? 'influencers' : 'origin'
+  )
   const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '')
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const [favoriteHandles, setFavoriteHandles] = useState<Set<string>>(new Set())
@@ -326,13 +323,13 @@ export default function CampaignInfluencers() {
   const buildCampaignUrlParams = useCallback(
     (nextQuery: Partial<ProfilesSearchQuery>, tab: 'influencers' | 'origin' = campaignMainTab) => {
       const params = campaignQueryToUrlParams(nextQuery)
-      if (tab === 'origin') params.tab = 'origin'
+      if (tab === 'influencers') params.tab = 'influencers'
       return params
     },
     [campaignMainTab]
   )
   useEffect(() => {
-    const nextTab = searchParams.get('tab') === 'origin' ? 'origin' : 'influencers'
+    const nextTab = searchParams.get('tab') === 'influencers' ? 'influencers' : 'origin'
     setCampaignMainTab((prev) => (prev === nextTab ? prev : nextTab))
   }, [searchParams])
   useEffect(() => {
@@ -524,8 +521,14 @@ export default function CampaignInfluencers() {
   const updateFilter = useCallback(
     (overrides: Partial<ProfilesSearchQuery>) => {
       const newQuery = { ...query, ...overrides, offset: 0 }
+      const qFromOverride = overrides.q
+      const explicitQ = 'q' in overrides
+      const qTrim = typeof qFromOverride === 'string' ? qFromOverride.trim() : ''
+      const wordSearchApplied = explicitQ && qTrim.length > 0
+      if (wordSearchApplied) setCampaignMainTab('origin')
+      const tab: 'influencers' | 'origin' = wordSearchApplied ? 'origin' : campaignMainTab
       setQuery(newQuery)
-      setSearchParams(buildCampaignUrlParams(newQuery), { replace: true })
+      setSearchParams(buildCampaignUrlParams(newQuery, tab), { replace: true })
       if (pendingPayment) {
         pendingLoadFromFilterRef.current = true
         loadContext(undefined, newQuery)
@@ -533,7 +536,7 @@ export default function CampaignInfluencers() {
         applyContextFilters(newQuery)
       }
     },
-    [query, contextItems, applyContextFilters, setSearchParams, pendingPayment, loadContext, buildCampaignUrlParams]
+    [query, contextItems, applyContextFilters, setSearchParams, pendingPayment, loadContext, buildCampaignUrlParams, campaignMainTab]
   )
 
   const clearFilters = useCallback(() => {
@@ -574,12 +577,15 @@ export default function CampaignInfluencers() {
       const nowQ = queryRef.current.q?.trim() || undefined
       if (nowTrimmed === nowQ) return
       const newQuery = { ...queryRef.current, q: nowTrimmed, offset: 0 }
+      const wordSearchApplied = (nowTrimmed?.length ?? 0) > 0
+      if (wordSearchApplied) setCampaignMainTab('origin')
+      const tab: 'influencers' | 'origin' = wordSearchApplied ? 'origin' : campaignMainTab
       setQuery(newQuery)
-      setSearchParams(buildCampaignUrlParams(newQuery), { replace: true })
+      setSearchParams(buildCampaignUrlParams(newQuery, tab), { replace: true })
       if (!pendingPayment && contextItems != null) applyContextFilters(newQuery)
     }, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [searchInput, contextItems, applyContextFilters, setSearchParams, pendingPayment, buildCampaignUrlParams])
+  }, [searchInput, contextItems, applyContextFilters, setSearchParams, pendingPayment, buildCampaignUrlParams, campaignMainTab])
 
   useEffect(() => {
     if (campaignId == null || !user) return
@@ -837,6 +843,23 @@ export default function CampaignInfluencers() {
             {campaignHasName ? 'Salvar' : 'Salvar'}
           </Button>
         </Space.Compact>
+        {campaignId ? (
+          <>
+            <Divider style={{ margin: '20px 0 12px' }} />
+            <Popconfirm
+              title="Excluir campanha"
+              description="Tem certeza? Esta ação não pode ser desfeita."
+              onConfirm={handleDeleteCampaign}
+              okText="Excluir"
+              cancelText="Cancelar"
+              okButtonProps={{ danger: true }}
+            >
+              <Button danger block icon={<DeleteOutlined />} loading={deletingCampaign}>
+                Excluir campanha
+              </Button>
+            </Popconfirm>
+          </>
+        ) : null}
       </Modal>
 
       <Modal
@@ -871,8 +894,23 @@ export default function CampaignInfluencers() {
         </Space>
       </Modal>
 
-      <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: CAMPAIGN_MAIN_COLUMN_GAP_PX,
+          marginBottom: 12,
+          minWidth: 0,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div
+          style={{
+            ...(isMobile
+              ? { flex: '1 1 140px', minWidth: 0 }
+              : { width: CAMPAIGN_BI_PANEL_WIDTH_PX, flexShrink: 0 }),
+          }}
+        >
           <Typography.Title level={4} style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {campaignInfo?.name?.trim() || 'Sua campanha'}
             {campaignId && (
@@ -881,54 +919,62 @@ export default function CampaignInfluencers() {
               </Tooltip>
             )}
           </Typography.Title>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            {campaignCredits != null && (
-              <>{campaignCredits.toLocaleString('pt-BR')} créditos</>
-            )}
+          <Typography.Text type="secondary" style={{ fontSize: 13, display: 'block' }}>
+            {campaignCredits != null && <>{campaignCredits.toLocaleString('pt-BR')} créditos</>}
           </Typography.Text>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Button
-            type="primary"
-            onClick={() => navigate('/app/campaigns')}
-            style={{
-              background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark, #6b21a8) 100%)',
-              border: 'none',
-              boxShadow: 'var(--app-shadow-cta, 0 2px 8px rgba(124, 58, 237, 0.35))',
-            }}
-          >
-            Minhas campanhas
-          </Button>
-          <Button
-            type="primary"
-            onClick={() => navigate('/search')}
-            style={{
-              background: 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
-              border: 'none',
-              boxShadow: '0 2px 8px rgba(8, 145, 178, 0.35)',
-            }}
-          >
-            Nova busca
-          </Button>
-          <Popconfirm
-            title="Excluir campanha"
-            description="Tem certeza? Esta ação não pode ser desfeita."
-            onConfirm={handleDeleteCampaign}
-            okText="Excluir"
-            cancelText="Cancelar"
-            okButtonProps={{ danger: true }}
-          >
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            flexWrap: 'wrap',
+          }}
+        >
+          {!pendingPayment ? (
+            <Segmented
+              className="campaign-main-tabs"
+              value={campaignMainTab}
+              onChange={(v) => {
+                const nextTab = v as 'influencers' | 'origin'
+                setCampaignMainTab(nextTab)
+                setSearchParams(buildCampaignUrlParams(queryRef.current, nextTab), { replace: true })
+              }}
+              options={[
+                { label: 'Origem (posts)', value: 'origin' },
+                { label: 'Influenciadores', value: 'influencers' },
+              ]}
+            />
+          ) : (
+            <span aria-hidden style={{ width: 0, overflow: 'hidden' }} />
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Button
-              type="text"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              loading={deletingCampaign}
-              style={{ color: 'var(--app-text-secondary)', fontSize: 12 }}
+              type="primary"
+              onClick={() => navigate('/app/campaigns')}
+              style={{
+                background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark, #6b21a8) 100%)',
+                border: 'none',
+                boxShadow: 'var(--app-shadow-cta, 0 2px 8px rgba(124, 58, 237, 0.35))',
+              }}
             >
-              Excluir campanha
+              Minhas campanhas
             </Button>
-          </Popconfirm>
+            <Button
+              type="primary"
+              onClick={() => navigate('/search')}
+              style={{
+                background: 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
+                border: 'none',
+                boxShadow: '0 2px 8px rgba(8, 145, 178, 0.35)',
+              }}
+            >
+              Nova busca
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -944,9 +990,9 @@ export default function CampaignInfluencers() {
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>Carregando filtros e valor...</Typography.Text>
         </div>
       ) : (
-        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: CAMPAIGN_MAIN_COLUMN_GAP_PX, alignItems: 'flex-start', minWidth: 0 }}>
           {!isMobile && (
-            <div style={{ flexShrink: 0, width: 240, minWidth: 0 }}>
+            <div style={{ flexShrink: 0, width: CAMPAIGN_BI_PANEL_WIDTH_PX, minWidth: 0 }}>
               <CampaignBIPanel
                 items={filteredList}
                 facets={facets}
@@ -1001,20 +1047,6 @@ export default function CampaignInfluencers() {
               </>
             ) : (
               <>
-                <Segmented
-                  className="campaign-main-tabs"
-                  value={campaignMainTab}
-                  onChange={(v) => {
-                    const nextTab = v as 'influencers' | 'origin'
-                    setCampaignMainTab(nextTab)
-                    setSearchParams(buildCampaignUrlParams(queryRef.current, nextTab), { replace: true })
-                  }}
-                  options={[
-                    { label: 'Influenciadores', value: 'influencers' },
-                    { label: 'Origem (posts)', value: 'origin' },
-                  ]}
-                  style={{ marginBottom: 12 }}
-                />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, width: '100%', minWidth: 0 }}>
                     <Typography.Text strong type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
@@ -1040,33 +1072,42 @@ export default function CampaignInfluencers() {
                         Buscar
                       </Button>
                     </Space.Compact>
-                    {!isMobile && campaignMainTab === 'influencers' && (
-                      <Button.Group
-                        style={{ flexShrink: 0, borderRadius: 20, overflow: 'hidden' }}
+                    {!isMobile && (campaignMainTab === 'influencers' || campaignMainTab === 'origin') && (
+                      <div
+                        className="campaign-instagram-view-toggle"
+                        role="group"
+                        aria-label="Lista ou grade"
                       >
-                        <Tooltip title="Lista (um por linha)">
-                          <Button
-                            type={viewMode === 'list' ? 'primary' : 'default'}
-                            icon={<UnorderedListOutlined />}
-                            onClick={() => setViewMode('list')}
-                            size="small"
-                          />
+                        <Tooltip title="Lista">
+                          <button
+                            type="button"
+                            className={`campaign-instagram-view-toggle-btn${(campaignMainTab === 'influencers' ? viewMode : originViewMode) === 'list' ? ' is-active' : ''}`}
+                            onClick={() =>
+                              campaignMainTab === 'influencers' ? setViewMode('list') : setOriginViewMode('list')
+                            }
+                          >
+                            <UnorderedListOutlined />
+                          </button>
                         </Tooltip>
-                        <Tooltip title="Lado a lado (grade)">
-                          <Button
-                            type={viewMode === 'grid' ? 'primary' : 'default'}
-                            icon={<AppstoreOutlined />}
-                            onClick={() => setViewMode('grid')}
-                            size="small"
-                          />
+                        <Tooltip title="Grade (como no Instagram)">
+                          <button
+                            type="button"
+                            className={`campaign-instagram-view-toggle-btn${(campaignMainTab === 'influencers' ? viewMode : originViewMode) === 'grid' ? ' is-active' : ''}`}
+                            onClick={() =>
+                              campaignMainTab === 'influencers' ? setViewMode('grid') : setOriginViewMode('grid')
+                            }
+                          >
+                            <AppstoreOutlined />
+                          </button>
                         </Tooltip>
-                      </Button.Group>
+                      </div>
                     )}
                   </div>
                 </div>
                 {campaignMainTab === 'origin' && campaignId ? (
                   <CampaignOriginGallery
                     campaignId={campaignId}
+                    viewMode={effectiveOriginViewMode}
                     textQuery={
                       query.q?.trim() ||
                       (typeof campaignInfo?.savedQuery?.q === 'string' ? campaignInfo.savedQuery.q.trim() : '')

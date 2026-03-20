@@ -30,8 +30,6 @@ export interface ReelsAnalysisSectionProps {
   getPostImageUrl: (post: PostItem) => string | undefined
   /** Retorna link do post (ex.: Instagram). */
   getPostLink: (post: PostItem) => string
-  /** Aplica proxy na URL da imagem. */
-  proxyImageUrl: (url: string | undefined) => string | undefined
   /** Espaçamento inferior da seção. */
   gap?: number
   /** Estilo do card. */
@@ -49,7 +47,6 @@ export function ReelsAnalysisSection({
   formatShortNum,
   getPostImageUrl,
   getPostLink,
-  proxyImageUrl,
   gap = s.xl,
   cardStyle: _cardStyle = { borderRadius: r, border: 'none', boxShadow: t.shadowLegacy, padding: s.lg, background: c.cardBg },
   lastReelAmplificationLabel,
@@ -385,7 +382,6 @@ export function ReelsAnalysisSection({
               }))}
               getImageUrl={(p) => getPostImageUrl(p as PostItem)}
               getLink={(p) => getPostLink(p as PostItem)}
-              proxyUrl={(url) => proxyImageUrl(url) ?? ''}
               failedImages={failedPostImages}
               formatShortNum={formatShortNum}
             />
@@ -409,7 +405,6 @@ export function ReelsAnalysisSection({
                 }))}
                 getImageUrl={(p) => getPostImageUrl(p as PostItem)}
                 getLink={(p) => getPostLink(p as PostItem)}
-                proxyUrl={(url) => proxyImageUrl(url) ?? ''}
                 failedImages={failedPostImages}
                 formatShortNum={formatShortNum}
               />

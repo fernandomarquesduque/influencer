@@ -18,7 +18,7 @@ import {
   TwitterOutlined,
   SafetyOutlined,
 } from '@ant-design/icons'
-import { getProfilePicUrl, proxyImageUrl, type EngagementStats, type ProfileActivation } from '../api'
+import { getProfilePicUrl, getStableProfilePicUrl, proxyImageUrl, type EngagementStats, type ProfileActivation } from '../api'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
@@ -81,6 +81,7 @@ interface ProfileSummaryCardProps {
 
 export default function ProfileSummaryCard({ item, variant = 'list', onClick, onImageRefreshQueued, showMetrics = true, isFavorite = false, onFavoriteToggle }: ProfileSummaryCardProps) {
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
+  const stablePic = getStableProfilePicUrl(item as unknown as Record<string, unknown>)
   const name = (item.full_name || item.handle) as string
   const eng = item.engagement
   const categories = (Array.isArray(item.categories) ? item.categories : []) as string[]
@@ -204,6 +205,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: variant === 'list' ? 6 : 12 }}>
         <ProfileAvatar
           src={pic}
+          stableBackgroundUrl={stablePic}
           handle={item.handle ?? item.key}
           size={avatarSize}
           border={variant === 'list' ? '2px solid var(--app-placeholder-bg)' : '3px solid var(--app-placeholder-bg)'}

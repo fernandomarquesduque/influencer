@@ -24,3 +24,48 @@
 .campaign-main-tabs .ant-segmented-item-selected .ant-segmented-item-label {
   color: #fff;
 }
+
+/* Toggle lista / grade — referência visual próxima ao Instagram (ícones, borda fina, segmento ativo neutro). */
+.campaign-instagram-view-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid #dbdbdb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.campaign-instagram-view-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: #8e8e8e;
+  font-size: 16px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.campaign-instagram-view-toggle-btn:first-child {
+  border-right: 1px solid #dbdbdb;
+}
+
+.campaign-instagram-view-toggle-btn:hover {
+  color: #262626;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.campaign-instagram-view-toggle-btn.is-active {
+  color: #262626;
+  background: #efefef;
+}
+
+.campaign-instagram-view-toggle-btn:focus-visible {
+  outline: 2px solid var(--app-primary, #722ed1);
+  outline-offset: 2px;
+}

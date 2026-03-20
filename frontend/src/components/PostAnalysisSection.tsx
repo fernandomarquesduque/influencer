@@ -42,8 +42,6 @@ export interface PostAnalysisSectionProps {
   getPostImageUrl: (post: PostItem) => string | undefined
   /** Retorna link do post (ex.: Instagram). */
   getPostLink: (post: PostItem) => string
-  /** Aplica proxy na URL da imagem. */
-  proxyImageUrl: (url: string | undefined) => string | undefined
   /** Espaçamento inferior da seção (ex.: gap da página). */
   gap?: number
   /** Estilo do card (bordas, sombra). */
@@ -64,7 +62,6 @@ export function PostAnalysisSection({
   formatShortNum,
   getPostImageUrl,
   getPostLink,
-  proxyImageUrl,
   gap = s.xl,
   cardStyle = { borderRadius: r, border: 'none', boxShadow: t.shadowLegacy, padding: s.lg, background: c.cardBg },
   contentOnly = false,
@@ -267,7 +264,6 @@ export function PostAnalysisSection({
                     )}
                     getImageUrl={(p) => getPostImageUrl(p as PostItem)}
                     getLink={(p) => getPostLink(p as PostItem)}
-                    proxyUrl={(url) => proxyImageUrl(url) ?? ''}
                     failedImages={failedPostImages}
                     formatShortNum={formatShortNum}
                   />
@@ -292,7 +288,6 @@ export function PostAnalysisSection({
                       )}
                       getImageUrl={(p) => getPostImageUrl(p as PostItem)}
                       getLink={(p) => getPostLink(p as PostItem)}
-                      proxyUrl={(url) => proxyImageUrl(url) ?? ''}
                       failedImages={failedPostImages}
                       formatShortNum={formatShortNum}
                     />

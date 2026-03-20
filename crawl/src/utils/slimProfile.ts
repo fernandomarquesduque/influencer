@@ -14,6 +14,8 @@ export interface SlimProfile extends Record<string, unknown> {
   full_name?: string;
   profile_pic_url?: string;
   hd_profile_pic_url?: string; // data.user.hd_profile_pic_url_info.url
+  /** URL pública (ex.: S3) — não expira como CDN do Instagram; preenchida na extração. */
+  stable_profile_pic_url?: string;
   id?: string;
   pk?: string;
   followers_count: number;    // follower_count ou edge_followed_by.count

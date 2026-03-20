@@ -46,6 +46,8 @@ export interface NormalizedPostInfluencer {
   is_private: boolean;
   profile_pic_url?: string;
   hd_profile_pic_url?: string;
+  /** URL estável (ex.: S3), copiada do perfil na extração — preview quando CDN do Instagram expira. */
+  stable_profile_pic_url?: string;
 }
 
 /** 2) Identidade do post (linkagem e tracking). */
@@ -111,6 +113,8 @@ export interface NormalizedPostMedia {
   original_height?: number;
   cover_images: Array<{ width: number; height: number; url: string }>;
   video_versions: Array<{ width: number; height: number; type?: number; url: string }>;
+  /** URL estável (S3) da capa após extração; não expira como CDN do Instagram. */
+  stable_cover_url?: string;
 }
 
 /** 5) Métricas (ranking e score). Apenas o que o Instagram entrega (edge_liked_by, edge_media_to_comment, video_view_count). */

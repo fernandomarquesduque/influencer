@@ -1,15 +1,20 @@
-import 'dotenv/config';
 import crypto from 'node:crypto';
 import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response } from 'express';
+import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** Raiz do projeto crawl (onde ficam .env e data/). Funciona com tsx (src/api) e com node após build (dist/api). */
 const _twoUp = path.resolve(__dirname, '../..');
 const CRAWL_ROOT = path.basename(_twoUp) === 'dist' ? path.resolve(__dirname, '../../..') : _twoUp;
+
+/** .env na pasta crawl — não depende do cwd (evita depurador/IDE com cwd errado sem AWS). */
+const CRAWL_ENV_PATH = path.join(CRAWL_ROOT, '.env');
+dotenv.config({ path: CRAWL_ENV_PATH });
+dotenv.config();
 
 function resolveAuthStatePath(relativeOrAbsolute: string): string {
   if (path.isAbsolute(relativeOrAbsolute)) return relativeOrAbsolute;
@@ -67,6 +72,7 @@ import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
 import { createCollectorController } from './controllers/collectorController.js';
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
 import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
+import { logS3StartupStatus } from '../s3/influencerProfileStorage.js';
 
 const require = createRequire(import.meta.url);
 const openApiRocksdb = require('./openapi-rocksdb.json');
@@ -4312,6 +4318,64 @@ function postItemShortcodeForDedupe(key: string, item: Record<string, unknown>):
   return key.toLowerCase();
 }
 
+/** Campos de `influencer` em post-matches, lidos do perfil indexado (RocksDB). */
+function influencerFieldsFromProfile(profile: Record<string, unknown> | null | undefined): {
+  followers_count: number;
+  full_name?: string;
+  profile_pic_url?: string;
+  stable_profile_pic_url?: string;
+  username?: string;
+} {
+  if (!profile || typeof profile !== 'object') {
+    return { followers_count: 0 };
+  }
+  const followers_count = getFollowersFromProfile(profile);
+  const topFull = typeof profile.full_name === 'string' ? profile.full_name.trim() : '';
+  const data = profile.data as { user?: Record<string, unknown> } | undefined;
+  const u = data?.user;
+  const rootUser = profile.user;
+  const uRoot =
+    rootUser != null && typeof rootUser === 'object' && !Array.isArray(rootUser)
+      ? (rootUser as Record<string, unknown>)
+      : undefined;
+  const userFull =
+    (u && typeof u.full_name === 'string' ? String(u.full_name).trim() : '') ||
+    (uRoot && typeof uRoot.full_name === 'string' ? String(uRoot.full_name).trim() : '') ||
+    '';
+  const full_name = topFull || userFull || undefined;
+  const picTop =
+    typeof profile.profile_pic_url === 'string' && profile.profile_pic_url.startsWith('http')
+      ? profile.profile_pic_url
+      : undefined;
+  const picUser =
+    u && typeof u.profile_pic_url === 'string' && u.profile_pic_url.startsWith('http')
+      ? u.profile_pic_url
+      : undefined;
+  const picRoot =
+    uRoot && typeof uRoot.profile_pic_url === 'string' && uRoot.profile_pic_url.startsWith('http')
+      ? uRoot.profile_pic_url
+      : undefined;
+  const hd = u?.hd_profile_pic_url_info as { url?: string } | undefined;
+  const hdRoot = uRoot?.hd_profile_pic_url_info as { url?: string } | undefined;
+  const picHd = hd && typeof hd.url === 'string' && hd.url.startsWith('http') ? hd.url : undefined;
+  const picHdRoot =
+    hdRoot && typeof hdRoot.url === 'string' && hdRoot.url.startsWith('http') ? hdRoot.url : undefined;
+  const profile_pic_url = picTop ?? picUser ?? picRoot ?? picHd ?? picHdRoot;
+  const stableRaw = profile.stable_profile_pic_url;
+  const stable_profile_pic_url =
+    typeof stableRaw === 'string' && stableRaw.startsWith('http') ? stableRaw : undefined;
+  const unameRaw = (profile.username ?? u?.username ?? uRoot?.username ?? profile.handle) as string | undefined;
+  const username =
+    typeof unameRaw === 'string' && unameRaw.trim() ? normalizeHandle(unameRaw) : undefined;
+  return {
+    followers_count,
+    ...(full_name ? { full_name } : {}),
+    ...(profile_pic_url ? { profile_pic_url } : {}),
+    ...(stable_profile_pic_url ? { stable_profile_pic_url } : {}),
+    ...(username ? { username } : {}),
+  };
+}
+
 const POST_MATCHES_HANDLE_BATCH = 32;
 
 /**
@@ -4403,6 +4467,47 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
       (item as Record<string, unknown>).profile_handle = postBucketKeyToHandle(key);
       return { key, ...item };
     });
+
+    const handlesInSlice = new Set<string>();
+    for (const row of slice) {
+      const ph = (row as Record<string, unknown>).profile_handle;
+      if (typeof ph === 'string' && ph.trim()) handlesInSlice.add(normalizeHandle(ph));
+    }
+    const influencerByHandle = new Map<
+      string,
+      ReturnType<typeof influencerFieldsFromProfile>
+    >();
+    await Promise.all(
+      [...handlesInSlice].map(async (h) => {
+        const profile = await db.loadByHandle(h);
+        influencerByHandle.set(h, influencerFieldsFromProfile(profile as Record<string, unknown> | null));
+      })
+    );
+    for (const row of slice) {
+      const ph = (row as Record<string, unknown>).profile_handle;
+      if (typeof ph !== 'string' || !ph.trim()) continue;
+      const h = normalizeHandle(ph);
+      const fromProfile = influencerByHandle.get(h) ?? { followers_count: 0 };
+      const prev = (row as Record<string, unknown>).influencer;
+      const base =
+        typeof prev === 'object' && prev !== null && !Array.isArray(prev)
+          ? { ...(prev as Record<string, unknown>) }
+          : {};
+      // O `influencer` dentro do post costuma ser o user da mídia (ex. dono do post em "marcados").
+      // Sempre exibir o perfil da campanha (`profile_handle` / bucket), não misturar nome/foto do nó.
+      delete base.full_name;
+      delete base.username;
+      delete base.profile_pic_url;
+      delete base.hd_profile_pic_url;
+      delete base.hd_profile_pic_url_info;
+      delete base.stable_profile_pic_url;
+      (row as Record<string, unknown>).influencer = {
+        ...base,
+        ...fromProfile,
+        username: fromProfile.username ?? h,
+      };
+    }
+
     res.json({ total, items: slice, q: qRaw || undefined });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -4802,6 +4907,7 @@ app.get('/api-docs', (_req: Request, res: Response) => {
     console.log(`API: http://localhost:${PORT}`);
     console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
     console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
+    logS3StartupStatus({ envPath: CRAWL_ENV_PATH, crawlRoot: CRAWL_ROOT });
     // Aquecer o browser em background para o primeiro extract-profile não esperar abrir o Chromium
     getApiExtractClient()
       .init()

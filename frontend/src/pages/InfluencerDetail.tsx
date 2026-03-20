@@ -29,7 +29,7 @@ import {
   CheckCircleOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
-import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
+import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { buildReportInsights, getWeekdayName, getPostsByWeekday } from '../utils/reportInsights'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
@@ -94,11 +94,7 @@ function formatShortNum(n: number): string {
 }
 
 function getPostImageUrl(post: PostItem): string | undefined {
-  const cover = post.media?.cover_images?.[0]?.url
-  if (cover) return cover
-  const video = post.media?.video_versions?.[0]?.url
-  if (video) return video
-  return (post as { image_url?: string }).image_url
+  return getPostCoverDisplayUrl(post)
 }
 
 function getPostLink(post: PostItem): string {
@@ -460,6 +456,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
   }
 
   const profilePic = proxyImageUrl(getProfilePicUrl(profile))
+  const stableProfilePic = getStableProfilePicUrl(profile)
 
   const hasActivationData = activation &&
     (activation.content_type?.length ||
@@ -651,6 +648,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
             </div>
             <ReportHero
               profilePic={profilePic || ''}
+              stableProfilePicUrl={stableProfilePic}
               name={fullName}
               handle={displayHandle}
               isMobile={isMobile}
@@ -923,7 +921,6 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                           postsByWeekday={getPostsByWeekday(ownPosts)}
                           getPostImageUrl={getPostImageUrl}
                           getPostLink={getPostLink}
-                          proxyImageUrl={proxyImageUrl}
                           failedPostImages={failedPostImages}
                         />
                       </div>
@@ -1150,7 +1147,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                               ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                             }}
                           >
-                            <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={ownPosts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} proxyImageUrl={proxyImageUrl} gap={gap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
+                            <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={ownPosts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={gap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
                           </div>
                           {showMetricsBlur && (
                             <div
@@ -1220,7 +1217,6 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                               formatShortNum={formatShortNum}
                               getPostImageUrl={getPostImageUrl}
                               getPostLink={getPostLink}
-                              proxyImageUrl={proxyImageUrl}
                               gap={gap}
                               cardStyle={cardStyle}
                               lastReelAmplificationLabel={reportInsights?.strategicMetrics?.lastReelAmplificationLabel}
@@ -1287,7 +1283,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                               ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                             }}
                           >
-                            <TaggedAnalysisSection tagged={mediaByType.tagged} followersCount={followersCount} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} proxyImageUrl={proxyImageUrl} gap={gap} contentOnly={!hasActivationData} />
+                            <TaggedAnalysisSection tagged={mediaByType.tagged} followersCount={followersCount} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={gap} contentOnly={!hasActivationData} />
                           </div>
                           {showMetricsBlur && (
                             <div

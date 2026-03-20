@@ -7,7 +7,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { Button, Result, Spin, Typography } from 'antd'
 import { CheckCircleFilled, LoadingOutlined } from '@ant-design/icons'
 import { pdf } from '@react-pdf/renderer'
-import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, authHeaders } from '../api'
+import { fetchProfile, fetchPosts, fetchProfileActivation, getProfilePicUrl, proxyImageUrl, proxyImageUrlForDisplay, authHeaders } from '../api'
 import type { PostItem } from '../api'
 import { buildReportInsights, getTopPosts, REPORT_POSTS_LIMIT } from '../utils/reportInsights'
 import type { ProfileItem, ProfileActivation, PostsResponse } from '../api'
@@ -189,6 +189,8 @@ export default function MediaKit() {
       setProgress('Carregando imagens dos posts...')
       function getPostImageUrlCandidates(p: PostItem): string[] {
         const urls: string[] = []
+        const stable = p.media?.stable_cover_url
+        if (typeof stable === 'string' && stable.startsWith('http')) urls.push(stable)
         const cover = p.media?.cover_images?.[0]?.url
         if (cover) urls.push(cover)
         const video = p.media?.video_versions?.[0]?.url
@@ -250,7 +252,7 @@ export default function MediaKit() {
       async function tryLoadPostImage(post: PostItem): Promise<boolean> {
         const candidates = getPostImageUrlCandidates(post).slice(0, MAX_URL_CANDIDATES_PER_POST)
         for (const rawUrl of candidates) {
-          const url = proxyImageUrl(rawUrl)
+          const url = proxyImageUrlForDisplay(rawUrl) ?? proxyImageUrl(rawUrl)
           if (!url) continue
           const dataUrl = await fetchImageAsDataUrl(url)
           if (dataUrl) {

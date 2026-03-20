@@ -7,7 +7,6 @@ import {
   CheckCircleFilled,
   WarningFilled,
   RocketOutlined,
-  FileImageOutlined,
   DollarOutlined,
   CommentOutlined,
   MessageOutlined,
@@ -17,8 +16,9 @@ import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { ERGaugeChart, ER_QUALIDADE_BANDAS, erBandaRangeLabel, getErBanda } from '../components/ERGaugeChart'
 import { TierProgressGameBar } from '../components/TierProgressGameBar'
 import type { StrategicMetrics, ExecutiveSummaryForBrands, BenchmarkInsight } from '../utils/reportInsights'
-import type { PostItem } from '../api'
+import { getPostStablePreviewUrl, type PostItem } from '../api'
 import ProfileAvatar from '../components/ProfileAvatar'
+import PostPreviewCard, { getPostCaptionOverlayLines } from '../components/PostPreviewCard'
 
 const s = t.spacing
 const c = t.colors
@@ -37,6 +37,8 @@ const cardBaseStyle: React.CSSProperties = {
 // ——— ReportHero ———
 export interface ReportHeroProps {
   profilePic: string
+  /** Foto estável (S3) como fundo quando a URL do Instagram falha. */
+  stableProfilePicUrl?: string
   /** Nome de exibição do perfil */
   name?: string
   /** Handle/username para exibir como @handle */
@@ -71,6 +73,7 @@ const AVATAR_SIZE_MOBILE = 64
 
 export function ReportHero({
   profilePic,
+  stableProfilePicUrl,
   name,
   handle: handleProp,
   headline,
@@ -116,6 +119,7 @@ export function ReportHero({
             <div style={{ position: 'relative', flexShrink: 0, width: avatarSize, height: avatarSize }}>
               <ProfileAvatar
                 src={profilePic}
+                stableBackgroundUrl={stableProfilePicUrl}
                 handle={handleProp}
                 alt={name || atHandle || 'Foto do perfil'}
                 size={avatarSize}
@@ -788,96 +792,64 @@ export function ProofCarousel({
   items,
   getImageUrl,
   getLink,
-  proxyUrl,
   failedImages,
   formatShortNum,
   /** Quando true, exibe "Postado por @username" (ex.: na seção de marcados). */
   showAuthor = false,
 }: {
   items: ProofItem[]
+  /** URL já pronta para `<img src>` (ex.: `getPostCoverDisplayUrl`). */
   getImageUrl: (post: unknown) => string | undefined
   getLink: (post: unknown) => string
-  proxyUrl: (url: string) => string
   failedImages: Set<string>
   formatShortNum: (n: number) => string
   showAuthor?: boolean
 }) {
-  const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   return (
-    <div className="proof-carousel" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: s.lg, width: '100%' }} role="list">
+    <div
+      className="proof-carousel"
+      style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(176px, 1fr))', gap: s.lg, width: '100%' }}
+      role="list"
+    >
       {items.map(({ post, interactions, erPost, oQueFuncionou, isTop, geraConversa }) => {
         const key = (post as { key: string }).key
-        const imgUrl = getImageUrl(post)
+        const displaySrc = failedImages.has(key) ? undefined : getImageUrl(post)
+        const stableBg = getPostStablePreviewUrl(post)
         const link = getLink(post)
         const failed = failedImages.has(key)
-        const isHovered = hoveredKey === key
+        const pi = post as PostItem
+        const overlayLines = getPostCaptionOverlayLines(pi)
+        const authorLine =
+          showAuthor && (post as { influencer?: { username?: string } })?.influencer?.username
+            ? `Postado por @${(post as { influencer?: { username?: string } }).influencer!.username}`
+            : undefined
+        const badges =
+          isTop || geraConversa ? (
+            <>
+              {isTop && <Tag style={{ margin: 0, background: c.primary, color: 'var(--brand-white)', border: 'none', fontSize: 10 }}>#1</Tag>}
+              {geraConversa && (
+                <Tag style={{ margin: 0, background: c.success, color: 'var(--brand-white)', border: 'none', fontSize: 10 }}>Gera conversa</Tag>
+              )}
+            </>
+          ) : undefined
         return (
-          <a
+          <PostPreviewCard
             key={key}
             href={link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="proof-thumb report-card--hover"
-            style={{ display: 'block', borderRadius: r.lg, overflow: 'hidden', boxShadow: sh.md, background: c.cardBg, minWidth: 0, transition: t.animation.hoverTransition }}
-            onMouseEnter={() => setHoveredKey(key)}
-            onMouseLeave={() => setHoveredKey(null)}
             aria-label={`Post com ${formatShortNum(interactions)} interações, ER ${erPost.toFixed(1)}%. ${oQueFuncionou}`}
-          >
-            <div style={{ position: 'relative', aspectRatio: '1', background: c.borderLight }}>
-              {(isTop || geraConversa) && (
-                <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {isTop && <Tag style={{ margin: 0, background: c.primary, color: 'var(--brand-white)', border: 'none', fontSize: 10 }}>#1</Tag>}
-                  {geraConversa && <Tag style={{ margin: 0, background: c.success, color: 'var(--brand-white)', border: 'none', fontSize: 10 }}>Gera conversa</Tag>}
-                </div>
-              )}
-              {imgUrl && !failed ? (
-                <img src={proxyUrl(imgUrl)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
-              ) : (
-                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileImageOutlined style={{ fontSize: 32, color: c.textMuted }} aria-hidden /></div>
-              )}
-              <div
-                className="proof-overlay"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'linear-gradient(to top, var(--app-overlay) 0%, transparent 50%)',
-                  opacity: isHovered ? 1 : 0,
-                  transition: 'opacity 0.2s ease',
-                  pointerEvents: 'none',
-                }}
-                aria-hidden
-              />
-            </div>
-            <div style={{ padding: s.sm }}>
-              {showAuthor && (post as { influencer?: { username?: string } })?.influencer?.username && (
-                <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 2 }}>
-                  Postado por @{(post as { influencer?: { username?: string } }).influencer!.username}
-                </div>
-              )}
-              <Tooltip title={METRIC_TOOLTIPS.interacoesPost} placement="top">
-                <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, cursor: 'help', display: 'inline-block' }}>{formatShortNum(interactions)} interações&nbsp;</div>
-              </Tooltip>
-              <Tooltip title={METRIC_TOOLTIPS.erPost} placement="top">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <span style={{ ...typ.caption, color: c.textMuted, cursor: 'help' }}>ER {erPost.toFixed(1)}%</span>
-                  <span
-                    style={{
-                      fontSize: 9,
-                      fontWeight: 600,
-                      padding: '1px 4px',
-                      borderRadius: 3,
-                      background: `${getErBanda(erPost).color}22`,
-                      color: getErBanda(erPost).color,
-                      border: `1px solid ${getErBanda(erPost).color}44`,
-                    }}
-                  >
-                    {getErBanda(erPost).label}
-                  </span>
-                </div>
-              </Tooltip>
-              <div style={{ ...typ.caption, color: c.primary, marginTop: 4 }}>{oQueFuncionou}</div>
-            </div>
-          </a>
+            imageDisplaySrc={displaySrc}
+            stableBackgroundUrl={stableBg}
+            imageUnavailable={failed || !displaySrc}
+            mediaAspectRatio="4 / 5"
+            overlayLines={overlayLines.length > 0 ? overlayLines : undefined}
+            imageTopBadges={badges}
+            interactionsLabel={`${formatShortNum(interactions)} interações`}
+            erPercent={erPost}
+            footerHint={oQueFuncionou}
+            authorLine={authorLine}
+            showHoverGradient
+            className="proof-thumb"
+          />
         )
       })}
     </div>
@@ -996,7 +968,6 @@ export interface MetricasMediakitSectionProps {
   postsByWeekday?: PostItem[][]
   getPostImageUrl?: (post: PostItem) => string | undefined
   getPostLink?: (post: PostItem) => string
-  proxyImageUrl?: (url: string | undefined) => string | undefined
   failedPostImages?: Set<string>
 }
 
@@ -1031,13 +1002,10 @@ export function MetricasMediakitSection({
   postsByWeekday,
   getPostImageUrl,
   getPostLink,
-  proxyImageUrl,
   failedPostImages = new Set(),
 }: MetricasMediakitSectionProps) {
   const [selectedWeekday, setSelectedWeekday] = useState<number | null>(null)
-  const canOpenModal = Boolean(
-    postsByWeekday && getPostImageUrl && getPostLink && proxyImageUrl
-  )
+  const canOpenModal = Boolean(postsByWeekday && getPostImageUrl && getPostLink)
   const postsForModal = selectedWeekday != null && postsByWeekday
     ? postsByWeekday[selectedWeekday] ?? []
     : []
@@ -1242,52 +1210,31 @@ export function MetricasMediakitSection({
               Nenhum post neste dia da semana.
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: s.md }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(156px, 1fr))', gap: s.md }}>
               {postsForModal.map((post) => {
                 const key = post.key ?? ((post.post?.id ?? post.post?.shortcode ?? '') || String(Math.random()))
-                const imgUrl = getPostImageUrl!(post)
+                const displaySrc = failedPostImages.has(key) ? undefined : getPostImageUrl!(post)
+                const stableBg = getPostStablePreviewUrl(post)
                 const link = getPostLink!(post)
                 const failed = failedPostImages.has(key)
                 const interactions = postInteractions(post)
                 const er = postEr(post, followersCount)
+                const overlayLines = getPostCaptionOverlayLines(post)
                 return (
-                  <a
+                  <PostPreviewCard
                     key={key}
                     href={link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="proof-thumb report-card--hover"
-                    style={{ display: 'block', borderRadius: r.lg, overflow: 'hidden', boxShadow: sh.md, background: c.cardBg, minWidth: 0 }}
-                  >
-                    <div style={{ position: 'relative', aspectRatio: '1', background: c.borderLight }}>
-                      {imgUrl && !failed ? (
-                        <img src={(proxyImageUrl!(imgUrl) ?? imgUrl) ?? ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
-                      ) : (
-                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <FileImageOutlined style={{ fontSize: 32, color: c.textMuted }} aria-hidden />
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ padding: s.sm }}>
-                      <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text }}>{formatShortNum(interactions)} interações</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ ...typ.caption, color: c.textMuted }}>ER {er.toFixed(1)}%</span>
-                        <span
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 600,
-                            padding: '1px 4px',
-                            borderRadius: 3,
-                            background: `${getErBanda(er).color}22`,
-                            color: getErBanda(er).color,
-                            border: `1px solid ${getErBanda(er).color}44`,
-                          }}
-                        >
-                          {getErBanda(er).label}
-                        </span>
-                      </div>
-                    </div>
-                  </a>
+                    aria-label={`${formatShortNum(interactions)} interações, ER ${er.toFixed(1)}%`}
+                    imageDisplaySrc={displaySrc}
+                    stableBackgroundUrl={stableBg}
+                    imageUnavailable={failed || !displaySrc}
+                    mediaAspectRatio="4 / 5"
+                    overlayLines={overlayLines.length > 0 ? overlayLines : undefined}
+                    interactionsLabel={`${formatShortNum(interactions)} interações`}
+                    erPercent={er}
+                    showHoverGradient={false}
+                    className="proof-thumb"
+                  />
                 )
               })}
             </div>

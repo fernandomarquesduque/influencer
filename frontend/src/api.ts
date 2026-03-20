@@ -27,6 +27,20 @@ export function proxyImageUrl(url: string | undefined): string | undefined {
   return `${API_BASE}/proxy-image?url=${encodeURIComponent(url)}`
 }
 
+/** Instagram/fbcdn → proxy da API; URLs públicas (ex.: S3) sem proxy. */
+export function proxyImageUrlForDisplay(url: string | undefined): string | undefined {
+  if (!url || typeof url !== 'string') return undefined
+  const lower = url.toLowerCase()
+  if (
+    lower.includes('instagram.') ||
+    lower.includes('fbcdn.net') ||
+    lower.includes('cdninstagram')
+  ) {
+    return proxyImageUrl(url)
+  }
+  return url
+}
+
 export interface ProfileItem {
   key: string
   handle?: string
@@ -67,6 +81,8 @@ export interface ProfileItem {
   address_street?: string
   city_name?: string
   zip?: string
+  /** URL pública estável (ex.: S3) quando configurado na extração. */
+  stable_profile_pic_url?: string
   [key: string]: unknown
 }
 
@@ -87,6 +103,33 @@ export function getProfilePicUrl(item: ProfileItem | Record<string, unknown> | n
     if (url && typeof url === 'string') return url
   }
   return undefined
+}
+
+/** URL da foto estável (S3) — não passa pelo proxy da API. */
+export function getStableProfilePicUrl(item: ProfileItem | Record<string, unknown> | null | undefined): string | undefined {
+  if (!item) return undefined
+  const top = (item as Record<string, unknown>).stable_profile_pic_url
+  if (typeof top === 'string' && top.startsWith('http')) return top
+  const data = (item as Record<string, unknown>).data
+  const u =
+    data && typeof data === 'object' && 'user' in data
+      ? (data as { user?: Record<string, unknown> }).user?.stable_profile_pic_url
+      : undefined
+  if (typeof u === 'string' && u.startsWith('http')) return u
+  return undefined
+}
+
+/**
+ * URL da camada de fundo atrás da capa no card (mesmo `cover` / object-fit).
+ * Prioriza a mídia do próprio post (`stable_cover_url`, capa, vídeo, `image_url`);
+ * só usa a foto estável do perfil quando não há imagem do post (ex.: URL do IG expirada e sem S3).
+ */
+export function getPostStablePreviewUrl(post: unknown): string | undefined {
+  const raw = getPostCoverRawUrl(post as PostItem)
+  if (raw) return raw
+  const p = post as { influencer?: { stable_profile_pic_url?: string } } | null | undefined
+  const u = p?.influencer?.stable_profile_pic_url
+  return typeof u === 'string' && u.startsWith('http') ? u : undefined
 }
 
 export interface ProfilesResponse {
@@ -122,6 +165,7 @@ export interface ProfileListItem {
   handle: string
   full_name?: string
   profile_pic_url?: string
+  stable_profile_pic_url?: string
   followers_count: number
   following_count?: number
   media_count?: number
@@ -895,6 +939,8 @@ export async function fetchCampaignProfiles(
 export interface PostMedia {
   cover_images?: Array<{ width: number; height: number; url: string }>
   video_versions?: Array<{ width: number; height: number; url: string }>
+  /** URL estável (S3) após extração. */
+  stable_cover_url?: string
 }
 
 export interface PostContent {
@@ -917,7 +963,14 @@ export interface PostItem {
   profile_handle?: string
   /** Tipo de mídia quando extraímos reels, marcados e destaques. */
   content_type?: MediaKind
-  influencer?: { username?: string; full_name?: string; profile_pic_url?: string }
+  influencer?: {
+    username?: string
+    full_name?: string
+    profile_pic_url?: string
+    stable_profile_pic_url?: string
+    /** Preenchido em post-matches a partir do perfil indexado (patamar na UI). */
+    followers_count?: number
+  }
   post?: { shortcode?: string; media_type?: number; taken_at?: number; collected_at?: string;[k: string]: unknown }
   content?: PostContent
   media?: PostMedia
@@ -925,6 +978,24 @@ export interface PostItem {
   image_url?: string
   video_url?: string
   [key: string]: unknown
+}
+
+/** URL bruta da capa (S3 estável ou CDN), antes do proxy. */
+export function getPostCoverRawUrl(post: PostItem): string | undefined {
+  const stable = post.media?.stable_cover_url
+  if (typeof stable === 'string' && stable.startsWith('http')) return stable
+  const cover = post.media?.cover_images?.[0]?.url
+  const video = post.media?.video_versions?.[0]?.url
+  const top = post.image_url
+  const raw = cover || video || top
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined
+}
+
+/** URL pronta para `<img src>` (proxy só quando for Instagram/fbcdn). */
+export function getPostCoverDisplayUrl(post: PostItem): string | undefined {
+  const raw = getPostCoverRawUrl(post)
+  if (!raw) return undefined
+  return proxyImageUrlForDisplay(raw) ?? proxyImageUrl(raw)
 }
 
 export interface PostsResponse {

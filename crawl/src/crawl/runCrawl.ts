@@ -8,6 +8,7 @@ import { crawlLog, crawlLogExtract } from '../utils/crawlLogger.js';
 import { getBusinessBlockReason, getFollowersFromEntity, hasPostWithMinLikes, hasRejectedProfileKeyword, isBlocklistedHandle, isBusinessFromEntity, isPersonOrCreator, isPrivateFromEntity, qualifiesAsInfluencer } from '../utils/entityAccess.js';
 import { reset429Run } from '../utils/rateLimit429.js';
 import { buildSlimProfile } from '../utils/slimProfile.js';
+import { resyncInfluencerS3AfterDbMediaReset } from '../storage/s3InfluencerImage.js';
 /** Storage usado pelo crawl: RocksDB ou Composite (RocksDB + SQLite). */
 export interface CrawlStorage {
   save(entity: Entity & { handle: string }): Promise<{ path: string; bytes: number }>;
@@ -135,11 +136,12 @@ async function processOneProfileWithTimeout(
         if (hasRejectedProfileKeyword(raw)) {
           throw new Error('FILTER_REJECT:perfil com palavra rejeitada');
         }
-        await storage.save(slim as Entity & { handle: string });
         const collectedAt = String(slim._collected_at ?? new Date().toISOString());
         if (typeof storage.deletePostsByHandle === 'function') {
           await storage.deletePostsByHandle(slim.handle);
         }
+        await resyncInfluencerS3AfterDbMediaReset(slim, { posts, reels, tagged, highlights });
+        await storage.save(slim as Entity & { handle: string });
         await storage.savePosts(slim.handle, posts, collectedAt);
         if (typeof storage.saveMedia === 'function') {
           if (reels.length > 0) await storage.saveMedia(slim.handle, 'reel', reels, collectedAt);
