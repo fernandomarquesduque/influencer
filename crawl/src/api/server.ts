@@ -26,7 +26,17 @@ import {
   buildConfigFromEnv,
   type ExtractSingleProfileResult,
 } from '../crawl/extractSingleProfile.js';
-import { searchProfiles, getProfileSummary, scheduleSearchCacheRewarm, warmSearchCache, type ProfilesSearchQuery, type ProfileListItem } from './profilesSearch.js';
+import {
+  searchProfiles,
+  getProfileSummary,
+  scheduleSearchCacheRewarm,
+  warmSearchCache,
+  matchesQuery,
+  getPostSearchableNormalized,
+  getPostTimestamp,
+  type ProfilesSearchQuery,
+  type ProfileListItem,
+} from './profilesSearch.js';
 import { CreditsCampaignsDb, isCampaignIdGuid } from '../storage/creditsCampaignsDb.js';
 import { PaymentsDb, type PaymentRow } from '../storage/paymentsDb.js';
 import * as asaas from '../asaas/client.js';
@@ -2430,7 +2440,13 @@ async function createReportCampaignFromQuery(
 ): Promise<string | null> {
   const { handles } = await getReportHandlesAndPrice(query, reportCount);
   if (handles.length === 0) return null;
-  return creditsCampaignsDb.createCampaign(userId, handles, 0, query.q?.trim() || 'Relatório', expiresAt);
+  let queryJson: string | null = null;
+  try {
+    queryJson = JSON.stringify(query);
+  } catch {
+    queryJson = null;
+  }
+  return creditsCampaignsDb.createCampaign(userId, handles, 0, query.q?.trim() || 'Relatório', expiresAt, queryJson);
 }
 
 /** Preview do preço do relatório (ativados R$2, não ativados R$1). Body: { query, desiredCount }. */
@@ -3222,7 +3238,13 @@ app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: R
     }
     const creditsNeeded = finalHandles.length * CREDITS_PER_INFLUENCER;
     const campaignName = (body?.name ?? '').toString().trim() || (query?.q ?? '').toString().trim() || undefined;
-    const campaignId = creditsCampaignsDb.createCampaign(userId, finalHandles, creditsNeeded, campaignName, expiresAt);
+    let queryJson: string | null = null;
+    try {
+      queryJson = JSON.stringify(query);
+    } catch {
+      queryJson = null;
+    }
+    const campaignId = creditsCampaignsDb.createCampaign(userId, finalHandles, creditsNeeded, campaignName, expiresAt, queryJson);
     res.status(201).json({ campaignId, handlesCount: finalHandles.length, creditsUsed: creditsNeeded });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -3258,6 +3280,13 @@ app.get('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
       expires_at: campaign.expires_at,
       paymentStatus: campaign.payment_status,
     };
+    if (campaign.query_json && typeof campaign.query_json === 'string' && campaign.query_json.trim()) {
+      try {
+        payload.savedQuery = JSON.parse(campaign.query_json) as unknown;
+      } catch {
+        /* ignora JSON inválido */
+      }
+    }
     const payment = paymentsDb.getByCampaignId(campaignId, userId);
     const hasPendingPayment = campaign.payment_status === 'pending';
     if (hasPendingPayment) {
@@ -4265,6 +4294,120 @@ app.get(
     }
   }
 );
+
+/** Handle do perfil a partir da chave do bucket post (ex.: `user:reel:ABC` → `user`). */
+function postBucketKeyToHandle(key: string): string {
+  const idx = key.indexOf(':');
+  if (idx <= 0) return normalizeHandle(key);
+  return normalizeHandle(key.slice(0, idx));
+}
+
+/** Shortcode normalizado para deduplicar a mesma mídia salva em chaves diferentes. */
+function postItemShortcodeForDedupe(key: string, item: Record<string, unknown>): string {
+  const post = item.post as Record<string, unknown> | undefined;
+  const sc = post?.shortcode ?? (item as { shortcode?: unknown }).shortcode;
+  if (sc != null && String(sc).trim()) return String(sc).trim().toLowerCase();
+  const parts = key.split(':');
+  if (parts.length >= 1) return String(parts[parts.length - 1] ?? '').toLowerCase();
+  return key.toLowerCase();
+}
+
+const POST_MATCHES_HANDLE_BATCH = 32;
+
+/**
+ * Posts/reels/etc. dos perfis da campanha onde `q` aparece na legenda/hashtags (dados atuais do storage).
+ * Sem `q`, retorna todos os itens da campanha (filtráveis por `type`).
+ * Só lê posts dos handles da campanha (prefixo no RocksDB), não varre o bucket inteiro.
+ */
+app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
+    if (!handles || handles.length === 0) {
+      res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
+      return;
+    }
+    const handleSet = new Set(handles.map((h) => normalizeHandle(h)));
+    const normHandles = Array.from(handleSet);
+    const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
+    const typeFilter = (req.query.type as string | undefined)?.toLowerCase();
+    const limit = Math.min(Number(req.query.limit) || 48, 200);
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+
+    const postsChunks: { key: string; value: Record<string, unknown> }[][] = [];
+    for (let i = 0; i < normHandles.length; i += POST_MATCHES_HANDLE_BATCH) {
+      const batch = normHandles.slice(i, i + POST_MATCHES_HANDLE_BATCH);
+      const part = await Promise.all(
+        batch.map((h) => db.getByBucket<Record<string, unknown>>('post', `${h}:`))
+      );
+      for (const items of part) postsChunks.push(items);
+    }
+
+    const candidates: Array<{ key: string; value: Record<string, unknown>; ts: number; ct: string }> = [];
+    for (const items of postsChunks) {
+      for (const { key, value } of items) {
+        const h = postBucketKeyToHandle(key);
+        if (!handleSet.has(h)) continue;
+        const item = { ...(value as Record<string, unknown>) };
+        const ct = getContentTypeFromItem(key, item);
+        if (typeFilter && MEDIA_TYPES.includes(typeFilter as (typeof MEDIA_TYPES)[number]) && ct !== typeFilter) {
+          continue;
+        }
+        const searchable = getPostSearchableNormalized(item);
+        if (qRaw) {
+          const { match } = matchesQuery(searchable, qRaw);
+          if (!match) continue;
+        }
+        const ts = getPostTimestamp(item) ?? 0;
+        candidates.push({ key, value: item, ts, ct });
+      }
+    }
+
+    /** Uma entrada por (perfil, shortcode): evita repetir a mesma mídia (ex.: chaves duplicadas / tipos cruzados). */
+    const deduped = new Map<string, { key: string; value: Record<string, unknown>; ts: number; ct: string }>();
+    for (const c of candidates) {
+      const h = postBucketKeyToHandle(c.key);
+      const sc = postItemShortcodeForDedupe(c.key, c.value);
+      const id = `${h}:${sc}`;
+      const prev = deduped.get(id);
+      if (
+        !prev ||
+        c.ts > prev.ts ||
+        (c.ts === prev.ts && c.key.localeCompare(prev.key) < 0)
+      ) {
+        deduped.set(id, c);
+      }
+    }
+
+    const sorted = [...deduped.values()].sort(
+      (a, b) => b.ts - a.ts || a.key.localeCompare(b.key)
+    );
+    const total = sorted.length;
+    const slice = sorted.slice(offset, offset + limit).map(({ key, value, ct }) => {
+      const item = value;
+      const post = item?.post as Record<string, unknown> | undefined;
+      const content = item?.content as Record<string, unknown> | undefined;
+      if (post && post.taken_at == null && content?.caption_created_at != null && typeof content.caption_created_at === 'number') {
+        item.post = { ...post, taken_at: content.caption_created_at };
+      }
+      if (!item.content_type) item.content_type = ct;
+      (item as Record<string, unknown>).profile_handle = postBucketKeyToHandle(key);
+      return { key, ...item };
+    });
+    res.json({ total, items: slice, q: qRaw || undefined });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
 
 /** Projetos para influenciadores (estilo Workana). Lista e detalhe: usuário logado. Cadastrar: adm. Candidatar: influenciador. */
 app.get('/api/projects', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {

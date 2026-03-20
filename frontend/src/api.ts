@@ -608,6 +608,8 @@ export interface CampaignInfo {
   id: string
   name: string | null
   description: string | null
+  /** Query salva na criação da campanha (inclui `q` e filtros). */
+  savedQuery?: Partial<ProfilesSearchQuery> | null
   handlesCount: number
   credits_used: number
   /** Quando campanha está paga, igual a credits_used; quando pendente, 0. Use para calcular quantidade não paga. */
@@ -928,6 +930,28 @@ export interface PostItem {
 export interface PostsResponse {
   total: number
   items: PostItem[]
+}
+
+/** Posts dos perfis da campanha onde `q` bate em legenda/hashtags (dados atuais). */
+export async function fetchCampaignPostMatches(
+  campaignId: string,
+  params: { q?: string; type?: MediaKind; limit?: number; offset?: number },
+  options?: { signal?: AbortSignal }
+): Promise<PostsResponse & { q?: string }> {
+  const p = new URLSearchParams()
+  if (params.q?.trim()) p.set('q', params.q.trim())
+  if (params.type) p.set('type', params.type)
+  p.set('limit', String(params.limit ?? 48))
+  p.set('offset', String(params.offset ?? 0))
+  const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/post-matches?${p}`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao carregar posts da campanha')
+  }
+  return res.json()
 }
 
 export async function fetchProfiles(

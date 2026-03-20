@@ -24,6 +24,8 @@ export interface CampaignRow {
   user_id: number;
   name: string | null;
   description: string | null;
+  /** JSON da busca original (inclui `q`, categorias, filtros). */
+  query_json: string | null;
   handles_json: string;
   handles_count: number;
   credits_used: number;
@@ -75,6 +77,14 @@ export class CreditsCampaignsDb {
     this.migrateCampaignDescription();
     this.migrateCampaignExpiresAt();
     this.migrateCampaignPaymentStatus();
+    this.migrateCampaignQueryJson();
+  }
+
+  /** Persiste a query usada na compra (para reexecutar busca textual em posts). */
+  private migrateCampaignQueryJson(): void {
+    const info = this.db.prepare('PRAGMA table_info(campaign)').all() as { name: string }[];
+    if (info.some((c) => c.name === 'query_json')) return;
+    this.db.exec('ALTER TABLE campaign ADD COLUMN query_json TEXT');
   }
 
   /** Adiciona payment_status: 'pending' (nova campanha) | 'paid'. Campanhas existentes = 'paid'. */
@@ -158,14 +168,21 @@ export class CreditsCampaignsDb {
     return true;
   }
 
-  createCampaign(userId: number, handles: string[], creditsUsed: number, name?: string, expiresAt: string = this.defaultExpiresAt()): string {
+  createCampaign(
+    userId: number,
+    handles: string[],
+    creditsUsed: number,
+    name?: string,
+    expiresAt: string = this.defaultExpiresAt(),
+    queryJson?: string | null
+  ): string {
     const id = crypto.randomUUID();
     const handlesJson = JSON.stringify(handles);
     const expires = expiresAt && /^\d{4}-\d{2}-\d{2}$/.test(expiresAt) ? expiresAt : this.defaultExpiresAt();
     this.db.prepare(`
-      INSERT INTO campaign (id, user_id, name, description, handles_json, handles_count, credits_used, created_at, expires_at, payment_status)
-      VALUES (?, ?, ?, NULL, ?, ?, ?, datetime('now'), ?, 'pending')
-    `).run(id, userId, name ?? null, handlesJson, handles.length, creditsUsed, expires);
+      INSERT INTO campaign (id, user_id, name, description, query_json, handles_json, handles_count, credits_used, created_at, expires_at, payment_status)
+      VALUES (?, ?, ?, NULL, ?, ?, ?, ?, datetime('now'), ?, 'pending')
+    `).run(id, userId, name ?? null, queryJson ?? null, handlesJson, handles.length, creditsUsed, expires);
     return id;
   }
 
@@ -184,7 +201,7 @@ export class CreditsCampaignsDb {
 
   getCampaign(campaignId: string, userId: number): CampaignRow | null {
     const row = this.db.prepare(`
-      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
+      SELECT id, user_id, name, description, query_json, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
       FROM campaign WHERE id = ? AND user_id = ?
     `).get(campaignId, userId) as CampaignRow | undefined;
     return row ?? null;
@@ -193,7 +210,7 @@ export class CreditsCampaignsDb {
   /** Retorna a campanha apenas se ainda estiver ativa (não expirada). Inclui pendentes de pagamento. */
   getCampaignIfActive(campaignId: string, userId: number): CampaignRow | null {
     const row = this.db.prepare(`
-      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
+      SELECT id, user_id, name, description, query_json, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
       FROM campaign
       WHERE id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at >= date('now'))
     `).get(campaignId, userId) as CampaignRow | undefined;
@@ -203,7 +220,7 @@ export class CreditsCampaignsDb {
   /** Retorna a campanha apenas se ativa e paga. Usado para autorizar acesso a relatório (perfis, BI). */
   getCampaignIfActiveAndPaid(campaignId: string, userId: number): CampaignRow | null {
     const row = this.db.prepare(`
-      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
+      SELECT id, user_id, name, description, query_json, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
       FROM campaign
       WHERE id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at >= date('now')) AND (payment_status IS NULL OR payment_status = 'paid')
     `).get(campaignId, userId) as CampaignRow | undefined;
@@ -284,7 +301,7 @@ export class CreditsCampaignsDb {
 
   listCampaigns(userId: number): CampaignRow[] {
     return this.db.prepare(`
-      SELECT id, user_id, name, description, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
+      SELECT id, user_id, name, description, query_json, handles_json, handles_count, credits_used, created_at, COALESCE(expires_at, date(created_at, '+1 year')) AS expires_at, COALESCE(payment_status, 'paid') AS payment_status
       FROM campaign WHERE user_id = ? AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY created_at DESC
     `).all(userId) as CampaignRow[];
   }

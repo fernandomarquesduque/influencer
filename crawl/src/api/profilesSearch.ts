@@ -246,6 +246,11 @@ function getPostTextForSearch(post: Record<string, unknown>): string {
   return parts.join(' ');
 }
 
+/** Texto do post normalizado (minúsculas) para aplicar `matchesQuery` (ex.: origem na campanha). */
+export function getPostSearchableNormalized(post: Record<string, unknown>): string {
+  return getPostTextForSearch(post).toLowerCase().replace(/\s+/g, ' ');
+}
+
 /** Máximo de posts usados para montar o texto pesquisável (evita custo com perfis com muitos posts). */
 const MAX_POSTS_FOR_SEARCH = 30;
 
@@ -307,7 +312,7 @@ function getSearchableTextProfileOnly(
  * - Se q não tem espaços: match por contém (relevância 2).
  * Retorna { match, relevance }.
  */
-function matchesQuery(searchableText: string, q: string): { match: boolean; relevance: number } {
+export function matchesQuery(searchableText: string, q: string): { match: boolean; relevance: number } {
   const qTrim = q.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!qTrim) return { match: true, relevance: 0 };
   const search = searchableText;
@@ -523,7 +528,7 @@ function matchesPostsCountBuckets(postsCount: number, selected: number[]): boole
 }
 
 /** Extrai timestamp Unix (segundos) do post. */
-function getPostTimestamp(p: Record<string, unknown>): number | null {
+export function getPostTimestamp(p: Record<string, unknown>): number | null {
   const post = p.post as Record<string, unknown> | undefined;
   const content = p.content as Record<string, unknown> | undefined;
   const takenAt = post?.taken_at ?? (p as { taken_at?: number }).taken_at;

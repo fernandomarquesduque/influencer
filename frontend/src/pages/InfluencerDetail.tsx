@@ -18,6 +18,7 @@ import {
   SafetyOutlined,
   MessageOutlined,
   SyncOutlined,
+  InstagramOutlined,
   VideoCameraOutlined,
   FacebookOutlined,
   LinkedinOutlined,
@@ -586,6 +587,20 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                     aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
                   >
                     {isFavorite ? 'Favoritado' : 'Favoritar'}
+                  </Button>
+                </Tooltip>
+              )}
+              {handle && (
+                <Tooltip title="Abrir perfil no Instagram">
+                  <Button
+                    type="default"
+                    size="large"
+                    icon={<InstagramOutlined />}
+                    onClick={() => window.open(`https://www.instagram.com/${encodeURIComponent(handle)}/`, '_blank', 'noopener,noreferrer')}
+                    style={{ borderRadius: r, minHeight: 44 }}
+                    aria-label="Abrir Instagram"
+                  >
+                    Abrir Instagram
                   </Button>
                 </Tooltip>
               )}
