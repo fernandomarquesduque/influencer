@@ -1,16 +1,12 @@
-import { useState, useEffect } from 'react'
 import {
   Card,
-  Avatar,
   Tag,
   Space,
   Typography,
   Tooltip,
-  Spin,
   Button,
 } from 'antd'
 import {
-  UserOutlined,
   HeartOutlined,
   HeartFilled,
   CommentOutlined,
@@ -22,11 +18,12 @@ import {
   TwitterOutlined,
   SafetyOutlined,
 } from '@ant-design/icons'
-import { getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type EngagementStats, type ProfileActivation } from '../api'
+import { getProfilePicUrl, proxyImageUrl, type EngagementStats, type ProfileActivation } from '../api'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
+import ProfileAvatar from './ProfileAvatar'
 
 const { Text } = Typography
 
@@ -89,18 +86,6 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
   const categories = (Array.isArray(item.categories) ? item.categories : []) as string[]
   const avatarSize = variant === 'detail' ? 128 : 56
 
-  /** Loader fica visível até a imagem ser carregada com sucesso (onLoad). Em erro, escondemos o loader e mostramos fallback. */
-  const [imageLoading, setImageLoading] = useState(!!pic)
-  const [imageError, setImageError] = useState(false)
-  useEffect(() => {
-    if (pic) {
-      setImageLoading(true)
-      setImageError(false)
-    } else {
-      setImageLoading(false)
-      setImageError(false)
-    }
-  }, [pic])
   const location = item.activation && (item.activation.city || item.activation.state)
     ? [item.activation.city, item.activation.state].filter(Boolean).join(', ')
     : null
@@ -217,79 +202,14 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
 
       {/* Topo: avatar + nome estilo rede social — loader até a imagem ser resolvida (onLoad) */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: variant === 'list' ? 6 : 12 }}>
-        <div style={{ position: 'relative', flexShrink: 0, width: avatarSize, height: avatarSize }}>
-          {pic ? (
-            <>
-              <img
-                src={pic}
-                alt=""
-                aria-hidden
-                style={{
-                  width: avatarSize,
-                  height: avatarSize,
-                  borderRadius: '50%',
-                  border: variant === 'list' ? '2px solid var(--app-placeholder-bg)' : '3px solid var(--app-placeholder-bg)',
-                  boxShadow: 'var(--app-shadow-xl)',
-                  objectFit: 'cover',
-                  visibility: imageLoading || imageError ? 'hidden' : 'visible',
-                  position: imageLoading ? 'absolute' : 'relative',
-                }}
-                onLoad={() => setImageLoading(false)}
-                onError={() => {
-                  setImageLoading(false)
-                  setImageError(true)
-                  const h = item.handle ?? item.key
-                  if (h) {
-                    queueRefreshProfile(h).catch(() => { })
-                    onImageRefreshQueued?.(String(h))
-                  }
-                }}
-              />
-              {imageLoading && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: avatarSize,
-                    height: avatarSize,
-                    borderRadius: '50%',
-                    background: 'var(--app-placeholder-bg)',
-                    border: variant === 'list' ? '2px solid var(--app-placeholder-bg)' : '3px solid var(--app-placeholder-bg)',
-                    boxShadow: 'var(--app-shadow-xl)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 1,
-                  }}
-                >
-                  <Spin size="default" />
-                </div>
-              )}
-              {imageError && (
-                <Avatar
-                  size={avatarSize}
-                  icon={<UserOutlined />}
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    zIndex: 1,
-                    border: variant === 'list' ? '2px solid var(--app-placeholder-bg)' : '3px solid var(--app-placeholder-bg)',
-                    boxShadow: 'var(--app-shadow-xl)',
-                  }}
-                />
-              )}
-            </>
-          ) : (
-            <Avatar
-              size={avatarSize}
-              icon={<UserOutlined />}
-              style={{
-                border: variant === 'list' ? '2px solid var(--app-placeholder-bg)' : '3px solid var(--app-placeholder-bg)',
-                boxShadow: 'var(--app-shadow-xl)',
-              }}
-            />
-          )}
-        </div>
+        <ProfileAvatar
+          src={pic}
+          handle={item.handle ?? item.key}
+          size={avatarSize}
+          border={variant === 'list' ? '2px solid var(--app-placeholder-bg)' : '3px solid var(--app-placeholder-bg)'}
+          shadow="var(--app-shadow-xl)"
+          onRefreshQueued={onImageRefreshQueued}
+        />
         {variant === 'list' && (
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: '-5px', position: 'relative', zIndex: 2 }}>
             <span

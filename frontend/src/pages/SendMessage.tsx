@@ -9,6 +9,7 @@ import { ArrowLeftOutlined, SendOutlined, SmileOutlined, PictureOutlined, Delete
 import { fetchProfile, sendDirectMessageToInfluencer, getProfilePicUrl, proxyImageUrl } from '../api'
 import type { ProfileItem } from '../api'
 import { reportTokens as t } from './reportTokens'
+import ProfileAvatar from '../components/ProfileAvatar'
 
 const { Text } = Typography
 const { TextArea } = Input
@@ -140,13 +141,7 @@ export default function SendMessage() {
       <Card
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: s.sm }}>
-            {profilePic && (
-              <img
-                src={profilePic}
-                alt=""
-                style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover' }}
-              />
-            )}
+            <ProfileAvatar src={profilePic} handle={handle} size={40} />
             <span>Enviar mensagem para {displayName}</span>
           </div>
         }

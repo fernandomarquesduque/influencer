@@ -560,14 +560,19 @@ export interface ExtractProfileOptions {
   client?: InstagramClient;
   /** Quando fornecido com client, highlights são salvos ao concluir a coleta em background. */
   storage?: ExtractProfileStorageForHighlights;
+  /**
+   * Quando true, coleta destaques (DOM + abrir cada highlight / background job).
+   * Padrão false: não busca destaques na extração do perfil — use `collectHighlightsInBackground` num job separado.
+   */
+  extractHighlights?: boolean;
 }
 
 /**
- * Coleta de destaques em background (própria page): obtém IDs (API + abas + DOM se necessário),
+ * Coleta de destaques em background (página dedicada): obtém IDs (API + abas + DOM se necessário),
  * abre cada destaque para meta, monta entidades e salva via storage.saveMedia.
- * Roda sempre que client e storage são passados em options (inclui fast mode).
+ * Exportada para poder ser chamada num job separado; em `extractProfile` só roda com `extractHighlights: true`.
  */
-async function collectHighlightsInBackground(
+export async function collectHighlightsInBackground(
   client: InstagramClient,
   handle: string,
   config: CrawlConfig,
@@ -766,7 +771,13 @@ export async function extractProfile(
 ): Promise<{ profile: Entity & { handle: string }; posts: Entity[]; reels: Entity[]; tagged: Entity[]; highlights: Entity[] } | null> {
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[extractProfile] ${logTimestamp()} @${handle} +${Date.now() - t0}ms ${msg}`);
-  const { pageAlreadyOnProfile = false, fastMode = false, client: optClient, storage: optStorage } = options;
+  const {
+    pageAlreadyOnProfile = false,
+    fastMode = false,
+    client: optClient,
+    storage: optStorage,
+    extractHighlights = false,
+  } = options;
   const profileUrl = InstagramClient.profileUrl(handle);
   const d = fastMode ? delayMsFast : delayMs;
   const humanD = fastMode ? humanDelayFast : humanDelay;
@@ -915,7 +926,8 @@ export async function extractProfile(
     logStep('aguardando respostas da API (Polaris)...');
     await page.waitForTimeout(fastMode ? 600 : 2000);
 
-    const runHighlightsInBackground = Boolean(optClient && optStorage && typeof optStorage.saveMedia === 'function');
+    const runHighlightsInBackground =
+      extractHighlights && Boolean(optClient && optStorage && typeof optStorage.saveMedia === 'function');
     if (runHighlightsInBackground) {
       runHighlightsAsync = true;
       void collectHighlightsInBackground(optClient!, handle, _config, fastMode, optStorage!, logStep).catch((err) =>
@@ -923,8 +935,8 @@ export async function extractProfile(
       );
     }
 
+    let highlightIds: string[] = [];
     if (!runHighlightsInBackground) {
-      let highlightIds: string[] = [];
       if (!fastMode) {
         const keyHandle = handle.toLowerCase().replace(/^@/, '');
         const waitAfterTab = 2500;
@@ -981,36 +993,42 @@ export async function extractProfile(
       if (!taggedOk) taggedOk = await tryClickLinkByHref('tagged', 'Marcados');
       if (!taggedOk) logStep('aba Marcados não encontrada.');
 
-      // Ids dos destaques: primeiro dos bodies; se zero, fallback DOM (círculos na página).
-      const bodiesSoFar = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
-      highlightIds = getHighlightIdsFromBodies(bodiesSoFar);
-      if (highlightIds.length === 0 && taggedOk) {
-        scrapedHighlightTrays = await page
-          .evaluate(() => {
-            const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/stories/highlights/"]'));
-            return links
-              .map((a) => {
-                const match = a.getAttribute('href')?.match(/\/stories\/highlights\/(\d+)/);
-                const id = match ? match[1]! : null;
-                if (!id) return null;
-                const title = (a.getAttribute('aria-label') || a.querySelector('span')?.textContent?.trim() || '').replace(/^Ver destaque de\s*/i, '').trim();
-                const img = a.querySelector('img');
-                const coverUrl = img ? (img.getAttribute('src') || (img as HTMLImageElement).src) : null;
-                return { id, title, cover_url: coverUrl };
-              })
-              .filter((x): x is { id: string; title: string; cover_url: string | null } => x != null && x.id != null);
-          })
-          .catch(() => []);
-        if (scrapedHighlightTrays.length > 0) {
-          highlightIds = scrapedHighlightTrays.map((t) => t.id);
-          logStep(`[fallback DOM] ${highlightIds.length} destaque(s) do DOM (API não retornou ids).`);
+      if (extractHighlights) {
+        // Ids dos destaques: primeiro dos bodies; se zero, fallback DOM (círculos na página).
+        const bodiesSoFar = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
+        highlightIds = getHighlightIdsFromBodies(bodiesSoFar);
+        if (highlightIds.length === 0 && taggedOk) {
+          scrapedHighlightTrays = await page
+            .evaluate(() => {
+              const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/stories/highlights/"]'));
+              return links
+                .map((a) => {
+                  const match = a.getAttribute('href')?.match(/\/stories\/highlights\/(\d+)/);
+                  const id = match ? match[1]! : null;
+                  if (!id) return null;
+                  const title = (a.getAttribute('aria-label') || a.querySelector('span')?.textContent?.trim() || '').replace(/^Ver destaque de\s*/i, '').trim();
+                  const img = a.querySelector('img');
+                  const coverUrl = img ? (img.getAttribute('src') || (img as HTMLImageElement).src) : null;
+                  return { id, title, cover_url: coverUrl };
+                })
+                .filter((x): x is { id: string; title: string; cover_url: string | null } => x != null && x.id != null);
+            })
+            .catch(() => []);
+          if (scrapedHighlightTrays.length > 0) {
+            highlightIds = scrapedHighlightTrays.map((t) => t.id);
+            logStep(`[fallback DOM] ${highlightIds.length} destaque(s) do DOM (API não retornou ids).`);
+          }
         }
       }
-    } else {
-      const bodiesSoFar = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
-      highlightIds = getHighlightIdsFromBodies(bodiesSoFar);
+    } else if (extractHighlights) {
+        const bodiesSoFarFast = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
+        highlightIds = getHighlightIdsFromBodies(bodiesSoFarFast);
+      }
+    } else if (extractHighlights) {
+      const bodiesSoFarBg = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
+      highlightIds = getHighlightIdsFromBodies(bodiesSoFarBg);
     }
-    if (highlightIds.length > 0) {
+    if (extractHighlights && highlightIds.length > 0) {
       logStep(`${highlightIds.length} destaque(s) da API; abrindo cada um para interceptar reel media.`);
       const maxHighlightsToOpen = Math.min(highlightIds.length, 12);
       let resolveMetaPromise: ((m: { itemCount: number; dateIso: string | null; weeksAgo: number | null } | null) => void) | null = null;
@@ -1135,7 +1153,6 @@ export async function extractProfile(
       }
       logStep(`${highlightMetaById.size} destaques com itens/data obtidos.`);
     }
-    }
   } finally {
     page.off('response', onResponse);
   }
@@ -1248,21 +1265,25 @@ export async function extractProfile(
 
   addFromPaths(REELS_EDGES_PATHS, seenShortcodesReels, allReels);
   addFromPaths(TAGGED_EDGES_PATHS, seenShortcodesTagged, allTagged);
-  addFromPaths(HIGHLIGHTS_EDGES_PATHS, seenShortcodesHighlights, allHighlights);
+  if (extractHighlights) {
+    addFromPaths(HIGHLIGHTS_EDGES_PATHS, seenShortcodesHighlights, allHighlights);
+  }
 
   // Marcados: somente da API (TAGGED_EDGES_PATHS + findAllEdgesByKeyHint) — sem DOM.
   // Destaques: somente da API (getHighlightEdgesFromRaw) + meta de interceptação ao abrir cada um.
-  for (const body of bodies) {
-    const edges = getHighlightEdgesFromRaw(body);
-    for (const edge of edges) {
-      if (edge == null || typeof edge !== 'object') continue;
-      const node = (edge as Record<string, unknown>).node;
-      if (!isHighlightEdgeNode(node)) continue;
-      const id = String((node as Record<string, unknown>).id ?? (node as Record<string, unknown>).pk);
-      if (seenShortcodesHighlights.has(id)) continue;
-      seenShortcodesHighlights.add(id);
-      const meta = highlightMetaById.get(id);
-      allHighlights.push(buildHighlightEntityFromNode(node as Record<string, unknown>, collectedAt, meta ?? undefined));
+  if (extractHighlights) {
+    for (const body of bodies) {
+      const edges = getHighlightEdgesFromRaw(body);
+      for (const edge of edges) {
+        if (edge == null || typeof edge !== 'object') continue;
+        const node = (edge as Record<string, unknown>).node;
+        if (!isHighlightEdgeNode(node)) continue;
+        const id = String((node as Record<string, unknown>).id ?? (node as Record<string, unknown>).pk);
+        if (seenShortcodesHighlights.has(id)) continue;
+        seenShortcodesHighlights.add(id);
+        const meta = highlightMetaById.get(id);
+        allHighlights.push(buildHighlightEntityFromNode(node as Record<string, unknown>, collectedAt, meta ?? undefined));
+      }
     }
   }
 
@@ -1281,13 +1302,15 @@ export async function extractProfile(
         }
       }
     }
-    const highlightArrays = findAllEdgesByKeyHint(body, 'highlight');
-    for (const edges of highlightArrays) {
-      for (const p of extractMediaFromEdges(edges, collectedAt)) {
-        const sc = shortcodeOf(p);
-        if (sc && !seenShortcodesHighlights.has(sc)) {
-          seenShortcodesHighlights.add(sc);
-          allHighlights.push(p);
+    if (extractHighlights) {
+      const highlightArrays = findAllEdgesByKeyHint(body, 'highlight');
+      for (const edges of highlightArrays) {
+        for (const p of extractMediaFromEdges(edges, collectedAt)) {
+          const sc = shortcodeOf(p);
+          if (sc && !seenShortcodesHighlights.has(sc)) {
+            seenShortcodesHighlights.add(sc);
+            allHighlights.push(p);
+          }
         }
       }
     }
@@ -1344,7 +1367,7 @@ export async function extractProfile(
   }
 
   // Fallback DOM: destaques da lista scrapedHighlightTrays (quando API não retornou edge_highlight_reels)
-  if (allHighlights.length === 0 && scrapedHighlightTrays.length > 0) {
+  if (extractHighlights && allHighlights.length === 0 && scrapedHighlightTrays.length > 0) {
     for (const tray of scrapedHighlightTrays) {
       if (seenShortcodesHighlights.has(tray.id)) continue;
       seenShortcodesHighlights.add(tray.id);

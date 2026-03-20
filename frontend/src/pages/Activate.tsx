@@ -21,7 +21,6 @@ import {
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
-  UserOutlined,
   MessageOutlined,
   LinkOutlined,
   GlobalOutlined,
@@ -33,7 +32,6 @@ import {
   deleteAccount,
   getProfilePicUrl,
   proxyImageUrl,
-  queueRefreshProfile,
   type ProfileActivation,
   type PricingData,
 } from '../api'
@@ -43,6 +41,7 @@ import { PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, getPricingRangeFromFollowers,
 import { getValorEstimadoPorTipoRocksDB } from '../utils/reportInsights'
 import type { ProfileItem, EngagementStats } from '../api'
 import { useAuth } from '../contexts/AuthContext'
+import ProfileAvatar from '../components/ProfileAvatar'
 import './Activate.css'
 
 const { Title, Text } = Typography
@@ -203,8 +202,6 @@ export default function Activate() {
   const firstFieldStep3Ref = useRef<HTMLDivElement>(null)
   const [profileName, setProfileName] = useState<string | null>(null)
   const [profilePic, setProfilePic] = useState<string | undefined>(undefined)
-  const [profilePicError, setProfilePicError] = useState(false)
-  const [profilePicLoading, setProfilePicLoading] = useState(false)
   const [cepLoading, setCepLoading] = useState(false)
   const [followersCount, setFollowersCount] = useState<number>(0)
   const [profile, setProfile] = useState<ProfileItem | null>(null)
@@ -230,7 +227,6 @@ export default function Activate() {
         const pic = getProfilePicUrl(profile)
         const picUrl = pic ? proxyImageUrl(pic) : undefined
         setProfilePic(picUrl)
-        setProfilePicLoading(!!picUrl)
       }
       const act = (activation || {}) as ProfileActivation
       const followers = (profile as ProfileItem | null)?.followers_count ?? 0
@@ -543,62 +539,13 @@ export default function Activate() {
         >
           {/* Cabeçalho premium */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 24 }}>
-            {profilePic && !profilePicError ? (
-              <div style={{ position: 'relative', flexShrink: 0, width: 72, height: 72 }}>
-                <img
-                  src={profilePic}
-                  alt=""
-                  onLoad={() => setProfilePicLoading(false)}
-                  onError={() => {
-                    setProfilePicLoading(false)
-                    setProfilePicError(true)
-                    if (handle) queueRefreshProfile(handle).catch(() => { })
-                  }}
-                  style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: '50%',
-                    objectFit: 'cover',
-                    border: '3px solid var(--app-placeholder-bg)',
-                    visibility: profilePicLoading ? 'hidden' : 'visible',
-                    position: profilePicLoading ? 'absolute' : 'relative',
-                  }}
-                />
-                {profilePicLoading && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      inset: 0,
-                      width: 72,
-                      height: 72,
-                      borderRadius: '50%',
-                      background: 'var(--app-placeholder-bg)',
-                      border: '3px solid var(--app-placeholder-bg)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      zIndex: 1,
-                    }}
-                  >
-                    <Spin size="default" />
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div
-                style={{
-                  width: 72,
-                  height: 72,
-                  borderRadius: '50%',
-                  background: 'var(--app-placeholder-bg)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <UserOutlined style={{ fontSize: 32, color: 'var(--app-text-tertiary)' }} />
-              </div>
-            )}
+            <ProfileAvatar
+              src={profilePic}
+              handle={handle}
+              size={72}
+              border="3px solid var(--app-placeholder-bg)"
+              fallbackIconSize={32}
+            />
             <div style={{ flex: 1 }}>
               <Title level={4} style={{ margin: 0, fontWeight: 600 }}>
                 Perfil do influencer

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Layout as AntLayout, Button, Drawer, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { CaretDownFilled, MenuOutlined, UserOutlined } from '@ant-design/icons'
+import { CaretDownFilled, MenuOutlined } from '@ant-design/icons'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
@@ -9,6 +9,7 @@ import { useCreditsOptional } from './contexts/CreditsContext'
 import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import Logo from './components/Logo'
+import ProfileAvatar from './components/ProfileAvatar'
 import ThemeFooterButton from './components/ThemeFooterButton'
 import MissionsBar from './components/MissionsBar/MissionsBar'
 import { Grid } from 'antd'
@@ -298,30 +299,14 @@ export default function Layout() {
                               )
                             })()}
                             <CaretDownFilled style={{ fontSize: 14, color: 'var(--app-header-text)', opacity: 0.95, marginBottom: -6, marginLeft: -2, marginRight: -2 }} />
-                            <span
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                width: 36,
-                                height: 36,
-                                borderRadius: '50%',
-                                background: headerProfilePic ? 'transparent' : 'var(--app-placeholder-bg)',
-                                color: 'var(--app-header-text)',
-                                overflow: 'hidden',
-                                flexShrink: 0,
-                              }}
-                            >
-                              {headerProfilePic ? (
-                                <img
-                                  src={headerProfilePic}
-                                  alt=""
-                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                  onError={() => setHeaderProfilePic(null)}
-                                />
-                              ) : (
-                                <UserOutlined style={{ fontSize: 18 }} />
-                              )}
+                            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <ProfileAvatar
+                                src={headerProfilePic ?? undefined}
+                                handle={myHandle}
+                                size={36}
+                                fallbackIconSize={18}
+                                onImageError={() => setHeaderProfilePic(null)}
+                              />
                             </span>
                           </button>
                         </Dropdown>

@@ -1,10 +1,9 @@
 /**
  * Subcomponentes do relatório premium (ReportHero, ScoreOverview, DiagnosticoBISection, etc.)
  */
-import React, { useState, useEffect } from 'react'
-import { Button, Card, Tag, Avatar, Progress, Skeleton, Tabs, Tooltip, Spin, Row, Col, Modal } from 'antd'
+import React, { useState } from 'react'
+import { Button, Card, Tag, Progress, Skeleton, Tabs, Tooltip, Row, Col, Modal } from 'antd'
 import {
-  UserOutlined,
   CheckCircleFilled,
   WarningFilled,
   RocketOutlined,
@@ -19,6 +18,7 @@ import { ERGaugeChart, ER_QUALIDADE_BANDAS, erBandaRangeLabel, getErBanda } from
 import { TierProgressGameBar } from '../components/TierProgressGameBar'
 import type { StrategicMetrics, ExecutiveSummaryForBrands, BenchmarkInsight } from '../utils/reportInsights'
 import type { PostItem } from '../api'
+import ProfileAvatar from '../components/ProfileAvatar'
 
 const s = t.spacing
 const c = t.colors
@@ -94,18 +94,6 @@ export function ReportHero({
   const gap = isMobile ? s.xs : s.sm
   const showRightColumn = !isMobile && (tierLabelProp != null && (percentil != null || scoreSelo) || typesTags != null)
 
-  const [imageLoading, setImageLoading] = useState(!!profilePic)
-  const [imageError, setImageError] = useState(false)
-  useEffect(() => {
-    if (profilePic) {
-      setImageLoading(true)
-      setImageError(false)
-    } else {
-      setImageLoading(false)
-      setImageError(false)
-    }
-  }, [profilePic])
-
   const hasRightBadge = tierLabelProp != null && (percentil != null || scoreSelo)
   return (
     <section className="report-hero" style={{ position: 'relative', width: '100%', boxSizing: 'border-box', paddingBottom: isMobile ? s.md : s.xl }} aria-label="Cabeçalho do relatório">
@@ -126,71 +114,15 @@ export function ReportHero({
           {/* Coluna esquerda: avatar + conteúdo principal */}
           <div style={{ display: 'flex', flex: showRightColumn ? 1 : undefined, flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'center' : 'center', gap, flexWrap: 'wrap', minWidth: 0 }}>
             <div style={{ position: 'relative', flexShrink: 0, width: avatarSize, height: avatarSize }}>
-              {profilePic ? (
-                <>
-                  <img
-                    src={profilePic}
-                    alt={name || atHandle || 'Foto do perfil'}
-                    style={{
-                      width: avatarSize,
-                      height: avatarSize,
-                      borderRadius: '50%',
-                      border: '3px solid var(--brand-white)',
-                      boxShadow: sh.md,
-                      objectFit: 'cover',
-                      visibility: imageLoading || imageError ? 'hidden' : 'visible',
-                      position: imageLoading ? 'absolute' : 'relative',
-                    }}
-                    onLoad={() => setImageLoading(false)}
-                    onError={() => {
-                      setImageLoading(false)
-                      setImageError(true)
-                      onAvatarError()
-                    }}
-                  />
-                  {imageLoading && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        width: avatarSize,
-                        height: avatarSize,
-                        borderRadius: '50%',
-                        background: 'var(--app-placeholder-bg)',
-                        border: '3px solid var(--brand-white)',
-                        boxShadow: sh.md,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 1,
-                      }}
-                    >
-                      <Spin size="default" />
-                    </div>
-                  )}
-                  {imageError && (
-                    <Avatar
-                      size={avatarSize}
-                      icon={<UserOutlined />}
-                      alt={name || atHandle || 'Foto do perfil'}
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        zIndex: 1,
-                        border: '3px solid var(--brand-white)',
-                        boxShadow: sh.md,
-                      }}
-                    />
-                  )}
-                </>
-              ) : (
-                <Avatar
-                  size={avatarSize}
-                  icon={<UserOutlined />}
-                  alt={name || atHandle || 'Foto do perfil'}
-                  style={{ border: '3px solid var(--brand-white)', boxShadow: sh.md }}
-                />
-              )}
+              <ProfileAvatar
+                src={profilePic}
+                handle={handleProp}
+                alt={name || atHandle || 'Foto do perfil'}
+                size={avatarSize}
+                border="3px solid var(--brand-white)"
+                shadow={sh.md}
+                onImageError={onAvatarError}
+              />
             </div>
             <div style={{ flex: isMobile ? undefined : 1, minWidth: 0, width: isMobile ? '100%' : undefined, textAlign: isMobile ? 'center' : undefined }}>
               {(name || atHandle || (hasRightBadge && !showRightColumn)) && (

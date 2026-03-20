@@ -14,10 +14,10 @@ import {
   Row,
   Col,
   Statistic,
-  Avatar,
 } from 'antd'
-import { PlayCircleOutlined, StopOutlined, ReloadOutlined, TagOutlined, UserOutlined } from '@ant-design/icons'
-import { fetchCrawlStatus, startCrawl, stopCrawl, fetchProfiles, getProfilePicUrl, proxyImageUrl, queueRefreshProfile, type ProfileItem } from '../api'
+import { PlayCircleOutlined, StopOutlined, ReloadOutlined, TagOutlined } from '@ant-design/icons'
+import { fetchCrawlStatus, startCrawl, stopCrawl, fetchProfiles, getProfilePicUrl, proxyImageUrl, type ProfileItem } from '../api'
+import ProfileAvatar from '../components/ProfileAvatar'
 
 const { Title, Text } = Typography
 
@@ -229,15 +229,11 @@ export default function Extraction() {
               return (
                 <List.Item>
                   <Space>
-                    <Avatar
+                    <ProfileAvatar
                       size={40}
-                      src={picUrl}
-                      icon={<UserOutlined />}
+                      src={picUrl || undefined}
+                      handle={handle}
                       alt={handle}
-                      onError={() => {
-                        if (handle) queueRefreshProfile(handle).catch(() => {})
-                        return false
-                      }}
                     />
                     <Text type="secondary">#{index + 1}</Text>
                     <Tag color="blue">@{handle}</Tag>

@@ -5,10 +5,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag, Alert, message, Popconfirm, Segmented } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, UserOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, BankOutlined, DeleteOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, BankOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
   fetchCampaignProfiles,
+  fetchProfile,
   getCampaign,
   updateCampaignName,
   updateCampaignDescription,
@@ -28,12 +29,10 @@ import {
   type CampaignInfo,
 } from '../api'
 import { useCreditsOptional } from '../contexts/CreditsContext'
-import { getCostTier } from '../utils/pricing'
 import { filterAndSortCampaignItems, computeFacetsFromItems } from '../utils/campaignFilterClient'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
-import { PRICE_BUCKETS, PRICING_FIELD_LABELS, getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
-import type { PricingData } from '../api'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
+import ProfileAvatar from '../components/ProfileAvatar'
 import CampaignBIPanel from '../components/CampaignBIPanel/CampaignBIPanel'
 import CampaignPaymentCart from '../components/CampaignPaymentCart/CampaignPaymentCart'
 import CampaignOriginGallery from '../components/CampaignOriginGallery'
@@ -46,27 +45,13 @@ const DISPLAY_PAGE_SIZE = 20
 
 const CAMPAIGN_ID_GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-const PRICING_FILTER_KEYS = ['pricingFeed', 'pricingReels', 'pricingStory', 'pricingDestaque'] as const
-
-const PRICING_FILTER_LABELS: Record<(typeof PRICING_FILTER_KEYS)[number], string> = {
-  pricingFeed: 'Valor por Feed',
-  pricingReels: 'Valor por Reels',
-  pricingStory: 'Valor por story',
-  pricingDestaque: 'Valor por Destaque',
-}
-
 function campaignQueryToUrlParams(query: Partial<ProfilesSearchQuery>): Record<string, string> {
   const params: Record<string, string> = {}
   if (query.q?.trim()) params.q = query.q.trim()
   if (query.sort) params.sort = query.sort
-  if (query.costTierFilter?.length) params.costTierFilter = query.costTierFilter.join(',')
   if (query.sizeFilter?.length) params.sizeFilter = query.sizeFilter.join(',')
   if (query.accountTypeFilter?.length) params.accountTypeFilter = query.accountTypeFilter.map(String).join(',')
   if (query.contentTypes?.length) params.contentTypes = query.contentTypes.join(',')
-  if (query.pricingFeed?.length) params.pricingFeed = query.pricingFeed.join(',')
-  if (query.pricingReels?.length) params.pricingReels = query.pricingReels.join(',')
-  if (query.pricingStory?.length) params.pricingStory = query.pricingStory.join(',')
-  if (query.pricingDestaque?.length) params.pricingDestaque = query.pricingDestaque.join(',')
   if (query.activationFilter?.length) params.activationFilter = query.activationFilter.join(',')
   if (query.cities?.length) params.cities = query.cities.join(',')
   if (query.states?.length) params.states = query.states.join(',')
@@ -89,14 +74,9 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
   return {
     q: params.get('q')?.trim() || undefined,
     sort: (params.get('sort') as ProfilesSort) || undefined,
-    costTierFilter: parseStrList(params.get('costTierFilter')),
     sizeFilter: parseStrList(params.get('sizeFilter')),
     accountTypeFilter: parseNumList(params.get('accountTypeFilter')),
     contentTypes: parseStrList(params.get('contentTypes')),
-    pricingFeed: parseNumList(params.get('pricingFeed')),
-    pricingReels: parseNumList(params.get('pricingReels')),
-    pricingStory: parseNumList(params.get('pricingStory')),
-    pricingDestaque: parseNumList(params.get('pricingDestaque')),
     activationFilter: parseStrList(params.get('activationFilter')),
     cities: parseStrList(params.get('cities')),
     states: parseStrList(params.get('states')),
@@ -126,11 +106,13 @@ function CampaignListRow({
   onClick,
   isFavorite,
   onFavoriteToggle,
+  onImageRefreshQueued,
 }: {
   item: ProfileListItem
   onClick: () => void
   isFavorite?: boolean
   onFavoriteToggle?: (handle: string) => void
+  onImageRefreshQueued?: (handle: string) => void
 }) {
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
   const name = (item.full_name || item.handle) as string
@@ -149,44 +131,6 @@ function CampaignListRow({
   const hasTiktok = !!(act?.tiktok?.trim())
   const accountTypeValue = (item as { account_type?: number }).account_type
   const accountTypeLabel = accountTypeValue === 1 ? 'Pessoal' : accountTypeValue === 2 ? 'Criador' : accountTypeValue === 3 ? 'Empresa' : null
-  const hasPricing =
-    act?.pricing &&
-    typeof act.pricing === 'object' &&
-    Object.values(act.pricing).some((v) => v !== undefined && v !== null && v !== '')
-  const costTier = hasPricing
-    ? getCostTier(act.pricing as PricingData)
-    : Number.isFinite(followers) && followers >= 0
-      ? getCostTier(getSuggestedPricingFromFollowers(followers) as unknown as PricingData)
-      : null
-  const costTierColor =
-    costTier?.tier === 'low'
-      ? '#d48806'
-      : costTier?.tier === 'medium'
-        ? '#389e0d'
-        : costTier?.tier === 'high' || costTier?.tier === 'very_high'
-          ? '#cf1322'
-          : undefined
-
-  const priceTooltipTitle =
-    costTier && Number.isFinite(followers) && followers >= 0
-      ? (() => {
-        const suggested = getSuggestedPricingFromFollowers(followers)
-        const parts = (['feed', 'reels', 'story', 'destaque'] as const)
-          .filter((k) => suggested[k] != null)
-          .map((k) => `${PRICING_FIELD_LABELS[k]}: R$ ${suggested[k]!.toLocaleString('pt-BR')}`)
-        return parts.length ? `Preço sugerido (por seguidores):\n${parts.join('\n')}` : undefined
-      })()
-      : costTier
-        ? undefined
-        : 'Sem preço informado'
-
-  const priceTooltipNode =
-    typeof priceTooltipTitle === 'string' && priceTooltipTitle.includes('\n') ? (
-      <span style={{ whiteSpace: 'pre-line' }}>{priceTooltipTitle}</span>
-    ) : (
-      priceTooltipTitle
-    )
-
   return (
     <tr
       role="button"
@@ -211,15 +155,13 @@ function CampaignListRow({
         </div>
       </td>
       <td style={{ verticalAlign: 'middle', padding: '4px 6px', width: 48 }}>
-        <div style={{ width: 40, height: 40, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'var(--app-placeholder-bg)' }}>
-          {pic ? (
-            <img src={pic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          ) : (
-            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--app-text-secondary)' }}>
-              <UserOutlined style={{ fontSize: 20 }} />
-            </div>
-          )}
-        </div>
+        <ProfileAvatar
+          src={pic}
+          handle={handle}
+          size={40}
+          fallbackIconSize={20}
+          onRefreshQueued={onImageRefreshQueued}
+        />
       </td>
       {onFavoriteToggle != null ? (
         <td className="campaign-list-cell" style={{ textAlign: 'center', width: 36, verticalAlign: 'middle', padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} onClick={(e) => e.stopPropagation()}>
@@ -316,18 +258,6 @@ function CampaignListRow({
           <span>{formatShortNum(avgLikes)}</span>
         </Tooltip>
       </td>
-      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, fontWeight: 600, color: costTierColor ?? 'var(--app-text)', textAlign: 'center', width: 68 }}>
-        <Tooltip title={priceTooltipNode}>
-          <span>
-            {costTier
-              ? (() => {
-                const label = costTier.label.trim()
-                return label.charAt(0).toUpperCase() + label.slice(1)
-              })()
-              : '—'}
-          </span>
-        </Tooltip>
-      </td>
     </tr>
   )
 }
@@ -382,7 +312,14 @@ export default function CampaignInfluencers() {
   const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '')
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const [favoriteHandles, setFavoriteHandles] = useState<Set<string>>(new Set())
+  const [data, setData] = useState<ProfileListItem[]>([])
   const addHandleForImageUpdate = useRef<((handle: string) => void) | null>(null)
+  const handlesPendingImageRef = useRef<Set<string>>(new Set())
+  const imagePollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const dataRef = useRef<ProfileListItem[]>([])
+  useEffect(() => {
+    dataRef.current = data
+  }, [data])
   const queryRef = useRef(query)
   queryRef.current = query
   const pendingLoadFromFilterRef = useRef(false)
@@ -462,7 +399,85 @@ export default function CampaignInfluencers() {
     setDisplayedCount(DISPLAY_PAGE_SIZE)
   }, [contextItems, favoriteHandles])
 
-  const data = filteredList.slice(0, displayedCount)
+  useEffect(() => {
+    setData(filteredList.slice(0, displayedCount))
+  }, [filteredList, displayedCount])
+
+  const updateOneProfileInContext = useRef<(handle: string, profile: Record<string, unknown>) => void>(() => {})
+  updateOneProfileInContext.current = (handle: string, profile: Record<string, unknown>) => {
+    const h = String(handle).toLowerCase().replace(/^@/, '')
+    const mergeItem = (item: ProfileListItem): ProfileListItem => {
+      const itemKey = String(item.key ?? item.handle ?? '').toLowerCase().replace(/^@/, '')
+      if (itemKey !== h) return item
+      const picUrl = profile.profile_pic_url != null && typeof profile.profile_pic_url === 'string' ? profile.profile_pic_url : item.profile_pic_url
+      const hdPicUrl = profile.hd_profile_pic_url != null && typeof profile.hd_profile_pic_url === 'string' ? profile.hd_profile_pic_url : item.hd_profile_pic_url
+      return {
+        ...item,
+        profile_pic_url: picUrl,
+        hd_profile_pic_url: hdPicUrl,
+        data: (profile.data ?? item.data) as Record<string, unknown> | undefined,
+      }
+    }
+    setContextItems((prev) => (prev ? prev.map(mergeItem) : prev))
+    setFilteredList((prev) => prev.map(mergeItem))
+    setData((prev) => prev.map(mergeItem))
+  }
+
+  addHandleForImageUpdate.current = (handle: string) => {
+    const h = String(handle).toLowerCase().replace(/^@/, '')
+    if (!h) return
+    handlesPendingImageRef.current.add(h)
+    if (imagePollingIntervalRef.current) return
+    const REFETCH_INTERVAL_MS = 15_000
+    const REFETCH_MAX_PER_HANDLE = 12
+    const counts = new Map<string, number>()
+    imagePollingIntervalRef.current = setInterval(() => {
+      const set = handlesPendingImageRef.current
+      if (set.size === 0) {
+        if (imagePollingIntervalRef.current) {
+          clearInterval(imagePollingIntervalRef.current)
+          imagePollingIntervalRef.current = null
+        }
+        return
+      }
+      set.forEach((pendingHandle) => {
+        const n = (counts.get(pendingHandle) ?? 0) + 1
+        counts.set(pendingHandle, n)
+        if (n > REFETCH_MAX_PER_HANDLE) {
+          set.delete(pendingHandle)
+          counts.delete(pendingHandle)
+          return
+        }
+        fetchProfile(pendingHandle)
+          .then((p) => {
+            if (!p || typeof p !== 'object') return
+            const prof = p as Record<string, unknown>
+            const newPic = (prof.profile_pic_url ?? prof.hd_profile_pic_url) as string | undefined
+            const dataUser = prof.data as Record<string, unknown> | undefined
+            const newPicFromData = (dataUser?.user as Record<string, unknown> | undefined)?.profile_pic_url as string | undefined
+            const newUrl = newPic ?? newPicFromData
+            const current = dataRef.current.find((item) => String(item.key ?? item.handle ?? '').toLowerCase().replace(/^@/, '') === pendingHandle)
+            const currentUser = (current?.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined
+            const currentUrl = (current?.profile_pic_url ?? current?.hd_profile_pic_url ?? currentUser?.profile_pic_url) as string | undefined
+            updateOneProfileInContext.current(pendingHandle, prof)
+            if (typeof newUrl === 'string' && newUrl !== currentUrl) {
+              set.delete(pendingHandle)
+              counts.delete(pendingHandle)
+            }
+          })
+          .catch(() => {})
+      })
+    }, REFETCH_INTERVAL_MS)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (imagePollingIntervalRef.current) {
+        clearInterval(imagePollingIntervalRef.current)
+        imagePollingIntervalRef.current = null
+      }
+    }
+  }, [])
 
   const pendingPayment = !!campaignInfo?.pendingPayment
   const loadContext = useCallback(
@@ -734,7 +749,7 @@ export default function CampaignInfluencers() {
   }
 
   const currentSort = query.sort ?? 'engagement_desc'
-  type SortColumn = 'name' | 'followers' | 'engagement' | 'total_likes' | 'total_comments' | 'avg_likes' | 'cost_tier' | 'favorite'
+  type SortColumn = 'name' | 'followers' | 'engagement' | 'total_likes' | 'total_comments' | 'avg_likes' | 'favorite'
   const handleSortColumn = useCallback(
     (column: SortColumn) => {
       const toggle = (desc: ProfilesSort, asc: ProfilesSort): ProfilesSort =>
@@ -746,8 +761,7 @@ export default function CampaignInfluencers() {
               : column === 'total_likes' ? toggle('total_likes_desc', 'total_likes_asc')
                 : column === 'total_comments' ? toggle('total_comments_desc', 'total_comments_asc')
                   : column === 'avg_likes' ? toggle('avg_likes_desc', 'avg_likes_asc')
-                    : column === 'cost_tier' ? toggle('cost_tier_desc', 'cost_tier_asc')
-                      : toggle('favorite_desc', 'favorite_asc')
+                    : toggle('favorite_desc', 'favorite_asc')
       updateFilter({ sort: next })
     },
     [currentSort, updateFilter]
@@ -758,19 +772,8 @@ export default function CampaignInfluencers() {
   const selectedStates = (query.states ?? []) as string[]
   const selectedSocial = (query.socialNetworks ?? []) as string[]
   const selectedContentTypes = (query.contentTypes ?? []) as string[]
-  const selectedPricingFeed = (query.pricingFeed ?? []) as number[]
-  const selectedPricingReels = (query.pricingReels ?? []) as number[]
-  const selectedPricingStory = (query.pricingStory ?? []) as number[]
-  const selectedPricingDestaque = (query.pricingDestaque ?? []) as number[]
-  const costTierFilter = (query.costTierFilter ?? []) as string[]
   const selectedSizeFilter = (query.sizeFilter ?? []) as string[]
   const selectedAccountTypeFilter = (query.accountTypeFilter ?? []) as number[]
-  const hasPricingFilter =
-    selectedPricingFeed.length > 0 ||
-    selectedPricingReels.length > 0 ||
-    selectedPricingStory.length > 0 ||
-    selectedPricingDestaque.length > 0
-  const hasCostTierFilter = costTierFilter.length > 0
   const hasActiveFilters =
     (query.q?.trim()?.length ?? 0) > 0 ||
     selectedActivation.length > 0 ||
@@ -779,19 +782,7 @@ export default function CampaignInfluencers() {
     selectedSocial.length > 0 ||
     selectedContentTypes.length > 0 ||
     selectedSizeFilter.length > 0 ||
-    selectedAccountTypeFilter.length > 0 ||
-    hasPricingFilter ||
-    hasCostTierFilter
-  const selectedCostTierOption: 'low' | 'medium' | 'above' | undefined =
-    costTierFilter.length === 0
-      ? undefined
-      : costTierFilter.includes('low') && costTierFilter.length === 1
-        ? 'low'
-        : costTierFilter.includes('medium') && costTierFilter.length === 1
-          ? 'medium'
-          : costTierFilter.some((t) => t === 'high' || t === 'very_high')
-            ? 'above'
-            : undefined
+    selectedAccountTypeFilter.length > 0
 
   if (authLoading || (campaignId != null && !user)) {
     return (
@@ -1128,36 +1119,6 @@ export default function CampaignInfluencers() {
                             maxTagCount={1}
                           />
                         )}
-                        {facets?.cost_tier && facets.cost_tier.length > 0 && (
-                          <Select
-                            size="small"
-                            placeholder="Preço"
-                            allowClear
-                            value={selectedCostTierOption}
-                            options={(() => {
-                              const opts: { value: 'low' | 'medium' | 'above'; label: string }[] = []
-                              const low = facets.cost_tier!.find((x) => x.tier === 'low')
-                              if (low && low.count > 0) opts.push({ value: 'low', label: `Abaixo (${low.count})` })
-                              const medium = facets.cost_tier!.find((x) => x.tier === 'medium')
-                              if (medium && medium.count > 0) opts.push({ value: 'medium', label: `Normal (${medium.count})` })
-                              const high = facets.cost_tier!.find((x) => x.tier === 'high')
-                              const veryHigh = facets.cost_tier!.find((x) => x.tier === 'very_high')
-                              const aboveCount = (high?.count ?? 0) + (veryHigh?.count ?? 0)
-                              if (aboveCount > 0) opts.push({ value: 'above', label: `Acima (${aboveCount})` })
-                              return opts
-                            })()}
-                            style={{ width: 130 }}
-                            onChange={(value) => {
-                              if (value == null) {
-                                updateFilter({ costTierFilter: undefined })
-                                return
-                              }
-                              const costTierFilter =
-                                value === 'low' ? ['low'] : value === 'medium' ? ['medium'] : ['high', 'very_high']
-                              updateFilter({ costTierFilter })
-                            }}
-                          />
-                        )}
                         {facets?.content_type && facets.content_type.filter((x) => x.count > 0).length > 0 && (
                           <Select
                             mode="multiple"
@@ -1178,35 +1139,6 @@ export default function CampaignInfluencers() {
                             maxTagCount={1}
                           />
                         )}
-                        {facets?.pricing && Object.values(facets.pricing).some((arr) => arr && arr.length > 0) &&
-                          PRICING_FILTER_KEYS.map((key) => {
-                            const actKey = key.slice(7).toLowerCase() as 'feed' | 'reels' | 'story' | 'destaque'
-                            const buckets = facets.pricing?.[actKey]
-                            if (!buckets || buckets.length === 0) return null
-                            const value =
-                              key === 'pricingFeed' ? selectedPricingFeed
-                                : key === 'pricingReels' ? selectedPricingReels
-                                  : key === 'pricingStory' ? selectedPricingStory
-                                    : selectedPricingDestaque
-                            const options = buckets.map((b) => ({
-                              value: b.value,
-                              label: `${PRICE_BUCKETS.find((pb) => pb.value === b.value)?.label ?? `R$ ${b.value}`} (${b.count})`,
-                            }))
-                            return (
-                              <Select
-                                key={key}
-                                mode="multiple"
-                                size="small"
-                                placeholder={PRICING_FILTER_LABELS[key]}
-                                allowClear
-                                value={value?.length ? value : undefined}
-                                options={options}
-                                onChange={(vals) => updateFilter({ [key]: vals?.length ? vals : undefined })}
-                                style={{ width: 100 }}
-                                maxTagCount={1}
-                              />
-                            )
-                          })}
                         {facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0) && (
                           <Select
                             mode="multiple"
@@ -1329,9 +1261,6 @@ export default function CampaignInfluencers() {
                                 <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 72 }} role="button" tabIndex={0} onClick={() => handleSortColumn('avg_likes')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('avg_likes')}>
                                   Posts {currentSort === 'avg_likes_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'avg_likes_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
                                 </th>
-                                <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 68 }} role="button" tabIndex={0} onClick={() => handleSortColumn('cost_tier')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('cost_tier')}>
-                                  Preço {currentSort === 'cost_tier_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'cost_tier_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                                </th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1342,6 +1271,7 @@ export default function CampaignInfluencers() {
                                   onClick={() => openDetail(item.handle ?? item.key)}
                                   isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
                                   onFavoriteToggle={user ? handleFavoriteToggle : undefined}
+                                  onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
                                 />
                               ))}
                             </tbody>

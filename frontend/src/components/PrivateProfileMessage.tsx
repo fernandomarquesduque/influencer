@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Alert, Button, Card, Typography, message } from 'antd'
 import { LockOutlined, HeartOutlined, SyncOutlined } from '@ant-design/icons'
 import { reportTokens as t } from '../pages/reportTokens'
+import ProfileAvatar from './ProfileAvatar'
 import {
   queueRefreshProfile,
   fetchProfile,
@@ -145,18 +146,13 @@ export function PrivateProfileMessage({
         >
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: isMobile ? s.sm : s.md, minWidth: 0 }}>
             {profilePic ? (
-              <img
+              <ProfileAvatar
                 src={profilePic}
+                handle={displayHandle}
                 alt={name || atHandle || 'Foto do perfil'}
-                style={{
-                  width: avatarSize,
-                  height: avatarSize,
-                  borderRadius: '50%',
-                  objectFit: 'cover',
-                  border: isMobile ? '3px solid rgba(255,255,255,0.9)' : '4px solid rgba(255,255,255,0.9)',
-                  boxShadow: sh,
-                  flexShrink: 0,
-                }}
+                size={avatarSize}
+                border={isMobile ? '3px solid rgba(255,255,255,0.9)' : '4px solid rgba(255,255,255,0.9)'}
+                shadow={sh}
               />
             ) : (
               <div

@@ -5,9 +5,10 @@
  */
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Typography, Spin, Empty, List, Avatar, Button, Modal } from 'antd'
-import { HeartFilled, UserOutlined, FolderOutlined, StarFilled } from '@ant-design/icons'
+import { Typography, Spin, Empty, List, Button, Modal } from 'antd'
+import { HeartFilled, FolderOutlined, StarFilled } from '@ant-design/icons'
 import { fetchFavorites, fetchProfile, fetchProfileSummary, removeFavorite, getProfilePicUrl, proxyImageUrl, type ProfileItem } from '../api'
+import ProfileAvatar from './ProfileAvatar'
 
 const { Text } = Typography
 
@@ -206,11 +207,11 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                   {/* Linha superior: (avatar + nano) + nome/handle */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, marginBottom: 6 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                      <Avatar
+                      <ProfileAvatar
                         size={40}
-                        src={pic}
-                        icon={!pic ? <UserOutlined /> : undefined}
-                        style={{ border: '1px solid var(--app-border)' }}
+                        src={pic || undefined}
+                        handle={handle}
+                        border="1px solid var(--app-border)"
                       />
                       <span
                         style={{
