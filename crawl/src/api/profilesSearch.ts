@@ -764,9 +764,9 @@ export async function searchProfiles(
     if (!restrictToHandles && categoriesFilter.length > 0) {
       const withNoPerfil = categoriesFilter.includes('no_perfil');
       const filterCategories = categoriesFilter.filter((c) => c !== 'no_perfil');
-      if (withNoPerfil) {
-        // "No Perfil" selecionado: incluir todos que batem na busca (não filtrar por categoria)
-      } else if (filterCategories.length > 0) {
+      // Com `no_perfil` na query (wizard / URL): não restringe por categoria — o total inclui quem bateu na busca
+      // mas não está nas hashtags do facet (“no perfil”); nunca excluir esse bloco.
+      if (filterCategories.length > 0 && !withNoPerfil) {
         const hasCategory = filterCategories.some((fc) => categories.some((c) => c.toLowerCase() === fc));
         if (!hasCategory) continue;
       }

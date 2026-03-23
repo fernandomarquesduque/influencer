@@ -1,28 +1,22 @@
 /**
- * Meus pagamentos: histórico e compra de créditos (PIX/Boleto).
+ * Meus pagamentos: histórico e atalho para compra de créditos (modal centralizado).
  */
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Typography, Spin, Alert, Modal, Space, Tag, message, InputNumber } from 'antd'
-import { DollarOutlined, CopyOutlined, BankOutlined, ThunderboltOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { Card, Table, Button, Typography, Spin, Alert, Space, Tag, Popconfirm, message } from 'antd'
+import { DollarOutlined, DeleteOutlined, AppstoreOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import { useCredits } from '../contexts/CreditsContext'
 import {
   fetchMyPayments,
-  createPaymentForCredits,
-  adminAddCredits,
+  fetchMyPendingPayment,
+  deleteMyPendingPayment,
   type PaymentItem,
   type CreatePaymentForCreditsResponse,
 } from '../api'
+import BuyCreditsModal from '../components/BuyCreditsModal/BuyCreditsModal'
 
-const { Title, Text } = Typography
-
-const CREDIT_PACKS = [
-  { credits: 10, label: '10 créditos' },
-  { credits: 50, label: '50 créditos' },
-  { credits: 100, label: '100 créditos' },
-  { credits: 200, label: '200 créditos' },
-]
+const { Text } = Typography
 
 const STATUS_LABELS: Record<string, string> = {
   PENDING: 'Pendente',
@@ -70,17 +64,14 @@ function StatusTag({ status }: { status: string }) {
 
 export default function Payments() {
   const navigate = useNavigate()
-  const { user, isAdm, loading: authLoading } = useAuth()
-  const { balance, refreshCredits } = useCredits()
+  const { user, loading: authLoading } = useAuth()
+  const { balance } = useCredits()
   const [payments, setPayments] = useState<PaymentItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [buyModalOpen, setBuyModalOpen] = useState(true)
-  const [buyCredits, setBuyCredits] = useState(50)
-  const [buyBillingType, setBuyBillingType] = useState<'PIX' | 'BOLETO'>('PIX')
-  const [creating, setCreating] = useState(false)
-  const [approvingAdmin, setApprovingAdmin] = useState(false)
-  const [createdPayment, setCreatedPayment] = useState<CreatePaymentForCreditsResponse | null>(null)
+  const [buyModalOpen, setBuyModalOpen] = useState(false)
+  const [buyCreditsResume, setBuyCreditsResume] = useState<CreatePaymentForCreditsResponse | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const loadPayments = useCallback(async () => {
     try {
@@ -99,53 +90,27 @@ export default function Payments() {
     if (user) void loadPayments()
   }, [user, loadPayments])
 
-  const handleOpenBuy = () => {
-    setCreatedPayment(null)
+  const handleOpenBuy = async () => {
+    try {
+      const p = await fetchMyPendingPayment()
+      setBuyCreditsResume(p)
+    } catch {
+      setBuyCreditsResume(null)
+    }
     setBuyModalOpen(true)
   }
 
-  const handleCreatePayment = async () => {
-    setCreating(true)
-    setError(null)
+  const handleDeletePending = async (paymentId: string) => {
+    setDeletingId(paymentId)
     try {
-      const res = await createPaymentForCredits(buyCredits, buyBillingType)
-      setCreatedPayment(res)
+      await deleteMyPendingPayment(paymentId)
+      message.success('Cobrança pendente removida.')
       await loadPayments()
-      await refreshCredits()
     } catch (e) {
-      setError((e as Error).message)
+      message.error((e as Error).message)
     } finally {
-      setCreating(false)
+      setDeletingId(null)
     }
-  }
-
-  const handleAdminApprove = async () => {
-    if (!user?.id) return
-    setApprovingAdmin(true)
-    setError(null)
-    try {
-      await adminAddCredits(user.id, buyCredits)
-      message.success(`${buyCredits} créditos adicionados com sucesso`)
-      await loadPayments()
-      await refreshCredits()
-      closeBuyModal()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setApprovingAdmin(false)
-    }
-  }
-
-  const copyPix = () => {
-    if (!createdPayment?.pixCopyPaste) return
-    void navigator.clipboard.writeText(createdPayment.pixCopyPaste).then(() => {
-      message.success('Código PIX copiado!')
-    })
-  }
-
-  const closeBuyModal = () => {
-    setBuyModalOpen(false)
-    setCreatedPayment(null)
   }
 
   useEffect(() => {
@@ -164,16 +129,16 @@ export default function Payments() {
 
   return (
     <div className="app-page" style={{ maxWidth: 900, margin: '0 auto', padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>
-        <Title level={3} style={{ margin: 0 }}>
-          Meus pagamentos
-        </Title>
-        <Space>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>
+        <Space wrap size="middle">
           <Text strong style={{ color: 'var(--app-primary)' }}>
             Saldo: {balance} créditos
           </Text>
-          <Button type="primary" icon={<DollarOutlined />} onClick={handleOpenBuy}>
+          <Button type="primary" icon={<DollarOutlined />} onClick={() => void handleOpenBuy()}>
             Comprar créditos
+          </Button>
+          <Button type="default" icon={<AppstoreOutlined />} onClick={() => navigate('/app/campaigns')}>
+            Minhas campanhas
           </Button>
         </Space>
       </div>
@@ -234,7 +199,7 @@ export default function Payments() {
                 title: 'Ações',
                 key: 'actions',
                 render: (_: unknown, row: PaymentItem) => (
-                  <Space size="small">
+                  <Space size="small" wrap>
                     {row.bankSlipUrl && row.status === 'PENDING' && (
                       <Button type="link" size="small" href={row.bankSlipUrl} target="_blank" rel="noopener noreferrer">
                         Ver boleto
@@ -245,6 +210,21 @@ export default function Payments() {
                         Fatura
                       </Button>
                     )}
+                    {row.status === 'PENDING' && (
+                      <Popconfirm
+                        title="Remover cobrança pendente?"
+                        description="Cancela no gateway e some do histórico. Não dá para desfazer."
+                        okText="Remover"
+                        cancelText="Cancelar"
+                        okButtonProps={{ danger: true, loading: deletingId === row.id }}
+                        disabled={deletingId != null}
+                        onConfirm={() => void handleDeletePending(row.id)}
+                      >
+                        <Button type="link" size="small" danger icon={<DeleteOutlined />} disabled={deletingId != null}>
+                          Excluir
+                        </Button>
+                      </Popconfirm>
+                    )}
                   </Space>
                 ),
               },
@@ -253,152 +233,15 @@ export default function Payments() {
         )}
       </Card>
 
-      <Modal
-        className="buy-credits-modal"
-        title="Comprar créditos"
+      <BuyCreditsModal
         open={buyModalOpen}
-        onCancel={closeBuyModal}
-        footer={null}
-        width={500}
-        destroyOnClose
-      >
-        {!createdPayment ? (
-          <>
-            <div style={{ marginBottom: 24 }}>
-              <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 10 }}>Quantidade de créditos</Text>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                {CREDIT_PACKS.map((p) => (
-                  <button
-                    key={p.credits}
-                    type="button"
-                    className={`credit-pack-btn ${buyCredits === p.credits ? 'credit-pack-btn-selected' : ''}`}
-                    onClick={() => setBuyCredits(p.credits)}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>Ou escolha o valor:</Text>
-                <InputNumber
-                  min={1}
-                  max={10000}
-                  value={buyCredits}
-                  onChange={(v) => setBuyCredits(v != null && Number.isFinite(v) ? Math.min(10000, Math.max(1, Math.floor(v))) : 1)}
-                  size="large"
-                  style={{ width: '100%' }}
-                  addonAfter="créditos"
-                />
-              </div>
-            </div>
-            <div style={{ marginBottom: 24 }}>
-              <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 10 }}>Forma de pagamento</Text>
-              <div style={{ display: 'flex', gap: 12, width: '100%' }}>
-                <div
-                  className={`payment-option ${buyBillingType === 'PIX' ? 'payment-option-selected' : ''}`}
-                  onClick={() => setBuyBillingType('PIX')}
-                  style={{ flex: 1, width: '50%', minWidth: 0 }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => e.key === 'Enter' && setBuyBillingType('PIX')}
-                >
-                  <ThunderboltOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
-                  <Text strong>PIX</Text>
-                  <Text type="secondary" style={{ fontSize: 12, marginLeft: 4 }}>instantâneo</Text>
-                </div>
-                <div
-                  className={`payment-option ${buyBillingType === 'BOLETO' ? 'payment-option-selected' : ''}`}
-                  onClick={() => setBuyBillingType('BOLETO')}
-                  style={{ flex: 1, width: '50%', minWidth: 0 }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => e.key === 'Enter' && setBuyBillingType('BOLETO')}
-                >
-                  <BankOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
-                  <Text strong>Boleto</Text>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
-              <div>
-                {isAdm && (
-                  <Button
-                    type="default"
-                    size="large"
-                    loading={approvingAdmin}
-                    onClick={handleAdminApprove}
-                    icon={<CheckCircleOutlined />}
-                    style={{ borderColor: 'var(--app-primary)', color: 'var(--app-primary)' }}
-                  >
-                    Aprovar sem pagar
-                  </Button>
-                )}
-              </div>
-              <Space>
-                <Button onClick={closeBuyModal} size="large">Cancelar</Button>
-                <Button
-                  type="primary"
-                  size="large"
-                  loading={creating}
-                  onClick={handleCreatePayment}
-                  icon={<DollarOutlined />}
-                  style={{
-                    background: 'linear-gradient(135deg, var(--app-primary) 0%, rgba(104, 39, 143, 0.9) 100%)',
-                    border: 'none',
-                    paddingLeft: 24,
-                    paddingRight: 24,
-                    fontWeight: 600,
-                  }}
-                >
-                  Gerar pagamento
-                </Button>
-              </Space>
-            </div>
-          </>
-        ) : (
-          <div>
-            <Alert
-              type="success"
-              message="Pagamento gerado"
-              description={
-                buyBillingType === 'PIX'
-                  ? 'Copie o código PIX abaixo e pague no app do seu banco. Os créditos serão creditados em instantes.'
-                  : 'Pague o boleto pelo link abaixo. Os créditos serão creditados após a confirmação do pagamento.'
-              }
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
-            {buyBillingType === 'PIX' && createdPayment.pixCopyPaste && (
-              <Card size="small" style={{ marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                  <Text type="secondary" style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
-                    {createdPayment.pixCopyPaste}
-                  </Text>
-                  <Button type="primary" icon={<CopyOutlined />} onClick={copyPix}>
-                    Copiar PIX
-                  </Button>
-                </div>
-              </Card>
-            )}
-            {buyBillingType === 'BOLETO' && createdPayment.bankSlipUrl && (
-              <Button type="primary" href={createdPayment.bankSlipUrl} target="_blank" rel="noopener noreferrer" block icon={<BankOutlined />} style={{ marginBottom: 16 }}>
-                Abrir boleto
-              </Button>
-            )}
-            {createdPayment.invoiceUrl && (
-              <Button href={createdPayment.invoiceUrl} target="_blank" rel="noopener noreferrer" block style={{ marginBottom: 16 }}>
-                Ver fatura
-              </Button>
-            )}
-            <div style={{ marginTop: 16, textAlign: 'right' }}>
-              <Button type="primary" onClick={closeBuyModal}>
-                Fechar
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+        onClose={() => {
+          setBuyModalOpen(false)
+          setBuyCreditsResume(null)
+        }}
+        resumePayment={buyCreditsResume}
+        onAfterPaymentCreated={loadPayments}
+      />
     </div>
   )
 }

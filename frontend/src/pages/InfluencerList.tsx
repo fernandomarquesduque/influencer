@@ -45,6 +45,7 @@ function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
   if (hasCategoriesFilter) {
     params.categories = Array.isArray(query.categories) ? query.categories.join(',') : String(query.categories)
   }
+  if (query.sizeFilter?.length) params.sizeFilter = query.sizeFilter.join(',')
   if (query.minFollowers != null) params.minFollowers = String(query.minFollowers)
   if (query.maxFollowers != null) params.maxFollowers = String(query.maxFollowers)
   if (query.excludePrivate) params.excludePrivate = '1'
@@ -86,6 +87,10 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     hasMandatory,
     q: q || undefined,
     categories,
+    sizeFilter: params.get('sizeFilter')
+      ?.split(',')
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean),
     minFollowers: params.has('minFollowers') ? Number(params.get('minFollowers')) : undefined,
     maxFollowers: params.has('maxFollowers') ? Number(params.get('maxFollowers')) : undefined,
     excludePrivate: params.get('excludePrivate') === '1',
@@ -143,7 +148,7 @@ export default function InfluencerList() {
   const navigate = useNavigate()
   const location = useLocation()
   const { handle: urlHandle } = useParams<{ handle?: string }>()
-  const { user, isPublic, loginWithToken } = useAuth()
+  const { user, isPublic, loginWithToken, login } = useAuth()
   const { getCache, saveCache } = useListCache()
   const isLimitedView = !user || isPublic
   const hashParams = useMemo(() => getParamsFromHash(location), [location.hash])
@@ -239,10 +244,12 @@ export default function InfluencerList() {
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false)
   const [creatingCampaign, setCreatingCampaign] = useState(false)
   const [reportModalOpen, setReportModalOpen] = useState(false)
+  const [reportAuthMode, setReportAuthMode] = useState<'signup' | 'login'>('signup')
   const [signupEmail, setSignupEmail] = useState('')
   const [signupName, setSignupName] = useState('')
   const [signupPassword, setSignupPassword] = useState('')
   const [signupPasswordConfirm, setSignupPasswordConfirm] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
   const [signupError, setSignupError] = useState<string | null>(null)
   const [signupLoading, setSignupLoading] = useState(false)
   const filterDrawerRef = useRef<HTMLDivElement>(null)
@@ -588,6 +595,8 @@ export default function InfluencerList() {
       return
     }
     setSignupError(null)
+    setReportAuthMode('signup')
+    setLoginPassword('')
     setReportModalOpen(true)
   }, [total, creatingCampaign, user, doCreateCampaignAndRedirect])
 
@@ -628,6 +637,29 @@ export default function InfluencerList() {
     }
   }, [signupEmail, signupName, signupPassword, signupPasswordConfirm, loginWithToken, doCreateCampaignAndRedirect])
 
+  const handleReportModalLoginSubmit = useCallback(async () => {
+    setSignupError(null)
+    const loginId = signupEmail.trim().replace(/^@/, '')
+    if (!loginId) {
+      setSignupError('Informe seu e-mail ou usuário.')
+      return
+    }
+    if (!loginPassword) {
+      setSignupError('Informe a senha.')
+      return
+    }
+    setSignupLoading(true)
+    try {
+      await login(loginId, loginPassword)
+      message.success('Login realizado com sucesso')
+      await doCreateCampaignAndRedirect()
+    } catch (e) {
+      setSignupError((e as Error).message || 'Usuário ou senha inválidos.')
+    } finally {
+      setSignupLoading(false)
+    }
+  }, [signupEmail, loginPassword, login, doCreateCampaignAndRedirect])
+
   if (!hasMandatoryFilters) {
     return (
       <div>
@@ -639,6 +671,7 @@ export default function InfluencerList() {
               ? {
                 q: parsedUrl.q ?? undefined,
                 categories: parsedUrl.categories?.length ? (Array.isArray(parsedUrl.categories) ? parsedUrl.categories : [parsedUrl.categories]) : undefined,
+                sizeFilter: parsedUrl.sizeFilter?.length ? parsedUrl.sizeFilter : undefined,
                 minFollowers: parsedUrl.minFollowers,
                 maxFollowers: parsedUrl.maxFollowers,
                 excludePrivate: parsedUrl.excludePrivate,
@@ -694,66 +727,141 @@ export default function InfluencerList() {
           loading={loading}
         />
         <Modal
-          title="Cadastre-se para acessar o relatório"
+          title={reportAuthMode === 'login' ? 'Entrar para acessar o relatório' : 'Cadastre-se para acessar o relatório'}
           open={reportModalOpen}
           onCancel={() => {
-            if (!signupLoading && !creatingCampaign) setReportModalOpen(false)
+            if (!signupLoading && !creatingCampaign) {
+              setReportModalOpen(false)
+              setReportAuthMode('signup')
+              setLoginPassword('')
+            }
           }}
           footer={null}
           destroyOnClose
           width={420}
         >
           <Form layout="vertical" style={{ marginTop: 8 }}>
-              <Form.Item label="Nome">
-                <Input
-                  placeholder="Seu nome"
-                  value={signupName}
-                  onChange={(e) => setSignupName(e.target.value)}
-                  size="large"
-                  style={{ borderRadius: 8 }}
-                />
-              </Form.Item>
-              <Form.Item label="E-mail" required>
-                <Input
-                  type="email"
-                  placeholder="seu@email.com"
-                  value={signupEmail}
-                  onChange={(e) => setSignupEmail(e.target.value)}
-                  size="large"
-                  style={{ borderRadius: 8 }}
-                />
-              </Form.Item>
-              <Form.Item label="Senha (mín. 6 caracteres)" required>
-                <Input.Password
-                  placeholder="••••••••"
-                  value={signupPassword}
-                  onChange={(e) => setSignupPassword(e.target.value)}
-                  size="large"
-                  style={{ borderRadius: 8 }}
-                />
-              </Form.Item>
-              <Form.Item label="Confirmar senha" required>
-                <Input.Password
-                  placeholder="••••••••"
-                  value={signupPasswordConfirm}
-                  onChange={(e) => setSignupPasswordConfirm(e.target.value)}
-                  size="large"
-                  style={{ borderRadius: 8 }}
-                />
-              </Form.Item>
+              {reportAuthMode === 'signup' ? (
+                <>
+                  <Form.Item label="Nome">
+                    <Input
+                      placeholder="Seu nome"
+                      value={signupName}
+                      onChange={(e) => setSignupName(e.target.value)}
+                      size="large"
+                      style={{ borderRadius: 8 }}
+                    />
+                  </Form.Item>
+                  <Form.Item label="E-mail" required>
+                    <Input
+                      type="email"
+                      placeholder="seu@email.com"
+                      value={signupEmail}
+                      onChange={(e) => setSignupEmail(e.target.value)}
+                      size="large"
+                      style={{ borderRadius: 8 }}
+                    />
+                  </Form.Item>
+                  <Form.Item label="Senha (mín. 6 caracteres)" required>
+                    <Input.Password
+                      placeholder="••••••••"
+                      value={signupPassword}
+                      onChange={(e) => setSignupPassword(e.target.value)}
+                      size="large"
+                      style={{ borderRadius: 8 }}
+                    />
+                  </Form.Item>
+                  <Form.Item label="Confirmar senha" required>
+                    <Input.Password
+                      placeholder="••••••••"
+                      value={signupPasswordConfirm}
+                      onChange={(e) => setSignupPasswordConfirm(e.target.value)}
+                      size="large"
+                      style={{ borderRadius: 8 }}
+                    />
+                  </Form.Item>
+                </>
+              ) : (
+                <>
+                  <Form.Item label="E-mail ou usuário" required>
+                    <Input
+                      placeholder="seu@email.com ou @usuario"
+                      value={signupEmail}
+                      onChange={(e) => setSignupEmail(e.target.value)}
+                      size="large"
+                      style={{ borderRadius: 8 }}
+                      autoComplete="username"
+                    />
+                  </Form.Item>
+                  <Form.Item label="Senha" required>
+                    <Input.Password
+                      placeholder="••••••••"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      size="large"
+                      style={{ borderRadius: 8 }}
+                      autoComplete="current-password"
+                    />
+                  </Form.Item>
+                </>
+              )}
               {signupError && (
                 <Alert type="error" message={signupError} showIcon style={{ marginBottom: 12 }} onClose={() => setSignupError(null)} closable />
               )}
-              <Button
-                type="primary"
-                size="large"
-                block
-                loading={signupLoading || creatingCampaign}
-                onClick={handleReportModalSubmit}
-                style={{ borderRadius: 8, marginTop: 8 }}
-              >
-                Cadastrar e criar relatório
-              </Button>
+              {reportAuthMode === 'signup' ? (
+                <>
+                  <Button
+                    type="primary"
+                    size="large"
+                    block
+                    loading={signupLoading || creatingCampaign}
+                    onClick={handleReportModalSubmit}
+                    style={{ borderRadius: 8, marginTop: 8 }}
+                  >
+                    Cadastrar e criar relatório
+                  </Button>
+                  <div style={{ textAlign: 'center', marginTop: 16 }}>
+                    <Button
+                      type="link"
+                      style={{ padding: 0, height: 'auto', fontSize: 14 }}
+                      disabled={signupLoading || creatingCampaign}
+                      onClick={() => {
+                        setSignupError(null)
+                        setReportAuthMode('login')
+                      }}
+                    >
+                      Já tenho cadastro — entrar
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Button
+                    type="primary"
+                    size="large"
+                    block
+                    loading={signupLoading || creatingCampaign}
+                    onClick={handleReportModalLoginSubmit}
+                    style={{ borderRadius: 8, marginTop: 8 }}
+                  >
+                    Entrar e criar relatório
+                  </Button>
+                  <div style={{ textAlign: 'center', marginTop: 16 }}>
+                    <Button
+                      type="link"
+                      style={{ padding: 0, height: 'auto', fontSize: 14 }}
+                      disabled={signupLoading || creatingCampaign}
+                      onClick={() => {
+                        setSignupError(null)
+                        setLoginPassword('')
+                        setReportAuthMode('signup')
+                      }}
+                    >
+                      Não tenho conta — cadastrar
+                    </Button>
+                  </div>
+                </>
+              )}
             </Form>
         </Modal>
       </div>

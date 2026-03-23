@@ -5,7 +5,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag, Alert, message, Popconfirm, Segmented, Divider } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, BankOutlined, DeleteOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DeleteOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
   fetchCampaignProfiles,
@@ -14,8 +14,8 @@ import {
   updateCampaignName,
   updateCampaignDescription,
   deleteCampaign,
-  createCampaignPayment,
   payCampaignWithCredits,
+  fetchMyPendingPayment,
   fetchFavorites,
   addFavorite,
   removeFavorite,
@@ -28,6 +28,7 @@ import {
   type ProfilesSearchResponse,
   type ProfilesSort,
   type CampaignInfo,
+  type CreatePaymentForCreditsResponse,
   type MediaKind,
   fetchCampaignPostMatches,
 } from '../api'
@@ -43,6 +44,7 @@ import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import ProfileAvatar from '../components/ProfileAvatar'
 import CampaignBIPanel from '../components/CampaignBIPanel/CampaignBIPanel'
 import CampaignPaymentCart from '../components/CampaignPaymentCart/CampaignPaymentCart'
+import BuyCreditsModal from '../components/BuyCreditsModal/BuyCreditsModal'
 import CampaignOriginGallery from '../components/CampaignOriginGallery'
 import './CampaignInfluencers.css'
 import { MessageOutlined, VideoCameraOutlined } from '@ant-design/icons'
@@ -129,12 +131,14 @@ function CampaignListRow({
   isFavorite,
   onFavoriteToggle,
   onImageRefreshQueued,
+  showFavoriteColumn = true,
 }: {
   item: ProfileListItem
   onClick: () => void
   isFavorite?: boolean
   onFavoriteToggle?: (handle: string) => void
   onImageRefreshQueued?: (handle: string) => void
+  showFavoriteColumn?: boolean
 }) {
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
   const stablePic = getStableProfilePicUrl(item as unknown as Record<string, unknown>)
@@ -187,25 +191,26 @@ function CampaignListRow({
           onRefreshQueued={onImageRefreshQueued}
         />
       </td>
-      {onFavoriteToggle != null ? (
-        <td className="campaign-list-cell" style={{ textAlign: 'center', width: 36, verticalAlign: 'middle', padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} onClick={(e) => e.stopPropagation()}>
-          <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
-            <Button
-              type="text"
-              size="small"
-              icon={isFavorite ? <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 14 }} /> : <HeartOutlined style={{ color: 'var(--app-text-secondary)', fontSize: 14 }} />}
-              onClick={(e) => {
-                e.stopPropagation()
-                onFavoriteToggle(handle)
-              }}
-              style={{ minWidth: 24, height: 24, padding: 0 }}
-              aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
-            />
-          </Tooltip>
-        </td>
-      ) : (
-        <td style={{ width: 36, padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} />
-      )}
+      {showFavoriteColumn &&
+        (onFavoriteToggle != null ? (
+          <td className="campaign-list-cell" style={{ textAlign: 'center', width: 36, verticalAlign: 'middle', padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} onClick={(e) => e.stopPropagation()}>
+            <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
+              <Button
+                type="text"
+                size="small"
+                icon={isFavorite ? <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 14 }} /> : <HeartOutlined style={{ color: 'var(--app-text-secondary)', fontSize: 14 }} />}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onFavoriteToggle(handle)
+                }}
+                style={{ minWidth: 24, height: 24, padding: 0 }}
+                aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
+              />
+            </Tooltip>
+          </td>
+        ) : (
+          <td style={{ width: 36, padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} />
+        ))}
       <td style={{ verticalAlign: 'middle', padding: '4px 4px', width: '100%', maxWidth: 300, minWidth: 0, overflow: 'hidden', textAlign: 'left' }}>
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -289,12 +294,21 @@ const defaultQuery: Partial<ProfilesSearchQuery> = {
 
 const MOBILE_BREAKPOINT = 768
 
+const ALL_CAMPAIGNS_SLUG = 'all'
+
 export default function CampaignInfluencers() {
   const { campaignId: campaignIdParam } = useParams<{ campaignId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
-  const campaignId = campaignIdParam != null && CAMPAIGN_ID_GUID_REGEX.test(campaignIdParam.trim()) ? campaignIdParam.trim() : null
+  const isAllCampaignsView =
+    campaignIdParam != null && campaignIdParam.trim().toLowerCase() === ALL_CAMPAIGNS_SLUG
+  const campaignId = isAllCampaignsView
+    ? ALL_CAMPAIGNS_SLUG
+    : campaignIdParam != null && CAMPAIGN_ID_GUID_REGEX.test(campaignIdParam.trim())
+      ? campaignIdParam.trim()
+      : null
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
+  const showFavoriteColumn = user?.scope !== 'influencer'
   const creditsContext = useCreditsOptional()
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT)
   const [viewMode, setViewMode] = useState<CampaignViewMode>('list')
@@ -318,9 +332,8 @@ export default function CampaignInfluencers() {
   const [namePromptDismissed, setNamePromptDismissed] = useState(false)
   const [nameModalOpen, setNameModalOpen] = useState(false)
   const hasAutoOpenedNameModalRef = useRef(false)
-  const [creatingPayment, setCreatingPayment] = useState<'pix' | 'boleto' | null>(null)
-  const [boletoModalOpen, setBoletoModalOpen] = useState(false)
-  const [boletoCpfValue, setBoletoCpfValue] = useState('')
+  const [buyCreditsModalOpen, setBuyCreditsModalOpen] = useState(false)
+  const [buyCreditsResume, setBuyCreditsResume] = useState<CreatePaymentForCreditsResponse | null>(null)
   const [payingWithCredits, setPayingWithCredits] = useState(false)
   const [deletingCampaign, setDeletingCampaign] = useState(false)
   const [filteredList, setFilteredList] = useState<ProfileListItem[]>([])
@@ -356,13 +369,17 @@ export default function CampaignInfluencers() {
     setCampaignMainTab((prev) => (prev === nextTab ? prev : nextTab))
   }, [searchParams])
   useEffect(() => {
-    if (!user) {
+    if (!user || user.scope === 'influencer') {
       setFavoriteHandles(new Set())
       return
     }
     const norm = (h: string) => (h ?? '').toLowerCase().replace(/^@/, '').trim()
     fetchFavorites()
       .then((res) => {
+        if (campaignId === ALL_CAMPAIGNS_SLUG) {
+          setFavoriteHandles(new Set((res.handles ?? []).map(norm)))
+          return
+        }
         // Na tela de campanha, considerar só favoritos desta campanha para o estado "selecionado"
         if (campaignId && (res.favorites?.length ?? 0) > 0) {
           const forCampaign = (res.favorites ?? []).filter((f) => f.campaignId === campaignId).map((f) => norm(f.handle))
@@ -372,7 +389,7 @@ export default function CampaignInfluencers() {
         }
       })
       .catch(() => setFavoriteHandles(new Set()))
-  }, [user, campaignId])
+  }, [user?.id, user?.scope, campaignId])
 
   const handleFavoriteToggle = useCallback(async (handle: string) => {
     const normalized = handle.toLowerCase().replace(/^@/, '').trim()
@@ -385,8 +402,14 @@ export default function CampaignInfluencers() {
       return next
     })
     try {
-      if (isFav) await removeFavorite(handle, campaignId ? { campaignId } : undefined)
-      else await addFavorite(handle, { campaignId: campaignId ?? undefined })
+      if (campaignId === ALL_CAMPAIGNS_SLUG) {
+        if (isFav) await removeFavorite(handle)
+        else await addFavorite(handle)
+      } else if (isFav) {
+        await removeFavorite(handle, campaignId ? { campaignId } : undefined)
+      } else {
+        await addFavorite(handle, { campaignId: campaignId ?? undefined })
+      }
     } catch {
       setFavoriteHandles((prev) => {
         const next = new Set(prev)
@@ -559,7 +582,7 @@ export default function CampaignInfluencers() {
         if (!ac.signal.aborted) setOriginPostKindCounts(null)
       })
     return () => ac.abort()
-  }, [campaignId, user, pendingPayment, query.q])
+  }, [campaignId, user?.id, pendingPayment, query.q])
 
   const updateFilter = useCallback(
     (overrides: Partial<ProfilesSearchQuery>) => {
@@ -639,7 +662,7 @@ export default function CampaignInfluencers() {
     const controller = new AbortController()
     loadContext(controller.signal)
     return () => controller.abort()
-  }, [campaignId, user, loadContext, pendingPayment])
+  }, [campaignId, user?.id, loadContext, pendingPayment])
 
   useEffect(() => {
     if (campaignId == null || !user) return
@@ -661,7 +684,7 @@ export default function CampaignInfluencers() {
         setCampaignInfoLoaded(true)
       })
     return () => controller.abort()
-  }, [campaignId, user])
+  }, [campaignId, user?.id])
 
   useEffect(() => {
     if (contextItems == null || pendingPayment) return
@@ -672,11 +695,16 @@ export default function CampaignInfluencers() {
     ? Math.max(1, total > 0 ? total : (campaignInfo?.handlesCount ?? 1))
     : 1
   const creditsPaid = campaignInfo?.creditsPaid ?? campaignInfo?.credits_used ?? 0
-  const unpaidQuantity = Math.max(0, maxQuantity - creditsPaid)
+  const billableProfileCount = pricePreview?.billableProfileCount ?? maxQuantity
+  const unpaidBillable = Math.max(0, billableProfileCount - creditsPaid)
   const balance = creditsContext?.balance ?? 0
-  const creditsToApply = pendingPayment && unpaidQuantity > 0 && balance > 0
-    ? Math.min(balance, unpaidQuantity)
-    : 0
+  const creditsToApply =
+    pendingPayment && unpaidBillable > 0 && balance > 0 ? Math.min(balance, unpaidBillable) : 0
+  const amountCentsAfterDiscount = pricePreview?.amountCents
+  const canPayWithCredits = !!(
+    pendingPayment &&
+    ((unpaidBillable > 0 && balance > 0) || (amountCentsAfterDiscount === 0 && maxQuantity > 0))
+  )
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -696,7 +724,7 @@ export default function CampaignInfluencers() {
   }, [showNamePrompt])
 
   const handleSaveCampaignName = useCallback(() => {
-    if (!campaignId) return
+    if (!campaignId || campaignId === ALL_CAMPAIGNS_SLUG) return
     setSavingCampaignName(true)
     updateCampaignName(campaignId, campaignNameInput)
       .then(() => {
@@ -715,7 +743,7 @@ export default function CampaignInfluencers() {
 
   const handleDescriptionSave = useCallback(
     (value: string) => {
-      if (!campaignId) return
+      if (!campaignId || campaignId === ALL_CAMPAIGNS_SLUG) return
       updateCampaignDescription(campaignId, value).then(() => {
         setCampaignInfo((prev) => (prev ? { ...prev, description: value || null } : null))
       })
@@ -724,14 +752,14 @@ export default function CampaignInfluencers() {
   )
 
   const refreshCampaign = useCallback(() => {
-    if (!campaignId) return
+    if (!campaignId || campaignId === ALL_CAMPAIGNS_SLUG) return
     getCampaign(campaignId).then((info) => {
       setCampaignInfo(info)
     }).catch(() => { })
   }, [campaignId])
 
   const handleDeleteCampaign = useCallback(() => {
-    if (!campaignId) return
+    if (!campaignId || campaignId === ALL_CAMPAIGNS_SLUG) return
     setDeletingCampaign(true)
     deleteCampaign(campaignId)
       .then(() => {
@@ -742,53 +770,49 @@ export default function CampaignInfluencers() {
       .finally(() => setDeletingCampaign(false))
   }, [campaignId, navigate])
 
-  const needsGeneratePayment = !!(
-    campaignInfo?.pendingPayment &&
-    (campaignInfo.pendingPayment.paymentMissing ||
-      (!campaignInfo.pendingPayment.bankSlipUrl && !campaignInfo.pendingPayment.pixCopyPaste))
-  )
-
-  const handleGeneratePix = useCallback(() => {
-    if (!campaignId) return
-    setCreatingPayment('pix')
-    createCampaignPayment(campaignId, { billingType: 'PIX', quantity: unpaidQuantity })
-      .then(() => refreshCampaign())
-      .catch((err) => message.error(err instanceof Error ? err.message : 'Falha ao gerar PIX'))
-      .finally(() => setCreatingPayment(null))
-  }, [campaignId, unpaidQuantity, refreshCampaign])
-
-  const handleGenerateBoleto = useCallback(() => {
-    if (!campaignId) return
-    const cpfCnpj = boletoCpfValue.replace(/\D/g, '')
-    if (cpfCnpj.length !== 11 && cpfCnpj.length !== 14) {
-      message.warning('Informe CPF (11 dígitos) ou CNPJ (14 dígitos).')
-      return
+  const handleOpenBuyCredits = useCallback(async () => {
+    try {
+      const p = await fetchMyPendingPayment()
+      setBuyCreditsResume(p)
+    } catch {
+      setBuyCreditsResume(null)
     }
-    setCreatingPayment('boleto')
-    createCampaignPayment(campaignId, { billingType: 'BOLETO', cpfCnpj, quantity: unpaidQuantity })
-      .then(() => {
-        setBoletoModalOpen(false)
-        setBoletoCpfValue('')
-        refreshCampaign()
-      })
-      .catch((err) => message.error(err instanceof Error ? err.message : 'Falha ao gerar boleto'))
-      .finally(() => setCreatingPayment(null))
-  }, [campaignId, boletoCpfValue, unpaidQuantity, refreshCampaign])
+    setBuyCreditsModalOpen(true)
+  }, [])
 
-  const canPayWithCredits = !!(pendingPayment && creditsToApply > 0)
-
-  const handlePayWithCredits = useCallback(() => {
-    if (!campaignId || creditsToApply <= 0) return
+  const handlePayWithCredits = useCallback(async () => {
+    if (!campaignId || campaignId === ALL_CAMPAIGNS_SLUG) return
+    const freeUnlock =
+      !!pendingPayment && pricePreview?.amountCents === 0 && maxQuantity > 0
+    if (!freeUnlock && creditsToApply <= 0) return
     setPayingWithCredits(true)
-    payCampaignWithCredits(campaignId, creditsToApply)
-      .then(() => {
-        message.success('Pagamento com créditos concluído. Relatório liberado!')
-        refreshCampaign()
-        creditsContext?.refreshCredits()
-      })
-      .catch((err) => message.error(err instanceof Error ? err.message : 'Falha ao pagar com créditos'))
-      .finally(() => setPayingWithCredits(false))
-  }, [campaignId, creditsToApply, unpaidQuantity, refreshCampaign, creditsContext])
+    try {
+      const payFullCampaignBillable =
+        !freeUnlock &&
+        creditsToApply > 0 &&
+        creditsToApply === billableProfileCount
+      await payCampaignWithCredits(
+        campaignId,
+        freeUnlock || payFullCampaignBillable ? undefined : creditsToApply > 0 ? creditsToApply : undefined
+      )
+      message.success('Pagamento com créditos concluído. Relatório liberado!')
+      refreshCampaign()
+      void creditsContext?.refreshCredits()
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Falha ao pagar com créditos')
+    } finally {
+      setPayingWithCredits(false)
+    }
+  }, [
+    campaignId,
+    creditsToApply,
+    billableProfileCount,
+    refreshCampaign,
+    creditsContext,
+    pendingPayment,
+    pricePreview?.amountCents,
+    maxQuantity,
+  ])
 
   const openDetail = (handleOrKey: string) => {
     if (!campaignId) return
@@ -888,7 +912,7 @@ export default function CampaignInfluencers() {
             {campaignHasName ? 'Salvar' : 'Salvar'}
           </Button>
         </Space.Compact>
-        {campaignId ? (
+        {campaignId && !isAllCampaignsView ? (
           <>
             <Divider style={{ margin: '20px 0 12px' }} />
             <Popconfirm
@@ -907,37 +931,15 @@ export default function CampaignInfluencers() {
         ) : null}
       </Modal>
 
-      <Modal
-        title="Gerar boleto"
-        open={boletoModalOpen}
-        onCancel={() => { setBoletoModalOpen(false); setBoletoCpfValue(''); }}
-        footer={null}
-        destroyOnClose
-      >
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          Para gerar o boleto é necessário informar CPF ou CNPJ.
-        </Typography.Paragraph>
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Input
-            placeholder="CPF ou CNPJ (apenas números)"
-            value={boletoCpfValue}
-            onChange={(e) => setBoletoCpfValue(e.target.value.replace(/\D/g, ''))}
-            maxLength={14}
-            size="large"
-          />
-          <Button
-            type="primary"
-            block
-            size="large"
-            icon={<BankOutlined />}
-            loading={creatingPayment === 'boleto'}
-            disabled={creatingPayment !== null || boletoCpfValue.replace(/\D/g, '').length < 11}
-            onClick={handleGenerateBoleto}
-          >
-            Gerar boleto
-          </Button>
-        </Space>
-      </Modal>
+      <BuyCreditsModal
+        open={buyCreditsModalOpen}
+        onClose={() => {
+          setBuyCreditsModalOpen(false)
+          setBuyCreditsResume(null)
+        }}
+        suggestedCredits={unpaidBillable}
+        resumePayment={buyCreditsResume}
+      />
 
       <div
         style={{
@@ -959,14 +961,17 @@ export default function CampaignInfluencers() {
         >
           <Typography.Title level={4} style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {campaignInfo?.name?.trim() || 'Sua campanha'}
-            {campaignId && (
+            {campaignId && !isAllCampaignsView && (
               <Tooltip title="Editar nome da campanha">
                 <Button type="text" size="small" icon={<EditOutlined />} onClick={openNameModalForEdit} style={{ padding: '0 4px' }} />
               </Tooltip>
             )}
           </Typography.Title>
           <Typography.Text type="secondary" style={{ fontSize: 13, display: 'block' }}>
-            {campaignCredits != null && <>{campaignCredits.toLocaleString('pt-BR')} créditos</>}
+            {!isAllCampaignsView && campaignCredits != null && <>{campaignCredits.toLocaleString('pt-BR')} créditos</>}
+            {isAllCampaignsView && (
+              <span>União das campanhas pagas · {campaignInfo?.handlesCount?.toLocaleString('pt-BR') ?? '—'} perfis</span>
+            )}
           </Typography.Text>
         </div>
         <div
@@ -1069,7 +1074,7 @@ export default function CampaignInfluencers() {
                 query={query}
                 onFilter={updateFilter}
                 description={campaignInfo?.description ?? null}
-                onDescriptionSave={pendingPayment ? undefined : handleDescriptionSave}
+                onDescriptionSave={pendingPayment || isAllCampaignsView ? undefined : handleDescriptionSave}
                 expiresAt={campaignInfo?.expires_at ?? null}
                 createdAt={campaignInfo?.created_at ?? null}
                 statsOverride={pendingPayment && pricePreview && typeof pricePreview.totalLikes === 'number' ? {
@@ -1106,13 +1111,23 @@ export default function CampaignInfluencers() {
                   maxQuantity={maxQuantity}
                   canPayWithCredits={canPayWithCredits}
                   creditsToApply={creditsToApply}
-                  pendingPayment={campaignInfo?.pendingPayment ?? null}
-                  needsGeneratePayment={needsGeneratePayment}
                   payingWithCredits={payingWithCredits}
-                  creatingPayment={creatingPayment}
                   onPayWithCredits={handlePayWithCredits}
-                  onGeneratePix={handleGeneratePix}
-                  onOpenBoletoModal={() => setBoletoModalOpen(true)}
+                  onBuyCredits={() => void handleOpenBuyCredits()}
+                  amountCentsAfterDiscount={pricePreview?.amountCents}
+                  ownershipDiscount={
+                    pricePreview &&
+                    (pricePreview.alreadyOwnedCount ?? 0) > 0 &&
+                    pricePreview.originalValueBrl != null
+                      ? {
+                          alreadyOwnedCount: pricePreview.alreadyOwnedCount!,
+                          originalValueBrl: pricePreview.originalValueBrl,
+                          billableProfileCount:
+                            pricePreview.billableProfileCount ??
+                            Math.max(0, maxQuantity - (pricePreview.alreadyOwnedCount ?? 0)),
+                        }
+                      : undefined
+                  }
                 />
               </>
             ) : (
@@ -1372,11 +1387,13 @@ export default function CampaignInfluencers() {
                               <tr style={{ background: 'var(--app-bg-secondary, #fafafa)', borderBottom: '1px solid var(--app-border, #f0f0f0)', fontSize: 10, fontWeight: 600, color: 'var(--app-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
                                 <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid var(--app-border)', width: '1%', whiteSpace: 'nowrap' }} />
                                 <th style={{ padding: '6px 8px', width: 48 }} />
-                                <th style={{ padding: '4px 0', paddingLeft: 0, paddingRight: 0, textAlign: 'center', width: 36, cursor: 'pointer', userSelect: 'none' }} role="button" tabIndex={0} onClick={() => handleSortColumn('favorite')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('favorite')} title="Ordenar por favoritos">
-                                  {currentSort === 'favorite_desc'
-                                    ? <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 12 }} />
-                                    : <HeartOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 12, opacity: 0.5 }} />}
-                                </th>
+                                {showFavoriteColumn && (
+                                  <th style={{ padding: '4px 0', paddingLeft: 0, paddingRight: 0, textAlign: 'center', width: 36, cursor: 'pointer', userSelect: 'none' }} role="button" tabIndex={0} onClick={() => handleSortColumn('favorite')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('favorite')} title="Ordenar por favoritos">
+                                    {currentSort === 'favorite_desc'
+                                      ? <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 12 }} />
+                                      : <HeartOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 12, opacity: 0.5 }} />}
+                                  </th>
+                                )}
                                 <th style={{ padding: '4px 4px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: '100%', maxWidth: 300 }} role="button" tabIndex={0} onClick={() => handleSortColumn('name')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('name')}>
                                   Perfil {currentSort === 'name_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'name_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
                                 </th>
@@ -1404,7 +1421,8 @@ export default function CampaignInfluencers() {
                                   item={item}
                                   onClick={() => openDetail(item.handle ?? item.key)}
                                   isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
-                                  onFavoriteToggle={user ? handleFavoriteToggle : undefined}
+                                  onFavoriteToggle={user && user.scope !== 'influencer' ? handleFavoriteToggle : undefined}
+                                  showFavoriteColumn={showFavoriteColumn}
                                   onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
                                 />
                               ))}
@@ -1429,7 +1447,7 @@ export default function CampaignInfluencers() {
                                 onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
                                 showMetrics={!!user}
                                 isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
-                                onFavoriteToggle={user ? handleFavoriteToggle : undefined}
+                                onFavoriteToggle={user && user.scope !== 'influencer' ? handleFavoriteToggle : undefined}
                               />
                             </Col>
                           ))}

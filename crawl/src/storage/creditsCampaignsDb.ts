@@ -306,6 +306,20 @@ export class CreditsCampaignsDb {
     `).all(userId) as CampaignRow[];
   }
 
+  /** Handles distintos de todas as campanhas ativas e pagas (para visão "Todos"). */
+  getAllPaidHandlesUnion(userId: number): string[] {
+    const set = new Set<string>();
+    for (const row of this.listCampaigns(userId)) {
+      const handles = this.getCampaignHandlesIfActiveAndPaid(row.id, userId);
+      if (!handles) continue;
+      for (const x of handles) {
+        const h = String(x).toLowerCase().replace(/^@/, '').trim();
+        if (h) set.add(h);
+      }
+    }
+    return Array.from(set);
+  }
+
   /** Exclui a campanha (apenas se pertencer ao usuário). Retorna true se excluiu. */
   deleteCampaign(campaignId: string, userId: number): boolean {
     const result = this.db.prepare('DELETE FROM campaign WHERE id = ? AND user_id = ?').run(campaignId, userId);

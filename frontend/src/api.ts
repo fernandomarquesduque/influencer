@@ -305,6 +305,15 @@ export interface ProfilesSearchResponse {
     totalFollowers?: number
     postsCount?: number
     avgEngagementRate?: number
+    /** Valor sem desconto (antes de abater perfis já em outros relatórios pagos). */
+    originalAmountCents?: number
+    originalValueBrl?: number
+    /** Quantidade de perfis que já estavam em outro relatório pago (cobrança zerada para eles). */
+    alreadyOwnedCount?: number
+    /** Perfis que ainda entram na cobrança (novos para o cliente). */
+    billableProfileCount?: number
+    chargedActivatedCount?: number
+    chargedNotActivatedCount?: number
   }
 }
 
@@ -332,6 +341,8 @@ export async function fetchProfilesSearch(
   }
   if (query.excludePrivate) params.set('excludePrivate', 'true')
   if (query.accountTypeFilter?.length) params.set('accountTypeFilter', query.accountTypeFilter.join(','))
+  if (query.costTierFilter?.length) params.set('costTierFilter', query.costTierFilter.join(','))
+  if (query.sizeFilter?.length) params.set('sizeFilter', query.sizeFilter.join(','))
   if (query.contentTypes?.length) params.set('contentTypes', query.contentTypes.join(','))
   if (query.pricingFeed?.length) params.set('pricingFeed', query.pricingFeed.join(','))
   if (query.pricingReels?.length) params.set('pricingReels', query.pricingReels.join(','))
@@ -419,6 +430,47 @@ export async function fetchPayment(id: string, options?: { signal?: AbortSignal 
   return res.json()
 }
 
+/** Como `fetchPayment`, mas retorna `null` em 404 (cobrança removida). Útil para polling de pendência. */
+export async function fetchPaymentIfExists(id: string, options?: { signal?: AbortSignal }): Promise<PaymentItem | null> {
+  const res = await fetch(`${API_BASE}/me/payments/${encodeURIComponent(id)}`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (res.status === 404) return null
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao consultar pagamento')
+  }
+  return res.json()
+}
+
+/** Cancela cobrança pendente no Asaas e remove do histórico local. */
+export async function deleteMyPendingPayment(id: string, options?: { signal?: AbortSignal }): Promise<void> {
+  const res = await fetch(`${API_BASE}/me/payments/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao remover cobrança')
+  }
+}
+
+/** Cobrança pendente do usuário (no máximo uma). `null` se não houver. */
+export async function fetchMyPendingPayment(options?: { signal?: AbortSignal }): Promise<CreatePaymentForCreditsResponse | null> {
+  const res = await fetch(`${API_BASE}/me/payments/pending`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao consultar cobrança pendente')
+  }
+  const data = (await res.json()) as { payment: CreatePaymentForCreditsResponse | null }
+  return data.payment ?? null
+}
+
 export interface CreatePaymentForCreditsResponse {
   paymentId: string
   asaasPaymentId: string | null
@@ -430,6 +482,16 @@ export interface CreatePaymentForCreditsResponse {
   invoiceUrl: string | null
   bankSlipUrl: string | null
   pixCopyPaste: string | null
+}
+
+/** POST /me/payments retornou 409 — já existe cobrança pendente. */
+export class PendingPaymentExistsError extends Error {
+  payment: CreatePaymentForCreditsResponse
+  constructor(message: string, payment: CreatePaymentForCreditsResponse) {
+    super(message)
+    this.name = 'PendingPaymentExistsError'
+    this.payment = payment
+  }
 }
 
 /** Checkout público: cadastra como Assinante e cria pagamento. Retorna token + user + dados do pagamento (sem auth). */
@@ -533,17 +595,28 @@ export async function payForReport(
 export async function createPaymentForCredits(
   credits: number,
   billingType: 'PIX' | 'BOLETO' = 'PIX',
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; cpfCnpj?: string }
 ): Promise<CreatePaymentForCreditsResponse> {
+  const body: Record<string, unknown> = { credits, billingType }
+  const cpfDigits = (options?.cpfCnpj ?? '').replace(/\D/g, '')
+  if (cpfDigits.length === 11 || cpfDigits.length === 14) {
+    body.cpfCnpj = cpfDigits
+  }
   const res = await fetch(`${API_BASE}/me/payments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ credits, billingType }),
+    body: JSON.stringify(body),
     signal: options?.signal,
   })
-  const data = await res.json().catch(() => ({}))
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string
+    payment?: CreatePaymentForCreditsResponse
+  }
   if (!res.ok) {
-    throw new Error((data as { error?: string }).error || 'Falha ao gerar pagamento')
+    if (res.status === 409 && data.payment) {
+      throw new PendingPaymentExistsError(data.error || 'Cobrança pendente', data.payment)
+    }
+    throw new Error(data.error || 'Falha ao gerar pagamento')
   }
   return data as CreatePaymentForCreditsResponse
 }

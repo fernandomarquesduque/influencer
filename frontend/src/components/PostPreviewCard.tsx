@@ -214,11 +214,13 @@ export interface PostPreviewCardProps {
   imageTopBadges?: ReactNode
   imageBottomRight?: ReactNode
   showCaptionOverlay?: boolean
-  interactionsLabel: string
+  interactionsLabel?: string
   erPercent?: number
   showErBand?: boolean
   footerHint?: string
   authorLine?: string
+  /** Só mídia (sem rodapé de métricas) — ex.: vitrine Top 4 sem texto sobre a imagem. */
+  hideFooter?: boolean
   showHoverGradient?: boolean
   'aria-label'?: string
   className?: string
@@ -245,6 +247,7 @@ export default function PostPreviewCard({
   showErBand = true,
   footerHint,
   authorLine,
+  hideFooter = false,
   showHoverGradient = true,
   'aria-label': ariaLabel,
   className,
@@ -268,37 +271,41 @@ export default function PostPreviewCard({
         showHoverGradient={showHoverGradient}
         isHovered={hovered}
       />
-      <div style={{ padding: s.md }}>
-        {authorLine ? (
-          <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 4 }}>{authorLine}</div>
-        ) : null}
-        <Tooltip title={METRIC_TOOLTIPS.interacoesPost} placement="top">
-          <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, cursor: 'help', display: 'inline-block' }}>{interactionsLabel}</div>
-        </Tooltip>
-        {showErBand && erPercent !== undefined ? (
-          <Tooltip title={METRIC_TOOLTIPS.erPost} placement="top">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-              <span style={{ ...typ.caption, color: c.textMuted, cursor: 'help' }}>ER {er.toFixed(1)}%</span>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  padding: '2px 6px',
-                  borderRadius: r.sm,
-                  background: `${banda.color}22`,
-                  color: banda.color,
-                  border: `1px solid ${banda.color}44`,
-                }}
-              >
-                {banda.label}
-              </span>
-            </div>
-          </Tooltip>
-        ) : null}
-        {footerHint ? (
-          <div style={{ ...typ.caption, color: c.primary, marginTop: 8, lineHeight: 1.35 }}>{footerHint}</div>
-        ) : null}
-      </div>
+      {!hideFooter ? (
+        <div style={{ padding: s.md }}>
+          {authorLine ? (
+            <div style={{ ...typ.caption, color: c.textMuted, marginBottom: 4 }}>{authorLine}</div>
+          ) : null}
+          {interactionsLabel ? (
+            <Tooltip title={METRIC_TOOLTIPS.interacoesPost} placement="top">
+              <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, cursor: 'help', display: 'inline-block' }}>{interactionsLabel}</div>
+            </Tooltip>
+          ) : null}
+          {showErBand && erPercent !== undefined ? (
+            <Tooltip title={METRIC_TOOLTIPS.erPost} placement="top">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                <span style={{ ...typ.caption, color: c.textMuted, cursor: 'help' }}>ER {er.toFixed(1)}%</span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '2px 6px',
+                    borderRadius: r.sm,
+                    background: `${banda.color}22`,
+                    color: banda.color,
+                    border: `1px solid ${banda.color}44`,
+                  }}
+                >
+                  {banda.label}
+                </span>
+              </div>
+            </Tooltip>
+          ) : null}
+          {footerHint ? (
+            <div style={{ ...typ.caption, color: c.primary, marginTop: 8, lineHeight: 1.35 }}>{footerHint}</div>
+          ) : null}
+        </div>
+      ) : null}
     </>
   )
 

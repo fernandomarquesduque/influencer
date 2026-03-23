@@ -796,6 +796,8 @@ export function ProofCarousel({
   formatShortNum,
   /** Quando true, exibe "Postado por @username" (ex.: na seção de marcados). */
   showAuthor = false,
+  /** Interações, ER e dicas abaixo da mídia. Default false: só a capa, sem texto sobre a imagem. */
+  showCardFooter = false,
 }: {
   items: ProofItem[]
   /** URL já pronta para `<img src>` (ex.: `getPostCoverDisplayUrl`). */
@@ -804,6 +806,7 @@ export function ProofCarousel({
   failedImages: Set<string>
   formatShortNum: (n: number) => string
   showAuthor?: boolean
+  showCardFooter?: boolean
 }) {
   return (
     <div
@@ -811,27 +814,16 @@ export function ProofCarousel({
       style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(176px, 1fr))', gap: s.lg, width: '100%' }}
       role="list"
     >
-      {items.map(({ post, interactions, erPost, oQueFuncionou, isTop, geraConversa }) => {
+      {items.map(({ post, interactions, erPost, oQueFuncionou }) => {
         const key = (post as { key: string }).key
         const displaySrc = failedImages.has(key) ? undefined : getImageUrl(post)
         const stableBg = getPostStablePreviewUrl(post)
         const link = getLink(post)
         const failed = failedImages.has(key)
-        const pi = post as PostItem
-        const overlayLines = getPostCaptionOverlayLines(pi)
         const authorLine =
           showAuthor && (post as { influencer?: { username?: string } })?.influencer?.username
             ? `Postado por @${(post as { influencer?: { username?: string } }).influencer!.username}`
             : undefined
-        const badges =
-          isTop || geraConversa ? (
-            <>
-              {isTop && <Tag style={{ margin: 0, background: c.primary, color: 'var(--brand-white)', border: 'none', fontSize: 10 }}>#1</Tag>}
-              {geraConversa && (
-                <Tag style={{ margin: 0, background: c.success, color: 'var(--brand-white)', border: 'none', fontSize: 10 }}>Gera conversa</Tag>
-              )}
-            </>
-          ) : undefined
         return (
           <PostPreviewCard
             key={key}
@@ -841,11 +833,10 @@ export function ProofCarousel({
             stableBackgroundUrl={stableBg}
             imageUnavailable={failed || !displaySrc}
             mediaAspectRatio="4 / 5"
-            overlayLines={overlayLines.length > 0 ? overlayLines : undefined}
-            imageTopBadges={badges}
-            interactionsLabel={`${formatShortNum(interactions)} interações`}
-            erPercent={erPost}
-            footerHint={oQueFuncionou}
+            hideFooter={!showCardFooter}
+            interactionsLabel={showCardFooter ? `${formatShortNum(interactions)} interações` : undefined}
+            erPercent={showCardFooter ? erPost : undefined}
+            footerHint={showCardFooter ? oQueFuncionou : undefined}
             authorLine={authorLine}
             showHoverGradient
             className="proof-thumb"

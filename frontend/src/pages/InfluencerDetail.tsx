@@ -86,6 +86,13 @@ const DETAIL_SUBTLE_ACTION = {
     color: '#6b21a8',
     boxShadow: '0 1px 4px rgba(107, 33, 168, 0.06)',
   },
+  editProfile: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%)',
+    border: '1px solid #fde68a',
+    color: '#b45309',
+    boxShadow: '0 1px 4px rgba(180, 83, 9, 0.07)',
+  },
   reports: {
     ...detailActionBtnShell(),
     background: 'linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%)',
@@ -178,9 +185,13 @@ interface InfluencerDetailProps {
 export default function InfluencerDetail({ overrideHandle, requireCampaignId }: InfluencerDetailProps = {}) {
   const params = useParams<{ handle?: string; campaignId?: string }>()
   const handle = overrideHandle ?? params.handle
-  const campaignId = params.campaignId != null && CAMPAIGN_ID_GUID_REGEX.test(params.campaignId.trim())
-    ? params.campaignId.trim()
-    : null
+  const rawCampaignParam = params.campaignId?.trim() ?? ''
+  const campaignId =
+    rawCampaignParam.toLowerCase() === 'all'
+      ? 'all'
+      : rawCampaignParam.length > 0 && CAMPAIGN_ID_GUID_REGEX.test(rawCampaignParam)
+        ? rawCampaignParam
+        : null
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -230,7 +241,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
   }, [])
 
   useEffect(() => {
-    if (!user || !handle) {
+    if (!user || !handle || user.scope === 'influencer') {
       setIsFavorite(false)
       return
     }
@@ -245,8 +256,14 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     const prev = isFavorite
     setIsFavorite(!prev)
     try {
-      if (prev) await removeFavorite(handle, campaignId ? { campaignId } : undefined)
-      else await addFavorite(handle, { campaignId: campaignId ?? undefined })
+      if (campaignId === 'all') {
+        if (prev) await removeFavorite(handle)
+        else await addFavorite(handle)
+      } else if (prev) {
+        await removeFavorite(handle, campaignId ? { campaignId } : undefined)
+      } else {
+        await addFavorite(handle, { campaignId: campaignId ?? undefined })
+      }
     } catch {
       setIsFavorite(prev)
     }
@@ -648,7 +665,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
               }}
             >
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', justifyContent: 'center' }}>
-                {user && handle && (
+                {user && handle && user.scope !== 'influencer' && (
                   <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
                     <Button
                       type="default"
@@ -675,6 +692,21 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                       aria-label="Abrir Instagram"
                     >
                       Abrir Instagram
+                    </Button>
+                  </Tooltip>
+                )}
+                {handle && canEdit && (
+                  <Tooltip title="Editar cadastro, ativação e dados do seu perfil na plataforma">
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={<EditOutlined />}
+                      onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                      style={DETAIL_SUBTLE_ACTION.editProfile}
+                      aria-label="Editar perfil"
+                    >
+                      Editar perfil
                     </Button>
                   </Tooltip>
                 )}

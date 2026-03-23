@@ -24,6 +24,8 @@ export interface AuthUser {
   profile_activated?: boolean
   /** E-mail validado (link de confirmação). Se ausente, tratamos como true para compatibilidade. */
   emailVerified?: boolean
+  /** Último CPF/CNPJ usado em pagamento (só dígitos), sugerido no próximo checkout. */
+  billingCpfCnpj?: string | null
 }
 
 interface AuthState {
@@ -70,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             displayName: u.display_name ?? null,
             profile_activated: u.profile_activated,
             emailVerified: u.email_verified,
+            billingCpfCnpj: u.billing_cpf_cnpj ?? null,
           },
           loading: false,
         }))
@@ -118,6 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           displayName: data.user.display_name ?? null,
           profile_activated: data.user.profile_activated,
           emailVerified: data.user.email_verified,
+          billingCpfCnpj: data.user.billing_cpf_cnpj ?? null,
         }
         : null,
       loading: false,
@@ -137,6 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         displayName: user.displayName ?? null,
         profile_activated: user.profile_activated,
         emailVerified: user.emailVerified,
+        billingCpfCnpj: user.billingCpfCnpj ?? null,
       },
       loading: false,
     })
@@ -167,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             displayName: u.display_name ?? null,
             profile_activated: u.profile_activated,
             emailVerified: u.email_verified,
+            billingCpfCnpj: u.billing_cpf_cnpj ?? null,
           },
         }))
       }

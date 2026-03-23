@@ -1,0 +1,11 @@
+{
+  "name": "influencer",
+  "private": true,
+  "description": "Monorepo: scripts na raiz delegam para cada pasta.",
+  "scripts": {
+    "start": "npm run start --prefix influencer-collector",
+    "collector": "npm run start --prefix influencer-collector",
+    "dev": "npm run dev --prefix frontend",
+    "api": "npm run api --prefix crawl"
+  }
+}

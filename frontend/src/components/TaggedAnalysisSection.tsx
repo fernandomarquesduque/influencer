@@ -270,6 +270,7 @@ export function TaggedAnalysisSection({
               failedImages={failedPostImages}
               formatShortNum={formatShortNum}
               showAuthor
+              showCardFooter
             />
             <Modal
               title="Todos os marcados"
@@ -294,6 +295,7 @@ export function TaggedAnalysisSection({
                 failedImages={failedPostImages}
                 formatShortNum={formatShortNum}
                 showAuthor
+                showCardFooter
               />
             </Modal>
           </Col>

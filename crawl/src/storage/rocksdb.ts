@@ -154,7 +154,11 @@ export class RocksDBStorage {
    * Se keyPrefix for informado, retorna apenas itens cuja chave (após "bucket:") começa com keyPrefix
    * (ex.: para bucket "post", keyPrefix "jonathas_avis:" retorna só posts desse perfil).
    */
-  async getByBucket<T = unknown>(bucket: string, keyPrefix?: string): Promise<{ key: string; value: T }[]> {
+  async getByBucket<T = unknown>(
+    bucket: string,
+    keyPrefix?: string,
+    opts?: { sort?: boolean }
+  ): Promise<{ key: string; value: T }[]> {
     const db = await this.getDb();
     const prefix = keyPrefix != null ? `${bucket}:${keyPrefix}` : `${bucket}:`;
     const limitKey = keyPrefix != null
@@ -170,7 +174,8 @@ export class RocksDBStorage {
     } finally {
       await stream.close();
     }
-    return items.sort((a, b) => a.key.localeCompare(b.key));
+    const sort = opts?.sort !== false;
+    return sort ? items.sort((a, b) => a.key.localeCompare(b.key)) : items;
   }
 
   estimatePayloadSize(obj: unknown): number {

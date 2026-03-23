@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { CreditsProvider } from './contexts/CreditsContext'
+import { PendingPaymentCelebrationProvider } from './contexts/PendingPaymentCelebrationContext'
 import { RequireAuth } from './components/RequireAuth'
 import Layout from './Layout'
 
@@ -63,6 +64,7 @@ export default function App() {
   return (
     <AuthProvider>
       <CreditsProvider>
+        <PendingPaymentCelebrationProvider>
         <FocusScrollHandler />
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -105,6 +107,7 @@ export default function App() {
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </PendingPaymentCelebrationProvider>
       </CreditsProvider>
     </AuthProvider >
   )

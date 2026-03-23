@@ -99,6 +99,164 @@ function normalizeUrl(value: string | undefined): string {
   return `https://${trimmed}`
 }
 
+/** Para o campo: mostrar só @usuario quando já salvou URL completa. */
+function parseTikTokHandleForForm(stored: string | undefined): string {
+  if (!stored || typeof stored !== 'string') return ''
+  const t = stored.trim()
+  if (!t) return ''
+  if (!/^https?:\/\//i.test(t)) {
+    return t.startsWith('@') ? t : t ? `@${t.replace(/^@+/, '')}` : ''
+  }
+  try {
+    const u = new URL(t)
+    const path = u.pathname.replace(/\/$/, '')
+    const m = path.match(/@([^/?#]+)/)
+    if (m?.[1]) return `@${m[1]}`
+    const parts = path.split('/').filter(Boolean)
+    const last = parts[parts.length - 1]
+    if (last && /^@?[a-zA-Z0-9._]+$/.test(last)) return last.startsWith('@') ? last : `@${last}`
+  } catch {
+    /* ignore */
+  }
+  return t
+}
+
+/** Salvar: usuário digita só o nome do perfil (com ou sem @) ou cola URL completa. */
+function normalizeTikTokUrl(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  const h = trimmed.replace(/^@+/, '').split(/[/?#\s]/)[0]?.trim() ?? ''
+  if (!h) return ''
+  return `https://www.tiktok.com/@${h}`
+}
+
+function parseFacebookHandleForForm(stored: string | undefined): string {
+  if (!stored || typeof stored !== 'string') return ''
+  const t = stored.trim()
+  if (!t) return ''
+  if (!/^https?:\/\//i.test(t)) return t.replace(/^@+/, '')
+  try {
+    const u = new URL(t)
+    const host = u.hostname.replace(/^www\./, '')
+    if (!/facebook\.com$/i.test(host) && !/fb\.com$/i.test(host)) return t
+    if (u.pathname.includes('profile.php')) return t
+    const parts = u.pathname.split('/').filter(Boolean)
+    if (parts.length === 0) return t
+    const last = parts[parts.length - 1]
+    if (last && /\.php$/i.test(last)) return t
+    return last || t
+  } catch {
+    return t
+  }
+}
+
+function normalizeFacebookUrl(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  if (/facebook\.com|fb\.com|profile\.php/i.test(trimmed)) return normalizeUrl(trimmed)
+  const slug = trimmed.replace(/^@+/, '').split(/[/?#\s]/)[0]?.trim() ?? ''
+  if (!slug) return ''
+  return `https://www.facebook.com/${slug}`
+}
+
+function parseLinkedInHandleForForm(stored: string | undefined): string {
+  if (!stored || typeof stored !== 'string') return ''
+  const t = stored.trim()
+  if (!t) return ''
+  if (!/^https?:\/\//i.test(t)) return t
+  try {
+    const u = new URL(t)
+    if (!/linkedin\.com$/i.test(u.hostname.replace(/^www\./, ''))) return t
+    const parts = u.pathname.split('/').filter(Boolean)
+    if (parts[0] === 'in' && parts[1]) return parts[1]
+    if (parts[0] === 'company' && parts[1]) return `company/${parts[1]}`
+  } catch {
+    /* ignore */
+  }
+  return t
+}
+
+function normalizeLinkedInUrl(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  const company = trimmed.match(/^company\/([^/?#\s]+)/i)
+  if (company?.[1]) return `https://www.linkedin.com/company/${company[1]}`
+  const slug = trimmed.split(/[/?#\s]/)[0]?.trim() ?? ''
+  if (!slug) return ''
+  return `https://www.linkedin.com/in/${slug}`
+}
+
+function parseTwitterHandleForForm(stored: string | undefined): string {
+  if (!stored || typeof stored !== 'string') return ''
+  const t = stored.trim()
+  if (!t) return ''
+  if (!/^https?:\/\//i.test(t)) {
+    return t.startsWith('@') ? t : `@${t.replace(/^@+/, '')}`
+  }
+  try {
+    const u = new URL(t)
+    const host = u.hostname.replace(/^www\./, '')
+    if (!/^(x|twitter)\.com$/i.test(host)) return t
+    const parts = u.pathname.split('/').filter(Boolean)
+    if (parts[0] === 'i' && parts[1] === 'status') return t
+    const h = parts[parts.length - 1]
+    if (h && /^[a-zA-Z0-9_]+$/.test(h)) return `@${h}`
+  } catch {
+    /* ignore */
+  }
+  return t
+}
+
+function normalizeTwitterUrl(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  const h = trimmed.replace(/^@+/, '').split(/[/?#\s]/)[0]?.trim() ?? ''
+  if (!h) return ''
+  return `https://x.com/${h}`
+}
+
+function stripUrlSchemeForDisplay(s: string): string {
+  const t = s.trim()
+  if (!t) return ''
+  if (!/^https?:\/\//i.test(t)) return t
+  try {
+    const u = new URL(t)
+    const path = u.pathname === '/' ? '' : u.pathname.replace(/\/$/, '')
+    const tail = `${path}${u.search}`.replace(/\/$/, '')
+    return tail ? `${u.host}${tail}` : u.host
+  } catch {
+    return t.replace(/^https?:\/\//i, '')
+  }
+}
+
+function parseWebsitesForForm(stored: string | undefined): string {
+  if (!stored || typeof stored !== 'string') return ''
+  const parts = stored.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
+  if (parts.length === 0) return ''
+  return parts.map(stripUrlSchemeForDisplay).join('\n')
+}
+
+function normalizeWebsites(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  const tokens = value.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
+  if (tokens.length === 0) return ''
+  return tokens
+    .map((p) => {
+      if (/^https?:\/\//i.test(p)) return p
+      if (p.startsWith('//')) return `https:${p}`
+      return normalizeUrl(p)
+    })
+    .join(', ')
+}
+
 function formatWhatsApp(value: string | undefined): string {
   if (!value || typeof value !== 'string') return ''
   const digits = value.replace(/\D/g, '')
@@ -279,11 +437,11 @@ export default function Activate() {
         neighborhoods: neighborhoodsList,
         informar_endereco_completo: act.allow_gifts,
         whatsapp: act.whatsapp ?? '',
-        tiktok: act.tiktok ?? '',
-        facebook: act.facebook ?? '',
-        linkedin: act.linkedin ?? '',
-        twitter: act.twitter ?? '',
-        websites: act.websites ?? '',
+        tiktok: parseTikTokHandleForForm(act.tiktok),
+        facebook: parseFacebookHandleForForm(act.facebook),
+        linkedin: parseLinkedInHandleForForm(act.linkedin),
+        twitter: parseTwitterHandleForForm(act.twitter),
+        websites: parseWebsitesForForm(act.websites),
         gender: act.gender ?? undefined,
         description: act.description?.trim() || suggestedBio,
         content_type: act.content_type ?? [],
@@ -382,11 +540,11 @@ export default function Activate() {
       country: undefined,
       allow_gifts: values.informar_endereco_completo === true,
       whatsapp: typeof values.whatsapp === 'string' ? values.whatsapp?.trim() || undefined : undefined,
-      tiktok: typeof values.tiktok === 'string' ? normalizeUrl(values.tiktok).trim() || undefined : undefined,
-      facebook: typeof values.facebook === 'string' ? normalizeUrl(values.facebook).trim() || undefined : undefined,
-      linkedin: typeof values.linkedin === 'string' ? normalizeUrl(values.linkedin).trim() || undefined : undefined,
-      twitter: typeof values.twitter === 'string' ? normalizeUrl(values.twitter).trim() || undefined : undefined,
-      websites: typeof values.websites === 'string' ? values.websites?.trim() || undefined : undefined,
+      tiktok: typeof values.tiktok === 'string' ? normalizeTikTokUrl(values.tiktok).trim() || undefined : undefined,
+      facebook: typeof values.facebook === 'string' ? normalizeFacebookUrl(values.facebook).trim() || undefined : undefined,
+      linkedin: typeof values.linkedin === 'string' ? normalizeLinkedInUrl(values.linkedin).trim() || undefined : undefined,
+      twitter: typeof values.twitter === 'string' ? normalizeTwitterUrl(values.twitter).trim() || undefined : undefined,
+      websites: typeof values.websites === 'string' ? normalizeWebsites(values.websites).trim() || undefined : undefined,
       gender: typeof values.gender === 'string' ? values.gender || undefined : undefined,
       description: typeof values.description === 'string' ? values.description?.trim() || undefined : undefined,
       content_type: Array.isArray(values.content_type) && values.content_type.length
@@ -912,45 +1070,67 @@ export default function Activate() {
                   <Form.Item
                     name="tiktok"
                     label={<Space><LinkOutlined /> TikTok</Space>}
-                    normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                    extra={
+                      <span className="activate-social-url-hint">
+                        <code>tiktok.com/@<strong>seuuser</strong></code>
+                      </span>
+                    }
                   >
-                    <Input placeholder="https://tiktok.com/@seuuser" />
+                    <Input placeholder="@seuuser" autoComplete="off" />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={12}>
                   <Form.Item
                     name="facebook"
                     label={<Space><LinkOutlined /> Facebook</Space>}
-                    normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                    extra={
+                      <span className="activate-social-url-hint">
+                        <code>facebook.com/<strong>seuperfil</strong></code>
+                      </span>
+                    }
                   >
-                    <Input placeholder="https://facebook.com/seuperfil" />
+                    <Input placeholder="seuperfil" autoComplete="off" />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={12}>
                   <Form.Item
                     name="linkedin"
                     label={<Space><LinkOutlined /> LinkedIn</Space>}
-                    normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                    extra={
+                      <span className="activate-social-url-hint">
+                        <code>linkedin.com/in/<strong>seuperfil</strong></code>
+                      </span>
+                    }
                   >
-                    <Input placeholder="https://linkedin.com/in/seuperfil" />
+                    <Input placeholder="seuperfil" autoComplete="off" />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={12}>
                   <Form.Item
                     name="twitter"
                     label={<Space><LinkOutlined /> X (Twitter)</Space>}
-                    normalize={(v) => (v && typeof v === 'string' ? normalizeUrl(v) : v)}
+                    extra={
+                      <span className="activate-social-url-hint">
+                        <code>x.com/<strong>seuuser</strong></code>
+                      </span>
+                    }
                   >
-                    <Input placeholder="https://x.com/seuuser" />
+                    <Input placeholder="@seuuser" autoComplete="off" />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={12}>
                   <Form.Item
                     name="websites"
                     label={<Space><GlobalOutlined /> Websites</Space>}
-                    extra="Um ou mais sites, separados por vírgula ou linha."
+                    extra={
+                      <span className="activate-social-url-hint">
+                        <code>
+                          https://<strong>meusite.com</strong>/sobre
+                        </code>
+                      </span>
+                    }
                   >
-                    <Input.TextArea placeholder="https://meusite.com" rows={2} />
+                    <Input.TextArea placeholder="meusite.com" rows={2} autoComplete="off" />
                   </Form.Item>
                 </Col>
               </Row>

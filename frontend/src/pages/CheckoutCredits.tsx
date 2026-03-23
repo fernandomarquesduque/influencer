@@ -8,6 +8,7 @@ import { Card, Typography, Button, Spin, Alert, Input, Radio, message } from 'an
 import { DollarOutlined, CopyOutlined, BankOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import { useCredits } from '../contexts/CreditsContext'
+import { useRegisterPendingPaymentWatch } from '../contexts/PendingPaymentCelebrationContext'
 import { registerAndCreatePayment, type RegisterAndCreatePaymentResponse } from '../api'
 
 const { Title, Text } = Typography
@@ -30,6 +31,7 @@ export default function CheckoutCredits() {
   const navigate = useNavigate()
   const { user, loading: authLoading, loginWithToken } = useAuth()
   const { refreshCredits } = useCredits()
+  const registerPendingPaymentWatch = useRegisterPendingPaymentWatch()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -39,6 +41,11 @@ export default function CheckoutCredits() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [created, setCreated] = useState<RegisterAndCreatePaymentResponse | null>(null)
+
+  useEffect(() => {
+    const id = created?.paymentId
+    if (id) registerPendingPaymentWatch(id)
+  }, [created?.paymentId, registerPendingPaymentWatch])
 
   useEffect(() => {
     if (authLoading) return

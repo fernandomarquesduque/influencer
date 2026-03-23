@@ -90,3 +90,20 @@
   background: #ff4d4f !important;
   color: #fff !important;
 }
+
+/* Passo Contato — URL de exemplo com nickname em destaque */
+.activate-social-url-hint {
+  display: block;
+  line-height: 1.5;
+}
+
+.activate-social-url-hint code {
+  display: inline-block;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--app-primary-muted, rgba(0, 0, 0, 0.06));
+  color: var(--app-text);
+  word-break: break-all;
+}

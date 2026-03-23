@@ -18,6 +18,8 @@ export interface AuthUserRow {
   mission_instagram_claimed?: number;
   /** Nome escolhido no cadastro (ex.: assinante). */
   display_name?: string | null;
+  /** Último CPF/CNPJ usado em pagamento (só dígitos), para sugerir na próxima compra. */
+  billing_cpf_cnpj?: string | null;
 }
 
 export class AuthDb {
@@ -103,9 +105,11 @@ export class AuthDb {
     addColIfMissing('email_verification_expires_at', 'ALTER TABLE auth_user ADD COLUMN email_verification_expires_at TEXT');
     addColIfMissing('mission_instagram_claimed', 'ALTER TABLE auth_user ADD COLUMN mission_instagram_claimed INTEGER NOT NULL DEFAULT 0');
     addColIfMissing('display_name', 'ALTER TABLE auth_user ADD COLUMN display_name TEXT');
+    addColIfMissing('billing_cpf_cnpj', 'ALTER TABLE auth_user ADD COLUMN billing_cpf_cnpj TEXT');
   }
 
-  private authUserSelect = 'id, username, password_hash, scope, profile_handle, created_at, COALESCE(email_verified, 1) AS email_verified, email_verification_token, email_verification_expires_at, COALESCE(mission_instagram_claimed, 0) AS mission_instagram_claimed, display_name';
+  private authUserSelect =
+    'id, username, password_hash, scope, profile_handle, created_at, COALESCE(email_verified, 1) AS email_verified, email_verification_token, email_verification_expires_at, COALESCE(mission_instagram_claimed, 0) AS mission_instagram_claimed, display_name, billing_cpf_cnpj';
 
   getByUsername(username: string): AuthUserRow | undefined {
     const u = username.trim().toLowerCase().replace(/@/g, '');
@@ -156,6 +160,19 @@ export class AuthDb {
 
   setMissionInstagramClaimed(userId: number): void {
     this.db.prepare('UPDATE auth_user SET mission_instagram_claimed = 1 WHERE id = ?').run(userId);
+  }
+
+  /** Salva CPF/CNPJ (apenas dígitos, 11 ou 14) para sugerir no próximo pagamento; null limpa. */
+  setBillingCpfCnpj(userId: number, digits: string | null): void {
+    if (digits == null || digits === '') {
+      this.db.prepare('UPDATE auth_user SET billing_cpf_cnpj = NULL WHERE id = ?').run(userId);
+      return;
+    }
+    const d = digits.replace(/\D/g, '');
+    if (d.length !== 11 && d.length !== 14) {
+      throw new Error('CPF/CNPJ inválido para armazenar');
+    }
+    this.db.prepare('UPDATE auth_user SET billing_cpf_cnpj = ? WHERE id = ?').run(d, userId);
   }
 
   listUsers(): Omit<AuthUserRow, 'password_hash'>[] {

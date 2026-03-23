@@ -190,6 +190,19 @@ export class PaymentsDb {
       .all(userId, limit, offset) as PaymentRow[];
   }
 
+  /** No máximo uma cobrança pendente por usuário — retorna a mais recente, se houver. */
+  getFirstPendingForUser(userId: number): PaymentRow | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
+                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
+                report_query, report_desired_count, campaign_id
+         FROM payment WHERE user_id = ? AND status = 'PENDING' ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(userId) as PaymentRow | undefined;
+    return row ?? null;
+  }
+
   updateStatus(
     id: string,
     status: PaymentStatus,
@@ -214,5 +227,26 @@ export class PaymentsDb {
       )
       .run(status, asaasPaymentId);
     return { ...row, status };
+  }
+
+  /**
+   * Só atualiza se ainda estiver PENDING — evita efeitos duplicados (webhook + sync ou duas requests).
+   * Retorna a linha atualizada ou null se já estava confirmada / não existe.
+   */
+  confirmPendingByAsaasIdIfStillPending(asaasPaymentId: string): PaymentRow | null {
+    const run = this.db
+      .prepare(
+        `UPDATE payment SET status = 'CONFIRMED', updated_at = datetime('now')
+         WHERE asaas_payment_id = ? AND status = 'PENDING'`
+      )
+      .run(asaasPaymentId);
+    if (run.changes === 0) return null;
+    return this.getByAsaasPaymentId(asaasPaymentId);
+  }
+
+  /** Remove registro local (após cancelar no gateway, se houver). */
+  deleteByIdForUser(id: string, userId: number): boolean {
+    const r = this.db.prepare('DELETE FROM payment WHERE id = ? AND user_id = ?').run(id, userId);
+    return r.changes > 0;
   }
 }

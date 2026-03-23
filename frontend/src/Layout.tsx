@@ -6,6 +6,7 @@ import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import { useCreditsOptional } from './contexts/CreditsContext'
+import { usePendingInvoiceBadge } from './contexts/PendingPaymentCelebrationContext'
 import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import Logo from './components/Logo'
@@ -52,6 +53,7 @@ export default function Layout() {
   const navigate = useNavigate()
   const { user, logout, isAdm } = useAuth()
   const creditsState = useCreditsOptional()
+  const hasPendingInvoice = usePendingInvoiceBadge()
   const { theme, setTheme } = useTheme()
   const screens = useBreakpoint()
   const isMobile = !screens.md
@@ -88,6 +90,12 @@ export default function Layout() {
   }, [user?.scope, location.pathname, navigate])
 
   const isAssinante = user?.scope === 'assinante'
+  /** Barra de missões/recompensas só na lista Minhas campanhas (não em create, detalhe de campanha, etc.). */
+  const missionsBarPath = location.pathname.replace(/\/$/, '') || '/'
+  const showMissionsBar =
+    missionsBarPath === '/app' || missionsBarPath === '/app/campaigns'
+  const hideCreditsOnInfluencerProfile =
+    location.pathname.startsWith('/app/influencer') && !isAdm
 
   useEffect(() => {
     if (!user) {
@@ -310,26 +318,42 @@ export default function Layout() {
                             </span>
                           </button>
                         </Dropdown>
-                        {creditsState != null && (
-                          <Link
-                            to="/app/payments"
-                            style={{
-                              fontSize: 15,
-                              fontWeight: 600,
-                              color: 'var(--app-primary)',
-                              background: 'var(--app-primary-muted)',
-                              padding: '6px 12px',
-                              borderRadius: 8,
-                              whiteSpace: 'nowrap',
-                              textDecoration: 'none',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 4,
-                            }}
-                            title="Créditos disponíveis - clique para ver pagamentos"
-                          >
-                            💰 {creditsState.loading ? '...' : `${creditsState.balance} créditos`}
-                          </Link>
+                        {creditsState != null && !hideCreditsOnInfluencerProfile && (
+                          <span className="layout-credits-wrap">
+                            <Link
+                              to="/app/payments"
+                              className={`layout-credits-pill${hasPendingInvoice ? ' layout-credits-pill--pending' : ''}`}
+                              style={{
+                                fontSize: 15,
+                                fontWeight: 600,
+                                color: 'var(--app-primary)',
+                                background: 'var(--app-primary-muted)',
+                                padding: '6px 12px',
+                                borderRadius: 8,
+                                whiteSpace: 'nowrap',
+                                textDecoration: 'none',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                              }}
+                              title={
+                                hasPendingInvoice
+                                  ? 'Créditos — há cobrança pendente (PIX/boleto). Clique para ver.'
+                                  : 'Créditos disponíveis — clique para ver pagamentos'
+                              }
+                            >
+                              💰 {creditsState.loading ? '...' : `${creditsState.balance} créditos`}
+                            </Link>
+                            {hasPendingInvoice && (
+                              <span
+                                className="layout-credits-pending-count"
+                                aria-label="1 cobrança pendente"
+                                title="1 fatura pendente"
+                              >
+                                1
+                              </span>
+                            )}
+                          </span>
                         )}
                       </>
                     ) : (
@@ -402,8 +426,19 @@ export default function Layout() {
                       </Link>
                     )}
                     {user && (
-                      <Link to="/app/payments" style={{ ...drawerLinkStyle, ...(isActive('/app/payments') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
-                        Meus pagamentos
+                      <Link
+                        to="/app/payments"
+                        style={{ ...drawerLinkStyle, ...(isActive('/app/payments') ? drawerLinkActiveStyle : {}) }}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          Meus pagamentos
+                          {hasPendingInvoice && (
+                            <span className="layout-drawer-pending-badge" title="Fatura PIX/boleto pendente">
+                              Pendente
+                            </span>
+                          )}
+                        </span>
                       </Link>
                     )}
                     {user && (
@@ -462,7 +497,7 @@ export default function Layout() {
         </>
       )}
       <Content className="app-layout-content" style={{ overflowX: 'hidden' }}>
-        {user && <MissionsBar />}
+        {user && showMissionsBar && <MissionsBar />}
         <div className="app-page">
           <Outlet />
         </div>

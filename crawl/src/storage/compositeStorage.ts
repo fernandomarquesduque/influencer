@@ -68,8 +68,12 @@ export class CompositeStorage {
     return this.rocks.listHandles();
   }
 
-  async getByBucket<T = unknown>(bucket: string, keyPrefix?: string): Promise<{ key: string; value: T }[]> {
-    return this.rocks.getByBucket<T>(bucket, keyPrefix);
+  async getByBucket<T = unknown>(
+    bucket: string,
+    keyPrefix?: string,
+    opts?: { sort?: boolean }
+  ): Promise<{ key: string; value: T }[]> {
+    return this.rocks.getByBucket<T>(bucket, keyPrefix, opts);
   }
 
   async listKeys(bucket: string): Promise<string[]> {

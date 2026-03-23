@@ -511,6 +511,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     }
     const email_verified = user.email_verified !== undefined ? user.email_verified === 1 : undefined;
     const display_name = (user as { display_name?: string | null }).display_name ?? null;
+    const billing_cpf_cnpj = (user as { billing_cpf_cnpj?: string | null }).billing_cpf_cnpj ?? null;
     res.json({
       token,
       user: {
@@ -521,6 +522,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
         ...(display_name != null && { display_name }),
         ...(profile_activated !== undefined && { profile_activated }),
         ...(email_verified !== undefined && { email_verified: email_verified === true }),
+        ...(billing_cpf_cnpj && { billing_cpf_cnpj }),
       },
     });
   } catch (e) {
@@ -549,6 +551,7 @@ app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
   }
   const email_verified = dbUser?.email_verified !== undefined ? dbUser.email_verified === 1 : undefined;
   const display_name = dbUser && 'display_name' in dbUser ? (dbUser as { display_name?: string | null }).display_name ?? null : null;
+  const billing_cpf_cnpj = dbUser ? ((dbUser as { billing_cpf_cnpj?: string | null }).billing_cpf_cnpj ?? null) : null;
   res.json({
     user: {
       id: userId,
@@ -558,6 +561,7 @@ app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
       display_name,
       ...(profile_activated !== undefined && { profile_activated }),
       ...(email_verified !== undefined && { email_verified: email_verified === true }),
+      ...(billing_cpf_cnpj && { billing_cpf_cnpj }),
     },
   });
 });
@@ -569,7 +573,7 @@ app.patch('/api/auth/me', (req: RequestWithAuth, res: Response) => {
     return;
   }
   const userId = Number(req.user.sub);
-  const body = req.body as { profile_handle?: string | null; display_name?: string | null; name?: string | null };
+  const body = req.body as { profile_handle?: string | null; display_name?: string | null; name?: string | null; billing_cpf_cnpj?: string | null };
   const updates: { profile_handle?: string | null; display_name?: string | null } = {};
   if (body.profile_handle !== undefined) {
     updates.profile_handle = body.profile_handle == null || (typeof body.profile_handle === 'string' && !body.profile_handle.trim())
@@ -583,6 +587,16 @@ app.patch('/api/auth/me', (req: RequestWithAuth, res: Response) => {
   if (Object.keys(updates).length > 0) {
     authDb.updateUser(userId, updates);
   }
+  if (body.billing_cpf_cnpj !== undefined) {
+    const raw = body.billing_cpf_cnpj == null ? '' : String(body.billing_cpf_cnpj);
+    const d = raw.replace(/\D/g, '');
+    try {
+      authDb.setBillingCpfCnpj(userId, d.length === 11 || d.length === 14 ? d : null);
+    } catch {
+      res.status(400).json({ error: 'CPF/CNPJ inválido (use 11 ou 14 dígitos, ou vazio para limpar).' });
+      return;
+    }
+  }
   const updated = authDb.getById(userId);
   if (!updated) {
     res.status(500).json({ error: 'Erro ao atualizar perfil.' });
@@ -595,6 +609,7 @@ app.patch('/api/auth/me', (req: RequestWithAuth, res: Response) => {
   );
   const email_verified = updated.email_verified !== undefined ? updated.email_verified === 1 : undefined;
   const display_name = (updated as { display_name?: string | null }).display_name ?? null;
+  const billing_cpf_cnpj = (updated as { billing_cpf_cnpj?: string | null }).billing_cpf_cnpj ?? null;
   res.status(200).json({
     user: {
       id: updated.id,
@@ -603,6 +618,7 @@ app.patch('/api/auth/me', (req: RequestWithAuth, res: Response) => {
       profile_handle: updated.profile_handle ?? null,
       display_name,
       ...(email_verified !== undefined && { email_verified: email_verified === true }),
+      ...(billing_cpf_cnpj && { billing_cpf_cnpj }),
     },
     token,
   });
@@ -1835,7 +1851,10 @@ app.get('/api/profiles', rateLimitDataApi, requireCampaignIdHeader, async (req: 
   try {
     const campaignId = req.allowedCampaignId!;
     const userId = Number(req.user!.sub);
-    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
+    const handles =
+      campaignId === 'all'
+        ? creditsCampaignsDb.getAllPaidHandlesUnion(userId)
+        : creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
     if (!handles || handles.length === 0) {
       res.json({ total: 0, items: [] });
       return;
@@ -1867,6 +1886,16 @@ app.get('/api/profiles', rateLimitDataApi, requireCampaignIdHeader, async (req: 
 });
 
 const PUBLIC_PAGE_SIZE = 12;
+
+const COST_TIER_VALUES = ['low', 'medium', 'high', 'very_high'] as const;
+
+function parseCostTierFilter(v: unknown): string[] | undefined {
+  if (v == null) return undefined;
+  const arr = Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',').map((x) => x.trim().toLowerCase()) : [];
+  const filtered = arr.filter((s) => (COST_TIER_VALUES as readonly string[]).includes(s));
+  return filtered.length > 0 ? filtered : undefined;
+}
+
 /** Requisições por minuto por IP (anônimo). Configurável por API_RATE_LIMIT_PER_MIN_IP. */
 const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 30;
 /** Requisições por minuto por usuário (public/influencer). Configurável por API_RATE_LIMIT_PER_MIN_USER. */
@@ -2013,6 +2042,13 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
     const socialNetworks = req.query.socialNetworks;
     const excludePrivate = req.query.excludePrivate === 'true';
     const accountTypeFilter = req.query.accountTypeFilter;
+    const sizeFilterRaw = req.query.sizeFilter;
+    const sizeFilterArr =
+      Array.isArray(sizeFilterRaw)
+        ? sizeFilterRaw.map(String).filter(Boolean)
+        : typeof sizeFilterRaw === 'string'
+          ? sizeFilterRaw.split(',').map((x) => x.trim()).filter(Boolean)
+          : undefined;
     const sort = (req.query.sort as string) || 'engagement_desc';
     const limitRaw = quantitativosOnly ? 0 : (isPublicOrAnonymous ? PUBLIC_PAGE_SIZE : Math.min(Math.max(0, Number(req.query.limit) || 50), 200));
     const offsetRaw = quantitativosOnly ? 0 : (isPublicOrAnonymous ? 0 : Math.max(0, Number(req.query.offset) || 0));
@@ -2042,6 +2078,8 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       pricingReels: parseNumList(req.query.pricingReels),
       pricingStory: parseNumList(req.query.pricingStory),
       pricingDestaque: parseNumList(req.query.pricingDestaque),
+      costTierFilter: parseCostTierFilter(req.query.costTierFilter),
+      sizeFilter: sizeFilterArr?.length ? sizeFilterArr : undefined,
       sort,
       limit,
       offset,
@@ -2111,6 +2149,90 @@ const REPORT_PRICE_CENTS_ACTIVATED = 200;
 /** Preço por influenciador não ativado no relatório (R$ 1,00). */
 const REPORT_PRICE_CENTS_NOT_ACTIVATED = 100;
 
+/** Converte linha payment → corpo igual ao POST /me/payments (modal de PIX/boleto). */
+function paymentRowToCreditsChargePayload(row: PaymentRow) {
+  return {
+    paymentId: row.id,
+    asaasPaymentId: row.asaas_payment_id,
+    status: row.status,
+    credits: row.credits_granted,
+    amountCents: row.amount_cents,
+    valueBrl: row.amount_cents / 100,
+    billingType: row.billing_type,
+    invoiceUrl: row.invoice_url,
+    bankSlipUrl: row.bank_slip_url,
+    pixCopyPaste: row.pix_copy_paste,
+  };
+}
+
+/** Status no Asaas que equivale a pago (inclui "Recebida" = RECEIVED). */
+function asaasRemoteStatusIsPaid(status: string | undefined): boolean {
+  const u = (status ?? '').trim().toUpperCase();
+  return (
+    u === 'RECEIVED' ||
+    u === 'CONFIRMED' ||
+    u === 'DONE' ||
+    u === 'RECEIVED_IN_CASH'
+  );
+}
+
+/**
+ * Marca pagamento como confirmado e aplica créditos / campanha (mesma regra do webhook).
+ * Só deve ser chamado quando `row.status === 'PENDING'`.
+ */
+async function finalizePendingPaymentRow(row: PaymentRow): Promise<void> {
+  const asaasId = row.asaas_payment_id?.trim();
+  if (!asaasId) return;
+  const fresh = paymentsDb.confirmPendingByAsaasIdIfStillPending(asaasId);
+  if (!fresh) return;
+  const reportCount = fresh.report_desired_count;
+  const reportQueryStr = fresh.report_query;
+  const existingCampaignId = (fresh as PaymentRow & { campaign_id?: string | null }).campaign_id;
+  if (reportCount != null && reportCount > 0 && reportQueryStr && !existingCampaignId) {
+    try {
+      await createReportCampaignFromQuery(
+        JSON.parse(reportQueryStr) as ProfilesSearchQuery,
+        reportCount,
+        fresh.user_id
+      );
+    } catch (e) {
+      console.error('[payments] finalize report campaign create', e);
+    }
+  } else if (existingCampaignId && reportCount != null && reportCount > 0) {
+    try {
+      creditsCampaignsDb.setCampaignQuantity(existingCampaignId, fresh.user_id, reportCount);
+      creditsCampaignsDb.setCampaignPaymentStatus(existingCampaignId, fresh.user_id, 'paid');
+    } catch (e) {
+      console.error('[payments] finalize trim campaign', e);
+    }
+  } else if (existingCampaignId) {
+    try {
+      creditsCampaignsDb.setCampaignPaymentStatus(existingCampaignId, fresh.user_id, 'paid');
+    } catch (e) {
+      console.error('[payments] finalize set campaign paid', e);
+    }
+  } else if (!reportQueryStr || reportCount == null || reportCount <= 0) {
+    creditsCampaignsDb.addCredits(fresh.user_id, fresh.credits_granted, 'payment', fresh.id);
+  }
+}
+
+/**
+ * Sem webhook: ao consultar pendência, pergunta ao Asaas se a cobrança já foi paga e atualiza o SQLite.
+ */
+async function syncPendingPaymentFromAsaasIfConfigured(row: PaymentRow): Promise<void> {
+  if (row.status !== 'PENDING') return;
+  const asaasId = row.asaas_payment_id?.trim();
+  if (!asaasId || !asaas.isAsaasConfigured()) return;
+  try {
+    const remote = await asaas.getPayment(asaasId);
+    if (asaasRemoteStatusIsPaid(remote?.status)) {
+      await finalizePendingPaymentRow(row);
+    }
+  } catch (e) {
+    console.warn('[payments] Asaas getPayment (sync pendente):', e instanceof Error ? e.message : e);
+  }
+}
+
 /** Lista pagamentos do usuário (comprar créditos). */
 app.get('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
   try {
@@ -2141,6 +2263,29 @@ app.get('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
   }
 });
 
+/** Cobrança pendente única do usuário (para reabrir PIX/boleto no modal). Deve vir antes de /:id. */
+app.get('/api/me/payments/pending', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    let row = paymentsDb.getFirstPendingForUser(userId);
+    if (row) {
+      await syncPendingPaymentFromAsaasIfConfigured(row);
+      row = paymentsDb.getFirstPendingForUser(userId);
+    }
+    if (!row) {
+      res.json({ payment: null });
+      return;
+    }
+    res.json({ payment: paymentRowToCreditsChargePayload(row) });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 /** Detalhe de um pagamento do usuário. */
 app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
   try {
@@ -2150,10 +2295,18 @@ app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
     }
     const userId = Number(req.user.sub);
     const id = String(req.params.id ?? '').trim();
-    const row = paymentsDb.getById(id, userId);
+    let row = paymentsDb.getById(id, userId);
     if (!row) {
       res.status(404).json({ error: 'Pagamento não encontrado' });
       return;
+    }
+    if (row.status === 'PENDING') {
+      await syncPendingPaymentFromAsaasIfConfigured(row);
+      row = paymentsDb.getById(id, userId);
+      if (!row) {
+        res.status(404).json({ error: 'Pagamento não encontrado' });
+        return;
+      }
     }
     res.json({
       id: row.id,
@@ -2168,6 +2321,44 @@ app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Remove cobrança pendente (cancela no Asaas quando aplicável e apaga o registro local). */
+app.delete('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const id = String(req.params.id ?? '').trim();
+    const row = paymentsDb.getById(id, userId);
+    if (!row) {
+      res.status(404).json({ error: 'Pagamento não encontrado' });
+      return;
+    }
+    if (row.status !== 'PENDING') {
+      res.status(400).json({ error: 'Só é possível remover cobranças pendentes.' });
+      return;
+    }
+    const asaasId = row.asaas_payment_id?.trim() || null;
+    if (asaasId && asaas.isAsaasConfigured()) {
+      try {
+        await asaas.deleteAsaasPayment(asaasId);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        res.status(502).json({ error: msg || 'Não foi possível cancelar no gateway de pagamento.' });
+        return;
+      }
+    }
+    if (!paymentsDb.deleteByIdForUser(id, userId)) {
+      res.status(404).json({ error: 'Pagamento não encontrado' });
+      return;
+    }
+    res.status(204).end();
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -2412,7 +2603,11 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
     const asaasPaymentId = asaasPayment?.id ?? null;
     const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
     const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
-    const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+    const pixCopyPaste = await asaas.resolvePixCopyPasteAfterCreate(
+      billingType as 'PIX' | 'BOLETO',
+      asaasPaymentId,
+      asaasPayment
+    );
 
     const paymentId = paymentsDb.createPayment({
       userId,
@@ -2492,6 +2687,96 @@ async function getReportHandlesAndPrice(
   const notActivatedCount = finalHandles.length - activatedCount;
   const amountCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
   return { handles: finalHandles, amountCents, activatedCount, notActivatedCount };
+}
+
+function normalizeReportHandleKey(h: string): string {
+  return String(h).toLowerCase().replace(/^@/, '').trim();
+}
+
+/** Preço do relatório descontando perfis que o usuário já possui em outras campanhas pagas. */
+function sumReportPriceWithOwnershipDedup(
+  items: ProfileListItem[],
+  ownedElsewhere: ReadonlySet<string>
+): {
+  amountCents: number;
+  originalAmountCents: number;
+  alreadyOwnedCount: number;
+  chargedActivatedCount: number;
+  chargedNotActivatedCount: number;
+  totalActivatedCount: number;
+} {
+  let amountCents = 0;
+  let originalAmountCents = 0;
+  let alreadyOwnedCount = 0;
+  let chargedActivatedCount = 0;
+  let chargedNotActivatedCount = 0;
+  let totalActivatedCount = 0;
+  for (const item of items) {
+    const key = normalizeReportHandleKey(String((item as ProfileListItem).handle ?? ''));
+    if (!key) continue;
+    const act = (item as ProfileListItem).activation;
+    const isActivated = Boolean(act?.city && String(act.city).trim());
+    if (isActivated) totalActivatedCount++;
+    const tierCents = isActivated ? REPORT_PRICE_CENTS_ACTIVATED : REPORT_PRICE_CENTS_NOT_ACTIVATED;
+    originalAmountCents += tierCents;
+    if (ownedElsewhere.has(key)) {
+      alreadyOwnedCount++;
+      continue;
+    }
+    amountCents += tierCents;
+    if (isActivated) chargedActivatedCount++;
+    else chargedNotActivatedCount++;
+  }
+  return {
+    amountCents,
+    originalAmountCents,
+    alreadyOwnedCount,
+    chargedActivatedCount,
+    chargedNotActivatedCount,
+    totalActivatedCount,
+  };
+}
+
+/** Créditos a debitar = perfis no prefixo da lista que ainda não estão em outro relatório pago. */
+function countBillableCreditsForHandlePrefix(
+  orderedHandles: string[],
+  prefixLen: number,
+  ownedSet: ReadonlySet<string>
+): number {
+  let c = 0;
+  const n = Math.min(Math.max(0, prefixLen), orderedHandles.length);
+  for (let i = 0; i < n; i++) {
+    const k = normalizeReportHandleKey(orderedHandles[i]);
+    if (k && !ownedSet.has(k)) c++;
+  }
+  return c;
+}
+
+/** Valor em centavos da campanha inteira (ou erro null) com desconto por propriedade em outras campanhas. */
+async function getCampaignBillableReportPricing(
+  campaignId: string,
+  userId: number
+): Promise<{
+  amountCents: number;
+  originalAmountCents: number;
+  alreadyOwnedCount: number;
+  profileCount: number;
+} | null> {
+  const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
+  if (!handles || handles.length === 0) return null;
+  const owned = new Set(creditsCampaignsDb.getAllPaidHandlesUnion(userId));
+  const result = await searchProfiles(
+    db,
+    { limit: Math.min(10000, handles.length), offset: 0, sort: 'engagement_desc' },
+    { restrictToHandles: handles }
+  );
+  const sums = sumReportPriceWithOwnershipDedup(result.items as ProfileListItem[], owned);
+  return {
+    amountCents: sums.amountCents,
+    originalAmountCents: sums.originalAmountCents,
+    alreadyOwnedCount: sums.alreadyOwnedCount,
+    profileCount: result.items.length,
+  };
 }
 
 /** Cria campanha a partir da query e quantidade. Retorna campaignId ou null se nenhum handle. */
@@ -2620,7 +2905,11 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
         const asaasPaymentId = asaasPayment?.id ?? null;
         const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
         const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
-        const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+        const pixCopyPaste = await asaas.resolvePixCopyPasteAfterCreate(
+          billingType as 'PIX' | 'BOLETO',
+          asaasPaymentId,
+          asaasPayment
+        );
         const hasPaymentUrl = Boolean(bankSlipUrl || pixCopyPaste);
         if (!hasPaymentUrl || !asaasPaymentId) {
           res.status(502).json({ error: 'Não foi possível gerar o pagamento. Tente novamente.' });
@@ -2757,7 +3046,11 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
     const asaasPaymentId = asaasPayment?.id ?? null;
     const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
     const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
-    const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+    const pixCopyPaste = await asaas.resolvePixCopyPasteAfterCreate(
+      billingType as 'PIX' | 'BOLETO',
+      asaasPaymentId,
+      asaasPayment
+    );
 
     const campaignIdReport = await createReportCampaignFromQuery(query, desiredCount, userId, expiresAt);
     const paymentId = paymentsDb.createPayment({
@@ -2811,13 +3104,18 @@ app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
       return;
     }
     const userId = Number(req.user.sub);
-    const body = req.body as { credits?: number; billingType?: string };
+    const body = req.body as { credits?: number; billingType?: string; cpfCnpj?: string };
     const credits = Number(body?.credits);
     if (!Number.isFinite(credits) || credits < 1 || credits > 10000) {
       res.status(400).json({ error: 'Envie credits (1 a 10000)' });
       return;
     }
     const billingType = (body?.billingType ?? 'PIX').toUpperCase() === 'BOLETO' ? 'BOLETO' : 'PIX';
+    const cpfDigits = (body?.cpfCnpj ?? '').replace(/\D/g, '');
+    if (billingType === 'BOLETO' && cpfDigits.length !== 11 && cpfDigits.length !== 14) {
+      res.status(400).json({ error: 'Para boleto, informe CPF (11 dígitos) ou CNPJ (14 dígitos).' });
+      return;
+    }
     const amountCents = credits * CREDITS_PRICE_CENTS;
     const valueBrl = amountCents / 100;
 
@@ -2826,6 +3124,17 @@ app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
       res.status(401).json({ error: 'Usuário não encontrado' });
       return;
     }
+
+    const pendingExisting = paymentsDb.getFirstPendingForUser(userId);
+    if (pendingExisting) {
+      res.status(409).json({
+        error:
+          'Já existe uma cobrança pendente. Conclua o pagamento, reabra pelo botão de compra ou cancele em Meus pagamentos antes de gerar outra.',
+        payment: paymentRowToCreditsChargePayload(pendingExisting),
+      });
+      return;
+    }
+
     const name = authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username;
     const email = authUser.username.includes('@') ? authUser.username : `user${userId}@payments.influencer.local`;
     const externalRef = `user_${userId}`;
@@ -2839,12 +3148,20 @@ app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
         name,
         email,
         externalReference: externalRef,
+        ...(cpfDigits.length === 11 || cpfDigits.length === 14 ? { cpfCnpj: cpfDigits } : {}),
       });
       asaasCustomerId = created?.id ?? null;
     }
     if (!asaasCustomerId) {
       res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
       return;
+    }
+    if (cpfDigits.length === 11 || cpfDigits.length === 14) {
+      try {
+        await asaas.updateCustomer(asaasCustomerId, { cpfCnpj: cpfDigits });
+      } catch (updateErr) {
+        console.warn('[me/payments] Asaas updateCustomer cpfCnpj:', updateErr);
+      }
     }
 
     const dueDate = new Date();
@@ -2863,7 +3180,11 @@ app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
     const asaasPaymentId = asaasPayment?.id ?? null;
     const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
     const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
-    const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+    const pixCopyPaste = await asaas.resolvePixCopyPasteAfterCreate(
+      billingType as 'PIX' | 'BOLETO',
+      asaasPaymentId,
+      asaasPayment
+    );
 
     const paymentId = paymentsDb.createPayment({
       userId,
@@ -2877,6 +3198,14 @@ app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
       bankSlipUrl,
       pixCopyPaste,
     });
+
+    if (cpfDigits.length === 11 || cpfDigits.length === 14) {
+      try {
+        authDb.setBillingCpfCnpj(userId, cpfDigits);
+      } catch (saveDocErr) {
+        console.warn('[me/payments] setBillingCpfCnpj:', saveDocErr);
+      }
+    }
 
     res.status(201).json({
       paymentId,
@@ -2915,43 +3244,9 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
       res.status(200).json({ received: true });
       return;
     }
-    const confirmedStatus = payment?.status?.toUpperCase();
-    const isPaid =
-      confirmedStatus === 'RECEIVED' ||
-      confirmedStatus === 'CONFIRMED' ||
-      confirmedStatus === 'DONE' ||
-      confirmedStatus === 'RECEIVED_IN_CASH';
-    if (isPaid && row.status === 'PENDING') {
-      paymentsDb.updateStatusByAsaasId(asaasId, 'CONFIRMED');
-      const reportCount = row.report_desired_count;
-      const reportQueryStr = row.report_query;
-      const existingCampaignId = (row as PaymentRow & { campaign_id?: string | null }).campaign_id;
-      if (reportCount != null && reportCount > 0 && reportQueryStr && !existingCampaignId) {
-        try {
-          await createReportCampaignFromQuery(
-            JSON.parse(reportQueryStr) as ProfilesSearchQuery,
-            reportCount,
-            row.user_id
-          );
-        } catch (e) {
-          console.error('[payments/webhook] report campaign create', e);
-        }
-      } else if (existingCampaignId && reportCount != null && reportCount > 0) {
-        try {
-          creditsCampaignsDb.setCampaignQuantity(existingCampaignId, row.user_id, reportCount);
-          creditsCampaignsDb.setCampaignPaymentStatus(existingCampaignId, row.user_id, 'paid');
-        } catch (e) {
-          console.error('[payments/webhook] trim campaign to quantity', e);
-        }
-      } else if (existingCampaignId) {
-        try {
-          creditsCampaignsDb.setCampaignPaymentStatus(existingCampaignId, row.user_id, 'paid');
-        } catch (e) {
-          console.error('[payments/webhook] set campaign paid', e);
-        }
-      } else if (!reportQueryStr || reportCount == null || reportCount <= 0) {
-        creditsCampaignsDb.addCredits(row.user_id, row.credits_granted, 'payment', row.id);
-      }
+    const confirmedStatus = payment?.status;
+    if (asaasRemoteStatusIsPaid(confirmedStatus) && row.status === 'PENDING') {
+      await finalizePendingPaymentRow(row);
     }
     res.status(200).json({ received: true });
   } catch (e) {
@@ -3076,6 +3371,9 @@ interface CampaignStatsResult {
   activatedCount: number;
   amountCents?: number;
   valueBrl?: number;
+  originalAmountCents?: number;
+  /** Perfis que já estão em outro relatório pago (sem cobrança de novo). */
+  alreadyOwnedInOtherReports?: number;
 }
 
 /** Agrega stats de engajamento e preview dos perfis da campanha. Só retorna dados para campanha ativa. */
@@ -3155,7 +3453,9 @@ async function getCampaignStats(campaignId: string, userId: number): Promise<Cam
     .slice(0, 20);
 
   const notActivatedCount = n - activatedCount;
-  const amountCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
+  const fallbackCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
+  const billablePricing = await getCampaignBillableReportPricing(campaignId, userId);
+  const amountCents = billablePricing?.amountCents ?? fallbackCents;
 
   return {
     totalLikes,
@@ -3174,6 +3474,8 @@ async function getCampaignStats(campaignId: string, userId: number): Promise<Cam
     activatedCount,
     amountCents,
     valueBrl: amountCents / 100,
+    originalAmountCents: billablePricing?.originalAmountCents,
+    alreadyOwnedInOtherReports: billablePricing?.alreadyOwnedCount,
   };
 }
 
@@ -3309,6 +3611,43 @@ app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: R
     }
     const campaignId = creditsCampaignsDb.createCampaign(userId, finalHandles, creditsNeeded, campaignName, expiresAt, queryJson);
     res.status(201).json({ campaignId, handlesCount: finalHandles.length, creditsUsed: creditsNeeded });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Visão agregada "Todos": metadados sintéticos (perfis = união das campanhas pagas). */
+app.get('/api/campaigns/all', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const rows = creditsCampaignsDb.listCampaigns(userId);
+    const handles = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+    const paidRows = rows.filter((r) => r.payment_status === 'paid');
+    const oldestCreated =
+      paidRows.length > 0
+        ? paidRows.reduce((a, b) => (a.created_at < b.created_at ? a : b)).created_at
+        : new Date().toISOString();
+    const maxExpires =
+      paidRows.length > 0
+        ? paidRows.reduce((a, b) => (a.expires_at > b.expires_at ? a : b)).expires_at
+        : new Date(Date.now() + 365 * 864e5).toISOString();
+    res.json({
+      id: 'all',
+      name: 'Todos',
+      description: 'Todos os perfis das suas campanhas pagas, sem duplicar handles.',
+      handlesCount: handles.length,
+      creditsUsed: 0,
+      creditsPaid: 0,
+      created_at: oldestCreated,
+      expires_at: maxExpires,
+      paymentStatus: 'paid',
+      aggregate: true,
+      paidCampaignsCount: paidRows.length,
+    });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -3576,6 +3915,7 @@ app.post('/api/campaigns/:id/create-payment', async (req: RequestWithAuth, res: 
     const quantity = (body?.quantity != null && Number.isFinite(body.quantity))
       ? Math.min(campaign.handles_count, Math.max(1, Math.floor(body.quantity)))
       : campaign.handles_count;
+    const ownedPaySet = new Set(creditsCampaignsDb.getAllPaidHandlesUnion(userId));
     let amountCents: number;
     if (quantity < campaign.handles_count) {
       const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
@@ -3584,17 +3924,12 @@ app.post('/api/campaigns/:id/create-payment', async (req: RequestWithAuth, res: 
         amountCents = quantity * 100;
       } else {
         const result = await searchProfiles(db, { limit: firstN.length, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: firstN });
-        let activatedCount = 0;
-        for (const item of result.items) {
-          const act = (item as ProfileListItem).activation;
-          if (act?.city?.trim()) activatedCount++;
-        }
-        const notActivatedCount = result.items.length - activatedCount;
-        amountCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
+        const sums = sumReportPriceWithOwnershipDedup(result.items as ProfileListItem[], ownedPaySet);
+        amountCents = sums.amountCents;
       }
     } else {
-      const stats = await getCampaignStats(campaignId, userId);
-      amountCents = stats?.amountCents ?? campaign.handles_count * 100;
+      const pricing = await getCampaignBillableReportPricing(campaignId, userId);
+      amountCents = pricing?.amountCents ?? campaign.handles_count * 100;
     }
     const valueBrl = amountCents / 100;
 
@@ -3639,7 +3974,11 @@ app.post('/api/campaigns/:id/create-payment', async (req: RequestWithAuth, res: 
     const asaasPaymentId = asaasPayment?.id ?? null;
     const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
     const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
-    const pixCopyPaste = asaasPayment?.pixTransaction?.payload ?? asaasPayment?.pixTransaction?.qrCode ?? null;
+    const pixCopyPaste = await asaas.resolvePixCopyPasteAfterCreate(
+      billingType as 'PIX' | 'BOLETO',
+      asaasPaymentId,
+      asaasPayment
+    );
     const hasPaymentUrl = Boolean(bankSlipUrl || pixCopyPaste);
     if (!hasPaymentUrl || !asaasPaymentId) {
       res.status(502).json({ error: 'Não foi possível gerar o pagamento. Tente novamente.' });
@@ -3694,12 +4033,29 @@ app.post('/api/campaigns/:id/pay-with-credits', async (req: RequestWithAuth, res
       res.status(400).json({ error: 'Esta campanha já foi paga.' });
       return;
     }
+    const handlesList = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
+    if (!handlesList || handlesList.length === 0) {
+      res.status(404).json({ error: 'Campanha sem perfis' });
+      return;
+    }
     const bodyQuantity = req.body && typeof (req.body as { quantity?: number }).quantity === 'number'
       ? Math.floor((req.body as { quantity: number }).quantity)
       : null;
-    const creditsNeeded = bodyQuantity != null && bodyQuantity >= 1 && bodyQuantity <= campaign.handles_count
-      ? bodyQuantity
-      : campaign.handles_count;
+    const prefixLen =
+      bodyQuantity != null && bodyQuantity >= 1 && bodyQuantity <= campaign.handles_count
+        ? bodyQuantity
+        : campaign.handles_count;
+    const ownedSet = new Set(creditsCampaignsDb.getAllPaidHandlesUnion(userId));
+    const creditsNeeded = countBillableCreditsForHandlePrefix(handlesList, prefixLen, ownedSet);
+    if (creditsNeeded === 0) {
+      if (prefixLen < campaign.handles_count) {
+        creditsCampaignsDb.setCampaignQuantity(campaignId, userId, prefixLen);
+      }
+      creditsCampaignsDb.setCampaignCreditsUsed(campaignId, userId, 0);
+      creditsCampaignsDb.setCampaignPaymentStatus(campaignId, userId, 'paid');
+      res.json({ ok: true, creditsUsed: 0 });
+      return;
+    }
     const balance = creditsCampaignsDb.getBalance(userId);
     if (balance < creditsNeeded) {
       res.status(402).json({
@@ -3718,8 +4074,8 @@ app.post('/api/campaigns/:id/pay-with-credits', async (req: RequestWithAuth, res
       res.status(500).json({ error: 'Falha ao atualizar campanha' });
       return;
     }
-    if (creditsNeeded < campaign.handles_count) {
-      creditsCampaignsDb.setCampaignQuantity(campaignId, userId, creditsNeeded);
+    if (prefixLen < campaign.handles_count) {
+      creditsCampaignsDb.setCampaignQuantity(campaignId, userId, prefixLen);
     }
     creditsCampaignsDb.setCampaignPaymentStatus(campaignId, userId, 'paid');
     res.json({ ok: true, creditsUsed: creditsNeeded });
@@ -3805,15 +4161,6 @@ function setCachedCampaignContext(campaignId: string, items: ProfileListItem[]):
   campaignContextCache.set(campaignId, { items, ts: Date.now() });
 }
 
-const COST_TIER_VALUES = ['low', 'medium', 'high', 'very_high'] as const;
-
-function parseCostTierFilter(v: unknown): string[] | undefined {
-  if (v == null) return undefined;
-  const arr = Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',').map((x) => x.trim().toLowerCase()) : [];
-  const filtered = arr.filter((s) => (COST_TIER_VALUES as readonly string[]).includes(s));
-  return filtered.length > 0 ? filtered : undefined;
-}
-
 /** Nome do header para contexto de campanha. Obrigatório ao acessar dados de outro influenciador. */
 const X_CAMPAIGN_ID = 'x-campaign-id';
 
@@ -3877,7 +4224,27 @@ function requireProfileOrCampaign(
     }
     const campaignIdRaw = (req.headers[X_CAMPAIGN_ID] ?? req.headers['x-campaign-id']) as string | undefined;
     const campaignId = typeof campaignIdRaw === 'string' ? campaignIdRaw.trim() : '';
-    if (!campaignId || !isCampaignIdGuid(campaignId)) {
+    if (!campaignId) {
+      res.status(403).json({
+        error: 'Para acessar dados de outro influenciador, envie o header X-Campaign-Id com o ID de uma campanha que contenha esse perfil.',
+        code: 'CAMPAIGN_ID_REQUIRED',
+      });
+      return;
+    }
+    if (campaignId.toLowerCase() === 'all') {
+      const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+      if (!union.some((h) => normalizeHandle(h) === handle)) {
+        res.status(403).json({
+          error: 'Perfil não encontrado nas suas campanhas pagas.',
+          code: 'PROFILE_NOT_IN_CAMPAIGN',
+        });
+        return;
+      }
+      (req as RequestWithAuth).allowedCampaignId = 'all';
+      next();
+      return;
+    }
+    if (!isCampaignIdGuid(campaignId)) {
       res.status(403).json({
         error: 'Para acessar dados de outro influenciador, envie o header X-Campaign-Id com o ID de uma campanha que contenha esse perfil.',
         code: 'CAMPAIGN_ID_REQUIRED',
@@ -3905,7 +4272,7 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
   }
   const raw = (req.headers[X_CAMPAIGN_ID] ?? req.headers['x-campaign-id']) as string | undefined;
   const campaignId = typeof raw === 'string' ? raw.trim() : '';
-  if (!campaignId || !isCampaignIdGuid(campaignId)) {
+  if (!campaignId) {
     res.status(403).json({
       error: 'Envie o header X-Campaign-Id com o ID de uma campanha válida.',
       code: 'CAMPAIGN_ID_REQUIRED',
@@ -3913,6 +4280,23 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
     return;
   }
   const userId = Number(req.user.sub);
+  if (campaignId.toLowerCase() === 'all') {
+    const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+    if (union.length === 0) {
+      res.status(403).json({ error: 'Nenhuma campanha paga com perfis.', code: 'CAMPAIGN_NOT_FOUND' });
+      return;
+    }
+    (req as RequestWithAuth).allowedCampaignId = 'all';
+    next();
+    return;
+  }
+  if (!isCampaignIdGuid(campaignId)) {
+    res.status(403).json({
+      error: 'Envie o header X-Campaign-Id com o ID de uma campanha válida.',
+      code: 'CAMPAIGN_ID_REQUIRED',
+    });
+    return;
+  }
   const campaign = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
   if (!campaign) {
     res.status(403).json({ error: 'Campanha não encontrada, expirada ou sem acesso.', code: 'CAMPAIGN_NOT_FOUND' });
@@ -3921,6 +4305,34 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
   (req as RequestWithAuth).allowedCampaignId = campaignId;
   next();
 }
+
+/** Listagem agregada: união dos perfis de todas as campanhas pagas (sem duplicar handles). */
+app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handles = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+    if (handles.length === 0) {
+      res.json({ total: 0, items: [], facets: null });
+      return;
+    }
+    const cacheKey = `all:${userId}`;
+    const query = buildCampaignProfilesQuery(req);
+    let contextItems: ProfileListItem[] | null = getCachedCampaignContext(cacheKey);
+    if (contextItems == null) {
+      const fullResult = await searchProfiles(db, { limit: 10000, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
+      contextItems = fullResult.items;
+      if (contextItems.length > 0) setCachedCampaignContext(cacheKey, contextItems);
+    }
+    const result = await searchProfiles(db, query, { initialItems: contextItems });
+    res.json({ total: result.total, items: result.items, facets: result.facets });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
 
 /** Listagem de perfis de uma campanha (paginação + filtros iguais à busca principal). Com pagamento pendente: retorna facets + total + pricePreview, sem items. */
 app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
@@ -3985,8 +4397,11 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
         }
       }
       const notActivatedCount = result.items.length - activatedCount;
-      const amountCents = activatedCount * REPORT_PRICE_CENTS_ACTIVATED + notActivatedCount * REPORT_PRICE_CENTS_NOT_ACTIVATED;
+      const ownedElsewhere = new Set(creditsCampaignsDb.getAllPaidHandlesUnion(userId));
+      const priceSums = sumReportPriceWithOwnershipDedup(result.items as ProfileListItem[], ownedElsewhere);
+      const amountCents = priceSums.amountCents;
       const avgEngagementRate = engCount > 0 ? Math.round((engSum / engCount) * 100) / 100 : 0;
+      const billableProfileCount = result.items.length - priceSums.alreadyOwnedCount;
       res.json({
         total: result.total,
         items: [],
@@ -4002,11 +4417,48 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
           totalFollowers,
           postsCount,
           avgEngagementRate,
+          originalAmountCents: priceSums.originalAmountCents,
+          originalValueBrl: priceSums.originalAmountCents / 100,
+          alreadyOwnedCount: priceSums.alreadyOwnedCount,
+          billableProfileCount,
+          chargedActivatedCount: priceSums.chargedActivatedCount,
+          chargedNotActivatedCount: priceSums.chargedNotActivatedCount,
         },
       });
       return;
     }
     res.json({ total: result.total, items: result.items, facets: result.facets });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Perfil na visão agregada "Todos" (handle deve estar em alguma campanha paga). */
+app.get('/api/campaigns/all/profiles/:handle', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
+    if (!handle) {
+      res.status(400).json({ error: 'Handle inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+    if (!union.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle)) {
+      res.status(404).json({ error: 'Perfil não encontrado nas suas campanhas pagas', handle: req.params.handle });
+      return;
+    }
+    const value = await db.get('profile', handle);
+    if (value == null) {
+      res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+      return;
+    }
+    const profile = value as Record<string, unknown>;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(profile);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -4048,6 +4500,46 @@ app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: Req
     const profile = value as Record<string, unknown>;
     res.setHeader('Cache-Control', 'no-store');
     res.json(profile);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Ativação na visão agregada "Todos". */
+app.get('/api/campaigns/all/profiles/:handle/activation', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
+    if (!handle) {
+      res.status(400).json({ error: 'Handle inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+    if (!union.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle)) {
+      res.status(404).json({ error: 'Perfil não encontrado nas suas campanhas pagas', handle: req.params.handle });
+      return;
+    }
+    const data = sqlite.getActivation(handle);
+    if (data == null) {
+      res.status(200).json({});
+      return;
+    }
+    if (isPricingEmpty(data.pricing as Record<string, unknown> | undefined)) {
+      try {
+        const profile = await db.loadByHandle(handle);
+        const followers = getFollowersFromProfile(profile as Record<string, unknown> | null);
+        const suggested = getSuggestedPricingFromFollowers(followers);
+        (data as { pricing?: Record<string, string> }).pricing = suggestedPricingToActivationFormat(suggested);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -4443,32 +4935,59 @@ function influencerFieldsFromProfile(profile: Record<string, unknown> | null | u
   };
 }
 
-const POST_MATCHES_HANDLE_BATCH = 32;
+const POST_MATCHES_HANDLE_BATCH = 48;
+
+/** Evita revarrer RocksDB a cada página / refetch (post-matches “Todos” com muitos perfis). */
+const POST_MATCHES_CACHE_TTL_MS = 50_000;
+const POST_MATCHES_CACHE_MAX = 40;
+
+type PostMatchesCachedRow = { key: string; value: Record<string, unknown>; ct: string };
+
+interface PostMatchesCachePayload {
+  total: number;
+  mediaKindCounts: Record<string, number>;
+  rows: PostMatchesCachedRow[];
+}
+
+const postMatchesResultCache = new Map<string, { expires: number; payload: PostMatchesCachePayload }>();
+
+function postMatchesCacheKey(userId: number, normHandles: string[], qRaw: string, typeFilters: string[]): string {
+  const fp = crypto.createHash('sha256').update([...normHandles].sort().join('\0')).digest('hex').slice(0, 24);
+  return `${userId}|${fp}|${qRaw}|${typeFilters.join(',')}`;
+}
+
+function postMatchesCacheGet(key: string): PostMatchesCachePayload | null {
+  const e = postMatchesResultCache.get(key);
+  const now = Date.now();
+  if (!e || e.expires <= now) {
+    if (e) postMatchesResultCache.delete(key);
+    return null;
+  }
+  return e.payload;
+}
+
+function postMatchesCacheSet(key: string, payload: PostMatchesCachePayload): void {
+  const now = Date.now();
+  for (const [k, v] of postMatchesResultCache) {
+    if (v.expires <= now) postMatchesResultCache.delete(k);
+  }
+  postMatchesResultCache.set(key, { expires: now + POST_MATCHES_CACHE_TTL_MS, payload });
+  while (postMatchesResultCache.size > POST_MATCHES_CACHE_MAX) {
+    const first = postMatchesResultCache.keys().next().value;
+    if (first !== undefined) postMatchesResultCache.delete(first);
+  }
+}
 
 /**
- * Posts/reels/etc. dos perfis da campanha onde `q` aparece na legenda/hashtags (dados atuais do storage).
- * Sem `q`, retorna todos os itens da campanha (filtráveis por `type`).
- * Só lê posts dos handles da campanha (prefixo no RocksDB), não varre o bucket inteiro.
+ * Posts/reels/etc. dos handles informados (`q` na legenda/hashtags). Usado por campanha única e visão "Todos".
  */
-app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+async function runPostMatchesForHandles(
+  req: RequestWithAuth,
+  res: Response,
+  normHandles: string[]
+): Promise<void> {
   try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Login necessário' });
-      return;
-    }
-    const campaignId = String(req.params.id ?? '').trim();
-    if (!isCampaignIdGuid(campaignId)) {
-      res.status(400).json({ error: 'ID da campanha inválido' });
-      return;
-    }
-    const userId = Number(req.user.sub);
-    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
-    if (!handles || handles.length === 0) {
-      res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
-      return;
-    }
-    const handleSet = new Set(handles.map((h) => normalizeHandle(h)));
-    const normHandles = Array.from(handleSet);
+    const handleSet = new Set(normHandles.map((h) => normalizeHandle(h)));
     const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
     const typeFilters = parsePostMatchTypeFilters(req.query.type as string | undefined);
     const limitRaw = req.query.limit;
@@ -4477,70 +4996,92 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
     const limit = Number.isFinite(limitParsed) ? Math.min(Math.max(0, limitParsed), 200) : 48;
     const offset = Math.max(0, Number(req.query.offset) || 0);
 
-    const postsChunks: { key: string; value: Record<string, unknown> }[][] = [];
-    for (let i = 0; i < normHandles.length; i += POST_MATCHES_HANDLE_BATCH) {
-      const batch = normHandles.slice(i, i + POST_MATCHES_HANDLE_BATCH);
-      const part = await Promise.all(
-        batch.map((h) => db.getByBucket<Record<string, unknown>>('post', `${h}:`))
-      );
-      for (const items of part) postsChunks.push(items);
-    }
+    const userId = Number(req.user?.sub ?? 0);
+    const cacheKey =
+      userId > 0 && normHandles.length > 0
+        ? postMatchesCacheKey(userId, normHandles, qRaw, typeFilters)
+        : '';
+    const cached = cacheKey ? postMatchesCacheGet(cacheKey) : null;
 
-    const candidates: Array<{ key: string; value: Record<string, unknown>; ts: number; ct: string }> = [];
-    for (const items of postsChunks) {
-      for (const { key, value } of items) {
-        const h = postBucketKeyToHandle(key);
-        if (!handleSet.has(h)) continue;
-        const item = { ...(value as Record<string, unknown>) };
-        const ct = getContentTypeFromItem(key, item);
-        const searchable = getPostSearchableNormalized(item);
-        if (qRaw) {
-          const { match } = matchesQuery(searchable, qRaw);
-          if (!match) continue;
+    let orderedRows: PostMatchesCachedRow[];
+    let total: number;
+    let mediaKindCounts: Record<string, number>;
+
+    if (cached) {
+      orderedRows = cached.rows;
+      total = cached.total;
+      mediaKindCounts = cached.mediaKindCounts;
+    } else {
+      const postsChunks: { key: string; value: Record<string, unknown> }[][] = [];
+      for (let i = 0; i < normHandles.length; i += POST_MATCHES_HANDLE_BATCH) {
+        const batch = normHandles.slice(i, i + POST_MATCHES_HANDLE_BATCH);
+        const part = await Promise.all(
+          batch.map((h) =>
+            db.getByBucket<Record<string, unknown>>('post', `${h}:`, { sort: false })
+          )
+        );
+        for (const items of part) postsChunks.push(items);
+      }
+
+      const candidates: Array<{ key: string; value: Record<string, unknown>; ts: number; ct: string }> = [];
+      for (const items of postsChunks) {
+        for (const { key, value } of items) {
+          const h = postBucketKeyToHandle(key);
+          if (!handleSet.has(h)) continue;
+          const item = value as Record<string, unknown>;
+          const ct = getContentTypeFromItem(key, item);
+          if (qRaw) {
+            const searchable = getPostSearchableNormalized(item);
+            const { match } = matchesQuery(searchable, qRaw);
+            if (!match) continue;
+          }
+          const ts = getPostTimestamp(item) ?? 0;
+          candidates.push({ key, value: item, ts, ct });
         }
-        const ts = getPostTimestamp(item) ?? 0;
-        candidates.push({ key, value: item, ts, ct });
       }
-    }
 
-    /** Uma entrada por (perfil, shortcode): evita repetir a mesma mídia (ex.: chaves duplicadas / tipos cruzados). */
-    const deduped = new Map<string, { key: string; value: Record<string, unknown>; ts: number; ct: string }>();
-    for (const c of candidates) {
-      const h = postBucketKeyToHandle(c.key);
-      const sc = postItemShortcodeForDedupe(c.key, c.value);
-      const id = `${h}:${sc}`;
-      const prev = deduped.get(id);
-      if (
-        !prev ||
-        c.ts > prev.ts ||
-        (c.ts === prev.ts && c.key.localeCompare(prev.key) < 0)
-      ) {
-        deduped.set(id, c);
+      /** Uma entrada por (perfil, shortcode): evita repetir a mesma mídia (ex.: chaves duplicadas / tipos cruzados). */
+      const deduped = new Map<string, { key: string; value: Record<string, unknown>; ts: number; ct: string }>();
+      for (const c of candidates) {
+        const h = postBucketKeyToHandle(c.key);
+        const sc = postItemShortcodeForDedupe(c.key, c.value);
+        const id = `${h}:${sc}`;
+        const prev = deduped.get(id);
+        if (
+          !prev ||
+          c.ts > prev.ts ||
+          (c.ts === prev.ts && c.key.localeCompare(prev.key) < 0)
+        ) {
+          deduped.set(id, c);
+        }
       }
+
+      const sorted = [...deduped.values()].sort(
+        (a, b) => b.ts - a.ts || a.key.localeCompare(b.key)
+      );
+
+      mediaKindCounts = {};
+      for (const row of deduped.values()) {
+        const k = row.ct;
+        mediaKindCounts[k] = (mediaKindCounts[k] ?? 0) + 1;
+      }
+
+      const filteredSorted =
+        typeFilters.length > 0 ? sorted.filter((x) => typeFilters.includes(x.ct)) : sorted;
+      total = filteredSorted.length;
+      orderedRows = filteredSorted.map(({ key, value, ct }) => ({ key, value, ct }));
+      if (cacheKey) postMatchesCacheSet(cacheKey, { total, mediaKindCounts, rows: orderedRows });
     }
 
-    const sorted = [...deduped.values()].sort(
-      (a, b) => b.ts - a.ts || a.key.localeCompare(b.key)
-    );
-
-    const mediaKindCounts: Record<string, number> = {};
-    for (const row of deduped.values()) {
-      const k = row.ct;
-      mediaKindCounts[k] = (mediaKindCounts[k] ?? 0) + 1;
-    }
-
-    const filteredSorted =
-      typeFilters.length > 0 ? sorted.filter((x) => typeFilters.includes(x.ct)) : sorted;
-    const total = filteredSorted.length;
-    const slice = filteredSorted.slice(offset, offset + limit).map(({ key, value, ct }) => {
-      const item = value;
+    const slice = orderedRows.slice(offset, offset + limit).map(({ key, value, ct }) => {
+      const item = { ...value } as Record<string, unknown>;
       const post = item?.post as Record<string, unknown> | undefined;
       const content = item?.content as Record<string, unknown> | undefined;
       if (post && post.taken_at == null && content?.caption_created_at != null && typeof content.caption_created_at === 'number') {
         item.post = { ...post, taken_at: content.caption_created_at };
       }
       if (!item.content_type) item.content_type = ct;
-      (item as Record<string, unknown>).profile_handle = postBucketKeyToHandle(key);
+      item.profile_handle = postBucketKeyToHandle(key);
       return { key, ...item };
     });
 
@@ -4585,6 +5126,53 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
     }
 
     res.json({ total, items: slice, q: qRaw || undefined, mediaKindCounts });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+app.get('/api/campaigns/all/post-matches', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+    if (union.length === 0) {
+      res.json({ total: 0, items: [], q: undefined, mediaKindCounts: {} });
+      return;
+    }
+    const handleSet = new Set(union.map((h) => normalizeHandle(h)));
+    await runPostMatchesForHandles(req, res, Array.from(handleSet));
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/**
+ * Posts/reels/etc. dos perfis da campanha onde `q` aparece na legenda/hashtags (dados atuais do storage).
+ * Sem `q`, retorna todos os itens da campanha (filtráveis por `type`).
+ */
+app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const campaignId = String(req.params.id ?? '').trim();
+    if (!isCampaignIdGuid(campaignId)) {
+      res.status(400).json({ error: 'ID da campanha inválido' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
+    if (!handles || handles.length === 0) {
+      res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
+      return;
+    }
+    const handleSet = new Set(handles.map((h) => normalizeHandle(h)));
+    await runPostMatchesForHandles(req, res, Array.from(handleSet));
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }

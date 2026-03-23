@@ -1,25 +1,26 @@
 /**
- * Checkout: compra do relatório (pagamento direto com PIX ou Boleto).
- * Fluxo de onboarding por e-mail: quantidade → cadastro leve → verificar e-mail → pagamento.
- * CPF/CNPJ só é pedido na etapa de pagamento (PIX/Boleto).
+ * Checkout: liberação do relatório apenas com créditos.
+ * Compra de créditos (PIX/Boleto) fica centralizada em BuyCreditsModal.
+ * Fluxo de onboarding por e-mail: quantidade → cadastro leve → verificar e-mail → pagamento com créditos.
  */
-import { useState, useEffect, useMemo } from 'react'
-import QRCode from 'qrcode'
-import { Card, Typography, Button, Spin, Alert, Slider, InputNumber, Space, Input, Radio } from 'antd'
-import { DollarOutlined, CopyOutlined, BankOutlined, WalletOutlined, MailOutlined } from '@ant-design/icons'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { Card, Typography, Button, Spin, Alert, Slider, InputNumber, Space, Input } from 'antd'
+import { WalletOutlined, MailOutlined, DollarOutlined } from '@ant-design/icons'
 import { useAuth } from '../../contexts/AuthContext'
 import { useCredits } from '../../contexts/CreditsContext'
 import {
-  payForReport,
   reportPricePreview,
   createCampaign,
   registerCheckoutUser,
   resendVerificationEmail,
+  fetchMyPendingPayment,
   type ProfilesSearchQuery,
   type AuthScope,
+  type CreatePaymentForCreditsResponse,
 } from '../../api'
+import BuyCreditsModal from '../BuyCreditsModal/BuyCreditsModal'
 
-const { Text } = Typography
+const { Text, Title } = Typography
 
 const MIN_PROFILES = 1
 
@@ -39,7 +40,6 @@ export interface CheckoutContentProps {
   onCancel: () => void
   onPaymentCreated?: () => void
   embed?: boolean
-  onBuyCredits?: () => void
 }
 
 export default function CheckoutContent({
@@ -58,34 +58,21 @@ export default function CheckoutContent({
   const [guestEmail, setGuestEmail] = useState('')
   const [guestPassword, setGuestPassword] = useState('')
   const [guestPasswordConfirm, setGuestPasswordConfirm] = useState('')
-  const [paymentCpfCnpj, setPaymentCpfCnpj] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [resendSuccess, setResendSuccess] = useState(false)
-  const [paymentMethod, setPaymentMethod] = useState<'credits' | 'pix' | 'boleto'>('credits')
-  const [paymentCreated, setPaymentCreated] = useState<{
-    pixCopyPaste: string | null
-    bankSlipUrl: string | null
-    invoiceUrl: string | null
-    billingType: string
-  } | null>(null)
-  const [pixQrDataUrl, setPixQrDataUrl] = useState<string | null>(null)
+  const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
+  const [buyCreditsResume, setBuyCreditsResume] = useState<CreatePaymentForCreditsResponse | null>(null)
 
-  useEffect(() => {
-    if (!paymentCreated?.pixCopyPaste) {
-      setPixQrDataUrl(null)
-      return
+  const openBuyCreditsModal = useCallback(async () => {
+    try {
+      const p = await fetchMyPendingPayment()
+      setBuyCreditsResume(p)
+    } catch {
+      setBuyCreditsResume(null)
     }
-    let cancelled = false
-    QRCode.toDataURL(paymentCreated.pixCopyPaste, { width: 220, margin: 2 })
-      .then((url) => {
-        if (!cancelled) setPixQrDataUrl(url)
-      })
-      .catch(() => {
-        if (!cancelled) setPixQrDataUrl(null)
-      })
-    return () => { cancelled = true }
-  }, [paymentCreated?.pixCopyPaste])
+    setBuyCreditsOpen(true)
+  }, [])
 
   const minProfiles = Math.min(MIN_PROFILES, total)
   const [desiredCount, setDesiredCount] = useState(() => Math.max(minProfiles, total))
@@ -116,12 +103,7 @@ export default function CheckoutContent({
 
   const creditsNeeded = desiredCount
   const canUseCredits = creditsBalance >= creditsNeeded
-
-  // Preferir créditos quando houver saldo; boleto/PIX só se não tiver ou escolher explicitamente
-  useEffect(() => {
-    if (canUseCredits) setPaymentMethod('credits')
-    else if (paymentMethod === 'credits') setPaymentMethod('boleto')
-  }, [canUseCredits])
+  const creditsShortfall = Math.max(0, creditsNeeded - creditsBalance)
 
   const totalCents = pricePreview?.amountCents ?? 0
   const priceReady = pricePreview != null
@@ -198,46 +180,6 @@ export default function CheckoutContent({
     setError(null)
   }
 
-  const handlePayForReport = async () => {
-    if (!query || total <= 0 || !user) return
-    if (paymentMethod !== 'pix' && paymentMethod !== 'boleto') return
-    if (paymentMethod === 'boleto') {
-      const digits = paymentCpfCnpj.replace(/\D/g, '')
-      if (digits.length !== 11 && digits.length !== 14) {
-        setError('Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para emissão do boleto.')
-        return
-      }
-    }
-    setError(null)
-    setLoading(true)
-    try {
-      const cpfCnpj = paymentMethod === 'boleto' ? paymentCpfCnpj.replace(/\D/g, '') : undefined
-      const res = await payForReport({
-        query,
-        desiredCount,
-        billingType: paymentMethod === 'boleto' ? 'BOLETO' : 'PIX',
-        expiresAt,
-        ...(cpfCnpj && cpfCnpj.length >= 11 ? { cpfCnpj } : {}),
-      })
-      if (res.campaignId && onSuccess) {
-        onSuccess(res.campaignId)
-        void refreshCredits()
-        return
-      }
-      setPaymentCreated({
-        pixCopyPaste: res.pixCopyPaste ?? null,
-        bankSlipUrl: res.bankSlipUrl ?? null,
-        invoiceUrl: res.invoiceUrl ?? null,
-        billingType: res.billingType,
-      })
-      if (onPaymentCreated) onPaymentCreated()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handlePayWithCredits = async () => {
     if (!query || total <= 0) return
     setError(null)
@@ -251,7 +193,7 @@ export default function CheckoutContent({
     } catch (e) {
       const err = e as Error & { code?: string; required?: number; balance?: number }
       if ((err.code === 'INSUFFICIENT_CREDITS' || err.code === 'CREDITS_INSUFFICIENT') && err.required != null) {
-        setError(`Saldo insuficiente. Necessário: ${err.required} créditos. Seu saldo: ${err.balance ?? 0}. Use Boleto ou PIX para pagar.`)
+        setError(`Saldo insuficiente. Necessário: ${err.required} créditos. Seu saldo: ${err.balance ?? 0}. Compre créditos para continuar.`)
       } else {
         setError((e as Error).message)
       }
@@ -260,57 +202,10 @@ export default function CheckoutContent({
     }
   }
 
-  const copyPix = () => {
-    if (!paymentCreated?.pixCopyPaste) return
-    void navigator.clipboard.writeText(paymentCreated.pixCopyPaste)
-  }
-
   if (authLoading) {
     return (
       <div style={{ maxWidth: 560, margin: '24px auto', padding: 24, textAlign: 'center' }}>
         <Spin size="large" />
-      </div>
-    )
-  }
-
-  if (paymentCreated && user) {
-    return (
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
-        <Alert
-          type="success"
-          message="Pagamento gerado"
-          description={
-            paymentCreated.billingType === 'PIX'
-              ? 'Escaneie o QR Code com o app do seu banco ou copie o código PIX. Após a confirmação, acesse Minhas campanhas para ver o relatório.'
-              : 'Pague o boleto pelo link abaixo. Após a confirmação, acesse Minhas campanhas para ver o relatório.'
-          }
-          showIcon
-          style={{ marginBottom: 20 }}
-        />
-        {paymentCreated.billingType === 'PIX' && paymentCreated.pixCopyPaste && (
-          <Card size="small" style={{ marginBottom: 16, textAlign: 'center' }}>
-            {pixQrDataUrl && (
-              <div style={{ marginBottom: 16 }}>
-                <img src={pixQrDataUrl} alt="QR Code PIX" style={{ display: 'block', margin: '0 auto', width: 220, height: 220 }} />
-                <Text strong style={{ display: 'block', marginTop: 8 }}>Escaneie para pagar</Text>
-              </div>
-            )}
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>Ou copie o código PIX:</Text>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <Text type="secondary" style={{ flex: 1, minWidth: 0, wordBreak: 'break-all', fontSize: 12 }}>{paymentCreated.pixCopyPaste}</Text>
-              <Button type="primary" icon={<CopyOutlined />} onClick={copyPix}>Copiar PIX</Button>
-            </div>
-          </Card>
-        )}
-        {paymentCreated.billingType === 'BOLETO' && paymentCreated.bankSlipUrl && (
-          <Button type="primary" href={paymentCreated.bankSlipUrl} target="_blank" rel="noopener noreferrer" block icon={<BankOutlined />} style={{ marginBottom: 16 }}>
-            Abrir boleto
-          </Button>
-        )}
-        {paymentCreated.invoiceUrl && (
-          <Button href={paymentCreated.invoiceUrl} target="_blank" rel="noopener noreferrer" block style={{ marginBottom: 16 }}>Ver fatura</Button>
-        )}
-        <Button type="primary" block onClick={onCancel}>Fechar</Button>
       </div>
     )
   }
@@ -387,9 +282,9 @@ export default function CheckoutContent({
             </Text>
           </div>
         </Card>
-        <Typography.Title level={5} style={{ marginTop: 16, marginBottom: 4 }}>Crie sua conta para continuar</Typography.Title>
+        <Title level={5} style={{ marginTop: 16, marginBottom: 4 }}>Crie sua conta para continuar</Title>
         <Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 13 }}>
-          Cadastre-se para salvar sua busca, receber seus créditos de boas-vindas e liberar a compra do relatório.
+          Cadastre-se para salvar sua busca, receber seus créditos de boas-vindas e liberar o relatório com créditos.
         </Text>
         <Card size="small" style={{ marginBottom: 10 }} bodyStyle={{ padding: '10px 12px' }}>
           <Space direction="vertical" style={{ width: '100%' }} size="small">
@@ -429,7 +324,7 @@ export default function CheckoutContent({
   if (user && guestStep === 'verify-email') {
     return (
       <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
-        <Typography.Title level={5} style={{ marginBottom: 4 }}>Confirme seu e-mail</Typography.Title>
+        <Title level={5} style={{ marginBottom: 4 }}>Confirme seu e-mail</Title>
         <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
           Enviamos um link de confirmação para o seu e-mail. Após validar, você poderá continuar com a liberação do relatório.
         </Text>
@@ -459,11 +354,11 @@ export default function CheckoutContent({
     )
   }
 
-  // ——— ETAPA 4 (e usuário logado): Pagamento — quantidade + forma de pagamento + CPF/CNPJ só para Boleto/PIX
+  // ——— ETAPA 4 (e usuário logado): somente créditos + modal de compra
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
       <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
-        Escolha quantos influenciadores deseja no relatório e como pagar.
+        Escolha quantos influenciadores deseja no relatório. A liberação é feita com créditos da sua conta.
       </Text>
 
       <Card style={{ marginBottom: 24 }}>
@@ -489,12 +384,12 @@ export default function CheckoutContent({
             />
           </div>
           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-            Reduza a quantidade para pagar menos.
+            Reduza a quantidade para gastar menos créditos.
           </Text>
         </div>
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: priceReady && pricePreview && (pricePreview.activatedCount > 0 || pricePreview.notActivatedCount > 0) ? 4 : 0 }}>
-            <Text strong>Total</Text>
+            <Text strong>Total (referência em R$)</Text>
             <Text strong style={{ color: 'var(--app-primary)' }}>
               {priceReady ? formatBrl(totalCents) : <Spin size="small" />}
             </Text>
@@ -510,82 +405,73 @@ export default function CheckoutContent({
       </Card>
 
       <Card size="small" style={{ marginBottom: 24 }} bodyStyle={{ padding: 12 }}>
-        <Text strong style={{ display: 'block', marginBottom: 10 }}>Forma de pagamento</Text>
-        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-          Escolha como pagar. Boleto e PIX só são gerados após você clicar em Continuar.
-        </Text>
-        <Radio.Group
-          value={paymentMethod}
-          onChange={(e) => setPaymentMethod(e.target.value)}
-          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-        >
-          <Radio value="credits" disabled={!canUseCredits}>
-            <Space>
-              <WalletOutlined />
-              <span>Usar meus créditos</span>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                ({creditsNeeded} créditos — saldo: {creditsBalance})
-              </Text>
-              {canUseCredits && (
-                <Text type="success" style={{ fontSize: 11 }}>Recomendado</Text>
-              )}
-              {!canUseCredits && (
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  Saldo insuficiente
-                </Text>
-              )}
-            </Space>
-          </Radio>
-          <Radio value="pix">
-            <Space>
-              <DollarOutlined />
-              <span>Pagar com PIX</span>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                ({priceReady ? formatBrl(totalCents) : '...'})
-              </Text>
-            </Space>
-          </Radio>
-          <Radio value="boleto">
-            <Space>
-              <BankOutlined />
-              <span>Pagar com Boleto</span>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                ({priceReady ? formatBrl(totalCents) : '...'})
-              </Text>
-            </Space>
-          </Radio>
-        </Radio.Group>
+        <Text strong style={{ display: 'block', marginBottom: 8 }}>Créditos</Text>
+        <Space direction="vertical" style={{ width: '100%' }} size="small">
+          <Space wrap>
+            <WalletOutlined />
+            <span>Para este relatório: <Text strong>{creditsNeeded}</Text> crédito{creditsNeeded !== 1 ? 's' : ''}</span>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Seu saldo: {creditsBalance}
+            </Text>
+            {canUseCredits ? (
+              <Text type="success" style={{ fontSize: 12 }}>Saldo suficiente</Text>
+            ) : (
+              <Text type="warning" style={{ fontSize: 12 }}>Faltam {creditsShortfall} crédito{creditsShortfall !== 1 ? 's' : ''}</Text>
+            )}
+          </Space>
+          {!canUseCredits && (
+            <Alert
+              type="info"
+              showIcon
+              message="Compre créditos com PIX ou boleto"
+              description="O pagamento do relatório não usa PIX/boleto direto: você adiciona créditos e libera com um clique."
+              style={{ marginTop: 4 }}
+            />
+          )}
+        </Space>
       </Card>
-
-      {paymentMethod === 'boleto' && (
-        <Card size="small" style={{ marginBottom: 24 }} bodyStyle={{ padding: 12 }}>
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>CPF ou CNPJ (para emissão do boleto)</Text>
-          <Input
-            placeholder="Apenas números"
-            value={paymentCpfCnpj}
-            onChange={(e) => setPaymentCpfCnpj(e.target.value.replace(/\D/g, ''))}
-            maxLength={14}
-          />
-        </Card>
-      )}
 
       {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 24 }} onClose={() => setError(null)} closable />}
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <Button
           type="primary"
           size="large"
-          icon={paymentMethod === 'credits' ? <WalletOutlined /> : <DollarOutlined />}
-          onClick={paymentMethod === 'credits' ? handlePayWithCredits : handlePayForReport}
-          disabled={loading || total <= 0 || !priceReady || (paymentMethod === 'credits' && !canUseCredits) || (paymentMethod !== 'credits' && paymentMethod === 'boleto' && !paymentCpfCnpj.trim())}
+          icon={<WalletOutlined />}
+          onClick={handlePayWithCredits}
+          disabled={loading || total <= 0 || !priceReady || !canUseCredits}
           loading={loading}
         >
-          {paymentMethod === 'credits' ? 'Usar créditos e gerar relatório' : paymentMethod === 'pix' ? 'Gerar PIX' : 'Gerar boleto'}
+          Usar créditos e gerar relatório
         </Button>
+        {!canUseCredits && (
+          <Button
+            type="default"
+            size="large"
+            icon={<DollarOutlined />}
+            onClick={() => void openBuyCreditsModal()}
+          >
+            Comprar créditos
+          </Button>
+        )}
         {!embed && (
           <Button size="large" onClick={onCancel} disabled={loading}>Cancelar</Button>
         )}
       </div>
+
+      <BuyCreditsModal
+        open={buyCreditsOpen}
+        onClose={() => {
+          setBuyCreditsOpen(false)
+          setBuyCreditsResume(null)
+        }}
+        suggestedCredits={creditsNeeded}
+        resumePayment={buyCreditsResume}
+        onAfterPaymentCreated={() => {
+          void refreshCredits()
+          onPaymentCreated?.()
+        }}
+      />
     </div>
   )
 }
