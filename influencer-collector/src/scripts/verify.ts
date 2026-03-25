@@ -48,6 +48,7 @@ async function runHttpSmoke(): Promise<void> {
     assert.ok(Number.isFinite(d.minFollowersToSave as number));
     assert.ok(Number.isFinite(d.maxProfiles as number));
     assert.equal(typeof d.excludeBusinessProfiles, 'boolean');
+    assert.equal(typeof d.skipIfAlreadyInRemoteDb, 'boolean');
 
     r = await fetch(`${base}/api/status`);
     assert.equal(r.ok, true);

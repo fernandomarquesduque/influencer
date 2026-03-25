@@ -12,6 +12,7 @@ import {
   Popconfirm,
   Typography,
 } from 'antd'
+import { Link } from 'react-router-dom'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
@@ -133,9 +134,12 @@ export default function AdminUsers() {
       <Card
         title="Usuários de acesso"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Novo usuário
-          </Button>
+          <Space>
+            <Link to="/app/admin/dashboard">Painel admin</Link>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              Novo usuário
+            </Button>
+          </Space>
         }
       >
         <Table

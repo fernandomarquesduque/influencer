@@ -15,8 +15,16 @@ export interface CollectorConfig {
   /** Cookies do Google (evita captcha na próxima vez). */
   googleSessionPath: string;
   excludeBusinessProfiles: boolean;
-  /** Exige bio identificável como pt-BR (franc + heurísticas). COLLECTOR_REQUIRE_BIO_PT_BR=false desliga. */
+  /**
+   * Exige bio identificável como pt-BR (franc + heurísticas).
+   * COLLECTOR_REQUIRE_BIO_PT_BR=false desliga. Bios curtas: ver COLLECTOR_BIO_PT_BR_MIN_USEFUL_CHARS em bioLanguageBr.
+   */
   requireBioBrazilianPortuguese: boolean;
+  /**
+   * Consulta a API (collector-verify-profile) antes de extrair; se o @ já existir no RocksDB, pula.
+   * .env: COLLECTOR_SKIP_IF_ALREADY_IN_DB=false desliga o padrão.
+   */
+  skipIfAlreadyInRemoteDb: boolean;
 }
 
 const DEFAULT_MIN_FOLLOWERS = 5000;
@@ -52,6 +60,11 @@ export function loadConfig(): CollectorConfig {
   const excludeBusinessProfiles = process.env.EXCLUDE_BUSINESS_PROFILES !== 'false';
   const requireBioBrazilianPortuguese =
     process.env.COLLECTOR_REQUIRE_BIO_PT_BR !== 'false';
+  const skipDbRaw = process.env.COLLECTOR_SKIP_IF_ALREADY_IN_DB;
+  const skipIfAlreadyInRemoteDb =
+    skipDbRaw === undefined || String(skipDbRaw).trim() === ''
+      ? true
+      : String(skipDbRaw).toLowerCase() !== 'false';
 
   return {
     minFollowersToSave,
@@ -65,6 +78,7 @@ export function loadConfig(): CollectorConfig {
     googleSessionPath,
     excludeBusinessProfiles,
     requireBioBrazilianPortuguese,
+    skipIfAlreadyInRemoteDb,
   };
 }
 
@@ -80,6 +94,7 @@ export function mergeCollectorConfig(
     maxProfiles: number;
     excludeBusinessProfiles: boolean;
     requireBioBrazilianPortuguese?: boolean;
+    skipIfAlreadyInRemoteDb?: boolean;
   }>
 ): CollectorConfig {
   const clamp = (n: number, min: number, max: number) =>
@@ -118,5 +133,9 @@ export function mergeCollectorConfig(
       overrides.requireBioBrazilianPortuguese !== undefined
         ? overrides.requireBioBrazilianPortuguese
         : base.requireBioBrazilianPortuguese,
+    skipIfAlreadyInRemoteDb:
+      overrides.skipIfAlreadyInRemoteDb !== undefined
+        ? overrides.skipIfAlreadyInRemoteDb
+        : base.skipIfAlreadyInRemoteDb,
   };
 }

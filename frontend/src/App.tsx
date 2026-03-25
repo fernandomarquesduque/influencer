@@ -39,6 +39,7 @@ import Home from './pages/Home'
 import Login from './pages/Login'
 import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
+import AdminDashboard from './pages/AdminDashboard'
 import ListAndDetailModal from './pages/ListAndDetailModal'
 import MyCampaigns from './pages/MyCampaigns'
 import CampaignInfluencers from './pages/CampaignInfluencers'
@@ -92,19 +93,29 @@ export default function App() {
             <Route path="influencer/:handle" element={<InfluencerDetail />} />
             <Route path="influencer/:handle/media-kit" element={<MediaKit />} />
             <Route path="influencer/:handle/send-message" element={<SendMessage />} />
+            <Route
+              path="admin/dashboard"
+              element={
+                <RequireAuth requireAdm>
+                  <AdminDashboard />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="admin/users"
+              element={
+                <RequireAuth requireAdm>
+                  <AdminUsers />
+                </RequireAuth>
+              }
+            />
           </Route>
 
           <Route path="/extraction" element={<Extraction />} />
           <Route path="/extract-profile" element={<ExtractProfile />} />
           <Route path="/activate/:handle" element={<Activate />} />
-          <Route
-            path="/admin/users"
-            element={
-              <RequireAuth requireAdm>
-                <AdminUsers />
-              </RequireAuth>
-            }
-          />
+          <Route path="/admin/dashboard" element={<Navigate to="/app/admin/dashboard" replace />} />
+          <Route path="/admin/users" element={<Navigate to="/app/admin/users" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </PendingPaymentCelebrationProvider>

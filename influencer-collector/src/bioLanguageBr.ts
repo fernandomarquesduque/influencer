@@ -9,8 +9,17 @@ function pickBio(entity: Record<string, unknown>): string {
   return collectBioRawText(entity);
 }
 
-/** Mínimo de caracteres úteis para exigir detecção (abaixo disso não rejeita por idioma). */
-const MIN_CHARS_STRICT = 22;
+/**
+ * Mínimo de caracteres úteis (após prepBio: sem URLs e @) para rodar franc/heurísticas.
+ * Abaixo disso a bio é aceita como pt-BR válida — texto curto demais para idioma confiável.
+ * Override: COLLECTOR_BIO_PT_BR_MIN_USEFUL_CHARS (0 = sempre analisar idioma).
+ */
+function minCharsStrict(): number {
+  const raw = process.env.COLLECTOR_BIO_PT_BR_MIN_USEFUL_CHARS?.trim();
+  if (raw === undefined || raw === '') return 22;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 22;
+}
 
 function prepBio(s: string): string {
   return s
@@ -89,12 +98,13 @@ export function explainBioNotBrazilianPortuguese(entity: Record<string, unknown>
   if (bioLista) return bioLista;
 
   const text = prepBio(pickBio(entity));
-  if (text.length < MIN_CHARS_STRICT) return null;
+  const minStrict = minCharsStrict();
+  if (text.length < minStrict) return null;
 
   const code = franc(text);
 
   /* por = português; glg = galego — o franc confunde pt-BR com glg com frequência, tratamos os dois igual. */
-  if (code === 'por' || code === 'glg' || code === 'vec') {
+  if (code === 'por' || code === 'glg' || code === 'vec' || code === 'ita') {
     if (looksEuropeanPt(text) && !looksBrazilianPt(text)) {
       return 'Bio em português europeu (Portugal) — aceitamos apenas perfil com bio em português brasileiro.';
     }

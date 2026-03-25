@@ -250,7 +250,8 @@ export default function Layout() {
                               ...(user ? [{ key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') }] : []),
                               ...(user ? [{ key: 'payments', label: 'Meus pagamentos', onClick: () => navigate('/app/payments') }] : []),
                               ...(isAdm ? [{ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') }] : []),
-                              ...(isAdm ? [{ key: 'users', label: 'Usuários', onClick: () => navigate('/admin/users') }] : []),
+                              ...(isAdm ? [{ key: 'admin-dash', label: 'Painel admin', onClick: () => navigate('/app/admin/dashboard') }] : []),
+                              ...(isAdm ? [{ key: 'users', label: 'Usuários', onClick: () => navigate('/app/admin/users') }] : []),
                               ...(isAdm ? [{ key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') }] : []),
                               { type: 'divider' as const },
                               { key: 'logout', label: 'Sair', onClick: () => logout() },
@@ -452,7 +453,20 @@ export default function Layout() {
                       </Link>
                     )}
                     {isAdm && (
-                      <Link to="/admin/users" style={{ ...drawerLinkStyle, ...(isActive('/admin') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                      <Link
+                        to="/app/admin/dashboard"
+                        style={{ ...drawerLinkStyle, ...(isActive('/app/admin/dashboard') ? drawerLinkActiveStyle : {}) }}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        Painel admin
+                      </Link>
+                    )}
+                    {isAdm && (
+                      <Link
+                        to="/app/admin/users"
+                        style={{ ...drawerLinkStyle, ...(isActive('/app/admin/users') ? drawerLinkActiveStyle : {}) }}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
                         Usuários
                       </Link>
                     )}

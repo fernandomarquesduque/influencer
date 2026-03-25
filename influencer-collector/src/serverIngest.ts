@@ -86,12 +86,14 @@ function extractHandleForVerify(body: unknown): string | null {
   return null;
 }
 
-/** Confirma no servidor que o perfil está no RocksDB (após ingest). */
-async function verifyProfileOnServer(
+type VerifyLookupResult = 'found' | 'not_found' | 'unavailable';
+
+/** GET collector-verify-profile — mesmo contrato usado após ingest e no pré-check de duplicata remota. */
+async function fetchCollectorVerifyProfile(
   base: string,
   key: string,
   handle: string
-): Promise<'ok' | 'not_found' | 'unavailable'> {
+): Promise<VerifyLookupResult> {
   const verifyUrl = `${base.replace(/\/+$/, '')}/crawl/collector-verify-profile?handle=${encodeURIComponent(handle)}`;
   const ms = Math.min(parseInt(process.env.COLLECTOR_VERIFY_TIMEOUT_MS ?? '', 10) || 20000, 60000);
   const ac = new AbortController();
@@ -105,12 +107,37 @@ async function verifyProfileOnServer(
     if (r.status === 404) return 'unavailable';
     if (!r.ok) return 'unavailable';
     const j = (await r.json()) as { found?: boolean };
-    return j.found === true ? 'ok' : 'not_found';
+    return j.found === true ? 'found' : 'not_found';
   } catch {
     return 'unavailable';
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Confirma no servidor que o perfil está no RocksDB (após ingest). */
+async function verifyProfileOnServer(
+  base: string,
+  key: string,
+  handle: string
+): Promise<'ok' | 'not_found' | 'unavailable'> {
+  const v = await fetchCollectorVerifyProfile(base, key, handle);
+  return v === 'found' ? 'ok' : v;
+}
+
+/**
+ * true se o RocksDB (via API) já tem o perfil — para pular extração antes do Instagram.
+ * false se não encontrado, API indisponível ou coletor sem COLLECTOR_API_BASE/INGEST_KEY.
+ */
+export async function isProfileAlreadyOnRemoteServer(handle: string): Promise<boolean> {
+  if (!isRemoteIngestConfigured()) return false;
+  const base = getCollectorApiBase();
+  const key = process.env.COLLECTOR_INGEST_KEY?.trim();
+  if (!base || !key) return false;
+  const h = handle.replace(/^@/, '').trim().toLowerCase();
+  if (!h) return false;
+  const v = await fetchCollectorVerifyProfile(base, key, h);
+  return v === 'found';
 }
 
 function apiTimeoutMs(path: string): number {

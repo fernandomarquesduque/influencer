@@ -10,6 +10,7 @@ import {
   discoverByFeed,
   discoverByExplore,
   discoverByGoogle,
+  discoverByHandles,
   processGoogleQueue,
 } from './discovery.js';
 import { issueHandleKeysSet } from './memoryStorage.js';
@@ -89,6 +90,8 @@ export interface StartOptions {
   tags?: string[];
   /** Modo google: consulta ou várias (uma por linha); após terminar uma, vai para a próxima. */
   googleQuery?: string;
+  /** Modo handles: lista de @arrobas para extrair direto. */
+  handles?: string[];
   /** Modo google: máx. páginas SERP por consulta. */
   maxSerpPages?: number;
   /** Modo google: tipos de SERP a buscar — ex. ['39', '7', ''] para udm=39, udm=7 e busca geral. */
@@ -104,6 +107,7 @@ export interface StartOptions {
   maxPostsPerTag?: number;
   excludeBusinessProfiles?: boolean;
   requireBioBrazilianPortuguese?: boolean;
+  skipIfAlreadyInRemoteDb?: boolean;
 }
 
 export async function runCollection(
@@ -139,6 +143,7 @@ export async function runCollection(
       maxPostsPerTag: options.maxPostsPerTag,
       excludeBusinessProfiles: options.excludeBusinessProfiles,
       requireBioBrazilianPortuguese: options.requireBioBrazilianPortuguese,
+      skipIfAlreadyInRemoteDb: options.skipIfAlreadyInRemoteDb,
     });
     const maxProfiles = options.limit ?? base.maxProfiles;
     coletaLog(
@@ -149,6 +154,7 @@ export async function runCollection(
     const discoveryOptions = {
       mode: options.mode,
       tag: options.tag,
+      handles: options.handles,
       googleQuery: options.googleQuery,
       maxSerpPages: options.maxSerpPages,
       udmValues: options.udmValues,
@@ -223,6 +229,16 @@ export async function runCollection(
           googleQueriesState = null;
         }
         result = { saved: totalSaved, processed: totalProcessed };
+      }
+    } else if (options.mode === 'handles') {
+      const handlesRaw = Array.isArray(options.handles) ? options.handles : [];
+      if (handlesRaw.length === 0) {
+        coletaLog('Modo Arrobas: defina ao menos um @ (uma por linha).');
+        result = { saved: 0, processed: 0 };
+      } else {
+        coletaLog(`Modo ARROBAS — ${handlesRaw.length} perfil(is) na lista | limite ${maxProfiles}`);
+        statusMessage = `Arrobas — ${handlesRaw.length} perfil(is) na lista`;
+        result = await discoverByHandles(client, pageRef.page, discoveryOptions);
       }
     } else {
       coletaLog(`Modo EXPLORE — limite ${maxProfiles}`);

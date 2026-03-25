@@ -36,6 +36,7 @@ import {
   takeNextFromGoogleQueue,
 } from './memoryStorage.js';
 import {
+  isProfileAlreadyOnRemoteServer,
   isRemoteIngestConfigured,
   pushProfileFullToServer,
   pushProfileToServerRocksDb,
@@ -49,6 +50,26 @@ import { setProcessingState } from './processingStatus.js';
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Se o perfil já está no servidor, marca duplicata, atualiza existingHandles e retorna true (caller retorna cedo). */
+async function skipIfHandleAlreadyOnRemoteServer(
+  config: CollectorConfig,
+  handle: string,
+  existingHandles: Set<string>,
+  handleLower: string,
+  logSuffix?: string
+): Promise<boolean> {
+  if (!isRemoteIngestConfigured() || !config.skipIfAlreadyInRemoteDb) return false;
+  const hk = handle.replace(/^@/, '').trim().toLowerCase();
+  if (!(await isProfileAlreadyOnRemoteServer(hk))) return false;
+  recordDuplicate(handle);
+  coletaLog(
+    `@${hk}: já cadastrado no banco (API/RocksDB), pulando${logSuffix ? ` ${logSuffix}` : ''}.`
+  );
+  existingHandles.add(hk);
+  if (handleLower !== hk) existingHandles.add(handleLower);
+  return true;
 }
 
 /** Conta links de post na grade da página atual (hashtag/explore). */
@@ -152,11 +173,13 @@ const profileHrefRe = /^\/[^/]+\/?$/;
 const isProfileHref = (h: string) =>
   profileHrefRe.test(h.replace(/\?.*$/, '')) && !h.includes('/p/') && !h.includes('/reel/');
 
-export type DiscoveryMode = 'hashtag' | 'feed' | 'explore' | 'google';
+export type DiscoveryMode = 'hashtag' | 'feed' | 'explore' | 'google' | 'handles';
 
 export interface DiscoveryOptions {
   mode: DiscoveryMode;
   tag?: string;
+  /** Modo handles: lista direta de @arrobas para extrair (uma por linha na UI). */
+  handles?: string[];
   /** Modo Google: consulta completa (ex.: site:instagram.com ("pai" OR "mãe") mario). */
   googleQuery?: string;
   /** Modo Google: filtro de tempo do Google (qdr). Valores principais: h/d/w/m/y. Default: w. */
@@ -189,6 +212,10 @@ async function processOneProfile(
   if (existingHandles.has(handleLower)) {
     recordDuplicate(handle);
     coletaLog(`@${handle}: duplicado (processOneProfile), ignorado.`);
+    return false;
+  }
+
+  if (await skipIfHandleAlreadyOnRemoteServer(config, handle, existingHandles, handleLower)) {
     return false;
   }
 
@@ -685,6 +712,11 @@ async function profileExtractionPipelineNewTab(
   logCtx: string
 ): Promise<{ saved: number; processed: number }> {
   const handleLower = handle.toLowerCase();
+  if (await skipIfHandleAlreadyOnRemoteServer(config, handle, existingHandles, handleLower, `(${logCtx})`)) {
+    triedInSession.add(handleLower);
+    sess?.add(handleLower);
+    return { saved: 0, processed: 0 };
+  }
   setProcessingState({
     handle: handleLower,
     stage: 'Abrindo perfil no Instagram…',
@@ -1292,18 +1324,31 @@ export async function discoverByHashtag(
       continue;
     }
 
-    const rPipe = await profileExtractionPipelineNewTab(
-      ctx,
-      handle,
-      config,
-      existingHandles,
-      triedInSession,
-      sess,
-      'hashtag',
-      tag,
-      onCollected,
-      `#${tag}`
-    );
+    let rPipe: { saved: number; processed: number };
+    try {
+      rPipe = await profileExtractionPipelineNewTab(
+        ctx,
+        handle,
+        config,
+        existingHandles,
+        triedInSession,
+        sess,
+        'hashtag',
+        tag,
+        onCollected,
+        `#${tag}`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
+      if (isClosed) {
+        coletaLog(`#${tag}: @${handle} — janela/aba fechada durante extração, avançando para o próximo post.`);
+      } else {
+        coletaLog(`#${tag}: @${handle} — erro na extração, avançando para o próximo post: ${msg}`);
+      }
+      recordIssue(handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
+      rPipe = { saved: 0, processed: 1 };
+    }
     saved += rPipe.saved;
     processed += rPipe.processed;
     if (rPipe.saved) {
@@ -1873,6 +1918,84 @@ export async function discoverByExplore(
       await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
     }
     await randomDelay(1500, 3000);
+  }
+
+  return { saved, processed };
+}
+
+/** Descoberta por lista direta de handles: abre cada perfil e aplica o mesmo pipeline de extração/regras. */
+export async function discoverByHandles(
+  _client: InstagramClient,
+  page: Page,
+  options: DiscoveryOptions
+): Promise<{ saved: number; processed: number }> {
+  const { config, shouldAbort, onCollected, sessionTriedHandles: sess } = options;
+  const existingHandles = listHandles();
+  const triedInSession = new Set<string>();
+  const ctx = page.context();
+  let saved = 0;
+  let processed = 0;
+
+  const rawHandles = Array.isArray(options.handles) ? options.handles : [];
+  const handles = rawHandles
+    .map((h) => String(h ?? '').trim().replace(/^@+/, '').toLowerCase())
+    .filter((h) => /^[a-z0-9._]{2,30}$/.test(h));
+
+  if (handles.length === 0) {
+    coletaLog('Modo Arrobas: informe ao menos um @ válido (uma por linha).');
+    return { saved: 0, processed: 0 };
+  }
+
+  for (let i = 0; i < handles.length && !shouldAbort() && saved < options.maxProfiles; i++) {
+    const handle = handles[i]!;
+    const handleLower = handle.toLowerCase();
+
+    if (existingHandles.has(handleLower)) {
+      recordDuplicate(handle);
+      continue;
+    }
+    if (triedInSession.has(handleLower) || sess?.has(handleLower)) {
+      continue;
+    }
+    if (isBlocklistedHandle(handle) || containsRejectedKeyword(handle)) {
+      triedInSession.add(handleLower);
+      sess?.add(handleLower);
+      continue;
+    }
+
+    const remaining = options.maxProfiles - saved;
+    if (remaining <= 0) break;
+    coletaLog(`Arrobas ${i + 1}/${handles.length}: @${handle} — restam ${remaining} perfil(is) para salvar.`);
+
+    let rPipe: { saved: number; processed: number };
+    try {
+      rPipe = await profileExtractionPipelineNewTab(
+        ctx,
+        handle,
+        config,
+        existingHandles,
+        triedInSession,
+        sess,
+        'handles',
+        'manual-list',
+        onCollected,
+        'Arrobas'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
+      if (isClosed) {
+        coletaLog(`Arrobas: @${handle} — janela/aba fechada durante extração, indo para o próximo.`);
+      } else {
+        coletaLog(`Arrobas: @${handle} — erro na extração, indo para o próximo: ${msg}`);
+      }
+      recordIssue(handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
+      rPipe = { saved: 0, processed: 1 };
+    }
+
+    saved += rPipe.saved;
+    processed += rPipe.processed;
+    await randomDelay(500, 1000);
   }
 
   return { saved, processed };

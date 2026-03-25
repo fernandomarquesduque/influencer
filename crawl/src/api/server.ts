@@ -69,6 +69,7 @@ import { signJwt, getJwtSecret } from '../auth/jwt.js';
 import { verifyPassword, hashPassword } from '../auth/password.js';
 import type { AuthScope } from '../auth/types.js';
 import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
+import { getAdminStatsSnapshot } from './adminStats.js';
 import { createCollectorController } from './controllers/collectorController.js';
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
 import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
@@ -1566,6 +1567,20 @@ app.put('/api/admin/users/:id', requireScopes('adm'), (req: RequestWithAuth, res
         created_at: updated.created_at,
       },
     });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Admin: totais da base (RocksDB + SQLite). Cache em memória (TTL); `?fresh=1` força novo scan. */
+app.get('/api/admin/stats', requireScopes('adm'), async (req: Request, res: Response) => {
+  try {
+    const fresh =
+      req.query.fresh === '1' ||
+      req.query.fresh === 'true' ||
+      String(req.query.refresh ?? '').toLowerCase() === '1';
+    const stats = await getAdminStatsSnapshot(sqlitePath, db, { bypassCache: fresh });
+    res.json(stats);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }

@@ -178,7 +178,7 @@ export function explainNotQualifiesAsInfluencer(
 // --- Estabelecimento (empresa/negócio) — palavras-chave de filtro ---
 const ESTABLISHMENT_KEYWORDS_RAW = [
   'governo', 'banco', 'politica', 'política',
-  'agência', 'cinema', 'teatro',
+  'agência', 'teatro', 'shopping',
   'condominio', 'condomínio',
   'mensagem', 'prefeitura',
   'noticia', 'notícia', 'noticias', 'notícias',

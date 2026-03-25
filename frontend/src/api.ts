@@ -1764,6 +1764,52 @@ export async function verifyEmailByToken(token: string, options?: { signal?: Abo
 /** Admin: tipos de usuário (scope). */
 export type AuthScope = 'adm' | 'assinante' | 'influencer' | 'public'
 
+export interface AdminDashboardStats {
+  generatedAt: string
+  rocksdb: { profiles: number; posts: number }
+  sqlite: {
+    available: boolean
+    tables: Record<string, number>
+    usersByScope?: { scope: string; count: number }[]
+    campaignsByPayment?: { payment_status: string; count: number }[]
+    paymentsByStatus?: { status: string; count: number }[]
+  }
+}
+
+/** Evita 2× fetch no React Strict Mode (dev): mesma Promise até concluir. */
+let adminDashboardStatsInFlight: Promise<AdminDashboardStats> | null = null
+
+export async function fetchAdminDashboardStats(opts?: { fresh?: boolean }): Promise<AdminDashboardStats> {
+  const fresh = opts?.fresh === true
+  const url = fresh
+    ? `${API_BASE}/admin/stats?fresh=1`
+    : `${API_BASE}/admin/stats`
+
+  const run = async (): Promise<AdminDashboardStats> => {
+    const res = await fetch(url, { headers: { ...authHeaders() } })
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string }
+      throw new Error(err?.error || 'Falha ao carregar estatísticas')
+    }
+    return (await res.json()) as AdminDashboardStats
+  }
+
+  if (fresh) {
+    return run()
+  }
+
+  if (adminDashboardStatsInFlight) {
+    return adminDashboardStatsInFlight
+  }
+  const p = run().finally(() => {
+    if (adminDashboardStatsInFlight === p) {
+      adminDashboardStatsInFlight = null
+    }
+  })
+  adminDashboardStatsInFlight = p
+  return p
+}
+
 export interface AdminUser {
   id: number
   username: string

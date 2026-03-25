@@ -68,6 +68,7 @@ export function createCollectorRequestHandler(
         maxSerpPages: 20,
         excludeBusinessProfiles: !!c.excludeBusinessProfiles,
         requireBioBrazilianPortuguese: !!c.requireBioBrazilianPortuguese,
+        skipIfAlreadyInRemoteDb: !!c.skipIfAlreadyInRemoteDb,
       });
       return;
     }
@@ -104,6 +105,14 @@ export function createCollectorRequestHandler(
             .filter((t) => t.length > 0);
           if (tags.length === 0) tags = undefined;
         }
+        let handles: string[] | undefined;
+        if (Array.isArray(body.handles)) {
+          handles = (body.handles as unknown[])
+            .filter((x): x is string => typeof x === 'string')
+            .map((h) => h.replace(/^@+/, '').trim().toLowerCase())
+            .filter((h) => /^[a-z0-9._]{2,30}$/.test(h));
+          if (handles.length === 0) handles = undefined;
+        }
         const baseCfg = loadConfig();
         const num = (v: unknown, fallback: number) => {
           if (v === undefined || v === null || v === '') return fallback;
@@ -124,6 +133,10 @@ export function createCollectorRequestHandler(
           typeof body.requireBioBrazilianPortuguese === 'boolean'
             ? body.requireBioBrazilianPortuguese
             : baseCfg.requireBioBrazilianPortuguese;
+        const skipIfAlreadyInRemoteDb =
+          typeof body.skipIfAlreadyInRemoteDb === 'boolean'
+            ? body.skipIfAlreadyInRemoteDb
+            : baseCfg.skipIfAlreadyInRemoteDb;
         const googleQuery =
           typeof body.googleQuery === 'string' ? String(body.googleQuery).trim() : undefined;
         const googleQdrRaw = typeof body.googleQdr === 'string' ? String(body.googleQdr).trim().toLowerCase() : undefined;
@@ -135,9 +148,10 @@ export function createCollectorRequestHandler(
           udmValuesRaw?.map((u) => (u === null || u === undefined ? '' : String(u).trim())).filter((u) => u !== undefined) ??
           ['39', '7', ''];
         const runOpts = {
-          mode: mode as 'hashtag' | 'feed' | 'explore' | 'google',
+          mode: mode as 'hashtag' | 'feed' | 'explore' | 'google' | 'handles',
           tag,
           tags,
+          handles,
           googleQuery: googleQuery || undefined,
           googleQdr,
           maxSerpPages: Math.max(1, Math.min(50, maxSerpPages)),
@@ -150,6 +164,7 @@ export function createCollectorRequestHandler(
           maxPostsPerTag,
           excludeBusinessProfiles,
           requireBioBrazilianPortuguese,
+          skipIfAlreadyInRemoteDb,
         };
         if (!runner.tryScheduleCollection()) {
           sendJson(res, 200, { started: false, error: 'Não foi possível iniciar (tente de novo).' });
@@ -275,10 +290,10 @@ export function createCollectorRequestHandler(
             processing,
             googleQueriesState: googleQueriesState
               ? {
-                  queries: googleQueriesState.queries,
-                  currentIndex: googleQueriesState.currentIndex,
-                  phase: googleQueriesState.phase,
-                }
+                queries: googleQueriesState.queries,
+                currentIndex: googleQueriesState.currentIndex,
+                phase: googleQueriesState.phase,
+              }
               : null,
             coletados: L.coletados.map(row),
             problemas,
@@ -365,7 +380,9 @@ export function createCollectorRequestHandler(
     .hint { font-size: 0.75rem; color: #666; margin-top: 0.35rem; }
     #tagLabel { flex-direction: column; align-items: flex-start; width: 100%; max-width: 420px; }
     #googleLabel { flex: 1 0 100%; flex-direction: column; align-items: flex-start; width: 100%; }
+    #handlesLabel { flex: 1 0 100%; flex-direction: column; align-items: flex-start; width: 100%; }
     #googleLabel #googleQuery { width: 100%; display: block; }
+    #handlesLabel #handlesInput { width: 100%; display: block; }
     #qdrLabel { flex: 0 0 auto; }
     #tags { width: 100%; min-height: 88px; padding: 0.5rem; border-radius: 4px; border: 1px solid #444; background: #2d2d2d; color: #e0e0e0; font-family: inherit; resize: vertical; }
   </style>
@@ -383,18 +400,21 @@ export function createCollectorRequestHandler(
       <label>Mín. curtidas por post <input type="number" id="minPostLikes" min="0" step="10" value="200"></label>
       <label>Qtd. posts com essa curtida <input type="number" id="minPostsWithMinLikes" min="1" max="50" step="1" value="4"></label>
       <label>Máx. posts na hashtag <input type="number" id="maxPostsPerTag" min="1" max="200" step="1" value="30"></label>
-      <label>Limite de perfis nesta rodada <input type="number" id="limit" min="1" max="100000" step="1" value="19999"></label>
+      <label>Limite de perfis nesta rodada <input type="number" id="limit" min="1" max="100000" step="1" value="10"></label>
     </div>
     <label style="margin-top:0.75rem;"><input type="checkbox" id="excludeBusiness" checked> Excluir perfis de empresa / estabelecimento</label>
     <label style="margin-top:0.5rem;"><input type="checkbox" id="requireBioPtBr" checked> Exigir bio em português brasileiro (rejeita outros idiomas e pt-PT sem sinais de BR)</label>
-    <p class="hint">Bio com menos de ~22 caracteres úteis não é filtrada por idioma. Desligue no .env: <code>COLLECTOR_REQUIRE_BIO_PT_BR=false</code>. Valores salvos no navegador (localStorage).</p>
+    <label style="margin-top:0.5rem;"><input type="checkbox" id="skipIfAlreadyInRemoteDb" checked> Pular @ se já estiver no banco (consulta à API antes de extrair — exige <code>COLLECTOR_API_BASE</code> + chave)</label>
+    <p class="hint">Bio com menos de ~22 caracteres úteis (sem links e @) é aceita como <strong>pt-BR</strong> sem checagem de idioma. Opcional no .env: <code>COLLECTOR_BIO_PT_BR_MIN_USEFUL_CHARS</code> (padrão 22; 0 = sempre checar idioma). Para desligar toda a regra de idioma: <code>COLLECTOR_REQUIRE_BIO_PT_BR=false</code>. Pular @ no banco: também <code>COLLECTOR_SKIP_IF_ALREADY_IN_DB=false</code>. Valores salvos no navegador (localStorage).</p>
   </fieldset>
   <div class="controls">
-    <label>Modo: <select id="mode"><option value="hashtag">Hashtag</option><option value="feed">Feed</option><option value="explore">Explore</option><option value="google">Google (site:instagram.com…)</option></select></label>
+    <label>Modo: <select id="mode"><option value="hashtag">Hashtag</option><option value="feed">Feed</option><option value="explore">Explore</option><option value="google">Google (site:instagram.com…)</option><option value="handles">Arrobas (@perfil)</option></select></label>
     <label id="tagLabel">Tags (modo Hashtag — uma por linha ou separadas por vírgula):
     <textarea id="tags" rows="4" placeholder="moda&#10;beleza&#10;lifestylebr">microinfluencerbr</textarea></label>
     <label id="googleLabel" style="display:none;">Consulta(s) Google — uma por linha (ex.: <code>site:instagram.com mae mario</code>); após terminar uma, vai para a próxima:
     <textarea id="googleQuery" rows="3" placeholder="site:instagram.com mae mario&#10;site:instagram.com pai nintendo"></textarea></label>
+    <label id="handlesLabel" style="display:none;">Lista de arrobas — uma por linha (com ou sem @):
+    <textarea id="handlesInput" rows="4" placeholder="@perfil1&#10;perfil2&#10;@perfil_3"></textarea></label>
     <label id="qdrLabel" style="display:none;">Filtro de tempo (qdr):
       <select id="qdr">
         <option value="h">Última hora</option>
@@ -471,6 +491,7 @@ export function createCollectorRequestHandler(
     var modeEl = document.getElementById('mode');
     var tagLabel = document.getElementById('tagLabel');
     var googleLabel = document.getElementById('googleLabel');
+    var handlesLabel = document.getElementById('handlesLabel');
     var qdrLabel = document.getElementById('qdrLabel');
     var btnStartEl = document.getElementById('btnStart');
     if (!modeEl || !tagLabel || !btnStartEl) {
@@ -491,9 +512,11 @@ export function createCollectorRequestHandler(
           limit: document.getElementById('limit') && document.getElementById('limit').value,
           excludeBusiness: !!(document.getElementById('excludeBusiness') && document.getElementById('excludeBusiness').checked),
           requireBioPtBr: !!(document.getElementById('requireBioPtBr') && document.getElementById('requireBioPtBr').checked),
+          skipIfAlreadyInRemoteDb: !!(document.getElementById('skipIfAlreadyInRemoteDb') && document.getElementById('skipIfAlreadyInRemoteDb').checked),
           mode: modeEl.value,
           tags: tagsEl ? String(tagsEl.value) : '',
           googleQuery: (document.getElementById('googleQuery') && document.getElementById('googleQuery').value) || '',
+          handlesInput: (document.getElementById('handlesInput') && document.getElementById('handlesInput').value) || '',
           googleQdr: (document.getElementById('qdr') && document.getElementById('qdr').value) || 'w',
           maxSerpPages: document.getElementById('maxSerpPages') && document.getElementById('maxSerpPages').value,
           udm39: !!(document.getElementById('udm39') && document.getElementById('udm39').checked),
@@ -534,7 +557,11 @@ export function createCollectorRequestHandler(
         var rb = document.getElementById('requireBioPtBr');
         if (rb) rb.checked = s.requireBioPtBr;
       }
-      if (s.mode === 'hashtag' || s.mode === 'feed' || s.mode === 'explore' || s.mode === 'google') modeEl.value = s.mode;
+      if (typeof s.skipIfAlreadyInRemoteDb === 'boolean') {
+        var sk = document.getElementById('skipIfAlreadyInRemoteDb');
+        if (sk) sk.checked = s.skipIfAlreadyInRemoteDb;
+      }
+      if (s.mode === 'hashtag' || s.mode === 'feed' || s.mode === 'explore' || s.mode === 'google' || s.mode === 'handles') modeEl.value = s.mode;
       if (typeof s.tags === 'string') {
         var te = document.getElementById('tags');
         if (te) te.value = s.tags;
@@ -543,12 +570,17 @@ export function createCollectorRequestHandler(
         var gq = document.getElementById('googleQuery');
         if (gq) gq.value = s.googleQuery;
       }
+      if (typeof s.handlesInput === 'string') {
+        var hi = document.getElementById('handlesInput');
+        if (hi) hi.value = s.handlesInput;
+      }
       if (typeof s.googleQdr === 'string') {
         var qdrEl = document.getElementById('qdr');
         if (qdrEl) qdrEl.value = s.googleQdr;
       }
       tagLabel.style.display = modeEl.value === 'hashtag' ? '' : 'none';
       if (googleLabel) googleLabel.style.display = modeEl.value === 'google' ? '' : 'none';
+      if (handlesLabel) handlesLabel.style.display = modeEl.value === 'handles' ? '' : 'none';
       var serpPagesLabel = document.getElementById('serpPagesLabel');
       if (serpPagesLabel) serpPagesLabel.style.display = modeEl.value === 'google' ? '' : 'none';
       if (qdrLabel) qdrLabel.style.display = modeEl.value === 'google' ? '' : 'none';
@@ -570,10 +602,14 @@ export function createCollectorRequestHandler(
       if (ex) ex.addEventListener('change', saveUiFilters);
       var rb = document.getElementById('requireBioPtBr');
       if (rb) rb.addEventListener('change', saveUiFilters);
+      var skDb = document.getElementById('skipIfAlreadyInRemoteDb');
+      if (skDb) skDb.addEventListener('change', saveUiFilters);
       var tagsEl = document.getElementById('tags');
       if (tagsEl) tagsEl.addEventListener('input', saveUiFilters);
       var gqEl = document.getElementById('googleQuery');
       if (gqEl) gqEl.addEventListener('input', saveUiFilters);
+      var hiEl = document.getElementById('handlesInput');
+      if (hiEl) hiEl.addEventListener('input', saveUiFilters);
       var qdrEl = document.getElementById('qdr');
       if (qdrEl) qdrEl.addEventListener('change', saveUiFilters);
       ['udm39', 'udm7', 'udmNone'].forEach(function(id) {
@@ -592,6 +628,7 @@ export function createCollectorRequestHandler(
     modeEl.addEventListener('change', function() {
       tagLabel.style.display = this.value === 'hashtag' ? '' : 'none';
       if (googleLabel) googleLabel.style.display = this.value === 'google' ? '' : 'none';
+      if (handlesLabel) handlesLabel.style.display = this.value === 'handles' ? '' : 'none';
       var serpPagesLabel = document.getElementById('serpPagesLabel');
       if (serpPagesLabel) serpPagesLabel.style.display = this.value === 'google' ? '' : 'none';
       var qdrLabelCh = document.getElementById('qdrLabel');
@@ -604,6 +641,7 @@ export function createCollectorRequestHandler(
     });
     tagLabel.style.display = modeEl.value === 'hashtag' ? '' : 'none';
     if (googleLabel) googleLabel.style.display = modeEl.value === 'google' ? '' : 'none';
+    if (handlesLabel) handlesLabel.style.display = modeEl.value === 'handles' ? '' : 'none';
     if (qdrLabel) qdrLabel.style.display = modeEl.value === 'google' ? '' : 'none';
     var serpPagesLabelInit = document.getElementById('serpPagesLabel');
     if (serpPagesLabelInit) serpPagesLabelInit.style.display = modeEl.value === 'google' ? '' : 'none';
@@ -634,6 +672,8 @@ export function createCollectorRequestHandler(
         if (ex) ex.checked = d.excludeBusinessProfiles !== false;
         var rb = document.getElementById('requireBioPtBr');
         if (rb) rb.checked = d.requireBioBrazilianPortuguese !== false;
+        var skDb = document.getElementById('skipIfAlreadyInRemoteDb');
+        if (skDb) skDb.checked = d.skipIfAlreadyInRemoteDb !== false;
         var saved = loadUiFilters();
         if (saved) applyUiFilters(saved);
       })
@@ -808,11 +848,22 @@ export function createCollectorRequestHandler(
           .map(function(t) { return t.replace(/^#/, '').trim(); })
           .filter(function(t) { return t.length > 0; });
         var gq = (document.getElementById('googleQuery') && document.getElementById('googleQuery').value || '').trim();
+        var handles = (document.getElementById('handlesInput') && document.getElementById('handlesInput').value || '')
+          .split(/[\\n,;]+/)
+          .map(function(h) { return h.replace(/^@+/, '').trim().toLowerCase(); })
+          .filter(function(h) { return /^[a-z0-9._]{2,30}$/.test(h); });
         if (mode === 'google' && !gq) {
           startRequestInFlight = false;
           btnS.disabled = false;
           st.className = 'status idle';
           st.textContent = 'Preencha a consulta Google (site:instagram.com…).';
+          return;
+        }
+        if (mode === 'handles' && handles.length === 0) {
+          startRequestInFlight = false;
+          btnS.disabled = false;
+          st.className = 'status idle';
+          st.textContent = 'Preencha ao menos uma arroba válida (@perfil) para o modo Arrobas.';
           return;
         }
         var udmValues = [];
@@ -824,6 +875,7 @@ export function createCollectorRequestHandler(
         var payload = {
           mode: mode,
           tags: tags.length ? tags : undefined,
+          handles: mode === 'handles' ? handles : undefined,
           googleQuery: mode === 'google' ? gq : undefined,
           googleQdr: mode === 'google' ? ((document.getElementById('qdr') && document.getElementById('qdr').value) || undefined) : undefined,
           maxSerpPages: numFromInput('maxSerpPages', 20),
@@ -835,7 +887,8 @@ export function createCollectorRequestHandler(
           minPostsWithMinLikes: numFromInput('minPostsWithMinLikes', 4),
           maxPostsPerTag: numFromInput('maxPostsPerTag', 30),
           excludeBusinessProfiles: !!(document.getElementById('excludeBusiness') && document.getElementById('excludeBusiness').checked),
-          requireBioBrazilianPortuguese: !!(document.getElementById('requireBioPtBr') && document.getElementById('requireBioPtBr').checked)
+          requireBioBrazilianPortuguese: !!(document.getElementById('requireBioPtBr') && document.getElementById('requireBioPtBr').checked),
+          skipIfAlreadyInRemoteDb: !!(document.getElementById('skipIfAlreadyInRemoteDb') && document.getElementById('skipIfAlreadyInRemoteDb').checked)
         };
         var ctrl = new AbortController();
         var to = setTimeout(function() { ctrl.abort(); }, 120000);

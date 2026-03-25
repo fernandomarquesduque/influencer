@@ -1,0 +1,319 @@
+/* Painel admin — layout compacto (menos espaço em branco) */
+
+.admin-dashboard {
+  padding: 8px 12px 20px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* Dentro do Layout, .app-page já tem padding — evita “área vazia” em duplicata */
+.app-page .admin-dashboard {
+  padding: 2px 4px 16px;
+  max-width: none;
+}
+
+.admin-dashboard__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.admin-dashboard__title-block h1 {
+  margin: 0 0 2px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--app-text);
+  line-height: 1.25;
+}
+
+.admin-dashboard__title-block p {
+  margin: 0;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.admin-dashboard__section {
+  margin-bottom: 14px;
+}
+
+.admin-dashboard__section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.admin-dashboard__section-accent {
+  width: 3px;
+  height: 22px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.admin-dashboard__section-head-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  line-height: 1.3;
+}
+
+.admin-dashboard__section-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+  color: var(--app-text);
+}
+
+.admin-dashboard__section-muted {
+  font-size: 12px;
+  color: var(--app-text-secondary);
+  font-weight: 400;
+}
+
+.admin-dashboard__stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.admin-dashboard__stat-tile {
+  border-radius: 10px;
+  padding: 12px 14px 10px;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  position: relative;
+  overflow: hidden;
+  min-height: 78px;
+}
+
+.admin-dashboard__stat-tile::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 100% 0%, rgba(255, 255, 255, 0.18), transparent 50%);
+  pointer-events: none;
+}
+
+.admin-dashboard__stat-tile--profiles {
+  background: linear-gradient(135deg, #6366f1 0%, #7c3aed 55%, #a855f7 100%);
+}
+
+.admin-dashboard__stat-tile--posts {
+  background: linear-gradient(135deg, #0891b2 0%, #0d9488 50%, #059669 100%);
+}
+
+.admin-dashboard__stat-tile--meta {
+  background: linear-gradient(135deg, #475569 0%, #334155 100%);
+}
+
+.admin-dashboard__stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.92;
+  margin-bottom: 4px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.admin-dashboard__stat-value {
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-dashboard__stat-icon {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  font-size: 20px;
+  opacity: 0.32;
+}
+
+.admin-dashboard__panel {
+  background: var(--app-card-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  box-shadow: var(--app-card-shadow);
+  overflow: hidden;
+}
+
+.admin-dashboard__panel-head {
+  padding: 8px 12px;
+  font-weight: 650;
+  font-size: 13px;
+  color: var(--app-text);
+  border-bottom: 1px solid var(--app-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-dashboard__panel-head-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.admin-dashboard__panel-head-stack > span:first-child {
+  line-height: 1.35;
+}
+
+.admin-dashboard__panel-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--app-text-secondary);
+  line-height: 1.3;
+}
+
+.admin-dashboard__panel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.admin-dashboard__panel-body {
+  padding: 0;
+}
+
+.admin-dashboard__panel-body .ant-table {
+  background: transparent;
+  font-size: 13px;
+}
+
+.admin-dashboard__panel-body .ant-table-tbody > tr > td {
+  padding: 5px 10px !important;
+}
+
+.admin-dashboard__panel-body .ant-table-thead > tr > th {
+  padding: 6px 10px !important;
+  background: var(--app-card-bg-soft, rgba(0, 0, 0, 0.02)) !important;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.admin-dashboard__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+.admin-dashboard__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  border: 1px solid transparent;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-dashboard__chip-count {
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.admin-dashboard__sqlite-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Resumo rápido: 3 colunas no desktop; 1 coluna em telas estreitas */
+.admin-dashboard__summary-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.admin-dashboard__summary-cols .admin-dashboard__panel {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .admin-dashboard__summary-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-dashboard__warn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--app-text);
+  font-size: 13px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+[data-theme='dark'] .admin-dashboard__stat-tile {
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+
+[data-theme='dark'] .admin-dashboard__warn {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+/* Impressão (classe aplicada em html ao imprimir a partir do painel admin) */
+@media print {
+  @page {
+    margin: 10mm;
+  }
+
+  html.print-admin-dashboard {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  html.print-admin-dashboard body {
+    background: #fff !important;
+  }
+
+  html.print-admin-dashboard .ant-layout > *:not(.ant-layout-content) {
+    display: none !important;
+  }
+
+  html.print-admin-dashboard .missions-bar {
+    display: none !important;
+  }
+
+  html.print-admin-dashboard .admin-dashboard__no-print {
+    display: none !important;
+  }
+
+  html.print-admin-dashboard .app-page {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  html.print-admin-dashboard .app-layout-content {
+    padding: 0 !important;
+  }
+
+  html.print-admin-dashboard .ant-drawer,
+  html.print-admin-dashboard .ant-modal-root,
+  html.print-admin-dashboard .ant-dropdown,
+  html.print-admin-dashboard .ant-message {
+    display: none !important;
+  }
+
+  html.print-admin-dashboard .admin-dashboard {
+    padding: 0 !important;
+  }
+}

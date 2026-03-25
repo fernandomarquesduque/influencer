@@ -80,6 +80,10 @@ export class CompositeStorage {
     return this.rocks.listKeys(bucket);
   }
 
+  async countKeysInBucket(bucket: string): Promise<number> {
+    return this.rocks.countKeysInBucket(bucket);
+  }
+
   async get<T = unknown>(bucket: string, key: string): Promise<T | null> {
     return this.rocks.get<T>(bucket, key);
   }

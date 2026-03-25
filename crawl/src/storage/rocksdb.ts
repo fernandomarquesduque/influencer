@@ -149,6 +149,22 @@ export class RocksDBStorage {
     return keys.sort();
   }
 
+  /** Conta chaves no bucket sem carregar valores (uso em painel admin / métricas). */
+  async countKeysInBucket(bucket: string): Promise<number> {
+    const db = await this.getDb();
+    const prefix = `${bucket}:`;
+    let n = 0;
+    const stream = db.iterator({ gte: prefix, lt: prefix + '\xff' });
+    try {
+      for await (const [_fullKey] of stream) {
+        n++;
+      }
+    } finally {
+      await stream.close();
+    }
+    return n;
+  }
+
   /**
    * Retorna todos os itens de um bucket como { key, value }.
    * Se keyPrefix for informado, retorna apenas itens cuja chave (após "bucket:") começa com keyPrefix
