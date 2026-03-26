@@ -1810,6 +1810,27 @@ export async function fetchAdminDashboardStats(opts?: { fresh?: boolean }): Prom
   return p
 }
 
+/** Resposta de GET /api/admin/reports/unregistered-mentions */
+export interface AdminUnregisteredMentionsReport {
+  postsScanned: number
+  profilesInDb: number
+  uniqueMentions: number
+  notRegisteredCount: number
+  /** Handles com @ que não existem no bucket `profile` do RocksDB */
+  notRegistered: string[]
+}
+
+export async function fetchAdminUnregisteredMentionsReport(): Promise<AdminUnregisteredMentionsReport> {
+  const res = await fetch(`${API_BASE}/admin/reports/unregistered-mentions`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err?.error || 'Falha ao gerar relatório de menções')
+  }
+  return (await res.json()) as AdminUnregisteredMentionsReport
+}
+
 export interface AdminUser {
   id: number
   username: string

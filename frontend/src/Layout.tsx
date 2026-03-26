@@ -89,6 +89,14 @@ export default function Layout() {
     }
   }, [user?.scope, location.pathname, navigate])
 
+  /** Rotas /app/admin/* exclusivas do perfil adm (reforço além do RequireAuth nas rotas). */
+  useEffect(() => {
+    if (!user) return
+    if (location.pathname.startsWith('/app/admin') && user.scope !== 'adm') {
+      navigate('/app', { replace: true })
+    }
+  }, [user, location.pathname, navigate])
+
   const isAssinante = user?.scope === 'assinante'
   /** Barra de missões/recompensas só na lista Minhas campanhas (não em create, detalhe de campanha, etc.). */
   const missionsBarPath = location.pathname.replace(/\/$/, '') || '/'
@@ -252,6 +260,15 @@ export default function Layout() {
                               ...(isAdm ? [{ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') }] : []),
                               ...(isAdm ? [{ key: 'admin-dash', label: 'Painel admin', onClick: () => navigate('/app/admin/dashboard') }] : []),
                               ...(isAdm ? [{ key: 'users', label: 'Usuários', onClick: () => navigate('/app/admin/users') }] : []),
+                              ...(isAdm
+                                ? [
+                                    {
+                                      key: 'admin-mentions',
+                                      label: 'Relatório @ não cadastrados',
+                                      onClick: () => navigate('/app/admin/reports/unregistered-mentions'),
+                                    },
+                                  ]
+                                : []),
                               ...(isAdm ? [{ key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') }] : []),
                               { type: 'divider' as const },
                               { key: 'logout', label: 'Sair', onClick: () => logout() },
@@ -468,6 +485,18 @@ export default function Layout() {
                         onClick={() => setMobileMenuOpen(false)}
                       >
                         Usuários
+                      </Link>
+                    )}
+                    {isAdm && (
+                      <Link
+                        to="/app/admin/reports/unregistered-mentions"
+                        style={{
+                          ...drawerLinkStyle,
+                          ...(isActive('/app/admin/reports/unregistered-mentions') ? drawerLinkActiveStyle : {}),
+                        }}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        Relatório @ não cadastrados
                       </Link>
                     )}
                     {isAdm && (

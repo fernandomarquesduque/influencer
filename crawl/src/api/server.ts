@@ -39,6 +39,7 @@ import {
   matchesQuery,
   getPostSearchableNormalized,
   getPostTimestamp,
+  collectMentionHandlesFromPostItem,
   type ProfilesSearchQuery,
   type ProfileListItem,
 } from './profilesSearch.js';
@@ -1581,6 +1582,40 @@ app.get('/api/admin/stats', requireScopes('adm'), async (req: Request, res: Resp
       String(req.query.refresh ?? '').toLowerCase() === '1';
     const stats = await getAdminStatsSnapshot(sqlitePath, db, { bypassCache: fresh });
     res.json(stats);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/**
+ * Admin: varre todos os posts (RocksDB), extrai @menções em legendas/texto auxiliar e retorna as que
+ * não possuem entrada no bucket `profile`.
+ */
+app.get('/api/admin/reports/unregistered-mentions', requireScopes('adm'), async (_req: Request, res: Response) => {
+  try {
+    const [postRows, profileRows] = await Promise.all([
+      db.getByBucket<Record<string, unknown>>('post'),
+      db.getByBucket<Record<string, unknown>>('profile'),
+    ]);
+    const profileSet = new Set(
+      profileRows
+        .map(({ key }) => String(key ?? '').replace(/^@+/, '').trim().toLowerCase())
+        .filter((k) => k.length > 0)
+    );
+    const allMentions = new Set<string>();
+    for (const { value } of postRows) {
+      for (const h of collectMentionHandlesFromPostItem(value as Record<string, unknown>)) {
+        allMentions.add(h);
+      }
+    }
+    const missing = [...allMentions].filter((h) => !profileSet.has(h)).sort((a, b) => a.localeCompare(b));
+    res.json({
+      postsScanned: postRows.length,
+      profilesInDb: profileSet.size,
+      uniqueMentions: allMentions.size,
+      notRegisteredCount: missing.length,
+      notRegistered: missing.map((h) => `@${h}`),
+    });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }

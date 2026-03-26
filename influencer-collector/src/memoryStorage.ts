@@ -2,6 +2,10 @@
  * Ledger em 3 faixas: coletado (aguardando ou sem API), problemas (só erros — duplicados não entram), integrado (API OK).
  */
 
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'fs';
+import { mkdir, writeFile } from 'fs/promises';
+import { dirname, join } from 'path';
 import type { Entity } from './entityRules.js';
 
 export type IssueKind = 'duplicado' | 'extracao' | 'regra' | 'erro_api';
@@ -24,6 +28,8 @@ export interface IntegratedRow extends PendingRow {
 }
 
 export interface IssueRow {
+  /** Identificador único (persistência + remoção na UI). */
+  id: string;
   handle: string;
   handleKey: string;
   kind: IssueKind;
@@ -54,6 +60,85 @@ const pending = new Map<string, PendingRow>();
 const integrated = new Map<string, IntegratedRow>();
 const issues: IssueRow[] = [];
 
+function issuesFilePath(): string {
+  const raw = process.env.COLLECTOR_ISSUES_PATH?.trim();
+  if (raw) return raw;
+  return join(process.cwd(), 'data', 'collector-issues.json');
+}
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function flushIssuesToDisk(): Promise<void> {
+  const path = issuesFilePath();
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, JSON.stringify(issues, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn(
+      '[ledger] Não foi possível gravar collector-issues.json:',
+      e instanceof Error ? e.message : e
+    );
+  }
+}
+
+function schedulePersistIssues(): void {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void flushIssuesToDisk();
+  }, 400);
+}
+
+/**
+ * Carrega a lista de problemas do disco (chame após dotenv, antes de iniciar coleta).
+ * Caminho: COLLECTOR_ISSUES_PATH ou data/collector-issues.json na raiz do projeto.
+ */
+export function loadPersistedIssuesSync(): void {
+  const path = issuesFilePath();
+  try {
+    if (!existsSync(path)) return;
+    const raw = readFileSync(path, 'utf-8');
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return;
+    const loaded: IssueRow[] = [];
+    for (const item of arr) {
+      if (item == null || typeof item !== 'object') continue;
+      const o = item as Record<string, unknown>;
+      const k = norm(String(o.handle ?? ''));
+      if (!k) continue;
+      const kind = o.kind as IssueKind;
+      if (kind !== 'extracao' && kind !== 'regra' && kind !== 'erro_api') continue;
+      const id = typeof o.id === 'string' && o.id.trim() ? o.id.trim() : randomUUID();
+      loaded.push({
+        id,
+        handle: k,
+        handleKey: k,
+        kind,
+        detail: typeof o.detail === 'string' ? o.detail : undefined,
+        at: typeof o.at === 'string' ? o.at : new Date().toISOString(),
+        full_name: typeof o.full_name === 'string' ? o.full_name : undefined,
+        followers_count: typeof o.followers_count === 'number' ? o.followers_count : undefined,
+        attemptedEndpoint: typeof o.attemptedEndpoint === 'string' ? o.attemptedEndpoint : undefined,
+      });
+    }
+    loaded.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+    issues.length = 0;
+    for (const row of loaded.slice(0, MAX_ISSUES)) {
+      issues.push(row);
+    }
+    if (loaded.length > 0) {
+      console.log(
+        `[ledger] ${issues.length} registro(s) em “Problemas” carregado(s) de ${path}`
+      );
+    }
+  } catch (e) {
+    console.warn(
+      '[ledger] Falha ao carregar problemas persistidos:',
+      e instanceof Error ? e.message : e
+    );
+  }
+}
+
 /** Fila de handles descobertos pelo Google — processamento no Instagram é assíncrono, 1 por vez. */
 export interface GoogleQueueItem {
   handle: string;
@@ -73,9 +158,22 @@ function norm(h: string): string {
     .toLowerCase();
 }
 
-function pushIssue(row: IssueRow): void {
-  issues.unshift(row);
+function pushIssue(row: Omit<IssueRow, 'id'> & { id?: string }): void {
+  const id = row.id?.trim() ? row.id.trim() : randomUUID();
+  issues.unshift({ ...row, id });
   if (issues.length > MAX_ISSUES) issues.length = MAX_ISSUES;
+  schedulePersistIssues();
+}
+
+/** Remove um registro específico de Problemas (libera o @ em issueHandleKeysSet se não houver outro erro para o mesmo handle). */
+export function removeIssueById(id: string): boolean {
+  const want = String(id ?? '').trim();
+  if (!want) return false;
+  const idx = issues.findIndex((x) => x.id === want);
+  if (idx === -1) return false;
+  issues.splice(idx, 1);
+  schedulePersistIssues();
+  return true;
 }
 
 /** Handles já coletados ou integrados (evita reprocessar). */
@@ -283,4 +381,5 @@ export function clearAll(): void {
   issues.length = 0;
   googleQueue.length = 0;
   duplicateLogged.clear();
+  schedulePersistIssues();
 }

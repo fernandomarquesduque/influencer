@@ -3,8 +3,16 @@
  * Funciona em Mac e Windows.
  */
 
+import './loadEnv.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { getLedger, getGoogleQueue, removeFromGoogleQueue, clearGoogleQueue, removeProfile } from './memoryStorage.js';
+import {
+  getLedger,
+  getGoogleQueue,
+  removeFromGoogleQueue,
+  clearGoogleQueue,
+  removeProfile,
+  removeIssueById,
+} from './memoryStorage.js';
 import { getProcessingState } from './processingStatus.js';
 import * as runner from './runner.js';
 import { loadConfig } from './config.js';
@@ -69,6 +77,7 @@ export function createCollectorRequestHandler(
         excludeBusinessProfiles: !!c.excludeBusinessProfiles,
         requireBioBrazilianPortuguese: !!c.requireBioBrazilianPortuguese,
         skipIfAlreadyInRemoteDb: !!c.skipIfAlreadyInRemoteDb,
+        allowedAccountTypes: Array.isArray(c.allowedAccountTypes) ? c.allowedAccountTypes : [],
       });
       return;
     }
@@ -137,6 +146,11 @@ export function createCollectorRequestHandler(
           typeof body.skipIfAlreadyInRemoteDb === 'boolean'
             ? body.skipIfAlreadyInRemoteDb
             : baseCfg.skipIfAlreadyInRemoteDb;
+        const allowedAccountTypes = Array.isArray(body.allowedAccountTypes)
+          ? (body.allowedAccountTypes as unknown[])
+              .map((x) => (typeof x === 'number' ? x : parseInt(String(x), 10)))
+              .filter((n): n is number => n === 1 || n === 2 || n === 3)
+          : baseCfg.allowedAccountTypes;
         const googleQuery =
           typeof body.googleQuery === 'string' ? String(body.googleQuery).trim() : undefined;
         const googleQdrRaw = typeof body.googleQdr === 'string' ? String(body.googleQdr).trim().toLowerCase() : undefined;
@@ -165,6 +179,7 @@ export function createCollectorRequestHandler(
           excludeBusinessProfiles,
           requireBioBrazilianPortuguese,
           skipIfAlreadyInRemoteDb,
+          allowedAccountTypes,
         };
         if (!runner.tryScheduleCollection()) {
           sendJson(res, 200, { started: false, error: 'Não foi possível iniciar (tente de novo).' });
@@ -234,6 +249,26 @@ export function createCollectorRequestHandler(
       return;
     }
 
+    if (url === '/api/remove-issue' && req.method === 'POST') {
+      try {
+        const body = await parseBody(req);
+        const id = typeof body.id === 'string' ? body.id.trim() : '';
+        if (!id) {
+          sendJson(res, 400, { ok: false, removed: false, error: 'Informe o id do registro.' });
+          return;
+        }
+        const removed = removeIssueById(id);
+        sendJson(res, removed ? 200 : 404, {
+          ok: removed,
+          removed,
+          error: removed ? undefined : 'Registro não encontrado.',
+        });
+      } catch (e) {
+        sendJson(res, 500, { ok: false, removed: false, error: e instanceof Error ? e.message : String(e) });
+      }
+      return;
+    }
+
     if (url === '/api/list' || url === '/list') {
       const L = getLedger();
       const googleQueue = getGoogleQueue();
@@ -242,6 +277,7 @@ export function createCollectorRequestHandler(
         handleKey: String(p.handle).replace(/^@/, '').trim().toLowerCase(),
         full_name: p.profile.full_name,
         followers_count: p.profile.followers_count,
+        account_type: p.profile.account_type,
         collectedAt: p.collectedAt,
       });
       const hostFromEndpoint = (u: string): string => {
@@ -258,6 +294,7 @@ export function createCollectorRequestHandler(
         rocksDbVerified: p.rocksDbVerified ?? '',
       }));
       const problemas = L.problemas.map((x) => ({
+        id: x.id,
         handle: x.handle,
         handleKey: x.handleKey,
         kind: x.kind,
@@ -331,8 +368,8 @@ export function createCollectorRequestHandler(
     .btn-stop:hover:not(:disabled) { background: #e53e3e; }
     .row-clickable { cursor: pointer; }
     .row-clickable:hover { background: rgba(255,255,255,0.04); }
-    .btn-remove-queue { padding: 0.3rem 0.6rem; font-size: 0.8rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
-    .btn-remove-queue:hover { background: #450a0a; color: #fca5a5; }
+    .btn-remove-queue, .btn-remove-issue { padding: 0.3rem 0.6rem; font-size: 0.8rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
+    .btn-remove-queue:hover, .btn-remove-issue:hover { background: #450a0a; color: #fca5a5; }
     .btn-clear-queue { margin-left: 0.5rem; padding: 0.35rem 0.75rem; font-size: 0.85rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
     .btn-clear-queue:hover { background: #450a0a; color: #fca5a5; }
     #udmOptionsWrap { margin-top: 0.5rem; }
@@ -402,10 +439,16 @@ export function createCollectorRequestHandler(
       <label>Máx. posts na hashtag <input type="number" id="maxPostsPerTag" min="1" max="200" step="1" value="30"></label>
       <label>Limite de perfis nesta rodada <input type="number" id="limit" min="1" max="100000" step="1" value="10"></label>
     </div>
+    <div class="account-types-block" style="margin-top:0.75rem;">
+      <div style="font-size:0.9rem;margin-bottom:0.35rem;">Tipos de conta Instagram aceitos <span style="color:#888">(account_type — nenhum marcado = aceitar todos)</span>:</div>
+      <label style="margin-right:1rem;"><input type="checkbox" id="acctType1" value="1"> Pessoal</label>
+      <label style="margin-right:1rem;"><input type="checkbox" id="acctType2" value="2"> Criador</label>
+      <label><input type="checkbox" id="acctType3" value="3"> Empresa</label>
+    </div>
     <label style="margin-top:0.75rem;"><input type="checkbox" id="excludeBusiness" checked> Excluir perfis de empresa / estabelecimento</label>
     <label style="margin-top:0.5rem;"><input type="checkbox" id="requireBioPtBr" checked> Exigir bio em português brasileiro (rejeita outros idiomas e pt-PT sem sinais de BR)</label>
     <label style="margin-top:0.5rem;"><input type="checkbox" id="skipIfAlreadyInRemoteDb" checked> Pular @ se já estiver no banco (consulta à API antes de extrair — exige <code>COLLECTOR_API_BASE</code> + chave)</label>
-    <p class="hint">Bio com menos de ~22 caracteres úteis (sem links e @) é aceita como <strong>pt-BR</strong> sem checagem de idioma. Opcional no .env: <code>COLLECTOR_BIO_PT_BR_MIN_USEFUL_CHARS</code> (padrão 22; 0 = sempre checar idioma). Para desligar toda a regra de idioma: <code>COLLECTOR_REQUIRE_BIO_PT_BR=false</code>. Pular @ no banco: também <code>COLLECTOR_SKIP_IF_ALREADY_IN_DB=false</code>. Valores salvos no navegador (localStorage).</p>
+    <p class="hint">Filtro por tipo: se marcar ao menos um, o coletor rejeita na primeira leitura do perfil quando o <code>account_type</code> do Instagram não estiver na lista (aparece em Problemas). .env: <code>COLLECTOR_ALLOWED_ACCOUNT_TYPES=1,2,3</code> (vazio = todos). Bio com menos de ~22 caracteres úteis (sem links e @) é aceita como <strong>pt-BR</strong> sem checagem de idioma. Opcional no .env: <code>COLLECTOR_BIO_PT_BR_MIN_USEFUL_CHARS</code> (padrão 22; 0 = sempre checar idioma). Para desligar toda a regra de idioma: <code>COLLECTOR_REQUIRE_BIO_PT_BR=false</code>. Pular @ no banco: também <code>COLLECTOR_SKIP_IF_ALREADY_IN_DB=false</code>. Valores salvos no navegador (localStorage).</p>
   </fieldset>
   <div class="controls">
     <label>Modo: <select id="mode"><option value="hashtag">Hashtag</option><option value="feed">Feed</option><option value="explore">Explore</option><option value="google">Google (site:instagram.com…)</option><option value="handles">Arrobas (@perfil)</option></select></label>
@@ -468,14 +511,15 @@ export function createCollectorRequestHandler(
   <p class="hint" style="margin-top:0"><strong>Confirmação no RocksDB</strong> = resposta do GET <code>collector-verify-profile</code> feito logo após o ingest (se a API tiver essa rota).</p>
   <div class="table-scroll">
   <table>
-    <thead><tr><th>#</th><th>Handle</th><th>Nome</th><th>Seguidores</th><th>Host (API)</th><th>Confirmação (consulta pós-ingest)</th><th>Integrado em</th></tr></thead>
+    <thead><tr><th>#</th><th>Handle</th><th>Nome</th><th>Seguidores</th><th>Tipo perfil</th><th>Host (API)</th><th>Confirmação (consulta pós-ingest)</th><th>Integrado em</th></tr></thead>
     <tbody id="rowsIntegrados"></tbody>
   </table>
   </div>
   <h2 class="section">3 — Erro (após processamento)</h2>
+  <p class="hint" style="margin-top:0">Lista gravada em disco (<code>data/collector-issues.json</code> ou <code>COLLECTOR_ISSUES_PATH</code>) para consulta entre execuções. <strong>Remover</strong> uma linha tira o @ da lista de bloqueio — na próxima coleta o perfil pode ser processado de novo.</p>
   <div class="table-scroll">
   <table>
-    <thead><tr><th>#</th><th>Handle</th><th>Tipo</th><th>Detalhe</th><th>Host</th><th>POST tentado</th><th>Quando</th></tr></thead>
+    <thead><tr><th>#</th><th>Handle</th><th>Tipo</th><th>Detalhe</th><th>Host</th><th>POST tentado</th><th>Quando</th><th></th></tr></thead>
     <tbody id="rowsProblemas"></tbody>
   </table>
   </div>
@@ -500,6 +544,25 @@ export function createCollectorRequestHandler(
     }
     var startRequestInFlight = false;
     var FILTER_STORAGE_KEY = 'influencerCollector.uiFilters.v1';
+    function collectAllowedAccountTypes() {
+      var out = [];
+      var t1 = document.getElementById('acctType1');
+      var t2 = document.getElementById('acctType2');
+      var t3 = document.getElementById('acctType3');
+      if (t1 && t1.checked) out.push(1);
+      if (t2 && t2.checked) out.push(2);
+      if (t3 && t3.checked) out.push(3);
+      return out;
+    }
+    function applyAccountTypeCheckboxes(arr) {
+      var types = Array.isArray(arr) ? arr : [];
+      var t1 = document.getElementById('acctType1');
+      var t2 = document.getElementById('acctType2');
+      var t3 = document.getElementById('acctType3');
+      if (t1) t1.checked = types.indexOf(1) >= 0;
+      if (t2) t2.checked = types.indexOf(2) >= 0;
+      if (t3) t3.checked = types.indexOf(3) >= 0;
+    }
     function saveUiFilters() {
       try {
         var tagsEl = document.getElementById('tags');
@@ -521,7 +584,8 @@ export function createCollectorRequestHandler(
           maxSerpPages: document.getElementById('maxSerpPages') && document.getElementById('maxSerpPages').value,
           udm39: !!(document.getElementById('udm39') && document.getElementById('udm39').checked),
           udm7: !!(document.getElementById('udm7') && document.getElementById('udm7').checked),
-          udmNone: !!(document.getElementById('udmNone') && document.getElementById('udmNone').checked)
+          udmNone: !!(document.getElementById('udmNone') && document.getElementById('udmNone').checked),
+          allowedAccountTypes: collectAllowedAccountTypes()
         }));
       } catch (e) { /* private mode / quota */ }
     }
@@ -589,6 +653,7 @@ export function createCollectorRequestHandler(
       if (typeof s.udm39 === 'boolean') { var u39 = document.getElementById('udm39'); if (u39) u39.checked = s.udm39; }
       if (typeof s.udm7 === 'boolean') { var u7 = document.getElementById('udm7'); if (u7) u7.checked = s.udm7; }
       if (typeof s.udmNone === 'boolean') { var uN = document.getElementById('udmNone'); if (uN) uN.checked = s.udmNone; }
+      if (Array.isArray(s.allowedAccountTypes)) applyAccountTypeCheckboxes(s.allowedAccountTypes);
     }
     function bindFilterPersistence() {
       ['minFollowers', 'maxFollowers', 'minPostLikes', 'minPostsWithMinLikes', 'maxPostsPerTag', 'limit', 'maxSerpPages'].forEach(function(id) {
@@ -613,6 +678,10 @@ export function createCollectorRequestHandler(
       var qdrEl = document.getElementById('qdr');
       if (qdrEl) qdrEl.addEventListener('change', saveUiFilters);
       ['udm39', 'udm7', 'udmNone'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('change', saveUiFilters);
+      });
+      ['acctType1', 'acctType2', 'acctType3'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) el.addEventListener('change', saveUiFilters);
       });
@@ -674,6 +743,7 @@ export function createCollectorRequestHandler(
         if (rb) rb.checked = d.requireBioBrazilianPortuguese !== false;
         var skDb = document.getElementById('skipIfAlreadyInRemoteDb');
         if (skDb) skDb.checked = d.skipIfAlreadyInRemoteDb !== false;
+        applyAccountTypeCheckboxes(Array.isArray(d.allowedAccountTypes) ? d.allowedAccountTypes : []);
         var saved = loadUiFilters();
         if (saved) applyUiFilters(saved);
       })
@@ -732,7 +802,30 @@ export function createCollectorRequestHandler(
             var t = '';
             try { t = p.since ? new Date(p.since).toLocaleString('pt-BR') : ''; } catch (e) { t = String(p.since || ''); }
             var hk = String(p.handle || '').replace(/^@/,'').toLowerCase();
-            return '<tr class="row-processing row-clickable" data-handle="' + escapeAttr(hk) + '"><td>…</td><td>@' + escapeAttr(p.handle) + '</td><td><span class="pulse-dot"></span><strong>Em processamento</strong> — ' + escapeAttr(p.stage || '') + '</td><td>—</td><td>' + escapeAttr(t) + '</td></tr>';
+            var folCell = '—';
+            if (p.followers_count != null && p.followers_count !== '' && Number(p.followers_count) > 0) {
+              folCell = Number(p.followers_count).toLocaleString('pt-BR');
+            }
+            var typePart = '';
+            if (p.account_type !== null && p.account_type !== undefined && p.account_type !== '') {
+              var atn = Number(p.account_type);
+              if (!isNaN(atn)) {
+                var atl = atn === 1 ? 'Pessoal' : atn === 2 ? 'Criador' : atn === 3 ? 'Empresa' : '';
+                typePart = 'account_type=' + atn + (atl ? ' (' + atl + ')' : '');
+              }
+            }
+            var bits = [];
+            if (p.full_name) bits.push(String(p.full_name));
+            if (typePart) bits.push(typePart);
+            if (p.category) {
+              var c = String(p.category);
+              if (c.length > 72) c = c.slice(0, 69) + '…';
+              bits.push('categoria: ' + c);
+            }
+            var sub = bits.length
+              ? '<br><span class="proc-profile-detail" style="display:block;margin-top:0.25rem;opacity:0.92;font-size:0.82em;font-weight:normal;line-height:1.35">' + escapeAttr(bits.join(' · ')) + '</span>'
+              : '';
+            return '<tr class="row-processing row-clickable" data-handle="' + escapeAttr(hk) + '"><td>…</td><td>@' + escapeAttr(p.handle) + '</td><td><span class="pulse-dot"></span><strong>Em processamento</strong> — ' + escapeAttr(p.stage || '') + sub + '</td><td>' + folCell + '</td><td>' + escapeAttr(t) + '</td></tr>';
           }
           function rowColetado(x, i) {
             var hk = x.handleKey || String(x.handle).replace(/^@/,'').toLowerCase();
@@ -743,10 +836,20 @@ export function createCollectorRequestHandler(
             var hostP = x.attemptedHost ? '<strong>' + escapeAttr(x.attemptedHost) + '</strong>' : '—';
             var urlP = x.attemptedEndpoint ? '<code class="ep">' + escapeAttr(x.attemptedEndpoint) + '</code>' : '—';
             var hk = x.handleKey || String(x.handle || '').replace(/^@/,'').toLowerCase();
-            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td class="' + cls + '">' + escapeAttr(x.kindLabel || x.kind) + '</td><td>' + escapeAttr(x.detail || '') + '</td><td>' + hostP + '</td><td>' + urlP + '</td><td>' + escapeAttr(x.at || '') + '</td></tr>';
+            var iid = x.id ? escapeAttr(String(x.id)) : '';
+            var rm = iid ? '<button type="button" class="btn-remove-issue" data-issue-id="' + iid + '">Remover</button>' : '—';
+            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td class="' + cls + '">' + escapeAttr(x.kindLabel || x.kind) + '</td><td>' + escapeAttr(x.detail || '') + '</td><td>' + hostP + '</td><td>' + urlP + '</td><td>' + escapeAttr(x.at || '') + '</td><td>' + rm + '</td></tr>';
           }
           function rowInt(x, i) {
             var hk = x.handleKey || String(x.handle).replace(/^@/,'').toLowerCase();
+            var typeCell = '—';
+            if (x.account_type != null && x.account_type !== '') {
+              var atn = Number(x.account_type);
+              if (!isNaN(atn)) {
+                var atl = atn === 1 ? 'Pessoal' : atn === 2 ? 'Criador' : atn === 3 ? 'Empresa' : '';
+                typeCell = String(atn) + (atl ? ' (' + atl + ')' : '');
+              }
+            }
             var host = x.apiHost ? '<strong>' + escapeAttr(x.apiHost) + '</strong>' : '<span style="color:#888">—</span>';
             var v = x.rocksDbVerified;
             var conf = '<span style="color:#888">—</span> <small>(registro antigo)</small>';
@@ -757,7 +860,7 @@ export function createCollectorRequestHandler(
             } else if (v === 'skipped') {
               conf = '<span class="verify-skip">Não executada</span> — <code>COLLECTOR_SKIP_VERIFY</code> ou fluxo sem verificação.';
             }
-            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + host + '</td><td class="verify-cell">' + conf + '</td><td>' + escapeAttr(x.integratedAt || '') + '</td></tr>';
+            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + escapeAttr(typeCell) + '</td><td>' + host + '</td><td class="verify-cell">' + conf + '</td><td>' + escapeAttr(x.integratedAt || '') + '</td></tr>';
           }
           function rowGoogleQueue(x, i) {
             var h = (x.handle || '').toLowerCase();
@@ -773,8 +876,8 @@ export function createCollectorRequestHandler(
           document.getElementById('rowsColetados').innerHTML = rowsC.length ? rowsC.join('') : '<tr><td colspan="5" style="color:#666">Nenhum nesta lista (nem em processamento).</td></tr>';
           var gqEl = document.getElementById('rowsGoogleQueue');
           if (gqEl) gqEl.innerHTML = googleQueue.length ? googleQueue.map(rowGoogleQueue).join('') : '<tr><td colspan="5" style="color:#666">Nenhum. Use o modo Google para preencher a fila.</td></tr>';
-          document.getElementById('rowsProblemas').innerHTML = problemas.length ? problemas.map(rowProb).join('') : '<tr><td colspan="7" style="color:#666">Nenhum.</td></tr>';
-          document.getElementById('rowsIntegrados').innerHTML = integrados.length ? integrados.map(rowInt).join('') : '<tr><td colspan="7" style="color:#666">Nenhum ainda.</td></tr>';
+          document.getElementById('rowsProblemas').innerHTML = problemas.length ? problemas.map(rowProb).join('') : '<tr><td colspan="8" style="color:#666">Nenhum.</td></tr>';
+          document.getElementById('rowsIntegrados').innerHTML = integrados.length ? integrados.map(rowInt).join('') : '<tr><td colspan="8" style="color:#666">Nenhum ainda.</td></tr>';
         })
         .catch(function() {
           document.getElementById('countC').textContent = '?';
@@ -810,9 +913,27 @@ export function createCollectorRequestHandler(
       }
       onRowClick(e);
     }
+    function onProblemasTableClick(e) {
+      var btn = e.target.closest('.btn-remove-issue');
+      if (btn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var id = btn.getAttribute('data-issue-id');
+        if (!id) return;
+        fetch(apiUrl('/api/remove-issue'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.removed) refreshList();
+            else if (d.error) alert(d.error);
+          })
+          .catch(function() { alert('Não foi possível remover o registro.'); });
+        return;
+      }
+      onRowClick(e);
+    }
     document.getElementById('rowsColetados').addEventListener('click', onRowClick);
     document.getElementById('rowsGoogleQueue').addEventListener('click', onGoogleQueueClick);
-    document.getElementById('rowsProblemas').addEventListener('click', onRowClick);
+    document.getElementById('rowsProblemas').addEventListener('click', onProblemasTableClick);
     document.getElementById('rowsIntegrados').addEventListener('click', onRowClick);
     var btnClearGq = document.getElementById('btnClearGoogleQueue');
     if (btnClearGq) {
@@ -888,7 +1009,8 @@ export function createCollectorRequestHandler(
           maxPostsPerTag: numFromInput('maxPostsPerTag', 30),
           excludeBusinessProfiles: !!(document.getElementById('excludeBusiness') && document.getElementById('excludeBusiness').checked),
           requireBioBrazilianPortuguese: !!(document.getElementById('requireBioPtBr') && document.getElementById('requireBioPtBr').checked),
-          skipIfAlreadyInRemoteDb: !!(document.getElementById('skipIfAlreadyInRemoteDb') && document.getElementById('skipIfAlreadyInRemoteDb').checked)
+          skipIfAlreadyInRemoteDb: !!(document.getElementById('skipIfAlreadyInRemoteDb') && document.getElementById('skipIfAlreadyInRemoteDb').checked),
+          allowedAccountTypes: collectAllowedAccountTypes()
         };
         var ctrl = new AbortController();
         var to = setTimeout(function() { ctrl.abort(); }, 120000);

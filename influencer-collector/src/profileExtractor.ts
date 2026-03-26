@@ -36,30 +36,104 @@ function applyMultiplier(num: number, rest: string): number {
 }
 
 function parseFollowersFromText(fullText: string): number | null {
-  const match = fullText.match(
-    /(\d[\d.,\s]*)\s*(?:mil|k|m|milhão|milhões)?\s*seguidores/i
-  ) ?? fullText.match(/(\d[\d.,\s]*)\s*(?:mil|k|m)?\s*followers?/i);
-  if (!match) return null;
-  const numStr = match[1].replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(numStr);
-  if (Number.isNaN(n)) return null;
-  return applyMultiplier(n, match[0] ?? '');
+  if (!fullText || fullText.length < 2) return null;
+  const compact = fullText.replace(/\s+/g, ' ').trim();
+  const tryMatch = (re: RegExp): number | null => {
+    const match = compact.match(re);
+    if (!match?.[1]) return null;
+    const numStr = match[1].replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+    const n = parseFloat(numStr);
+    if (Number.isNaN(n)) return null;
+    return applyMultiplier(n, match[0] ?? '');
+  };
+  return (
+    tryMatch(/(\d[\d.,\s]*)\s*(?:mil|k|m|milhão|milhões)?\s*seguidores\b/i) ??
+    tryMatch(/(\d[\d.,\s]*)\s*(?:mil|k|m)?\s*followers?\b/i) ??
+    /** Alguns layouts colocam o rótulo antes do número. */
+    tryMatch(/\bseguidores?\s*[·•:]?\s*(\d[\d.,\s]*)\b/i) ??
+    tryMatch(/\bfollowers?\s*[·•:]?\s*(\d[\d.,\s]*)\b/i) ??
+    null
+  );
 }
 
-async function readFollowersFromDOM(page: Page): Promise<number | null> {
+function parsePlainTitle(title: string | null): number | null {
+  if (!title || !title.trim()) return null;
+  const numStr = title.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(numStr);
+  if (Number.isNaN(n) || n <= 0) return null;
+  return Math.round(n);
+}
+
+/**
+ * Layout antigo: a[href*="/followers/"]. Layout novo (2024+): a[href="#"][role=link] com texto "N seguidores" e span[title="N"].
+ * O cabeçalho do perfil pode estar em <section> fora de <main>.
+ */
+export async function readFollowersFromDOM(page: Page): Promise<number | null> {
   await page.waitForTimeout(1500);
   const main = page.locator('main').first();
   await main.waitFor({ state: 'visible', timeout: 8000 }).catch(() => null);
-  const link = page.locator('a[href*="/followers/"]').first();
-  const span = link.locator('span[title]').first();
-  const title = await span.getAttribute('title').catch(() => null);
-  if (title) {
-    const numStr = title.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
-    const n = parseFloat(numStr);
-    if (!Number.isNaN(n) && n > 0) return Math.round(n);
-  }
-  const text = await main.allTextContents().then((a) => a.join('\n'));
-  return parseFollowersFromText(text.replace(/\s+/g, ' '));
+
+  const textFrom = async (loc: ReturnType<Page['locator']>): Promise<string> =>
+    loc
+      .allTextContents()
+      .then((a) => a.join('\n'))
+      .catch(() => '');
+
+  const classicLink = page.locator('a[href*="/followers/"]').first();
+  const classicTitle = await classicLink.locator('span[title]').first().getAttribute('title').catch(() => null);
+  const classicN = parsePlainTitle(classicTitle);
+  if (classicN != null) return classicN;
+
+  const newUiTitle = await page
+    .locator('main a[role="link"]')
+    .filter({ hasText: /\bseguidores\b/i })
+    .first()
+    .locator('span[title]')
+    .first()
+    .getAttribute('title')
+    .catch(() => null);
+  const newUiN = parsePlainTitle(newUiTitle);
+  if (newUiN != null) return newUiN;
+
+  const fromEvaluate = await page.evaluate(() => {
+    const roots: Element[] = [];
+    const m = document.querySelector('main');
+    if (m) roots.push(m);
+    document.querySelectorAll('section').forEach((s) => roots.push(s));
+    if (roots.length === 0 && document.body) roots.push(document.body);
+
+    for (const root of roots) {
+      const links = root.querySelectorAll('a[role="link"], a._a6hd');
+      for (const a of links) {
+        const txt = a.textContent ?? '';
+        if (!/\bseguidores\b/i.test(txt)) continue;
+        const span = a.querySelector('span[title]');
+        const t = span?.getAttribute('title')?.trim();
+        if (!t) continue;
+        const numStr = t.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+        const n = parseFloat(numStr);
+        if (Number.isFinite(n) && n > 0) return Math.round(n);
+      }
+    }
+    return null as number | null;
+  });
+  if (fromEvaluate != null) return fromEvaluate;
+
+  const fromMain = parseFollowersFromText((await textFrom(main)).replace(/\s+/g, ' '));
+  if (fromMain != null) return fromMain;
+
+  const fromSection = parseFollowersFromText(
+    (await textFrom(page.locator('section').filter({ hasText: /\bseguidores\b/i }).first())).replace(/\s+/g, ' ')
+  );
+  if (fromSection != null) return fromSection;
+
+  const fromHeader = parseFollowersFromText(
+    (await textFrom(page.locator('header').first())).replace(/\s+/g, ' ')
+  );
+  if (fromHeader != null) return fromHeader;
+
+  const bodyText = await page.evaluate(() => document.body?.innerText ?? '');
+  return parseFollowersFromText(bodyText.replace(/\s+/g, ' '));
 }
 
 export interface GetFollowersOptions {
@@ -130,7 +204,7 @@ export async function getFollowersAndMinimalProfile(
 
     if (options?.skipGoto) {
       if (options.quickGate) {
-        await page.waitForTimeout(700);
+        await page.waitForTimeout(260);
         return finalize();
       }
       await page.waitForTimeout(450);
@@ -154,7 +228,7 @@ export async function getFollowersAndMinimalProfile(
       await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
     }
     if (options?.quickGate) {
-      await page.waitForTimeout(1800);
+      await page.waitForTimeout(700);
       return finalize();
     }
     await page.waitForTimeout(1800);
@@ -165,6 +239,34 @@ export async function getFollowersAndMinimalProfile(
     return finalize();
   } finally {
     page.off('response', onResponse);
+  }
+}
+
+/** Detalhe gravado em Problemas (seção “Erro (após processamento)”) quando o IG não mostra o perfil. */
+export const INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL =
+  'Perfil não existe no Instagram ou está indisponível no momento da abertura.';
+
+/**
+ * Detecta a página “Esta página não está disponível” / “This page isn’t available” após abrir instagram.com/handle/.
+ * Espera curta opcional: o React do IG costuma pintar o erro em poucos ms após domcontentloaded.
+ */
+export async function isInstagramProfileUnavailablePage(page: Page): Promise<boolean> {
+  try {
+    return await page.evaluate(() => {
+      const raw = document.body?.innerText ?? '';
+      const n = raw
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '')
+        .replace(/\s+/g, ' ');
+      if (n.includes('esta pagina nao esta disponivel')) return true;
+      if (n.includes("this page isn't available") || n.includes('this page is not available'))
+        return true;
+      if (n.includes('sorry, this page') || n.includes('sorry this page')) return true;
+      return false;
+    });
+  } catch {
+    return false;
   }
 }
 
@@ -338,6 +440,110 @@ export interface ExtractedProfileFull {
   postsForRules: Record<string, unknown>[];
 }
 
+export type ExtractProfileFullOptions = {
+  pageAlreadyOnProfile?: boolean;
+  /**
+   * Logo após abrir o perfil (antes do scroll longo da timeline e de Reels/Marcados).
+   * Útil para reprovar por `account_type` assim que o GraphQL trouxer o usuário.
+   */
+  afterInitialLoad?: (ctx: {
+    profile: Record<string, unknown>;
+    posts: Record<string, unknown>[];
+  }) => Promise<boolean>;
+  /**
+   * Chamado após scroll da timeline e antes de abrir Reels/Marcados.
+   * Se retornar false, a extração para aqui (sem Reels/Marcados).
+   */
+  afterTimeline?: (ctx: {
+    profile: Record<string, unknown>;
+    posts: Record<string, unknown>[];
+  }) => Promise<boolean>;
+};
+
+export type ExtractProfileFullResult =
+  | { ok: true; data: ExtractedProfileFull }
+  | { ok: false; reason: 'validation' | 'technical' };
+
+function mergeMissingShallow(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const k of Object.keys(source)) {
+    const sv = source[k];
+    const tv = target[k];
+    if ((tv === undefined || tv === null) && sv !== undefined && sv !== null) {
+      target[k] = sv;
+    }
+  }
+}
+
+/**
+ * Une `data.user` de todas as respostas com `hasDataUser` — o primeiro payload costuma vir sem `account_type`
+ * e um GraphQL seguinte traz o campo; sem isso a validação de tipo falha só depois de Reels.
+ */
+function mergeProfileRawFromCaptured(captured: Record<string, unknown>[]): Record<string, unknown> | null {
+  const userBodies = captured.filter((b) => hasDataUser(b));
+  if (userBodies.length === 0) {
+    for (const body of captured) {
+      const edges = getEdgesFromRaw(body);
+      if (edges.length > 0) {
+        const first = edges[0];
+        if (first != null && typeof first === 'object') {
+          const node = (first as Record<string, unknown>).node;
+          const u =
+            node != null && typeof node === 'object'
+              ? (node as Record<string, unknown>).user
+              : null;
+          if (u != null && typeof u === 'object') {
+            return { data: { user: u } } as Record<string, unknown>;
+          }
+        }
+      }
+    }
+    return null;
+  }
+  const merged = JSON.parse(JSON.stringify(userBodies[0])) as Record<string, unknown>;
+  const u0 = getIn(merged, 'data.user');
+  if (u0 != null && typeof u0 === 'object' && userBodies.length > 1) {
+    const tu = u0 as Record<string, unknown>;
+    for (let i = 1; i < userBodies.length; i++) {
+      const ui = getIn(userBodies[i], 'data.user');
+      if (ui != null && typeof ui === 'object') mergeMissingShallow(tu, ui as Record<string, unknown>);
+    }
+  }
+  return merged;
+}
+
+/** Perfil + posts só da timeline (respostas já capturadas) — para validar antes de Reels/Marcados. */
+function buildTimelineProfileAndPostsFromCaptured(
+  captured: Record<string, unknown>[],
+  keyHandle: string
+): { profile: Record<string, unknown>; posts: Record<string, unknown>[] } | null {
+  const profileRaw = mergeProfileRawFromCaptured(captured);
+  if (!profileRaw) return null;
+  const seenRules = new Set<string>();
+  const postsForRules: Record<string, unknown>[] = [];
+  for (const body of captured) {
+    for (const path of TIMELINE_EDGES_PATHS) {
+      for (const edge of getEdgesAtPath(body, path)) {
+        if (edge == null || typeof edge !== 'object') continue;
+        const p = nodeToPost(edge);
+        if (!p) continue;
+        const code = String(p.shortcode ?? p.code ?? '');
+        if (!code || seenRules.has(code)) continue;
+        seenRules.add(code);
+        postsForRules.push(p);
+      }
+    }
+  }
+  const user = extractUserFromRaw(profileRaw);
+  const profile: Record<string, unknown> = {
+    ...profileRaw,
+    handle: keyHandle,
+    username: keyHandle,
+    ...(user ?? {}),
+    _collected_at: new Date().toISOString(),
+  };
+  return { profile, posts: postsForRules };
+}
+
 /**
  * Extrai perfil + timeline (scroll) + abas Reels e Marcados (GraphQL).
  * Usado para envio completo à API do crawl (métricas / ER no site).
@@ -346,8 +552,8 @@ export async function extractProfileFull(
   page: Page,
   handle: string,
   profileUrl: string,
-  options?: { pageAlreadyOnProfile?: boolean }
-): Promise<ExtractedProfileFull | null> {
+  options?: ExtractProfileFullOptions
+): Promise<ExtractProfileFullResult> {
   const keyHandle = handle.replace(/^@/, '').trim().toLowerCase();
   const captured: Record<string, unknown>[] = [];
   const onResponse = async (response: import('playwright').Response) => {
@@ -412,10 +618,47 @@ export async function extractProfileFull(
     }
     await page.waitForTimeout(2800);
 
+    if (options?.afterInitialLoad) {
+      await page.waitForTimeout(1200);
+      const rawMerged = mergeProfileRawFromCaptured(captured);
+      if (rawMerged) {
+        const userEarly = extractUserFromRaw(rawMerged);
+        const profileEarly: Record<string, unknown> = {
+          ...rawMerged,
+          handle: keyHandle,
+          username: keyHandle,
+          ...(userEarly ?? {}),
+        };
+        const proceedEarly = await options.afterInitialLoad({ profile: profileEarly, posts: [] });
+        if (!proceedEarly) {
+          coletaLog(
+            `@${keyHandle} [full] validação inicial reprovou (ex.: tipo de conta) — sem scroll longo da timeline nem Reels.`
+          );
+          return { ok: false, reason: 'validation' };
+        }
+      }
+    }
+
     coletaLog(`@${keyHandle} [full] rolando timeline (8×) para carregar mais posts…`);
     for (let s = 0; s < 8; s++) {
       await page.mouse.wheel(0, 950);
       await page.waitForTimeout(1300);
+    }
+
+    const timelineBuilt = buildTimelineProfileAndPostsFromCaptured(captured, keyHandle);
+    if (!timelineBuilt) {
+      coletaLog(`@${keyHandle} [full] ERRO: sem dados de usuário após timeline — abortando antes de Reels.`);
+      return { ok: false, reason: 'technical' };
+    }
+    if (options?.afterTimeline) {
+      const proceed = await options.afterTimeline({
+        profile: timelineBuilt.profile,
+        posts: timelineBuilt.posts,
+      });
+      if (!proceed) {
+        coletaLog(`@${keyHandle} [full] validação reprovou — não abre Reels nem Marcados.`);
+        return { ok: false, reason: 'validation' };
+      }
     }
 
     let reelsOk = await clickTab(1);
@@ -443,35 +686,10 @@ export async function extractProfileFull(
       }
     }
 
-    let profileRaw: Record<string, unknown> | null = null;
-    for (const body of captured) {
-      if (hasDataUser(body)) {
-        profileRaw = body;
-        break;
-      }
-    }
-    if (!profileRaw) {
-      for (const body of captured) {
-        const edges = getEdgesFromRaw(body);
-        if (edges.length > 0) {
-          const first = edges[0];
-          if (first != null && typeof first === 'object') {
-            const node = (first as Record<string, unknown>).node;
-            const u =
-              node != null && typeof node === 'object'
-                ? (node as Record<string, unknown>).user
-                : null;
-            if (u != null && typeof u === 'object') {
-              profileRaw = { data: { user: u } } as Record<string, unknown>;
-              break;
-            }
-          }
-        }
-      }
-    }
+    const profileRaw = mergeProfileRawFromCaptured(captured);
     if (!profileRaw) {
       coletaLog(`@${keyHandle} [full] ERRO: nenhum body GraphQL com dados de usuário.`);
-      return null;
+      return { ok: false, reason: 'technical' };
     }
 
     coletaLog(`@${keyHandle} [full] montando listas (${captured.length} respostas GraphQL capturadas)…`);
@@ -564,11 +782,14 @@ export async function extractProfileFull(
     };
 
     return {
-      profile,
-      feedMedia,
-      reelMedia,
-      taggedMedia,
-      postsForRules,
+      ok: true,
+      data: {
+        profile,
+        feedMedia,
+        reelMedia,
+        taggedMedia,
+        postsForRules,
+      },
     };
   } finally {
     page.off('response', onResponse);

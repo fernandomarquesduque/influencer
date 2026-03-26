@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Button, Space, Table, Typography, message } from 'antd'
 import {
   ReloadOutlined,
@@ -117,6 +118,7 @@ function defaultChipStyle() {
 }
 
 export default function AdminDashboard() {
+  const navigate = useNavigate()
   const { isAdm } = useAuth()
   const [stats, setStats] = useState<AdminDashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -203,6 +205,9 @@ export default function AdminDashboard() {
           </Button>
           <Button icon={<PrinterOutlined />} onClick={handlePrint}>
             Imprimir
+          </Button>
+          <Button onClick={() => navigate('/app/admin/reports/unregistered-mentions')}>
+            Relatório @ não cadastrados
           </Button>
         </Space>
       </div>

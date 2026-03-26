@@ -178,7 +178,7 @@ export function explainNotQualifiesAsInfluencer(
 // --- Estabelecimento (empresa/negócio) — palavras-chave de filtro ---
 const ESTABLISHMENT_KEYWORDS_RAW = [
   'governo', 'banco', 'politica', 'política',
-  'agência', 'teatro', 'shopping',
+  'agência', 'teatro', 'shopping', 'coffe',
   'condominio', 'condomínio',
   'mensagem', 'prefeitura',
   'noticia', 'notícia', 'noticias', 'notícias',
@@ -286,16 +286,143 @@ function normalizeCategory(cat: unknown): string {
   return normalize(String(cat));
 }
 
-function getAccountType(entity: Record<string, unknown>): number | undefined {
-  const v = getIn(entity, 'data.user.account_type', 'account_type');
+function parseAccountTypeRaw(v: unknown): number | undefined {
   if (v === undefined || v === null) return undefined;
-  const n = typeof v === 'number' ? v : parseInt(String(v), 10);
-  return Number.isNaN(n) ? undefined : n;
+  const n = typeof v === 'number' ? v : parseInt(String(v).replace(/\D/g, ''), 10);
+  if (Number.isNaN(n) || n < 1 || n > 3) return undefined;
+  return n;
+}
+
+/**
+ * Varre JSON GraphQL (perfil) em busca de account_type — o IG nem sempre envia só em data.user.
+ * Ignora arrays grandes (timeline) para não pegar tipo de outro usuário no feed.
+ */
+function deepFindAccountType(obj: unknown, maxDepth: number, seen: Set<unknown>): number | undefined {
+  if (maxDepth <= 0 || obj == null || typeof obj !== 'object') return undefined;
+  if (seen.has(obj)) return undefined;
+  seen.add(obj);
+  const o = obj as Record<string, unknown>;
+  const here = parseAccountTypeRaw(o.account_type);
+  if (here !== undefined) return here;
+  const keys = Object.keys(o).sort((a, b) => {
+    const pref = (k: string) =>
+      k === 'data' || k === 'user' ? 0 : k === 'owner' || k === 'username' ? 1 : 2;
+    return pref(a) - pref(b);
+  });
+  for (const k of keys) {
+    const v = o[k];
+    if (Array.isArray(v) && v.length > 80) continue;
+    const found = deepFindAccountType(v, maxDepth - 1, seen);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+export function getAccountType(entity: Record<string, unknown>): number | undefined {
+  const v = getIn(
+    entity,
+    'data.user.account_type',
+    'user.account_type',
+    'account_type',
+    'data.viewer.user.account_type',
+    'data.xdt_shortcode_media.owner.account_type'
+  );
+  const direct = parseAccountTypeRaw(v);
+  if (direct !== undefined) return direct;
+
+  const userObj = getIn(entity, 'data.user', 'user');
+  if (userObj != null && typeof userObj === 'object') {
+    const fromUser = parseAccountTypeRaw((userObj as Record<string, unknown>).account_type);
+    if (fromUser !== undefined) return fromUser;
+  }
+
+  return deepFindAccountType(entity, 12, new Set());
 }
 
 const ACCOUNT_TYPE_PERSONAL = 1;
 const ACCOUNT_TYPE_CREATOR = 2;
 const ACCOUNT_TYPE_BUSINESS = 3;
+
+/** Rótulos alinhados ao site (1=pessoal, 2=criador, 3=empresa). */
+export function labelAccountType(type: number | undefined): string {
+  if (type === 1) return 'Pessoal';
+  if (type === 2) return 'Criador';
+  if (type === 3) return 'Empresa';
+  if (type === undefined) return 'desconhecido';
+  return `tipo ${type}`;
+}
+
+/** Snapshot para a UI “em processamento” (gate ou perfil já extraído). */
+export function summarizeProfileForUi(
+  entity: Record<string, unknown>,
+  followersHint?: number | null
+): {
+  full_name: string;
+  category: string;
+  account_type: number | null;
+  followers_count: number | null;
+} {
+  const fn = String(getIn(entity, 'data.user.full_name', 'full_name', 'name') ?? '').trim();
+  const cat = String(
+    getIn(entity, 'data.user.category_name', 'data.user.category', 'category_name', 'category') ?? ''
+  ).trim();
+  const at = getAccountType(entity);
+  let followers_count: number | null = null;
+  if (followersHint != null && followersHint > 0) followers_count = followersHint;
+  else {
+    const n = getFollowersFromEntity(entity);
+    if (n > 0) followers_count = n;
+  }
+  return {
+    full_name: fn.slice(0, 120),
+    category: cat.slice(0, 100),
+    account_type: at ?? null,
+    followers_count,
+  };
+}
+
+function formatAllowedAccountTypesForMessage(allowed: number[]): string {
+  return [...allowed]
+    .sort((a, b) => a - b)
+    .map((n) => `${n}=${labelAccountType(n)}`)
+    .join(', ');
+}
+
+/**
+ * Se `allowed` não for vazio e o Instagram informou `account_type`, exige que esteja na lista.
+ * Se o tipo for 3 (empresa) e "Empresa" não estiver permitida, rejeita mesmo quando só há `is_business_account` + categoria (tipo às vezes omitido no primeiro payload).
+ */
+export function explainAccountTypeFilterMismatch(
+  entity: Record<string, unknown>,
+  allowed: number[]
+): string | null {
+  if (!allowed.length) return null;
+  const at = getAccountType(entity);
+  if (at != null) {
+    if (allowed.includes(at)) return null;
+    return `Tipo de conta não permitido: account_type=${at} (${labelAccountType(at)}); aceitos: ${formatAllowedAccountTypesForMessage(allowed)}.`;
+  }
+
+  /** Sem account_type detectável: heurística para empresa (categoria comercial + conta business). */
+  if (!allowed.includes(ACCOUNT_TYPE_BUSINESS)) {
+    const rawAt = parseAccountTypeRaw(getIn(entity, 'data.user.account_type', 'account_type'));
+    if (rawAt === ACCOUNT_TYPE_BUSINESS) {
+      return `Tipo de conta não permitido: account_type=3 (${labelAccountType(3)}); aceitos: ${formatAllowedAccountTypesForMessage(allowed)}.`;
+    }
+    const cat = String(
+      getIn(entity, 'data.user.category_name', 'data.user.category', 'category_name', 'category') ?? ''
+    ).trim();
+    if (cat.length > 0) {
+      const isBizFlag =
+        getIn(entity, 'data.user.is_business_account', 'is_business_account', 'is_business') === true;
+      if (isBizFlag && textContainsAny(normalizeCategory(cat), ESTABLISHMENT_KEYWORDS)) {
+        return `Tipo de conta não permitido: account_type=? (heurística empresa; categoria «${cat.slice(0, 80)}»); aceitos: ${formatAllowedAccountTypesForMessage(allowed)}.`;
+      }
+    }
+  }
+
+  return null;
+}
 
 export function isBusinessFromEntity(entity: Record<string, unknown>): boolean {
   const category = getIn(entity, 'data.user.category', 'category');

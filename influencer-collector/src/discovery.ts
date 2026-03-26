@@ -8,6 +8,9 @@ import {
   getFollowersAndMinimalProfile,
   extractProfile,
   extractProfileFull,
+  INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL,
+  isInstagramProfileUnavailablePage,
+  readFollowersFromDOM,
 } from './profileExtractor.js';
 import { buildSlimProfile } from './slimProfile.js';
 import {
@@ -23,6 +26,9 @@ import {
   explainCommercialOrEstablishment,
   explainNotQualifiesAsInfluencer,
   explainRejectedEstablishmentKeywordInBio,
+  explainAccountTypeFilterMismatch,
+  getAccountType,
+  summarizeProfileForUi,
   type Entity,
 } from './entityRules.js';
 import { explainBioNotBrazilianPortuguese } from './bioLanguageBr.js';
@@ -70,6 +76,193 @@ async function skipIfHandleAlreadyOnRemoteServer(
   existingHandles.add(hk);
   if (handleLower !== hk) existingHandles.add(handleLower);
   return true;
+}
+
+/** true = rejeitou (já registrou issue + log). */
+function rejectByAllowedAccountTypes(
+  config: CollectorConfig,
+  handle: string,
+  minimal: Record<string, unknown> | null | undefined,
+  followers: number | null | undefined,
+  logCtx: string,
+  issuePrefix?: string
+): boolean {
+  if (!config.allowedAccountTypes.length || !minimal) return false;
+  const entity = {
+    handle,
+    username: handle,
+    ...minimal,
+    followers_count: followers ?? getFollowersFromEntity(minimal),
+  } as Record<string, unknown>;
+  const msg = explainAccountTypeFilterMismatch(entity, config.allowedAccountTypes);
+  if (!msg) return false;
+  recordIssue(handle, 'extracao', issuePrefix ? `${issuePrefix} ${msg}` : msg, {
+    followers_count: followers ?? undefined,
+  });
+  coletaLog(`${logCtx}: @${handle}: ${msg}`);
+  return true;
+}
+
+type ProfileUiPatch = {
+  full_name?: string;
+  followers_count?: number | null;
+  account_type?: number | null;
+  category?: string;
+};
+
+/**
+ * Com filtro de tipos ativo: se o primeiro JSON ainda não traz `account_type`, espera GraphQL mais longo
+ * **antes** da extração completa (evita minutos de timeline/Reels só para reprovar tipo 3).
+ */
+async function probeAccountTypeIfStillUnknown(
+  page: Page,
+  profileUrl: string,
+  pageAlready: boolean,
+  config: CollectorConfig,
+  handle: string,
+  minimal: Record<string, unknown>,
+  followers: number | null | undefined,
+  proc: (stage: string, patch?: ProfileUiPatch) => void
+): Promise<boolean> {
+  if (!config.allowedAccountTypes.length) return true;
+  const f0 = followers ?? getFollowersFromEntity(minimal);
+  const ent0 = {
+    handle,
+    username: handle,
+    ...minimal,
+    followers_count: f0,
+  } as Record<string, unknown>;
+  if (getAccountType(ent0) != null) return true;
+  proc('Confirmando tipo de conta (leitura do perfil)…');
+  coletaLog(`@${handle}: account_type ainda ausente no JSON — aguardando Instagram antes da extração completa…`);
+  let typeSnap = await getFollowersAndMinimalProfile(page, profileUrl, {
+    skipGoto: pageAlready,
+    quickGate: false,
+  });
+  if (!typeSnap.minimalProfile && pageAlready) {
+    await randomDelay(180, 420);
+    typeSnap = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: true, quickGate: false });
+  }
+  const min = typeSnap.minimalProfile ?? minimal;
+  const f = typeSnap.followers ?? followers;
+  if (rejectByAllowedAccountTypes(config, handle, min, f, `@${handle}`)) return false;
+  proc(
+    'Validando perfil…',
+    summarizeProfileForUi(
+      { handle, username: handle, ...min, followers_count: f ?? getFollowersFromEntity(min) } as Record<string, unknown>,
+      f
+    )
+  );
+  return true;
+}
+
+/** Regras de qualificação sobre perfil + posts (timeline). Retorna false se reprovou (já registrou issue). */
+function runCollectorProfileRules(
+  raw: Record<string, unknown>,
+  posts: Entity[],
+  handle: string,
+  config: CollectorConfig,
+  proc: (stage: string, patch?: ProfileUiPatch) => void,
+  validationStageLabel: string
+): boolean {
+  const followers = getFollowersFromEntity(raw);
+  proc(validationStageLabel, summarizeProfileForUi(raw, followers));
+
+  const typeRej = explainAccountTypeFilterMismatch(raw, config.allowedAccountTypes);
+  if (typeRej) {
+    recordIssue(handle, 'extracao', typeRej);
+    coletaLog(`@${handle}: ${typeRej}`);
+    return false;
+  }
+
+  if (config.maxFollowersToSave > 0 && followers > config.maxFollowersToSave) {
+    recordIssue(
+      handle,
+      'regra',
+      `Máximo de seguidores: ${config.maxFollowersToSave.toLocaleString('pt-BR')}; @${handle} tem ${followers.toLocaleString('pt-BR')}.`
+    );
+    return false;
+  }
+
+  const rejListaPosExtract = explainRejectedEstablishmentKeywordInBio(raw);
+  if (rejListaPosExtract) {
+    recordIssue(handle, 'regra', rejListaPosExtract);
+    coletaLog(`@${handle}: rejeitado por bio (lista) após leitura do perfil — não envia à API.`);
+    return false;
+  }
+
+  if (config.requireBioBrazilianPortuguese) {
+    const bioRegra = explainBioNotBrazilianPortuguese(raw);
+    if (bioRegra) {
+      recordIssue(handle, 'regra', bioRegra);
+      return false;
+    }
+  }
+  if (isPrivateFromEntity(raw)) {
+    recordIssue(
+      handle,
+      'regra',
+      'Perfil privado — não dá para validar posts/seguidores para o filtro do coletor.'
+    );
+    return false;
+  }
+  if (hasRejectedProfileKeyword(raw)) {
+    recordIssue(handle, 'regra', explainRejectedProfileKeyword(raw));
+    return false;
+  }
+  if (isBusinessFromEntity(raw)) {
+    recordIssue(handle, 'regra', explainCommercialOrEstablishment(raw));
+    return false;
+  }
+  if (config.excludeBusinessProfiles && !qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
+    recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave));
+    return false;
+  }
+  if (!config.excludeBusinessProfiles) {
+    if (!qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
+      recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave));
+      return false;
+    }
+  }
+  if (
+    config.minPostLikesToSave > 0 &&
+    !hasPostWithMinLikes(posts, config.minPostLikesToSave, config.minPostsWithMinLikesToSave)
+  ) {
+    recordIssue(handle, 'regra', `Posts sem curtidas suficientes (mín. ${config.minPostLikesToSave})`);
+    return false;
+  }
+  if (isBlocklistedHandle(handle)) {
+    recordIssue(handle, 'regra', `Handle @${handle} está na lista de bloqueio interna do coletor.`);
+    return false;
+  }
+  return true;
+}
+
+function followersFromSnap(snap: {
+  followers: number | null;
+  minimalProfile: Record<string, unknown> | null;
+}): number | null {
+  if (snap.followers != null && snap.followers > 0) return snap.followers;
+  if (snap.minimalProfile) {
+    const f = getFollowersFromEntity(snap.minimalProfile as Record<string, unknown>);
+    return f > 0 ? f : null;
+  }
+  return null;
+}
+
+/**
+ * API + entidade GraphQL + DOM quando há mín./máx. de seguidores (quickGate costuma deixar API vazia).
+ */
+async function resolveFollowersForEarlyGate(
+  page: Page,
+  snap: { followers: number | null; minimalProfile: Record<string, unknown> | null },
+  config: CollectorConfig
+): Promise<number | null> {
+  let f = followersFromSnap(snap);
+  if (f != null) return f;
+  if (config.minFollowersToSave <= 0 && config.maxFollowersToSave <= 0) return null;
+  const fromDom = await readFollowersFromDOM(page);
+  return fromDom != null && fromDom > 0 ? fromDom : null;
 }
 
 /** Conta links de post na grade da página atual (hashtag/explore). */
@@ -205,7 +398,12 @@ async function processOneProfile(
   existingHandles: Set<string>,
   discoveredBy: string,
   discoveredValue: string,
-  options?: { pageAlreadyOnProfile?: boolean; skipGate?: boolean },
+  options?: {
+    pageAlreadyOnProfile?: boolean;
+    skipGate?: boolean;
+    /** Dados já lidos no pipeline (ex.: Google) — preenche a UI antes da extração completa. */
+    prefillProfileSnap?: { minimal: Record<string, unknown>; followers?: number | null };
+  },
   onCollected?: (handle: string, followers: number) => void
 ): Promise<boolean> {
   const handleLower = handle.toLowerCase();
@@ -220,14 +418,48 @@ async function processOneProfile(
   }
 
   const hk = handle.replace(/^@/, '').trim().toLowerCase();
-  setProcessingState({ handle: hk, stage: 'Validando perfil…', since: new Date().toISOString() });
-  const proc = (stage: string) =>
-    setProcessingState({ handle: hk, stage, since: new Date().toISOString() });
+  let profileUi: {
+    full_name?: string;
+    followers_count?: number | null;
+    account_type?: number | null;
+    category?: string;
+  } = {};
+  const proc = (stage: string, patch?: typeof profileUi) => {
+    if (patch) Object.assign(profileUi, patch);
+    setProcessingState({
+      handle: hk,
+      stage,
+      since: new Date().toISOString(),
+      ...profileUi,
+    });
+  };
+  proc('Validando perfil…');
+  const prefill = options?.prefillProfileSnap;
+  if (prefill?.minimal) {
+    const pf = prefill.followers ?? null;
+    const fol = pf ?? getFollowersFromEntity(prefill.minimal);
+    proc(
+      'Validando perfil…',
+      summarizeProfileForUi(
+        { handle, username: handle, ...prefill.minimal, followers_count: fol } as Record<string, unknown>,
+        pf
+      )
+    );
+  }
 
   const profileUrl = InstagramClient.profileUrl(handle);
   const pageAlready = options?.pageAlreadyOnProfile ?? false;
   const skipGate = options?.skipGate ?? false;
   const useRemote = isRemoteIngestConfigured();
+
+  if (!skipGate && pageAlready) {
+    await page.waitForTimeout(400);
+    if (await isInstagramProfileUnavailablePage(page)) {
+      coletaLog(`@${handle}: perfil inexistente ou indisponível (página atual).`);
+      recordIssue(handle, 'extracao', INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL);
+      return false;
+    }
+  }
 
   let rawProfile: Record<string, unknown>;
   let posts: Entity[];
@@ -238,12 +470,45 @@ async function processOneProfile(
   } | null = null;
 
   if (!skipGate) {
-    /** Bio (lista de rejeição + pt-BR se ativo) SEMPRE antes de timeline/Reels — se falhar, não inicia extração pesada. */
-    coletaLog(`@${handle}: validando bio antes de coletar timeline/Reels…`);
+    /** Seguidores primeiro; depois bio/pt-BR/tipo — evita trabalho inútil se já está fora da faixa. */
+    coletaLog(`@${handle}: validando seguidores e bio antes de coletar timeline/Reels…`);
     let gateSnap = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: pageAlready });
     if (!gateSnap.minimalProfile && pageAlready) {
       await randomDelay(1200, 2200);
       gateSnap = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: true });
+    }
+    const gateFollowers = await resolveFollowersForEarlyGate(page, gateSnap, config);
+    if (gateSnap.minimalProfile) {
+      const gateEntity = {
+        handle,
+        username: handle,
+        ...(gateSnap.minimalProfile as Record<string, unknown>),
+        followers_count:
+          gateFollowers ??
+          gateSnap.followers ??
+          getFollowersFromEntity(gateSnap.minimalProfile as Record<string, unknown>),
+      } as Record<string, unknown>;
+      proc('Validando perfil…', summarizeProfileForUi(gateEntity, gateFollowers ?? gateSnap.followers));
+    }
+    if (config.maxFollowersToSave > 0 && gateFollowers != null && gateFollowers > config.maxFollowersToSave) {
+      recordIssue(
+        handle,
+        'regra',
+        `Máximo de seguidores: ${config.maxFollowersToSave.toLocaleString('pt-BR')}; @${handle} tem ${gateFollowers.toLocaleString('pt-BR')}.`,
+        { followers_count: gateFollowers }
+      );
+      coletaLog(`@${handle}: acima do máximo de seguidores (${gateFollowers.toLocaleString('pt-BR')}).`);
+      return false;
+    }
+    if (config.minFollowersToSave > 0) {
+      if (gateFollowers == null || gateFollowers < config.minFollowersToSave) {
+        const detail = `Antes de extrair o perfil completo: exige pelo menos ${config.minFollowersToSave.toLocaleString(
+          'pt-BR'
+        )} seguidores; @${handle} tem ${gateFollowers != null ? gateFollowers.toLocaleString('pt-BR') : '—'}.`;
+        recordIssue(handle, 'regra', detail, { followers_count: gateFollowers ?? undefined });
+        coletaLog(`@${handle}: ${detail}`);
+        return false;
+      }
     }
     if (gateSnap.minimalProfile) {
       const minimal = gateSnap.minimalProfile as Record<string, unknown>;
@@ -257,7 +522,7 @@ async function processOneProfile(
           handle,
           username: handle,
           ...minimal,
-          followers_count: gateSnap.followers ?? getFollowersFromEntity(minimal),
+          followers_count: gateFollowers ?? gateSnap.followers ?? getFollowersFromEntity(minimal),
         } as Record<string, unknown>;
         const rejLang = explainBioNotBrazilianPortuguese(gateEntity);
         if (rejLang) {
@@ -265,9 +530,53 @@ async function processOneProfile(
           return false;
         }
       }
+      if (
+        rejectByAllowedAccountTypes(
+          config,
+          handle,
+          minimal,
+          gateFollowers ?? gateSnap.followers,
+          `@${handle}`
+        )
+      ) {
+        return false;
+      }
+      if (
+        !(await probeAccountTypeIfStillUnknown(
+          page,
+          profileUrl,
+          pageAlready,
+          config,
+          handle,
+          minimal,
+          gateFollowers ?? gateSnap.followers,
+          proc
+        ))
+      ) {
+        return false;
+      }
     }
   } else {
     coletaLog(`@${handle}: gate já validado (pipeline) → extraindo perfil completo uma vez.`);
+    if (config.allowedAccountTypes.length > 0 && options?.prefillProfileSnap?.minimal) {
+      const pf = options.prefillProfileSnap;
+      const pfFol = pf.followers ?? null;
+      if (rejectByAllowedAccountTypes(config, handle, pf.minimal, pfFol, `@${handle}`)) return false;
+      if (
+        !(await probeAccountTypeIfStillUnknown(
+          page,
+          profileUrl,
+          pageAlready,
+          config,
+          handle,
+          pf.minimal,
+          pfFol,
+          proc
+        ))
+      ) {
+        return false;
+      }
+    }
   }
 
   proc('Extraindo dados no Instagram…');
@@ -276,10 +585,51 @@ async function processOneProfile(
     if (useRemote) {
       coletaLog(`@${handle}: extração COMPLETA (timeline + Reels + Marcados)…`);
       proc('Capturando timeline, Reels e marcados (pode levar 1–3 min)…');
-      const full = await extractProfileFull(page, handle, profileUrl, {
+      const fullResult = await extractProfileFull(page, handle, profileUrl, {
         pageAlreadyOnProfile: pageAlready,
+        afterInitialLoad: async ({ profile: p }) => {
+          const bioListaEarly = explainRejectedEstablishmentKeywordInBio(p);
+          if (bioListaEarly) {
+            recordIssue(handle, 'regra', bioListaEarly, {
+              followers_count: getFollowersFromEntity(p) || undefined,
+            });
+            coletaLog(`@${handle}: rejeitado por bio (pré-extração completa).`);
+            return false;
+          }
+          if (config.requireBioBrazilianPortuguese) {
+            const bioLangEarly = explainBioNotBrazilianPortuguese(p);
+            if (bioLangEarly) {
+              recordIssue(handle, 'regra', bioLangEarly, {
+                followers_count: getFollowersFromEntity(p) || undefined,
+              });
+              coletaLog(`@${handle}: bio fora de pt-BR (pré-extração completa).`);
+              return false;
+            }
+          }
+          if (config.allowedAccountTypes.length > 0) {
+            const msg = explainAccountTypeFilterMismatch(p, config.allowedAccountTypes);
+            if (msg) {
+              recordIssue(handle, 'extracao', msg, {
+                followers_count: getFollowersFromEntity(p) || undefined,
+              });
+              coletaLog(`@${handle}: ${msg}`);
+              return false;
+            }
+          }
+          return true;
+        },
+        afterTimeline: async ({ profile, posts: timelinePosts }) =>
+          runCollectorProfileRules(
+            profile,
+            timelinePosts as Entity[],
+            handle,
+            config,
+            proc,
+            'Validando regras (antes de Reels/Marcados)…'
+          ),
       });
-      if (full) {
+      if (fullResult.ok) {
+        const full = fullResult.data;
         rawProfile = full.profile;
         posts = full.postsForRules as Entity[];
         mediaBundle = {
@@ -290,6 +640,9 @@ async function processOneProfile(
         coletaLog(
           `@${handle}: captura OK → feed=${full.feedMedia.length} reels=${full.reelMedia.length} marcados=${full.taggedMedia.length} itens GraphQL`
         );
+      } else if (fullResult.reason === 'validation') {
+        coletaLog(`@${handle}: extração completa interrompida antes de Reels/Marcados (regras).`);
+        return false;
       } else {
         coletaLog(`@${handle}: extração completa falhou → tentando extração rápida…`);
         proc('Extração rápida (fallback)…');
@@ -317,77 +670,23 @@ async function processOneProfile(
       rawProfile = extracted.profile;
       posts = extracted.posts as Entity[];
     }
-    proc('Validando regras (seguidores, curtidas, tipo de perfil)…');
     const raw = rawProfile as Record<string, unknown>;
     const followers = getFollowersFromEntity(raw);
 
-    if (config.maxFollowersToSave > 0 && followers > config.maxFollowersToSave) {
-      recordIssue(
-        handle,
-        'regra',
-        `Máximo de seguidores: ${config.maxFollowersToSave.toLocaleString('pt-BR')}; @${handle} tem ${followers.toLocaleString('pt-BR')}.`
-      );
-      return false;
-    }
-
-    /** Lista de rejeição na bio (sempre no perfil já extraído, antes da API) — evita contar como “falha de API”. */
-    const rejListaPosExtract = explainRejectedEstablishmentKeywordInBio(raw);
-    if (rejListaPosExtract) {
-      recordIssue(handle, 'regra', rejListaPosExtract);
-      coletaLog(`@${handle}: rejeitado por bio (lista) após leitura do perfil — não envia à API.`);
-      return false;
-    }
-
-    if (config.requireBioBrazilianPortuguese) {
-      const bioRegra = explainBioNotBrazilianPortuguese(raw);
-      if (bioRegra) {
-        recordIssue(handle, 'regra', bioRegra);
-        return false;
-      }
-    }
-    if (isPrivateFromEntity(raw)) {
-      recordIssue(
-        handle,
-        'regra',
-        'Perfil privado — não dá para validar posts/seguidores para o filtro do coletor.'
-      );
-      return false;
-    }
-    if (hasRejectedProfileKeyword(raw)) {
-      recordIssue(handle, 'regra', explainRejectedProfileKeyword(raw));
-      return false;
-    }
-    if (isBusinessFromEntity(raw)) {
-      recordIssue(handle, 'regra', explainCommercialOrEstablishment(raw));
-      return false;
-    }
-    if (config.excludeBusinessProfiles && !qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
-      recordIssue(
-        handle,
-        'regra',
-        explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave)
-      );
-      return false;
-    }
-    if (!config.excludeBusinessProfiles) {
-      if (!qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
-        recordIssue(
-          handle,
-          'regra',
-          explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave)
-        );
-        return false;
-      }
-    }
+    /**
+     * Sempre validar de novo no perfil final: `account_type` e outros campos às vezes só aparecem
+     * depois de mais respostas GraphQL (Reels/Marcados). Antes pulávamos isso quando o [full] dava OK.
+     */
     if (
-      config.minPostLikesToSave > 0 &&
-      !hasPostWithMinLikes(posts, config.minPostLikesToSave, config.minPostsWithMinLikesToSave)
+      !runCollectorProfileRules(
+        raw,
+        posts,
+        handle,
+        config,
+        proc,
+        'Validando regras (perfil final, antes da API)…'
+      )
     ) {
-      recordIssue(handle, 'regra', `Posts sem curtidas suficientes (mín. ${config.minPostLikesToSave})`);
-      return false;
-    }
-    if (isBlocklistedHandle(handle)) {
-      recordIssue(handle, 'regra', `Handle @${handle} está na lista de bloqueio interna do coletor.`);
       return false;
     }
 
@@ -409,7 +708,8 @@ async function processOneProfile(
     proc(
       nMedia > 0
         ? `Enviando para API (~${nMedia} itens de mídia)…`
-        : 'Enviando perfil para API…'
+        : 'Enviando perfil para API…',
+      summarizeProfileForUi(raw, followers)
     );
     const pushResult = await registerCollectedWithIntegration(
       slim as Record<string, unknown> & { handle: string },
@@ -717,11 +1017,7 @@ async function profileExtractionPipelineNewTab(
     sess?.add(handleLower);
     return { saved: 0, processed: 0 };
   }
-  setProcessingState({
-    handle: handleLower,
-    stage: 'Abrindo perfil no Instagram…',
-    since: new Date().toISOString(),
-  });
+  /** Só mostra “Em processamento” na UI depois das pré-checagens (seguidores/regras), para não parecer “coleta completa” em perfil já reprovado. */
   const profileUrlFull = InstagramClient.profileUrl(handle);
   const profileTab = await ctx.newPage();
   let saved = 0;
@@ -730,64 +1026,109 @@ async function profileExtractionPipelineNewTab(
     try {
       await profileTab.goto(profileUrlFull, { waitUntil: 'domcontentloaded', timeout: 25000 });
     } catch {
-      coletaLog(`${logCtx}: @${handle}: falha ao abrir perfil no Instagram.`);
-      return { saved: 0, processed: 0 };
+      coletaLog(`${logCtx}: @${handle}: falha ao abrir perfil no Instagram (timeout ou rede).`);
+      recordIssue(
+        handle,
+        'extracao',
+        'Falha ao abrir o perfil no Instagram (timeout ou rede).'
+      );
+      triedInSession.add(handleLower);
+      return { saved: 0, processed: 1 };
     }
-    await randomDelay(1200, 2000);
+
+    await profileTab.waitForTimeout(400);
+    if (await isInstagramProfileUnavailablePage(profileTab)) {
+      coletaLog(`${logCtx}: @${handle}: perfil inexistente ou indisponível no Instagram.`);
+      recordIssue(handle, 'extracao', INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL);
+      triedInSession.add(handleLower);
+      return { saved: 0, processed: 1 };
+    }
+
+    await randomDelay(800, 1500);
 
     let snapH = await getFollowersAndMinimalProfile(profileTab, profileUrlFull, {
       skipGoto: true,
       quickGate: true,
     });
     if (!snapH.minimalProfile) {
-      await randomDelay(800, 1500);
+      await randomDelay(180, 420);
       snapH = await getFollowersAndMinimalProfile(profileTab, profileUrlFull, {
         skipGoto: true,
         quickGate: true,
       });
     }
+    if (!snapH.minimalProfile && (await isInstagramProfileUnavailablePage(profileTab))) {
+      coletaLog(
+        `${logCtx}: @${handle}: perfil inexistente ou indisponível (após tentativa rápida de dados).`
+      );
+      recordIssue(handle, 'extracao', INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL);
+      triedInSession.add(handleLower);
+      return { saved: 0, processed: 1 };
+    }
+
+    const needFollowerLimits = config.minFollowersToSave > 0 || config.maxFollowersToSave > 0;
+    let followersResolved = await resolveFollowersForEarlyGate(profileTab, snapH, config);
+    /** Modo rápido: não faz segunda captura longa aqui; segue para próxima validação sem travar o fluxo. */
+    if (needFollowerLimits && followersResolved == null) {
+      coletaLog(
+        `${logCtx}: @${handle}: seguidores indisponíveis no gate rápido — pulando espera longa para seguir mais rápido.`
+      );
+    }
+
+    if (config.maxFollowersToSave > 0 && followersResolved != null && followersResolved > config.maxFollowersToSave) {
+      recordIssue(
+        handle,
+        'regra',
+        `Máximo de seguidores: ${config.maxFollowersToSave.toLocaleString('pt-BR')}; @${handle} tem ${followersResolved.toLocaleString('pt-BR')}.`,
+        { followers_count: followersResolved }
+      );
+      coletaLog(
+        `${logCtx}: @${handle}: acima do máximo de seguidores (${followersResolved.toLocaleString('pt-BR')}).`
+      );
+      triedInSession.add(handleLower);
+      return { saved: 0, processed: 1 };
+    }
+
+    if (config.minFollowersToSave > 0) {
+      if (followersResolved == null || followersResolved < config.minFollowersToSave) {
+        const detail = `Antes de extrair o perfil completo: exige pelo menos ${config.minFollowersToSave.toLocaleString(
+          'pt-BR'
+        )} seguidores; @${handle} tem ${followersResolved != null ? followersResolved.toLocaleString('pt-BR') : '—'}.`;
+        recordIssue(handle, 'regra', detail, { followers_count: followersResolved ?? undefined });
+        coletaLog(`${logCtx}: @${handle}: ${detail}`);
+        triedInSession.add(handleLower);
+        return { saved: 0, processed: 1 };
+      }
+    }
+
     if (snapH.minimalProfile) {
       const rejBioH = explainRejectedEstablishmentKeywordInBio(
         snapH.minimalProfile as Record<string, unknown>
       );
       if (rejBioH) {
         recordIssue(handle, 'regra', rejBioH, {
-          followers_count: snapH.followers ?? undefined,
+          followers_count: followersResolved ?? snapH.followers ?? undefined,
         });
         triedInSession.add(handleLower);
         return { saved: 0, processed: 1 };
       }
     }
-    if (config.maxFollowersToSave > 0) {
-      const fol =
-        snapH.followers ??
-        (snapH.minimalProfile
-          ? getFollowersFromEntity(snapH.minimalProfile as Record<string, unknown>)
-          : null);
-      if (fol != null && fol > config.maxFollowersToSave) {
-        recordIssue(
-          handle,
-          'regra',
-          `Máximo de seguidores: ${config.maxFollowersToSave.toLocaleString('pt-BR')}; @${handle} tem ${fol.toLocaleString('pt-BR')}.`,
-          { followers_count: fol }
-        );
-        triedInSession.add(handleLower);
-        return { saved: 0, processed: 1 };
-      }
+    if (
+      snapH.minimalProfile &&
+      rejectByAllowedAccountTypes(
+        config,
+        handle,
+        snapH.minimalProfile as Record<string, unknown>,
+        followersResolved ?? snapH.followers,
+        logCtx
+      )
+    ) {
+      triedInSession.add(handleLower);
+      return { saved: 0, processed: 1 };
     }
 
     if (config.minFollowersToSave > 0) {
-      const followers = snapH.followers;
-      if (followers == null || followers < config.minFollowersToSave) {
-        recordIssue(
-          handle,
-          'regra',
-          `Antes de extrair o perfil completo: exige pelo menos ${config.minFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${followers != null ? followers.toLocaleString('pt-BR') : '—'}.`,
-          { followers_count: followers ?? undefined }
-        );
-        triedInSession.add(handleLower);
-        return { saved: 0, processed: 1 };
-      }
+      const followers = followersResolved!;
       const bioEarlyHashtag =
         config.requireBioBrazilianPortuguese && snapH.minimalProfile
           ? explainBioNotBrazilianPortuguese({
@@ -847,7 +1188,10 @@ async function profileExtractionPipelineNewTab(
         }
       }
       if (config.excludeBusinessProfiles && snapH.minimalProfile) {
-        const fol = snapH.followers ?? getFollowersFromEntity(snapH.minimalProfile as Record<string, unknown>);
+        const fol =
+          followersResolved ??
+          snapH.followers ??
+          getFollowersFromEntity(snapH.minimalProfile as Record<string, unknown>);
         const entity = {
           handle,
           username: handle,
@@ -884,7 +1228,17 @@ async function profileExtractionPipelineNewTab(
       existingHandles,
       discoveredBy,
       discoveredValue,
-      { pageAlreadyOnProfile: true, skipGate: gateAlreadyValidated },
+      {
+        pageAlreadyOnProfile: true,
+        skipGate: gateAlreadyValidated,
+        prefillProfileSnap:
+          snapH.minimalProfile != null
+            ? {
+                minimal: snapH.minimalProfile as Record<string, unknown>,
+                followers: followersResolved ?? snapH.followers ?? null,
+              }
+            : undefined,
+      },
       onCollected
     );
     if (ok) saved = 1;
@@ -1444,13 +1798,39 @@ export async function discoverByFeed(
       await randomDelay(1200, 2200);
       snapF = await getFollowersAndMinimalProfile(page, profileUrlFeed, { skipGoto: true });
     }
+
+    const folFeed = await resolveFollowersForEarlyGate(page, snapF, config);
+    if (config.maxFollowersToSave > 0 && folFeed != null && folFeed > config.maxFollowersToSave) {
+      recordIssue(handle, 'regra', `No feed: máximo ${config.maxFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${folFeed.toLocaleString('pt-BR')}.`, {
+        followers_count: folFeed,
+      });
+      coletaLog(`Feed: @${handle}: acima do máximo de seguidores (${folFeed.toLocaleString('pt-BR')}).`);
+      skipped.add(hlFeed);
+      sess?.add(hlFeed);
+      processed++;
+      await page.goBack({ timeout: 15000 });
+      continue;
+    }
+    if (config.minFollowersToSave > 0) {
+      if (folFeed == null || folFeed < config.minFollowersToSave) {
+        const detail = `No feed: exige ≥${config.minFollowersToSave.toLocaleString('pt-BR')} seguidores para abrir o perfil; @${handle} tem ${folFeed != null ? folFeed.toLocaleString('pt-BR') : '—'}.`;
+        recordIssue(handle, 'regra', detail, { followers_count: folFeed ?? undefined });
+        coletaLog(`Feed: @${handle}: ${detail}`);
+        skipped.add(hlFeed);
+        sess?.add(hlFeed);
+        processed++;
+        await page.goBack({ timeout: 15000 });
+        continue;
+      }
+    }
+
     if (snapF.minimalProfile) {
       const rejBioF = explainRejectedEstablishmentKeywordInBio(
         snapF.minimalProfile as Record<string, unknown>
       );
       if (rejBioF) {
         recordIssue(handle, 'regra', `No feed: ${rejBioF}`, {
-          followers_count: snapF.followers ?? undefined,
+          followers_count: folFeed ?? snapF.followers ?? undefined,
         });
         skipped.add(hlFeed);
         sess?.add(hlFeed);
@@ -1460,50 +1840,39 @@ export async function discoverByFeed(
       }
     }
 
+    if (
+      snapF.minimalProfile &&
+      rejectByAllowedAccountTypes(
+        config,
+        handle,
+        snapF.minimalProfile as Record<string, unknown>,
+        folFeed ?? snapF.followers,
+        'Feed',
+        'No feed:'
+      )
+    ) {
+      skipped.add(hlFeed);
+      sess?.add(hlFeed);
+      processed++;
+      await page.goBack({ timeout: 15000 });
+      continue;
+    }
+
     if (config.minFollowersToSave > 0) {
       const result = snapF;
-      if (
-        result.followers == null ||
-        result.followers < config.minFollowersToSave
-      ) {
-        recordIssue(
-          handle,
-          'regra',
-          `No feed: exige ≥${config.minFollowersToSave.toLocaleString('pt-BR')} seguidores para abrir o perfil; @${handle} tem ${result.followers != null ? result.followers.toLocaleString('pt-BR') : '—'}.`,
-          { followers_count: result.followers ?? undefined }
-        );
-        skipped.add(hlFeed);
-        sess?.add(hlFeed);
-        processed++;
-        await page.goBack({ timeout: 15000 });
-        continue;
-      }
-      if (
-        config.maxFollowersToSave > 0 &&
-        result.followers != null &&
-        result.followers > config.maxFollowersToSave
-      ) {
-        recordIssue(handle, 'regra', `No feed: máximo ${config.maxFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${result.followers.toLocaleString('pt-BR')}.`, {
-          followers_count: result.followers,
-        });
-        skipped.add(hlFeed);
-        sess?.add(hlFeed);
-        processed++;
-        await page.goBack({ timeout: 15000 });
-        continue;
-      }
+      const followers = folFeed!;
       const bioEarlyFeed =
         config.requireBioBrazilianPortuguese && result.minimalProfile
           ? explainBioNotBrazilianPortuguese({
             handle,
             username: handle,
             ...result.minimalProfile,
-            followers_count: result.followers,
+            followers_count: followers,
           } as Record<string, unknown>)
           : null;
       if (bioEarlyFeed) {
         recordIssue(handle, 'regra', `No feed: ${bioEarlyFeed}`, {
-          followers_count: result.followers,
+          followers_count: followers,
         });
         skipped.add(hlFeed);
         sess?.add(hlFeed);
@@ -1516,7 +1885,7 @@ export async function discoverByFeed(
           handle,
           username: handle,
           ...result.minimalProfile,
-          followers_count: result.followers,
+          followers_count: followers,
         } as Record<string, unknown>;
         let feedDetail = '';
         if (hasRejectedProfileKeyword(entity)) {
@@ -1528,7 +1897,7 @@ export async function discoverByFeed(
         }
         if (feedDetail) {
           recordIssue(handle, 'regra', `No feed: ${feedDetail}`, {
-            followers_count: result.followers,
+            followers_count: followers,
           });
           skipped.add(hlFeed);
           sess?.add(hlFeed);
@@ -1552,8 +1921,26 @@ export async function discoverByFeed(
           continue;
         }
       }
+      if (
+        snapF.minimalProfile &&
+        rejectByAllowedAccountTypes(
+          config,
+          handle,
+          snapF.minimalProfile as Record<string, unknown>,
+          folFeed ?? snapF.followers,
+          'Feed',
+          'No feed:'
+        )
+      ) {
+        skipped.add(hlFeed);
+        sess?.add(hlFeed);
+        processed++;
+        await page.goBack({ timeout: 15000 });
+        continue;
+      }
       if (config.excludeBusinessProfiles && snapF.minimalProfile) {
-        const fol = snapF.followers ?? getFollowersFromEntity(snapF.minimalProfile as Record<string, unknown>);
+        const fol =
+          folFeed ?? snapF.followers ?? getFollowersFromEntity(snapF.minimalProfile as Record<string, unknown>);
         const entity = {
           handle,
           username: handle,
@@ -1685,13 +2072,47 @@ export async function discoverByExplore(
           await page.waitForURL(profileUrlRe, { timeout: 20000 });
         },
       });
+      const folExplore = await resolveFollowersForEarlyGate(page, result, config);
+      if (config.maxFollowersToSave > 0 && folExplore != null && folExplore > config.maxFollowersToSave) {
+        recordIssue(handle, 'regra', `No Explore: máximo ${config.maxFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${folExplore.toLocaleString('pt-BR')}.`, {
+          followers_count: folExplore,
+        });
+        coletaLog(`Explore: @${handle}: acima do máximo de seguidores (${folExplore.toLocaleString('pt-BR')}).`);
+        skipped.add(handleLower);
+        sess?.add(handleLower);
+        processed++;
+        try {
+          await page.goBack({ timeout: 15000 });
+          await page.goBack({ timeout: 15000 });
+        } catch {
+          await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+        }
+        await randomDelay(1000, 2000);
+        continue;
+      }
+      if (folExplore == null || folExplore < config.minFollowersToSave) {
+        const detail = `No Explore: exige ≥${config.minFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${folExplore != null ? folExplore.toLocaleString('pt-BR') : '—'}.`;
+        recordIssue(handle, 'regra', detail, { followers_count: folExplore ?? undefined });
+        coletaLog(`Explore: @${handle}: ${detail}`);
+        skipped.add(handleLower);
+        sess?.add(handleLower);
+        processed++;
+        try {
+          await page.goBack({ timeout: 15000 });
+          await page.goBack({ timeout: 15000 });
+        } catch {
+          await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+        }
+        await randomDelay(1000, 2000);
+        continue;
+      }
       if (result.minimalProfile) {
         const rejBioE = explainRejectedEstablishmentKeywordInBio(
           result.minimalProfile as Record<string, unknown>
         );
         if (rejBioE) {
           recordIssue(handle, 'regra', `No Explore: ${rejBioE}`, {
-            followers_count: result.followers ?? undefined,
+            followers_count: folExplore ?? result.followers ?? undefined,
           });
           skipped.add(handleLower);
           sess?.add(handleLower);
@@ -1707,35 +2128,16 @@ export async function discoverByExplore(
         }
       }
       if (
-        result.followers == null ||
-        result.followers < config.minFollowersToSave
-      ) {
-        recordIssue(
+        result.minimalProfile &&
+        rejectByAllowedAccountTypes(
+          config,
           handle,
-          'regra',
-          `No Explore: exige ≥${config.minFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${result.followers != null ? result.followers.toLocaleString('pt-BR') : '—'}.`,
-          { followers_count: result.followers ?? undefined }
-        );
-        skipped.add(handleLower);
-        sess?.add(handleLower);
-        processed++;
-        try {
-          await page.goBack({ timeout: 15000 });
-          await page.goBack({ timeout: 15000 });
-        } catch {
-          await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
-        }
-        await randomDelay(1000, 2000);
-        continue;
-      }
-      if (
-        config.maxFollowersToSave > 0 &&
-        result.followers != null &&
-        result.followers > config.maxFollowersToSave
+          result.minimalProfile as Record<string, unknown>,
+          folExplore ?? result.followers,
+          'Explore',
+          'No Explore:'
+        )
       ) {
-        recordIssue(handle, 'regra', `No Explore: máximo ${config.maxFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${result.followers.toLocaleString('pt-BR')}.`, {
-          followers_count: result.followers,
-        });
         skipped.add(handleLower);
         sess?.add(handleLower);
         processed++;
@@ -1754,12 +2156,12 @@ export async function discoverByExplore(
             handle,
             username: handle,
             ...result.minimalProfile,
-            followers_count: result.followers,
+            followers_count: folExplore,
           } as Record<string, unknown>)
           : null;
       if (bioEarlyExp) {
         recordIssue(handle, 'regra', `No Explore: ${bioEarlyExp}`, {
-          followers_count: result.followers,
+          followers_count: folExplore,
         });
         skipped.add(handleLower);
         sess?.add(handleLower);
@@ -1778,7 +2180,7 @@ export async function discoverByExplore(
           handle,
           username: handle,
           ...result.minimalProfile,
-          followers_count: result.followers,
+          followers_count: folExplore,
         } as Record<string, unknown>;
         let expDetail = '';
         if (hasRejectedProfileKeyword(entity)) {
@@ -1790,7 +2192,7 @@ export async function discoverByExplore(
         }
         if (expDetail) {
           recordIssue(handle, 'regra', `No Explore: ${expDetail}`, {
-            followers_count: result.followers,
+            followers_count: folExplore,
           });
           skipped.add(handleLower);
           sess?.add(handleLower);
@@ -1821,13 +2223,31 @@ export async function discoverByExplore(
         await randomDelay(1200, 2200);
         sExp = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: true });
       }
+      const folS = await resolveFollowersForEarlyGate(page, sExp, config);
+      if (config.maxFollowersToSave > 0 && folS != null && folS > config.maxFollowersToSave) {
+        recordIssue(handle, 'regra', `No Explore: máximo ${config.maxFollowersToSave.toLocaleString('pt-BR')} seguidores; @${handle} tem ${folS.toLocaleString('pt-BR')}.`, {
+          followers_count: folS,
+        });
+        coletaLog(`Explore: @${handle}: acima do máximo de seguidores (${folS.toLocaleString('pt-BR')}).`);
+        skipped.add(handleLower);
+        sess?.add(handleLower);
+        processed++;
+        try {
+          await page.goBack({ timeout: 15000 });
+          await page.goBack({ timeout: 15000 });
+        } catch {
+          await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+        }
+        await randomDelay(1000, 2000);
+        continue;
+      }
       if (sExp.minimalProfile) {
         const rjExp = explainRejectedEstablishmentKeywordInBio(
           sExp.minimalProfile as Record<string, unknown>
         );
         if (rjExp) {
           recordIssue(handle, 'regra', `No Explore: ${rjExp}`, {
-            followers_count: sExp.followers ?? undefined,
+            followers_count: folS ?? sExp.followers ?? undefined,
           });
           skipped.add(handleLower);
           sess?.add(handleLower);
@@ -1841,6 +2261,29 @@ export async function discoverByExplore(
           await randomDelay(1000, 2000);
           continue;
         }
+      }
+      if (
+        sExp.minimalProfile &&
+        rejectByAllowedAccountTypes(
+          config,
+          handle,
+          sExp.minimalProfile as Record<string, unknown>,
+          folS ?? sExp.followers,
+          'Explore',
+          'No Explore:'
+        )
+      ) {
+        skipped.add(handleLower);
+        sess?.add(handleLower);
+        processed++;
+        try {
+          await page.goBack({ timeout: 15000 });
+          await page.goBack({ timeout: 15000 });
+        } catch {
+          await page.goto(InstagramClient.exploreUrl(), { waitUntil: 'domcontentloaded', timeout: 20000 });
+        }
+        await randomDelay(1000, 2000);
+        continue;
       }
       if (config.requireBioBrazilianPortuguese && sExp.minimalProfile) {
         const bioE0 = explainBioNotBrazilianPortuguese({
@@ -1865,7 +2308,7 @@ export async function discoverByExplore(
       }
       if (config.excludeBusinessProfiles && sExp.minimalProfile) {
         const fol =
-          sExp.followers ?? getFollowersFromEntity(sExp.minimalProfile as Record<string, unknown>);
+          folS ?? sExp.followers ?? getFollowersFromEntity(sExp.minimalProfile as Record<string, unknown>);
         const entity = {
           handle,
           username: handle,
@@ -1995,7 +2438,7 @@ export async function discoverByHandles(
 
     saved += rPipe.saved;
     processed += rPipe.processed;
-    await randomDelay(500, 1000);
+    await randomDelay(80, 180);
   }
 
   return { saved, processed };

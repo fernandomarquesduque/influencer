@@ -25,6 +25,12 @@ export interface CollectorConfig {
    * .env: COLLECTOR_SKIP_IF_ALREADY_IN_DB=false desliga o padrão.
    */
   skipIfAlreadyInRemoteDb: boolean;
+  /**
+   * Tipos de conta Instagram aceitos (account_type: 1=pessoal, 2=criador, 3=empresa).
+   * Lista vazia = não filtrar por tipo.
+   * .env: COLLECTOR_ALLOWED_ACCOUNT_TYPES=1,2,3 (vazio ou ausente = todos).
+   */
+  allowedAccountTypes: number[];
 }
 
 const DEFAULT_MIN_FOLLOWERS = 5000;
@@ -32,6 +38,17 @@ const DEFAULT_MIN_FOLLOWERS = 5000;
 const DEFAULT_MAX_FOLLOWERS = 1_000_000;
 const DEFAULT_MIN_POST_LIKES = 200;
 const DEFAULT_MIN_POSTS_WITH_LIKES = 4;
+
+function parseAllowedAccountTypesFromEnv(): number[] {
+  const raw = process.env.COLLECTOR_ALLOWED_ACCOUNT_TYPES?.trim();
+  if (!raw) return [];
+  const out: number[] = [];
+  for (const part of raw.split(/[,;\s]+/)) {
+    const n = parseInt(part, 10);
+    if (n === 1 || n === 2 || n === 3) out.push(n);
+  }
+  return [...new Set(out)];
+}
 
 export function loadConfig(): CollectorConfig {
   const minFollowersRaw = process.env.MIN_FOLLOWERS?.trim();
@@ -65,6 +82,7 @@ export function loadConfig(): CollectorConfig {
     skipDbRaw === undefined || String(skipDbRaw).trim() === ''
       ? true
       : String(skipDbRaw).toLowerCase() !== 'false';
+  const allowedAccountTypes = parseAllowedAccountTypesFromEnv();
 
   return {
     minFollowersToSave,
@@ -79,6 +97,7 @@ export function loadConfig(): CollectorConfig {
     excludeBusinessProfiles,
     requireBioBrazilianPortuguese,
     skipIfAlreadyInRemoteDb,
+    allowedAccountTypes,
   };
 }
 
@@ -95,6 +114,7 @@ export function mergeCollectorConfig(
     excludeBusinessProfiles: boolean;
     requireBioBrazilianPortuguese?: boolean;
     skipIfAlreadyInRemoteDb?: boolean;
+    allowedAccountTypes?: number[];
   }>
 ): CollectorConfig {
   const clamp = (n: number, min: number, max: number) =>
@@ -137,5 +157,9 @@ export function mergeCollectorConfig(
       overrides.skipIfAlreadyInRemoteDb !== undefined
         ? overrides.skipIfAlreadyInRemoteDb
         : base.skipIfAlreadyInRemoteDb,
+    allowedAccountTypes:
+      overrides.allowedAccountTypes !== undefined
+        ? overrides.allowedAccountTypes.filter((n) => n === 1 || n === 2 || n === 3)
+        : base.allowedAccountTypes,
   };
 }

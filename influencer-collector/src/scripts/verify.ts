@@ -64,6 +64,7 @@ async function runHttpSmoke(): Promise<void> {
     assert.ok(html.includes('startRequestInFlight'), 'lógica anti-corrida do clique');
     assert.ok(html.includes('rowsColetados'), 'três tabelas: coletados');
     assert.ok(html.includes('rowsIntegrados'), 'três tabelas: integrados');
+    assert.ok(html.includes('remove-issue'), 'UI deve permitir remover erro persistido');
 
     r = await fetch(`${base}/api/list`);
     assert.equal(r.ok, true);
@@ -93,6 +94,20 @@ async function runHttpSmoke(): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ handle: 'naoexiste12345' }),
+    });
+    assert.equal(r.status, 404);
+
+    r = await fetch(`${base}/api/remove-issue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(r.status, 400);
+
+    r = await fetch(`${base}/api/remove-issue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: '00000000-0000-4000-8000-000000000000' }),
     });
     assert.equal(r.status, 404);
   } finally {

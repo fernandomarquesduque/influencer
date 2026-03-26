@@ -40,6 +40,7 @@ import Login from './pages/Login'
 import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
 import AdminDashboard from './pages/AdminDashboard'
+import AdminMentionReport from './pages/AdminMentionReport'
 import ListAndDetailModal from './pages/ListAndDetailModal'
 import MyCampaigns from './pages/MyCampaigns'
 import CampaignInfluencers from './pages/CampaignInfluencers'
@@ -109,6 +110,14 @@ export default function App() {
                 </RequireAuth>
               }
             />
+            <Route
+              path="admin/reports/unregistered-mentions"
+              element={
+                <RequireAuth requireAdm>
+                  <AdminMentionReport />
+                </RequireAuth>
+              }
+            />
           </Route>
 
           <Route path="/extraction" element={<Extraction />} />
@@ -116,6 +125,10 @@ export default function App() {
           <Route path="/activate/:handle" element={<Activate />} />
           <Route path="/admin/dashboard" element={<Navigate to="/app/admin/dashboard" replace />} />
           <Route path="/admin/users" element={<Navigate to="/app/admin/users" replace />} />
+          <Route
+            path="/admin/reports/unregistered-mentions"
+            element={<Navigate to="/app/admin/reports/unregistered-mentions" replace />}
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </PendingPaymentCelebrationProvider>

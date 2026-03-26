@@ -4,18 +4,12 @@
  * Mac e Windows.
  */
 
-import { resolve } from 'path';
-import { existsSync } from 'fs';
-import dotenv from 'dotenv';
-
-const root = resolve(process.cwd());
-if (existsSync(resolve(root, '.env'))) {
-  dotenv.config({ path: resolve(root, '.env') });
-}
+import './loadEnv.js';
 
 import type { Frame, Page } from 'playwright';
 import { InstagramClient } from './instagram.js';
 import { loadConfig } from './config.js';
+import { loadPersistedIssuesSync } from './memoryStorage.js';
 import { startServer } from './server.js';
 import { getCollectorApiBase, isRemoteIngestConfigured } from './serverIngest.js';
 
@@ -99,6 +93,7 @@ function setupSessionPersistence(
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  loadPersistedIssuesSync();
   console.log('Influencer Collector — iniciando browser no Instagram...');
   console.log('Min seguidores:', config.minFollowersToSave, '| Min curtidas por post:', config.minPostLikesToSave, '| Posts com min curtidas:', config.minPostsWithMinLikesToSave);
   if (isRemoteIngestConfigured()) {

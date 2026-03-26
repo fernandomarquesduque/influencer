@@ -104,7 +104,7 @@ export function explainBioNotBrazilianPortuguese(entity: Record<string, unknown>
   const code = franc(text);
 
   /* por = português; glg = galego — o franc confunde pt-BR com glg com frequência, tratamos os dois igual. */
-  if (code === 'por' || code === 'glg' || code === 'vec' || code === 'ita') {
+  if (code === 'por' || code === 'glg' || code === 'vec' || code === 'ita' || code === 'src') {
     if (looksEuropeanPt(text) && !looksBrazilianPt(text)) {
       return 'Bio em português europeu (Portugal) — aceitamos apenas perfil com bio em português brasileiro.';
     }

@@ -222,6 +222,50 @@ function getAllHashtagsFromPosts(posts: Record<string, unknown>[]): string[] {
   return [...set].sort();
 }
 
+/** Trecho de handle Instagram para regex (1–30 caracteres, evita casar e-mail). */
+const IG_MENTION_HANDLE_BODY = '[a-zA-Z0-9](?:[a-zA-Z0-9._]{0,28}[a-zA-Z0-9])?';
+
+/**
+ * Extrai handles a partir de texto (legendas etc.). Normaliza em minúsculas.
+ * Não captura `usuario@dominio.com`: exige que o caractere antes de `@` não seja alfanumérico/ponto/underscore.
+ */
+export function extractMentionHandlesFromText(text: string): string[] {
+  const t = text.trim();
+  if (!t) return [];
+  const re = new RegExp(`(?:^|[^a-zA-Z0-9._])@(${IG_MENTION_HANDLE_BODY})`, 'gi');
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const h = m[1]!.toLowerCase();
+    if (h.length < 1 || h.length > 30) continue;
+    if (!seen.has(h)) {
+      seen.add(h);
+      out.push(h);
+    }
+  }
+  return out;
+}
+
+/** Texto onde costumam aparecer @menções: legenda, acessibilidade, artista do áudio. */
+export function getPostMentionSourceText(post: Record<string, unknown>): string {
+  const base = getPostTextForSearch(post);
+  const parts: string[] = [];
+  if (base.trim()) parts.push(base.trim());
+  const content = post.content as Record<string, unknown> | undefined;
+  const acc = content?.accessibility_caption;
+  if (typeof acc === 'string' && acc.trim()) parts.push(acc.trim());
+  const audio = content?.audio as Record<string, unknown> | undefined;
+  const igArtist = audio?.ig_artist_username;
+  if (typeof igArtist === 'string' && igArtist.trim()) parts.push(igArtist.trim());
+  return parts.join('\n');
+}
+
+/** Handles únicos citados com @ neste item do bucket `post` (formato normalizado). */
+export function collectMentionHandlesFromPostItem(item: Record<string, unknown>): string[] {
+  return extractMentionHandlesFromText(getPostMentionSourceText(item));
+}
+
 /** Extrai de um post: caption/descrição e hashtags para busca (todas as fontes de texto). */
 function getPostTextForSearch(post: Record<string, unknown>): string {
   const parts: string[] = [];
@@ -715,87 +759,87 @@ export async function searchProfiles(
   if (useInitialItems) {
     items = [...options!.initialItems!];
   } else {
-  for (const { key, value } of profilesRaw) {
-    const profile = value as Record<string, unknown>;
-    const handle = getHandle(profile, key).toLowerCase().replace(/^@/, '');
-    if (restrictToHandles && !restrictToHandles.has(handle)) continue;
-    const followersCount = getFollowers(profile);
-    const fullName = getFullName(profile);
-    const baseCategories = getCategories(profile);
-    const posts = postsByHandle.get(handle) ?? [];
-    const postHashtags = getAllHashtagsFromPosts(posts);
-    const categoriesSet = new Set<string>([...baseCategories.map((c) => c.trim().toLowerCase()), ...postHashtags].filter(Boolean));
-    const categories = [...categoriesSet].sort();
+    for (const { key, value } of profilesRaw) {
+      const profile = value as Record<string, unknown>;
+      const handle = getHandle(profile, key).toLowerCase().replace(/^@/, '');
+      if (restrictToHandles && !restrictToHandles.has(handle)) continue;
+      const followersCount = getFollowers(profile);
+      const fullName = getFullName(profile);
+      const baseCategories = getCategories(profile);
+      const posts = postsByHandle.get(handle) ?? [];
+      const postHashtags = getAllHashtagsFromPosts(posts);
+      const categoriesSet = new Set<string>([...baseCategories.map((c) => c.trim().toLowerCase()), ...postHashtags].filter(Boolean));
+      const categories = [...categoriesSet].sort();
 
-    if (minFollowers != null && followersCount < minFollowers) continue;
-    if (maxFollowers != null && followersCount > maxFollowers) continue;
-    if (excludePrivate && getIsPrivate(profile)) continue;
-    if (accountTypeFilter.length > 0) {
+      if (minFollowers != null && followersCount < minFollowers) continue;
+      if (maxFollowers != null && followersCount > maxFollowers) continue;
+      if (excludePrivate && getIsPrivate(profile)) continue;
+      if (accountTypeFilter.length > 0) {
+        const at = getAccountType(profile);
+        if (at == null || !accountTypeFilter.includes(at)) continue;
+      }
+
+      const engagement = computeEngagement(posts, followersCount);
+
+      if (engagementRateBucketsFilter.length > 0) {
+        if (!matchesEngagementRateBuckets(engagement.engagement_rate, engagementRateBucketsFilter)) continue;
+      } else if (minEngagementRate != null && engagement.engagement_rate < minEngagementRate) continue;
+      if (avgLikesBucketsFilter.length > 0) {
+        if (!matchesAvgLikesBuckets(engagement.avg_likes, avgLikesBucketsFilter)) continue;
+      } else if (minAvgLikes != null && engagement.avg_likes < minAvgLikes) continue;
+      if (postsCountBucketsFilter.length > 0) {
+        if (!matchesPostsCountBuckets(engagement.posts_count, postsCountBucketsFilter)) continue;
+      } else if (minPostsCount != null && engagement.posts_count < minPostsCount) continue;
+
+      let searchRelevance: number | undefined;
+      if (!restrictToHandles && q) {
+        const textProfileOnly = getSearchableTextProfileOnly(profile, key, fullName, categories);
+        const { match: matchProfile, relevance: relProfile } = matchesQuery(textProfileOnly, q);
+        if (matchProfile) {
+          searchRelevance = relProfile;
+        } else {
+          const searchableText = getSearchableText(profile, key, fullName, categories, posts);
+          const { match, relevance } = matchesQuery(searchableText, q);
+          if (!match) continue;
+          searchRelevance = relevance;
+        }
+      }
+
+      if (!restrictToHandles && categoriesFilter.length > 0) {
+        const withNoPerfil = categoriesFilter.includes('no_perfil');
+        const filterCategories = categoriesFilter.filter((c) => c !== 'no_perfil');
+        // Com `no_perfil` na query (wizard / URL): não restringe por categoria — o total inclui quem bateu na busca
+        // mas não está nas hashtags do facet (“no perfil”); nunca excluir esse bloco.
+        if (filterCategories.length > 0 && !withNoPerfil) {
+          const hasCategory = filterCategories.some((fc) => categories.some((c) => c.toLowerCase() === fc));
+          if (!hasCategory) continue;
+        }
+      }
+
+      const pic = getProfilePicUrl(profile);
       const at = getAccountType(profile);
-      if (at == null || !accountTypeFilter.includes(at)) continue;
-    }
-
-    const engagement = computeEngagement(posts, followersCount);
-
-    if (engagementRateBucketsFilter.length > 0) {
-      if (!matchesEngagementRateBuckets(engagement.engagement_rate, engagementRateBucketsFilter)) continue;
-    } else if (minEngagementRate != null && engagement.engagement_rate < minEngagementRate) continue;
-    if (avgLikesBucketsFilter.length > 0) {
-      if (!matchesAvgLikesBuckets(engagement.avg_likes, avgLikesBucketsFilter)) continue;
-    } else if (minAvgLikes != null && engagement.avg_likes < minAvgLikes) continue;
-    if (postsCountBucketsFilter.length > 0) {
-      if (!matchesPostsCountBuckets(engagement.posts_count, postsCountBucketsFilter)) continue;
-    } else if (minPostsCount != null && engagement.posts_count < minPostsCount) continue;
-
-    let searchRelevance: number | undefined;
-    if (!restrictToHandles && q) {
-      const textProfileOnly = getSearchableTextProfileOnly(profile, key, fullName, categories);
-      const { match: matchProfile, relevance: relProfile } = matchesQuery(textProfileOnly, q);
-      if (matchProfile) {
-        searchRelevance = relProfile;
-      } else {
-        const searchableText = getSearchableText(profile, key, fullName, categories, posts);
-        const { match, relevance } = matchesQuery(searchableText, q);
-        if (!match) continue;
-        searchRelevance = relevance;
+      const item: ProfileListItem = {
+        key,
+        handle,
+        full_name: fullName,
+        followers_count: followersCount,
+        following_count: toNum(profile.following_count ?? getDataUser(profile)?.following_count),
+        media_count: (profile.media_count ?? getDataUser(profile)?.media_count) as number | undefined,
+        biography: (profile.biography ?? getDataUser(profile)?.biography) as string | undefined,
+        categories,
+        engagement,
+        ...(searchRelevance != null && { search_relevance: searchRelevance }),
+        ...(pic && { profile_pic_url: pic }),
+        data: profile.data as Record<string, unknown> | undefined,
+        ...(at != null && { account_type: at }),
+      };
+      Object.assign(item, profile);
+      item.categories = categories;
+      if (q) {
+        (item as Record<string, unknown>)._searchable_text = getSearchableText(profile, key, fullName, categories, posts);
       }
+      items.push(item);
     }
-
-    if (!restrictToHandles && categoriesFilter.length > 0) {
-      const withNoPerfil = categoriesFilter.includes('no_perfil');
-      const filterCategories = categoriesFilter.filter((c) => c !== 'no_perfil');
-      // Com `no_perfil` na query (wizard / URL): não restringe por categoria — o total inclui quem bateu na busca
-      // mas não está nas hashtags do facet (“no perfil”); nunca excluir esse bloco.
-      if (filterCategories.length > 0 && !withNoPerfil) {
-        const hasCategory = filterCategories.some((fc) => categories.some((c) => c.toLowerCase() === fc));
-        if (!hasCategory) continue;
-      }
-    }
-
-    const pic = getProfilePicUrl(profile);
-    const at = getAccountType(profile);
-    const item: ProfileListItem = {
-      key,
-      handle,
-      full_name: fullName,
-      followers_count: followersCount,
-      following_count: toNum(profile.following_count ?? getDataUser(profile)?.following_count),
-      media_count: (profile.media_count ?? getDataUser(profile)?.media_count) as number | undefined,
-      biography: (profile.biography ?? getDataUser(profile)?.biography) as string | undefined,
-      categories,
-      engagement,
-      ...(searchRelevance != null && { search_relevance: searchRelevance }),
-      ...(pic && { profile_pic_url: pic }),
-      data: profile.data as Record<string, unknown> | undefined,
-      ...(at != null && { account_type: at }),
-    };
-    Object.assign(item, profile);
-    item.categories = categories;
-    if (q) {
-      (item as Record<string, unknown>)._searchable_text = getSearchableText(profile, key, fullName, categories, posts);
-    }
-    items.push(item);
-  }
   }
 
   /** Timestamp (ms) da data de atualização do perfil (_collected_at ISO) para ordenação. */
@@ -955,9 +999,9 @@ export async function searchProfiles(
       const fc = i.followers_count ?? 0;
       const key =
         fc < 10_000 ? 'nano'
-        : fc < 50_000 ? 'micro'
-        : fc < 200_000 ? 'medio'
-        : 'macro';
+          : fc < 50_000 ? 'micro'
+            : fc < 200_000 ? 'medio'
+              : 'macro';
       return sizeFilterSet.has(key);
     });
   }
@@ -994,156 +1038,156 @@ export async function searchProfiles(
   /** Facets calculados sobre o conjunto completo filtrado (para sumarização na UI). Omitidos quando includeFacets=false (ex.: paginação). */
   let facets: ProfilesSearchFacets;
   if (includeFacets) {
-  let activatedCount = 0;
-  const categoryCount = new Map<string, number>();
-  const contentTypeCount = new Map<string, number>();
-  const cityCount = new Map<string, number>();
-  const stateCount = new Map<string, number>();
-  const neighborhoodCount = new Map<string, number>();
-  const socialCount = { whatsapp: 0, tiktok: 0, facebook: 0, linkedin: 0, twitter: 0 };
-  const engagementRateBuckets = [
-    { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
-    { key: 'media', label: 'Média', min: 1, count: 0 },
-    { key: 'alta', label: 'Alta', min: 5, count: 0 },
-  ];
-  const followersBuckets = [
-    { key: 'nano', label: 'Nano (até 10k)', min: 0, max: 10_000 as number | undefined, count: 0 },
-    { key: 'micro', label: 'Micro (10k – 50k)', min: 10_000, max: 50_000 as number | undefined, count: 0 },
-    { key: 'medio', label: 'Médio (50k – 200k)', min: 50_000, max: 200_000 as number | undefined, count: 0 },
-    { key: 'macro', label: 'Macro (200k+)', min: 200_000, max: undefined, count: 0 },
-  ];
-  const accountTypeBuckets = [
-    { value: 1, label: 'Pessoal', count: 0 },
-    { value: 2, label: 'Criador', count: 0 },
-    { value: 3, label: 'Empresa', count: 0 },
-  ];
-  const avgLikesBuckets = [
-    { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
-    { key: 'media', label: 'Média', min: 500, count: 0 },
-    { key: 'alta', label: 'Alta', min: 5000, count: 0 },
-  ];
-  const postsCountBuckets = [
-    { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
-    { key: 'media', label: 'Média', min: 25, count: 0 },
-    { key: 'alta', label: 'Alta', min: 50, count: 0 },
-  ];
+    let activatedCount = 0;
+    const categoryCount = new Map<string, number>();
+    const contentTypeCount = new Map<string, number>();
+    const cityCount = new Map<string, number>();
+    const stateCount = new Map<string, number>();
+    const neighborhoodCount = new Map<string, number>();
+    const socialCount = { whatsapp: 0, tiktok: 0, facebook: 0, linkedin: 0, twitter: 0 };
+    const engagementRateBuckets = [
+      { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
+      { key: 'media', label: 'Média', min: 1, count: 0 },
+      { key: 'alta', label: 'Alta', min: 5, count: 0 },
+    ];
+    const followersBuckets = [
+      { key: 'nano', label: 'Nano (até 10k)', min: 0, max: 10_000 as number | undefined, count: 0 },
+      { key: 'micro', label: 'Micro (10k – 50k)', min: 10_000, max: 50_000 as number | undefined, count: 0 },
+      { key: 'medio', label: 'Médio (50k – 200k)', min: 50_000, max: 200_000 as number | undefined, count: 0 },
+      { key: 'macro', label: 'Macro (200k+)', min: 200_000, max: undefined, count: 0 },
+    ];
+    const accountTypeBuckets = [
+      { value: 1, label: 'Pessoal', count: 0 },
+      { value: 2, label: 'Criador', count: 0 },
+      { value: 3, label: 'Empresa', count: 0 },
+    ];
+    const avgLikesBuckets = [
+      { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
+      { key: 'media', label: 'Média', min: 500, count: 0 },
+      { key: 'alta', label: 'Alta', min: 5000, count: 0 },
+    ];
+    const postsCountBuckets = [
+      { key: 'baixa', label: 'Baixa', min: undefined as number | undefined, count: 0 },
+      { key: 'media', label: 'Média', min: 25, count: 0 },
+      { key: 'alta', label: 'Alta', min: 50, count: 0 },
+    ];
 
-  const pricingCounts: Record<(typeof pricingActivationKeys)[number], Map<number, number>> = {
-    feed: new Map(),
-    reels: new Map(),
-    story: new Map(),
-    destaque: new Map(),
-  };
-  const costTierCount = new Map<CostTier, number>();
+    const pricingCounts: Record<(typeof pricingActivationKeys)[number], Map<number, number>> = {
+      feed: new Map(),
+      reels: new Map(),
+      story: new Map(),
+      destaque: new Map(),
+    };
+    const costTierCount = new Map<CostTier, number>();
 
-  for (const item of items) {
-    if (item.activation) {
-      activatedCount++;
-      const act = item.activation;
-      if (act.city?.trim()) cityCount.set(act.city.trim().toLowerCase(), (cityCount.get(act.city.trim().toLowerCase()) ?? 0) + 1);
-      if (act.state?.trim()) stateCount.set(act.state.trim().toLowerCase(), (stateCount.get(act.state.trim().toLowerCase()) ?? 0) + 1);
-      if (act.neighborhood?.trim()) {
-        const parts = act.neighborhood.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-        for (const p of parts) neighborhoodCount.set(p, (neighborhoodCount.get(p) ?? 0) + 1);
-      }
-      if (act.whatsapp?.trim()) socialCount.whatsapp++;
-      if (act.tiktok?.trim()) socialCount.tiktok++;
-      if (act.facebook?.trim()) socialCount.facebook++;
-      if (act.linkedin?.trim()) socialCount.linkedin++;
-      if (act.twitter?.trim()) socialCount.twitter++;
-      const ct = act.content_type;
-      if (Array.isArray(ct)) {
-        for (const v of ct) {
-          if (v && typeof v === 'string') {
-            const k = v.trim().toLowerCase();
-            if (k) contentTypeCount.set(k, (contentTypeCount.get(k) ?? 0) + 1);
+    for (const item of items) {
+      if (item.activation) {
+        activatedCount++;
+        const act = item.activation;
+        if (act.city?.trim()) cityCount.set(act.city.trim().toLowerCase(), (cityCount.get(act.city.trim().toLowerCase()) ?? 0) + 1);
+        if (act.state?.trim()) stateCount.set(act.state.trim().toLowerCase(), (stateCount.get(act.state.trim().toLowerCase()) ?? 0) + 1);
+        if (act.neighborhood?.trim()) {
+          const parts = act.neighborhood.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+          for (const p of parts) neighborhoodCount.set(p, (neighborhoodCount.get(p) ?? 0) + 1);
+        }
+        if (act.whatsapp?.trim()) socialCount.whatsapp++;
+        if (act.tiktok?.trim()) socialCount.tiktok++;
+        if (act.facebook?.trim()) socialCount.facebook++;
+        if (act.linkedin?.trim()) socialCount.linkedin++;
+        if (act.twitter?.trim()) socialCount.twitter++;
+        const ct = act.content_type;
+        if (Array.isArray(ct)) {
+          for (const v of ct) {
+            if (v && typeof v === 'string') {
+              const k = v.trim().toLowerCase();
+              if (k) contentTypeCount.set(k, (contentTypeCount.get(k) ?? 0) + 1);
+            }
           }
         }
+        const pricing = act.pricing as Record<string, unknown> | undefined;
+        if (pricing && typeof pricing === 'object') {
+          for (const actKey of pricingActivationKeys) {
+            const raw = pricing[actKey];
+            if (raw === undefined || raw === null || raw === '') continue;
+            const num = typeof raw === 'number' ? raw : Number(raw);
+            if (!Number.isFinite(num)) continue;
+            const map = pricingCounts[actKey];
+            map.set(num, (map.get(num) ?? 0) + 1);
+          }
+        }
+        let tier = getCostTierFromPricing(act.pricing as Record<string, unknown> | undefined);
+        if (!tier) {
+          const suggested = getSuggestedPricingFromFollowers(item.followers_count ?? 0);
+          tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
+        }
+        if (tier) costTierCount.set(tier, (costTierCount.get(tier) ?? 0) + 1);
+      } else {
+        const suggested = getSuggestedPricingFromFollowers(item.followers_count ?? 0);
+        const tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
+        if (tier) costTierCount.set(tier, (costTierCount.get(tier) ?? 0) + 1);
       }
-      const pricing = act.pricing as Record<string, unknown> | undefined;
-      if (pricing && typeof pricing === 'object') {
-        for (const actKey of pricingActivationKeys) {
-          const raw = pricing[actKey];
-          if (raw === undefined || raw === null || raw === '') continue;
-          const num = typeof raw === 'number' ? raw : Number(raw);
-          if (!Number.isFinite(num)) continue;
-          const map = pricingCounts[actKey];
-          map.set(num, (map.get(num) ?? 0) + 1);
+      for (const c of item.categories ?? []) {
+        if (c && typeof c === 'string') {
+          const key = c.trim().toLowerCase();
+          if (key) categoryCount.set(key, (categoryCount.get(key) ?? 0) + 1);
         }
       }
-      let tier = getCostTierFromPricing(act.pricing as Record<string, unknown> | undefined);
-      if (!tier) {
-        const suggested = getSuggestedPricingFromFollowers(item.followers_count ?? 0);
-        tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
-      }
-      if (tier) costTierCount.set(tier, (costTierCount.get(tier) ?? 0) + 1);
-    } else {
-      const suggested = getSuggestedPricingFromFollowers(item.followers_count ?? 0);
-      const tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
-      if (tier) costTierCount.set(tier, (costTierCount.get(tier) ?? 0) + 1);
+      const rate = item.engagement?.engagement_rate ?? 0;
+      const avgLikes = item.engagement?.avg_likes ?? 0;
+      const postsCount = item.engagement?.posts_count ?? 0;
+      if (rate < 1) engagementRateBuckets[0]!.count++;
+      else if (rate < 5) engagementRateBuckets[1]!.count++;
+      else engagementRateBuckets[2]!.count++;
+      const fc = item.followers_count;
+      if (fc < 10_000) followersBuckets[0]!.count++;
+      else if (fc < 50_000) followersBuckets[1]!.count++;
+      else if (fc < 200_000) followersBuckets[2]!.count++;
+      else followersBuckets[3]!.count++;
+      const at = (item as ProfileListItem & { account_type?: number }).account_type;
+      if (at === 1) accountTypeBuckets[0]!.count++;
+      else if (at === 2) accountTypeBuckets[1]!.count++;
+      else if (at === 3) accountTypeBuckets[2]!.count++;
+      if (avgLikes < 500) avgLikesBuckets[0]!.count++;
+      else if (avgLikes < 5000) avgLikesBuckets[1]!.count++;
+      else avgLikesBuckets[2]!.count++;
+      if (postsCount < 25) postsCountBuckets[0]!.count++;
+      else if (postsCount < 50) postsCountBuckets[1]!.count++;
+      else postsCountBuckets[2]!.count++;
     }
-    for (const c of item.categories ?? []) {
-      if (c && typeof c === 'string') {
-        const key = c.trim().toLowerCase();
-        if (key) categoryCount.set(key, (categoryCount.get(key) ?? 0) + 1);
-      }
-    }
-    const rate = item.engagement?.engagement_rate ?? 0;
-    const avgLikes = item.engagement?.avg_likes ?? 0;
-    const postsCount = item.engagement?.posts_count ?? 0;
-    if (rate < 1) engagementRateBuckets[0]!.count++;
-    else if (rate < 5) engagementRateBuckets[1]!.count++;
-    else engagementRateBuckets[2]!.count++;
-    const fc = item.followers_count;
-    if (fc < 10_000) followersBuckets[0]!.count++;
-    else if (fc < 50_000) followersBuckets[1]!.count++;
-    else if (fc < 200_000) followersBuckets[2]!.count++;
-    else followersBuckets[3]!.count++;
-    const at = (item as ProfileListItem & { account_type?: number }).account_type;
-    if (at === 1) accountTypeBuckets[0]!.count++;
-    else if (at === 2) accountTypeBuckets[1]!.count++;
-    else if (at === 3) accountTypeBuckets[2]!.count++;
-    if (avgLikes < 500) avgLikesBuckets[0]!.count++;
-    else if (avgLikes < 5000) avgLikesBuckets[1]!.count++;
-    else avgLikesBuckets[2]!.count++;
-    if (postsCount < 25) postsCountBuckets[0]!.count++;
-    else if (postsCount < 50) postsCountBuckets[1]!.count++;
-    else postsCountBuckets[2]!.count++;
-  }
 
-  facets = {
-    categories: [...categoryCount.entries()]
-      .filter(([, count]) => count > 0)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count),
-    engagement_rate: engagementRateBuckets,
-    avg_likes: avgLikesBuckets,
-    posts_count: postsCountBuckets,
-    activation: { activated: activatedCount, not_activated: total - activatedCount },
-    content_type: [...contentTypeCount.entries()]
-      .filter(([, count]) => count > 0)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count),
-    cities: [...cityCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
-    states: [...stateCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
-    neighborhoods: [...neighborhoodCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
-    social: socialCount,
-    followers_buckets: followersBuckets.map(({ key, label, min, max, count }) => ({ key, label, min, max, count })),
-    account_type: accountTypeBuckets.map(({ value, label, count }) => ({ value, label, count })),
-    pricing: Object.fromEntries(
-      pricingActivationKeys.map((actKey) => [
-        actKey,
-        [...pricingCounts[actKey].entries()]
-          .filter(([, count]) => count > 0)
-          .map(([value, count]) => ({ value, count }))
-          .sort((a, b) => a.value - b.value),
-      ])
-    ) as Record<(typeof pricingActivationKeys)[number], { value: number; count: number }[]>,
-    cost_tier: [...costTierCount.entries()]
-      .filter(([, count]) => count > 0)
-      .map(([tier, count]) => ({ tier, count }))
-      .sort((a, b) => b.count - a.count),
-  };
+    facets = {
+      categories: [...categoryCount.entries()]
+        .filter(([, count]) => count > 0)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count),
+      engagement_rate: engagementRateBuckets,
+      avg_likes: avgLikesBuckets,
+      posts_count: postsCountBuckets,
+      activation: { activated: activatedCount, not_activated: total - activatedCount },
+      content_type: [...contentTypeCount.entries()]
+        .filter(([, count]) => count > 0)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count),
+      cities: [...cityCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+      states: [...stateCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+      neighborhoods: [...neighborhoodCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+      social: socialCount,
+      followers_buckets: followersBuckets.map(({ key, label, min, max, count }) => ({ key, label, min, max, count })),
+      account_type: accountTypeBuckets.map(({ value, label, count }) => ({ value, label, count })),
+      pricing: Object.fromEntries(
+        pricingActivationKeys.map((actKey) => [
+          actKey,
+          [...pricingCounts[actKey].entries()]
+            .filter(([, count]) => count > 0)
+            .map(([value, count]) => ({ value, count }))
+            .sort((a, b) => a.value - b.value),
+        ])
+      ) as Record<(typeof pricingActivationKeys)[number], { value: number; count: number }[]>,
+      cost_tier: [...costTierCount.entries()]
+        .filter(([, count]) => count > 0)
+        .map(([tier, count]) => ({ tier, count }))
+        .sort((a, b) => b.count - a.count),
+    };
   } else {
     facets = {
       categories: [],

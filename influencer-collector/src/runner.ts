@@ -108,6 +108,8 @@ export interface StartOptions {
   excludeBusinessProfiles?: boolean;
   requireBioBrazilianPortuguese?: boolean;
   skipIfAlreadyInRemoteDb?: boolean;
+  /** 1=pessoal, 2=criador, 3=empresa; vazio = aceitar todos. */
+  allowedAccountTypes?: number[];
 }
 
 export async function runCollection(
@@ -144,6 +146,7 @@ export async function runCollection(
       excludeBusinessProfiles: options.excludeBusinessProfiles,
       requireBioBrazilianPortuguese: options.requireBioBrazilianPortuguese,
       skipIfAlreadyInRemoteDb: options.skipIfAlreadyInRemoteDb,
+      allowedAccountTypes: options.allowedAccountTypes,
     });
     const maxProfiles = options.limit ?? base.maxProfiles;
     coletaLog(

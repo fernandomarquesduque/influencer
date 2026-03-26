@@ -8,7 +8,10 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = Split-Path -Parent $ScriptDir
 
 $Name = "influencer-collector-windows"
-$Out = Join-Path $Root ("release\" + $Name)
+$ReleaseDir = Join-Path $Root "release"
+$Out = Join-Path $ReleaseDir $Name
+# Monta primeiro em staging (evita falha se a pasta de release estiver aberta no Explorer / em uso)
+$Staging = Join-Path $ReleaseDir "_collector-win-staging"
 
 Write-Host "==> Instalando dependências e compilando..."
 Push-Location $Root
@@ -21,21 +24,21 @@ Write-Host "==> Dependências de produção + Chromium (Playwright)..."
 npm prune --production
 npx playwright install chromium
 
-Write-Host "==> Montando pasta de release em: $Out"
-if (Test-Path $Out) {
-  Remove-Item -Recurse -Force $Out
+Write-Host "==> Montando pasta de staging em: $Staging"
+if (Test-Path $Staging) {
+  Remove-Item -Recurse -Force $Staging
 }
-New-Item -ItemType Directory -Path $Out -Force | Out-Null
+New-Item -ItemType Directory -Path $Staging -Force | Out-Null
 
 # Copia artefatos
-Copy-Item -Recurse -Force (Join-Path $Root "dist") $Out
-Copy-Item -Recurse -Force (Join-Path $Root "node_modules") $Out
-Copy-Item -Force (Join-Path $Root "package.json") $Out
-Copy-Item -Force (Join-Path $Root "package-lock.json") $Out
-Copy-Item -Force (Join-Path $Root ".env.example") (Join-Path $Out ".env.example")
+Copy-Item -Recurse -Force (Join-Path $Root "dist") $Staging
+Copy-Item -Recurse -Force (Join-Path $Root "node_modules") $Staging
+Copy-Item -Force (Join-Path $Root "package.json") $Staging
+Copy-Item -Force (Join-Path $Root "package-lock.json") $Staging
+Copy-Item -Force (Join-Path $Root ".env.example") (Join-Path $Staging ".env.example")
 
 # Script de execução para rodar com duplo clique
-$RunBatPath = Join-Path $Out "run.bat"
+$RunBatPath = Join-Path $Staging "run.bat"
 @'
 @echo off
 setlocal
@@ -55,6 +58,30 @@ node dist\index.js %*
 
 endlocal
 '@ | Set-Content -Path $RunBatPath -Encoding ASCII
+
+Write-Host "==> Publicando em: $Out"
+if (Test-Path $Out) {
+  try {
+    Remove-Item -Recurse -Force $Out -ErrorAction Stop
+  }
+  catch {
+    Write-Warning "Não foi possível remover a pasta antiga (em uso?). Copiando por cima do que for possível..."
+    Get-ChildItem -LiteralPath $Out -Force -ErrorAction SilentlyContinue | ForEach-Object {
+      Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+if (-not (Test-Path $Out)) {
+  New-Item -ItemType Directory -Path $Out -Force | Out-Null
+}
+Copy-Item -Path (Join-Path $Staging "*") -Destination $Out -Recurse -Force
+
+if (Test-Path $Staging) {
+  Remove-Item -Recurse -Force $Staging -ErrorAction SilentlyContinue
+}
+
+Write-Host "==> Restaurando node_modules completo para desenvolvimento (npm ci)..."
+npm ci
 
 Pop-Location
 

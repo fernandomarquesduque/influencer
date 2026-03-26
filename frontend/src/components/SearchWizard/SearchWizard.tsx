@@ -575,28 +575,28 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       maxFollowers: undefined,
     }))
 
-    ;(async () => {
-      if (!onEstimate) {
-        setStep(3)
-        return
-      }
-      setNextStepLoading(true)
-      try {
-        const facetsForStep1 = facets ?? initialFacets
-        const termLower = hashtagSearchWord.trim().toLowerCase() || (cleaned.q ?? '').toLowerCase()
-        const step1HashtagNames = getStep1HashtagNames(facetsForStep1, termLower, maxHashtags)
-        const query = stateToQuery(cleaned, step1HashtagNames)
-        const { total, facets: nextFacets } = await onEstimate(query)
-        setEstimateCount(total)
-        setFacets(nextFacets ?? null)
-        setStep(3)
-      } catch {
-        porteAutoSkipRef.current = false
-        porteAutoSkipInProgressRef.current = false
-      } finally {
-        setNextStepLoading(false)
-      }
-    })()
+      ; (async () => {
+        if (!onEstimate) {
+          setStep(3)
+          return
+        }
+        setNextStepLoading(true)
+        try {
+          const facetsForStep1 = facets ?? initialFacets
+          const termLower = hashtagSearchWord.trim().toLowerCase() || (cleaned.q ?? '').toLowerCase()
+          const step1HashtagNames = getStep1HashtagNames(facetsForStep1, termLower, maxHashtags)
+          const query = stateToQuery(cleaned, step1HashtagNames)
+          const { total, facets: nextFacets } = await onEstimate(query)
+          setEstimateCount(total)
+          setFacets(nextFacets ?? null)
+          setStep(3)
+        } catch {
+          porteAutoSkipRef.current = false
+          porteAutoSkipInProgressRef.current = false
+        } finally {
+          setNextStepLoading(false)
+        }
+      })()
   }, [step, facets, initialFacets, state, hashtagSearchWord, onEstimate, maxHashtags])
 
   const isLoadingOptions = estimateLoading || nextStepLoading || (step >= 1 && !(facets ?? initialFacets))
