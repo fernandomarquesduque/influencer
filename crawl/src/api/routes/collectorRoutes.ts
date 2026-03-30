@@ -29,6 +29,18 @@ export function createCollectorCrawlRouter(controller: CollectorController): Rou
     asyncHandler((req, res) => controller.ingestProfileFull(req, res))
   );
 
+  router.get(
+    '/collector-llm-pending',
+    requireCollectorIngestSecret,
+    asyncHandler((req, res) => controller.listLlmPending(req, res))
+  );
+
+  router.post(
+    '/collector-ingest-llm',
+    requireCollectorIngestSecret,
+    asyncHandler((req, res) => controller.ingestLlm(req, res))
+  );
+
   /** Opcional: verificar se o ingest está habilitado (sem gravar). Útil para health do collector. */
   router.get('/collector-ingest-status', (_req, res) => {
     const enabled = Boolean(process.env.COLLECTOR_INGEST_SECRET?.trim());

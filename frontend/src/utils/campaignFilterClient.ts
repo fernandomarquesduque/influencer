@@ -2,13 +2,138 @@
  * Filtro, ordenação e facets no cliente para a listagem de campanha.
  * Usado quando temos o contexto completo em cache para evitar chamadas à API a cada mudança de filtro.
  */
-import type { ProfileListItem, ProfilesSearchQuery, ProfilesSearchFacets } from '../api'
+import type { ProfileListItem, ProfilesSearchQuery, ProfilesSearchFacets, LlmSearchFacets } from '../api'
 import type { ProfilesSort } from '../api'
 import { getCostTier } from './pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
 
 type CostTier = 'low' | 'medium' | 'high' | 'very_high'
+
+function getLlmQualification(record: Record<string, unknown>): Record<string, unknown> | null {
+  const llm = record.llm
+  if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) return null
+  const lo = llm as Record<string, unknown>
+  const status = String(lo.status ?? '').trim().toLowerCase()
+  if (status !== 'done') return null
+  const q = lo.qualification
+  if (q == null || typeof q !== 'object' || Array.isArray(q)) return null
+  return q as Record<string, unknown>
+}
+
+function bumpFacetString(map: Map<string, number>, raw: string): void {
+  const k = raw.trim().toLowerCase()
+  if (!k) return
+  map.set(k, (map.get(k) ?? 0) + 1)
+}
+
+function bumpFacetStringArray(map: Map<string, number>, arr: unknown): void {
+  if (!Array.isArray(arr)) return
+  for (const x of arr) {
+    if (typeof x === 'string' && x.trim()) bumpFacetString(map, x)
+  }
+}
+
+function mapToNameCountDesc(m: Map<string, number>): { name: string; count: number }[] {
+  return [...m.entries()]
+    .filter(([, count]) => count > 0)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+}
+
+interface LlmFacetMaps {
+  profileType: Map<string, number>
+  mainCategory: Map<string, number>
+  gender: Map<string, number>
+  subCategories: Map<string, number>
+  contentPillars: Map<string, number>
+  audienceType: Map<string, number>
+}
+
+function createEmptyLlmFacetMaps(): LlmFacetMaps {
+  return {
+    profileType: new Map(),
+    mainCategory: new Map(),
+    gender: new Map(),
+    subCategories: new Map(),
+    contentPillars: new Map(),
+    audienceType: new Map(),
+  }
+}
+
+function accumulateLlmFacetsFromItem(item: ProfileListItem, maps: LlmFacetMaps): void {
+  const q = getLlmQualification(item as unknown as Record<string, unknown>)
+  if (!q) return
+  bumpFacetString(maps.profileType, String(q.profileType ?? ''))
+  bumpFacetString(maps.mainCategory, String(q.mainCategory ?? ''))
+  bumpFacetString(maps.gender, String(q.gender ?? ''))
+  bumpFacetStringArray(maps.subCategories, q.subCategories)
+  bumpFacetStringArray(maps.contentPillars, q.contentPillars)
+  bumpFacetStringArray(maps.audienceType, q.audienceType)
+}
+
+function mapsToLlmSearchFacets(maps: LlmFacetMaps): LlmSearchFacets {
+  return {
+    profileType: mapToNameCountDesc(maps.profileType),
+    mainCategory: mapToNameCountDesc(maps.mainCategory),
+    gender: mapToNameCountDesc(maps.gender),
+    language: [],
+    subCategories: mapToNameCountDesc(maps.subCategories),
+    contentPillars: mapToNameCountDesc(maps.contentPillars),
+    audienceType: mapToNameCountDesc(maps.audienceType),
+    toneOfVoice: [],
+    brandSafety: {
+      level: [],
+    },
+  }
+}
+
+function parseStringArrayForLlm(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean)
+  if (typeof v === 'string') return v.split(',').map((x) => x.trim()).filter(Boolean)
+  return []
+}
+
+function qualificationArrayMatchesOr(q: Record<string, unknown>, key: string, selected: string[]): boolean {
+  if (selected.length === 0) return true
+  const set = new Set(selected.map((s) => s.trim().toLowerCase()).filter(Boolean))
+  const arr = q[key]
+  if (!Array.isArray(arr)) return false
+  return arr.some((x) => typeof x === 'string' && set.has(x.trim().toLowerCase()))
+}
+
+function matchesLlmQualificationFilters(record: Record<string, unknown>, query: Partial<ProfilesSearchQuery>): boolean {
+  const qual = getLlmQualification(record)
+  if (!qual) return false
+
+  const orScalar = (field: string, selected: string[]): boolean => {
+    if (selected.length === 0) return true
+    const set = new Set(selected.map((s) => s.trim().toLowerCase()).filter(Boolean))
+    const v = String(qual[field] ?? '').trim().toLowerCase()
+    return set.has(v)
+  }
+
+  if (!orScalar('profileType', parseStringArrayForLlm(query.llmProfileType))) return false
+  if (!orScalar('mainCategory', parseStringArrayForLlm(query.llmMainCategory))) return false
+  if (!orScalar('gender', parseStringArrayForLlm(query.llmGender))) return false
+
+  if (!qualificationArrayMatchesOr(qual, 'subCategories', parseStringArrayForLlm(query.llmSubCategories))) return false
+  if (!qualificationArrayMatchesOr(qual, 'contentPillars', parseStringArrayForLlm(query.llmContentPillars))) return false
+  if (!qualificationArrayMatchesOr(qual, 'audienceType', parseStringArrayForLlm(query.llmAudienceType))) return false
+
+  return true
+}
+
+function hasAnyLlmFilter(query: Partial<ProfilesSearchQuery>): boolean {
+  return (
+    (query.llmProfileType?.length ?? 0) > 0 ||
+    (query.llmMainCategory?.length ?? 0) > 0 ||
+    (query.llmGender?.length ?? 0) > 0 ||
+    (query.llmSubCategories?.length ?? 0) > 0 ||
+    (query.llmContentPillars?.length ?? 0) > 0 ||
+    (query.llmAudienceType?.length ?? 0) > 0
+  )
+}
 
 function getSearchableTextFromItem(item: ProfileListItem): string {
   const precomputed = (item as Record<string, unknown>)._searchable_text
@@ -79,20 +204,14 @@ export function filterAndSortCampaignItems(
 ): ProfileListItem[] {
   let list = [...items]
   const q = (query.q ?? '').trim().toLowerCase()
-  const costTierFilter = (query.costTierFilter ?? []).map((s) => s.toLowerCase())
   const sizeFilter = (query.sizeFilter ?? []).map((s) => s.toLowerCase())
   const accountTypeFilter = (query.accountTypeFilter ?? [])
   const contentTypesFilter = (query.contentTypes ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean)
-  const activationFilter = (query.activationFilter ?? []).map((s) => s.toLowerCase())
   const citiesFilter = (query.cities ?? []).map((s) => s.toLowerCase())
   const statesFilter = (query.states ?? []).map((s) => s.toLowerCase())
   const neighborhoodsFilter = (query.neighborhoods ?? []).map((s) => s.toLowerCase())
   const socialFilter = (query.socialNetworks ?? []).map((s) => s.toLowerCase())
 
-  if (activationFilter.length === 1) {
-    const wantActivated = activationFilter[0] === 'activated'
-    list = list.filter((i) => (wantActivated ? !!i.activation : !i.activation))
-  }
   if (citiesFilter.length > 0) {
     list = list.filter(
       (i) => i.activation?.city?.trim() && citiesFilter.includes(i.activation.city.trim().toLowerCase())
@@ -124,13 +243,6 @@ export function filterAndSortCampaignItems(
       return contentTypesFilter.some((fc) => ctLower.includes(fc))
     })
   }
-  if (costTierFilter.length > 0) {
-    const tierSet = new Set(costTierFilter)
-    list = list.filter((i) => {
-      const tier = getCostTierFromItem(i)
-      return tier != null && tierSet.has(tier)
-    })
-  }
   if (sizeFilter.length > 0) {
     const sizeSet = new Set(sizeFilter)
     list = list.filter((i) => {
@@ -144,6 +256,9 @@ export function filterAndSortCampaignItems(
       const at = (i as { account_type?: number }).account_type
       return at != null && typeSet.has(at)
     })
+  }
+  if (hasAnyLlmFilter(query)) {
+    list = list.filter((i) => matchesLlmQualificationFilters(i as unknown as Record<string, unknown>, query))
   }
   if (q) {
     list = list.filter((i) => {
@@ -214,13 +329,13 @@ export function filterAndSortCampaignItems(
 
 export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearchFacets {
   const total = items.length
+  const llmFacetMaps = createEmptyLlmFacetMaps()
   let activatedCount = 0
   const contentTypeCount = new Map<string, number>()
   const cityCount = new Map<string, number>()
   const stateCount = new Map<string, number>()
   const neighborhoodCount = new Map<string, number>()
   const socialCount = { whatsapp: 0, tiktok: 0, facebook: 0, linkedin: 0, twitter: 0 }
-  const costTierCount = new Map<string, number>()
   const sizeCount = new Map<string, number>()
   const accountTypeCount = new Map<number, number>()
 
@@ -249,14 +364,13 @@ export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearch
         }
       }
     }
-    const tier = getCostTierFromItem(item)
-    if (tier) costTierCount.set(tier, (costTierCount.get(tier) ?? 0) + 1)
     const size = getSizeFromItem(item)
     if (size) sizeCount.set(size, (sizeCount.get(size) ?? 0) + 1)
     const at = (item as { account_type?: number }).account_type
     if (at != null && (at === 1 || at === 2 || at === 3)) {
       accountTypeCount.set(at, (accountTypeCount.get(at) ?? 0) + 1)
     }
+    accumulateLlmFacetsFromItem(item, llmFacetMaps)
   }
 
   const engagementRateBuckets = [
@@ -310,7 +424,7 @@ export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearch
     states: [...stateCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     neighborhoods: [...neighborhoodCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     social: socialCount,
-    cost_tier: [...costTierCount.entries()].filter(([, count]) => count > 0).map(([tier, count]) => ({ tier, count })).sort((a, b) => b.count - a.count),
+    cost_tier: [],
     size_buckets: [
       { key: 'nano', label: 'Nano', count: sizeCount.get('nano') ?? 0 },
       { key: 'micro', label: 'Micro', count: sizeCount.get('micro') ?? 0 },
@@ -322,5 +436,6 @@ export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearch
       { value: 2, label: 'Criador', count: accountTypeCount.get(2) ?? 0 },
       { value: 3, label: 'Empresa', count: accountTypeCount.get(3) ?? 0 },
     ].filter((x) => x.count > 0),
+    llm: mapsToLlmSearchFacets(llmFacetMaps),
   }
 }

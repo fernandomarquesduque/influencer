@@ -1,6 +1,6 @@
 /**
  * Minhas campanhas: dashboard de relatórios comprados pelo usuário.
- * Cards lado a lado com stats detalhados (engajamento, likes, views, etc.).
+ * Cards em lista com resumo LLM (gêneros, tipos de perfil) e categorias no rodapé.
  */
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -13,8 +13,6 @@ import {
   ArrowRightOutlined,
   HeartOutlined,
   CommentOutlined,
-  EyeOutlined,
-  RiseOutlined,
   TeamOutlined,
   FileTextOutlined,
   ClockCircleOutlined,
@@ -22,6 +20,7 @@ import {
 import { useAuth } from '../contexts/AuthContext'
 import { fetchMyCampaigns, fetchFavorites, type MyCampaignItem, type MyCampaignStats } from '../api'
 import FavoriteProfilesList from '../components/FavoriteProfilesList'
+import { campaignLlmBadgeStyles } from '../utils/campaignLlmBadges'
 import './MyCampaigns.css'
 
 const { Title, Text } = Typography
@@ -72,34 +71,46 @@ export default function MyCampaigns() {
 
   useEffect(() => {
     if (!user) return
+    let active = true
     setLoading(true)
     setError(null)
     setStatsLoading(false)
     const ac = new AbortController()
     Promise.all([
       fetchMyCampaigns({ signal: ac.signal, light: true }),
-      fetchFavorites().then((res) => (res.handles?.length ?? 0) > 0).catch(() => false),
+      fetchFavorites({ signal: ac.signal })
+        .then((res) => (res.handles?.length ?? 0) > 0)
+        .catch(() => false),
     ])
       .then(([campaignsRes, fav]) => {
+        if (!active) return
         setCampaigns(campaignsRes.campaigns ?? [])
         setHasFavorites(fav)
-        setLoading(false)
         if ((campaignsRes.campaigns?.length ?? 0) > 0) {
           setStatsLoading(true)
           fetchMyCampaigns({ signal: ac.signal })
-            .then((full) => setCampaigns(full.campaigns ?? []))
-            .catch(() => {})
-            .finally(() => setStatsLoading(false))
+            .then((full) => {
+              if (active) setCampaigns(full.campaigns ?? [])
+            })
+            .catch(() => { })
+            .finally(() => {
+              if (active) setStatsLoading(false)
+            })
         }
       })
       .catch((e) => {
         // Não exibir erro quando o request foi cancelado (navegação/cleanup)
         const err = e as Error & { name?: string }
         if (err?.name === 'AbortError' || err?.message?.toLowerCase().includes('abort')) return
-        setError(err?.message ?? 'Erro ao carregar campanhas')
+        if (active) setError(err?.message ?? 'Erro ao carregar campanhas')
       })
-      .finally(() => setLoading(false))
-    return () => ac.abort()
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+      ac.abort()
+    }
   }, [user])
 
   useEffect(() => {
@@ -150,114 +161,154 @@ export default function MyCampaigns() {
         <>
           <Row gutter={[16, 16]} className="my-campaigns-grid">
             {campaigns.map((c) => (
-              <Col xs={24} sm={12} lg={8} key={c.id}>
+              <Col xs={24} key={c.id}>
                 <Card
                   className="my-campaign-card"
                   hoverable
                   onClick={() => navigate(`/app/campaigns/${c.id}`)}
                 >
-                  <div className="my-campaign-card-header">
-                    <Title level={5} className="my-campaign-card-name">
-                      {c.name || 'Campanha'}
-                    </Title>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<ArrowRightOutlined />}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        navigate(`/app/campaigns/${c.id}`)
-                      }}
-                    />
-                  </div>
-                  <Row gutter={[8, 12]} className="my-campaign-card-stats">
-                    <Col span={12}>
-                      <span className="my-campaign-card-perfis">
-                        <UserOutlined /> {formatShortNum(c.handlesCount)} Perfis
-                      </span>
-                    </Col>
-                    <Col span={12}>
-                      <div className="my-campaign-card-date">
-                        <CalendarOutlined style={{ marginRight: 4, opacity: 0.7 }} />
-                        <Text type="secondary" style={{ fontSize: 11 }}>
-                          {formatDate(c.created_at)}
-                        </Text>
-                      </div>
-                    </Col>
-                    {c.pendingPayment && (
-                      <Col span={24}>
-                        <span className="my-campaign-card-pending-payment">
-                          <ClockCircleOutlined /> Aguardando pagamento
-                        </span>
-                      </Col>
-                    )}
-                  </Row>
-                  {c.stats && (c.stats.totalLikes > 0 || c.stats.totalViews > 0 || c.stats.totalFollowers > 0) && (
-                    <div className="my-campaign-card-engagement">
-                      <Text type="secondary" className="my-campaign-card-engagement-label">
-                        Engajamento
-                      </Text>
-                      <Row gutter={[8, 8]}>
-                        <Col span={12}>
-                          <Tooltip title="Total de curtidas nos posts">
-                            <div className="my-campaign-metric">
-                              <HeartOutlined /> {formatShortNum(c.stats.totalLikes)}
-                            </div>
-                          </Tooltip>
-                        </Col>
-                        <Col span={12}>
-                          <Tooltip title="Total de comentários">
-                            <div className="my-campaign-metric">
-                              <CommentOutlined /> {formatShortNum(c.stats.totalComments)}
-                            </div>
-                          </Tooltip>
-                        </Col>
-                        <Col span={12}>
-                          <Tooltip title="Total de visualizações (reels)">
-                            <div className="my-campaign-metric">
-                              <EyeOutlined /> {formatShortNum(c.stats.totalViews)}
-                            </div>
-                          </Tooltip>
-                        </Col>
-                        <Col span={12}>
-                          <Tooltip title="Seguidores somados">
-                            <div className="my-campaign-metric">
-                              <TeamOutlined /> {formatShortNum(c.stats.totalFollowers)}
-                            </div>
-                          </Tooltip>
-                        </Col>
-                        <Col span={12}>
-                          <Tooltip title="Posts analisados">
-                            <div className="my-campaign-metric">
-                              <FileTextOutlined /> {formatShortNum(c.stats.postsCount)}
-                            </div>
-                          </Tooltip>
-                        </Col>
-                        <Col span={12}>
-                          <Tooltip title="Taxa média de engajamento (%)">
-                            <div className="my-campaign-metric">
-                              <RiseOutlined /> {c.stats.avgEngagementRate.toFixed(2)}%
-                            </div>
-                          </Tooltip>
-                        </Col>
-                        {(c.stats.avgLikes > 0 || c.stats.avgComments > 0) && (
-                          <Col span={24}>
-                            <Text type="secondary" style={{ fontSize: 11 }}>
-                              Média: {formatShortNum(c.stats.avgLikes)} likes · {formatShortNum(c.stats.avgComments)} comentários
+                  <div className="my-campaign-card-body">
+                    <div className="my-campaign-card-row">
+                      <div className="my-campaign-card-leading">
+                        <div className="my-campaign-card-header">
+                          <Title level={5} className="my-campaign-card-name">
+                            {c.name || 'Campanha'}
+                          </Title>
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<ArrowRightOutlined />}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              navigate(`/app/campaigns/${c.id}`)
+                            }}
+                          />
+                        </div>
+                        <div className="my-campaign-card-meta-row">
+                          <span className="my-campaign-card-perfis">
+                            <UserOutlined /> {formatShortNum(c.handlesCount)} perfis
+                          </span>
+                          <span className="my-campaign-card-meta-sep" aria-hidden>
+                            ·
+                          </span>
+                          <div className="my-campaign-card-date">
+                            <CalendarOutlined style={{ marginRight: 4, opacity: 0.7 }} />
+                            <Text type="secondary" className="my-campaign-card-date-text">
+                              {formatDate(c.created_at)}
                             </Text>
-                          </Col>
-                        )}
-                      </Row>
+                          </div>
+                          {c.pendingPayment && (
+                            <>
+                              <span className="my-campaign-card-meta-sep" aria-hidden>
+                                ·
+                              </span>
+                              <span className="my-campaign-card-pending-payment my-campaign-card-pending-payment--inline">
+                                <ClockCircleOutlined /> Aguardando pagamento
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {(() => {
+                        const llmRows: Array<{
+                          key: string
+                          sectionLabel: string
+                          entries: Array<{ label: string; count: number }>
+                          tooltipLabel: string
+                        }> = []
+                        if (c.topLlmGenders?.length) {
+                          llmRows.push({
+                            key: 'genders',
+                            sectionLabel: 'Gêneros (LLM)',
+                            entries: c.topLlmGenders,
+                            tooltipLabel: 'gênero (LLM)',
+                          })
+                        }
+                        if (c.topLlmProfileTypes?.length) {
+                          llmRows.push({
+                            key: 'profileTypes',
+                            sectionLabel: 'Tipos de perfil (LLM)',
+                            entries: c.topLlmProfileTypes,
+                            tooltipLabel: 'tipo de perfil (LLM)',
+                          })
+                        }
+                        if (llmRows.length === 0) return null
+                        return (
+                          <div className="my-campaign-card-llm-dimensions">
+                            {llmRows.map((row) => (
+                              <div key={row.key} className="my-campaign-card-llm-dimensions-row">
+                                <Text type="secondary" className="my-campaign-card-llm-dimensions-label">
+                                  {row.sectionLabel}
+                                </Text>
+                                <div className="my-campaign-card-llm-dimensions-chips">
+                                  {row.entries.map((entry) => {
+                                    const st = campaignLlmBadgeStyles(entry.label)
+                                    const n = entry.count
+                                    const perfis = n === 1 ? 'perfil' : 'perfis'
+                                    return (
+                                      <Tooltip
+                                        key={`${row.key}-${entry.label}`}
+                                        title={`${entry.label}: ${n} ${perfis} com este ${row.tooltipLabel}`}
+                                      >
+                                        <span
+                                          className="my-campaign-card-llm-chip my-campaign-card-llm-chip--compact"
+                                          style={{
+                                            border: st.border,
+                                            color: st.color,
+                                            background: st.background,
+                                          }}
+                                        >
+                                          <span className="my-campaign-card-llm-chip-text">{entry.label}</span>
+                                          <span className="my-campaign-card-llm-chip-count">{n}</span>
+                                        </span>
+                                      </Tooltip>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })()}
                     </div>
-                  )}
-                  <div className={`my-campaign-card-footer${c.topHashtags && c.topHashtags.length > 0 ? ' my-campaign-card-footer-hashtags' : ''}`}>
-                    {c.topHashtags && c.topHashtags.length > 0 ? (
-                      <Text>
-                        {c.topHashtags.map((h) => `#${h}`).join(' ')}
-                      </Text>
-                    ) : (
-                      <Text type="secondary">Clique para ver os influenciadores</Text>
-                    )}
+
+                    <div className="my-campaign-card-footer">
+                      {c.topLlmCategories && c.topLlmCategories.length > 0 ? (
+                        <div className="my-campaign-card-llm-categories">
+                          <Text type="secondary" className="my-campaign-card-llm-categories-label">
+                            Categorias (LLM)
+                          </Text>
+                          <div className="my-campaign-card-llm-categories-chips">
+                            {c.topLlmCategories.map((entry) => {
+                              const st = campaignLlmBadgeStyles(entry.label)
+                              const n = entry.count
+                              const perfis = n === 1 ? 'perfil' : 'perfis'
+                              return (
+                                <Tooltip
+                                  key={entry.label}
+                                  title={`${entry.label}: ${n} ${perfis} com esta categoria principal (LLM)`}
+                                >
+                                  <span
+                                    className="my-campaign-card-llm-chip"
+                                    style={{
+                                      border: st.border,
+                                      color: st.color,
+                                      background: st.background,
+                                    }}
+                                  >
+                                    <span className="my-campaign-card-llm-chip-text">{entry.label}</span>
+                                    <span className="my-campaign-card-llm-chip-count">{n}</span>
+                                  </span>
+                                </Tooltip>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <Text type="secondary">Clique para ver os influenciadores</Text>
+                      )}
+                    </div>
                   </div>
                 </Card>
               </Col>

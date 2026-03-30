@@ -239,6 +239,18 @@ export interface ProfilesSearchQuery {
   costTierFilter?: string[]
   /** Tamanho: nano, micro, mid, macro. */
   sizeFilter?: string[]
+  /** Filtros sobre classificação LLM (`llm.qualification`); multiselect = OR no mesmo campo. */
+  llmProfileType?: string[]
+  llmMainCategory?: string[]
+  llmGender?: string[]
+  llmLanguage?: string[]
+  llmSubCategories?: string[]
+  llmContentPillars?: string[]
+  llmAudienceType?: string[]
+  llmToneOfVoice?: string[]
+  llmRiskLevel?: string[]
+  llmIsFamilySafe?: boolean
+  llmIsAdultContent?: boolean
   sort?: ProfilesSort
   limit?: number
   offset?: number
@@ -256,6 +268,22 @@ export interface FacetBucket {
 export interface PricingFacetBucket {
   value: number
   count: number
+}
+
+/** Agregações de `llm.qualification` (classificação qualify). */
+export interface LlmSearchFacets {
+  profileType: { name: string; count: number }[]
+  mainCategory: { name: string; count: number }[]
+  gender: { name: string; count: number }[]
+  language: { name: string; count: number }[]
+  subCategories: { name: string; count: number }[]
+  contentPillars: { name: string; count: number }[]
+  audienceType: { name: string; count: number }[]
+  toneOfVoice: { name: string; count: number }[]
+  /** Categoria única do prompt: familia | sensivel | adulto. */
+  brandSafety: {
+    level: { name: string; count: number }[]
+  }
 }
 
 /** Sumarização dos resultados para filtros (hashtags, engajamento, ativação, tipo de conteúdo, faixas de preço). */
@@ -287,11 +315,13 @@ export interface ProfilesSearchFacets {
   cost_tier?: { tier: string; count: number }[]
   /** Contagem por tamanho (nano, micro, mid, macro). */
   size_buckets?: { key: string; label: string; count: number }[]
+  llm?: LlmSearchFacets
 }
 
 export interface ProfilesSearchResponse {
   total: number
-  items: ProfileListItem[]
+  /** Na busca pública/anônima o backend pode omitir `items` (só total + facets). */
+  items?: ProfileListItem[]
   facets?: ProfilesSearchFacets
   /** Quando a campanha tem pagamento pendente: valor e stats calculados com base nos filtros (sem retornar items). */
   pricePreview?: {
@@ -317,10 +347,31 @@ export interface ProfilesSearchResponse {
   }
 }
 
-export async function fetchProfilesSearch(
-  query: ProfilesSearchQuery,
-  options?: { signal?: AbortSignal; campaignId?: string | null }
-): Promise<ProfilesSearchResponse> {
+/** Resposta normalizada de `fetchProfilesSearch` (sempre inclui `items`, possivelmente vazio). */
+export type ProfilesSearchResult = Omit<ProfilesSearchResponse, 'items'> & { items: ProfileListItem[] }
+
+export interface ProfilePreviewItem {
+  firstName: string
+  profilePicUrl: string
+  llmDescription: string
+  size: 'nano' | 'micro' | 'medio' | 'macro'
+  category: string
+  audience: string
+  collectedAt: string | null
+  followersCount: number
+  engagementRate: number
+  totalLikes: number
+  totalComments: number
+  postsCount: number
+}
+
+export interface ProfilesPreviewResponse {
+  total: number
+  items: ProfilePreviewItem[]
+}
+
+/** Serializa filtros de busca para query string (busca pública, campanha, admin). */
+export function profilesSearchQueryToParams(query: Partial<ProfilesSearchQuery>): URLSearchParams {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
   if (query.minFollowers != null) params.set('minFollowers', String(query.minFollowers))
@@ -351,6 +402,30 @@ export async function fetchProfilesSearch(
   if (query.sort) params.set('sort', query.sort)
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))
+  const llmJoin = (key: string, arr?: string[]) => {
+    if (arr?.length) params.set(key, arr.join(','))
+  }
+  llmJoin('llmProfileType', query.llmProfileType)
+  llmJoin('llmMainCategory', query.llmMainCategory)
+  llmJoin('llmGender', query.llmGender)
+  llmJoin('llmLanguage', query.llmLanguage)
+  llmJoin('llmSubCategories', query.llmSubCategories)
+  llmJoin('llmContentPillars', query.llmContentPillars)
+  llmJoin('llmAudienceType', query.llmAudienceType)
+  llmJoin('llmToneOfVoice', query.llmToneOfVoice)
+  llmJoin('llmRiskLevel', query.llmRiskLevel)
+  if (query.llmIsFamilySafe === true) params.set('llmFamilySafe', '1')
+  if (query.llmIsFamilySafe === false) params.set('llmFamilySafe', '0')
+  if (query.llmIsAdultContent === true) params.set('llmAdultContent', '1')
+  if (query.llmIsAdultContent === false) params.set('llmAdultContent', '0')
+  return params
+}
+
+export async function fetchProfilesSearch(
+  query: ProfilesSearchQuery,
+  options?: { signal?: AbortSignal; campaignId?: string | null }
+): Promise<ProfilesSearchResult> {
+  const params = profilesSearchQueryToParams(query)
   const res = await fetch(`${API_BASE}/profiles/search?${params.toString()}`, {
     headers: authHeadersWithCampaign(options?.campaignId),
     signal: options?.signal,
@@ -363,7 +438,29 @@ export async function fetchProfilesSearch(
     e.code = code
     throw e
   }
-  return res.json()
+  const data = (await res.json()) as ProfilesSearchResponse
+  return { ...data, items: data.items ?? [] }
+}
+
+export async function fetchProfilesPreview(
+  query: ProfilesSearchQuery,
+  options?: { signal?: AbortSignal; limit?: number }
+): Promise<ProfilesPreviewResponse> {
+  const res = await fetch(`${API_BASE}/profiles/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ query, limit: options?.limit ?? 10 }),
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao carregar preview de perfis')
+  }
+  const data = (await res.json()) as Partial<ProfilesPreviewResponse>
+  return {
+    total: Number(data.total ?? 0),
+    items: Array.isArray(data.items) ? data.items as ProfilePreviewItem[] : [],
+  }
 }
 
 /** Saldo de créditos do usuário autenticado. */
@@ -681,6 +778,23 @@ export interface CreateCampaignError {
   balance?: number
 }
 
+/** Defaults públicos: duração do relatório (dias) e data YYYY-MM-DD sugerida na criação. */
+export interface CampaignAccessDefaults {
+  durationDays: number
+  defaultExpiresAt: string
+}
+
+export async function fetchCampaignAccessDefaults(options?: {
+  signal?: AbortSignal
+}): Promise<CampaignAccessDefaults> {
+  const res = await fetch(`${API_BASE}/campaign-access-defaults`, { signal: options?.signal })
+  const data = (await res.json().catch(() => ({}))) as Partial<CampaignAccessDefaults>
+  if (!res.ok || typeof data.durationDays !== 'number' || typeof data.defaultExpiresAt !== 'string') {
+    throw new Error('Falha ao carregar configuração de acesso à campanha')
+  }
+  return data as CampaignAccessDefaults
+}
+
 export async function createCampaign(
   query: ProfilesSearchQuery,
   options: { expiresAt: string; name?: string; maxHandles?: number; signal?: AbortSignal }
@@ -720,6 +834,9 @@ export interface CampaignCompilado {
   avgViews: number
   previewProfiles: Array<{ handle: string; profile_pic_url?: string; full_name?: string; followers_count?: number }>
   topHashtags: string[]
+  topLlmCategories?: Array<{ label: string; count: number }>
+  topLlmGenders?: Array<{ label: string; count: number }>
+  topLlmProfileTypes?: Array<{ label: string; count: number }>
   cities: Array<{ name: string; count: number }>
   states: Array<{ name: string; count: number }>
   activatedCount: number
@@ -920,6 +1037,12 @@ export interface MyCampaignItem {
   previewProfiles?: MyCampaignPreviewProfile[]
   /** 2 hashtags/categorias mais relevantes da campanha. */
   topHashtags?: string[]
+  /** Categorias principais LLM mais frequentes nos perfis (rótulo + quantidade, até 8). */
+  topLlmCategories?: Array<{ label: string; count: number }>
+  /** Gênero (LLM) agregado na campanha. */
+  topLlmGenders?: Array<{ label: string; count: number }>
+  /** Tipo de perfil (LLM) agregado na campanha. */
+  topLlmProfileTypes?: Array<{ label: string; count: number }>
   /** Pagamento pendente (PIX/Boleto) para esta campanha. */
   pendingPayment?: {
     status: string
@@ -985,7 +1108,6 @@ export async function fetchCampaignProfiles(
   if (query.engagementRateBuckets?.length) params.set('engagementRateBuckets', query.engagementRateBuckets.join(','))
   if (query.avgLikesBuckets?.length) params.set('avgLikesBuckets', query.avgLikesBuckets.join(','))
   if (query.postsCountBuckets?.length) params.set('postsCountBuckets', query.postsCountBuckets.join(','))
-  if (query.activationFilter?.length) params.set('activationFilter', query.activationFilter.join(','))
   if (query.cities?.length) params.set('cities', query.cities.join(','))
   if (query.states?.length) params.set('states', query.states.join(','))
   if (query.neighborhoods?.length) params.set('neighborhoods', query.neighborhoods.join(','))
@@ -1002,6 +1124,15 @@ export async function fetchCampaignProfiles(
   if (query.sort) params.set('sort', query.sort)
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))
+  const llmJoinCamp = (key: string, arr?: string[]) => {
+    if (arr?.length) params.set(key, arr.join(','))
+  }
+  llmJoinCamp('llmProfileType', query.llmProfileType)
+  llmJoinCamp('llmMainCategory', query.llmMainCategory)
+  llmJoinCamp('llmGender', query.llmGender)
+  llmJoinCamp('llmSubCategories', query.llmSubCategories)
+  llmJoinCamp('llmContentPillars', query.llmContentPillars)
+  llmJoinCamp('llmAudienceType', query.llmAudienceType)
   const qs = params.toString()
   const res = await fetch(`${API_BASE}/campaigns/${campaignId}/profiles${qs ? `?${qs}` : ''}`, {
     headers: { ...authHeaders() },
@@ -1045,6 +1176,8 @@ export interface PostItem {
     stable_profile_pic_url?: string
     /** Preenchido em post-matches a partir do perfil indexado (patamar na UI). */
     followers_count?: number
+    /** Qualificação LLM do perfil (post-matches), quando existir no storage. */
+    llm?: unknown
   }
   post?: { shortcode?: string; media_type?: number; taken_at?: number; collected_at?: string;[k: string]: unknown }
   content?: PostContent
@@ -1902,6 +2035,73 @@ export async function adminPurgeInfluencer(handle: string): Promise<{ ok: boolea
     throw new Error(err?.error || 'Falha ao excluir influenciador')
   }
   return (await res.json().catch(() => ({}))) as { ok: boolean; s3ObjectsRemoved?: number }
+}
+
+const ADMIN_PURGE_BATCH_CHUNK = 100
+
+/** Admin: lista perfis do índice com filtros (inclui facetas LLM). */
+export async function fetchAdminInfluencers(
+  query: Partial<ProfilesSearchQuery>,
+  options?: { signal?: AbortSignal; includeFacets?: boolean }
+): Promise<ProfilesSearchResult> {
+  const params = profilesSearchQueryToParams(query)
+  if (options?.includeFacets === false) params.set('includeFacets', 'false')
+  const res = await fetch(`${API_BASE}/admin/influencers?${params.toString()}`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err?.error || 'Falha ao listar influenciadores')
+  }
+  const data = (await res.json()) as ProfilesSearchResponse
+  return { ...data, items: data.items ?? [] }
+}
+
+export interface AdminPurgeBatchResult {
+  ok: boolean
+  removed: string[]
+  failed: { handle: string; error: string }[]
+  s3ObjectsRemoved: number
+}
+
+/** Admin: purge em lote (várias requisições se > 100 handles). */
+export async function adminPurgeInfluencersBatch(handles: string[]): Promise<AdminPurgeBatchResult> {
+  const unique: string[] = []
+  const seen = new Set<string>()
+  for (const x of handles) {
+    const h = String(x ?? '')
+      .replace(/^@+/, '')
+      .toLowerCase()
+      .trim()
+    if (!h || seen.has(h)) continue
+    seen.add(h)
+    unique.push(h)
+  }
+  const removed: string[] = []
+  const failed: { handle: string; error: string }[] = []
+  let s3ObjectsRemoved = 0
+  for (let i = 0; i < unique.length; i += ADMIN_PURGE_BATCH_CHUNK) {
+    const chunk = unique.slice(i, i + ADMIN_PURGE_BATCH_CHUNK)
+    const res = await fetch(`${API_BASE}/admin/influencers/purge-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ handles: chunk }),
+    })
+    const data = (await res.json().catch(() => ({}))) as Partial<AdminPurgeBatchResult> & { error?: string }
+    if (!res.ok) {
+      throw new Error(data.error || 'Falha na exclusão em lote')
+    }
+    if (Array.isArray(data.removed)) removed.push(...data.removed)
+    if (Array.isArray(data.failed)) failed.push(...data.failed)
+    s3ObjectsRemoved += Number(data.s3ObjectsRemoved) || 0
+  }
+  return {
+    ok: failed.length === 0,
+    removed,
+    failed,
+    s3ObjectsRemoved,
+  }
 }
 
 /** LGPD: excluir conta. Influencer: própria conta. Adm: pode passar handle para excluir conta de outro usuário. */

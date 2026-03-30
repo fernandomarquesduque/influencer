@@ -6,6 +6,7 @@
     "start": "npm run start --prefix influencer-collector",
     "collector": "npm run start --prefix influencer-collector",
     "dev": "npm run dev --prefix frontend",
-    "api": "npm run api --prefix crawl"
+    "api": "npm run api --prefix crawl",
+    "qualify": "npm run qualify --prefix qualify"
   }
 }

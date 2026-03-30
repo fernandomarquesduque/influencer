@@ -18,6 +18,45 @@ export function getInfluencerTierTooltip(followers: number | undefined | null): 
   return 'Macro (500k+)'
 }
 
+/** Chave de porte vinda da API (`size`, buckets de busca): nano | micro | medio | macro. */
+export function sizeBucketKeyToTierLabel(key: string | undefined | null): InfluencerTierLabel {
+  const k = String(key ?? '').trim().toLowerCase()
+  if (k === 'nano') return 'Nano'
+  if (k === 'micro') return 'Micro'
+  if (k === 'medio' || k === 'mid') return 'Mid'
+  if (k === 'macro') return 'Macro'
+  return '—'
+}
+
+export function getInfluencerTierTooltipFromLabel(tier: InfluencerTierLabel): string | undefined {
+  if (tier === '—') return undefined
+  if (tier === 'Nano') return 'Nano (até 10k seg.)'
+  if (tier === 'Micro') return 'Micro (10k–50k)'
+  if (tier === 'Mid') return 'Mid (50k–500k)'
+  if (tier === 'Macro') return 'Macro (500k+)'
+  return undefined
+}
+
+const TIER_SOLID_HEX: Record<Exclude<InfluencerTierLabel, '—'>, string> = {
+  Nano: '#722ed1',
+  Micro: '#1890ff',
+  Mid: '#13c2c2',
+  Macro: '#eb2f96',
+}
+
+/** Cor sólida (tom base do gradiente do selo) para chaves de bucket da API. */
+export function getInfluencerTierSolidHexForBucketKey(key: string | undefined | null): string | undefined {
+  const tier = sizeBucketKeyToTierLabel(key)
+  if (tier === '—') return undefined
+  return TIER_SOLID_HEX[tier]
+}
+
+/** Mesma paleta, a partir do rótulo já resolvido (ex.: selo compacto alinhado a chips). */
+export function getInfluencerTierSolidHexForTierLabel(tier: InfluencerTierLabel): string | undefined {
+  if (tier === '—') return undefined
+  return TIER_SOLID_HEX[tier]
+}
+
 /** Fundo do selo de patamar (igual à tabela de influenciadores da campanha). */
 export function getInfluencerTierGradientCss(tier: InfluencerTierLabel): string {
   if (tier === 'Nano') return 'linear-gradient(90deg, #722ed1, #9254de)'

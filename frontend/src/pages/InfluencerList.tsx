@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { useNavigate, useLocation, useParams, Link, Navigate } from 'react-router-dom'
 import {
   Row,
@@ -21,7 +21,18 @@ import {
 import { SearchOutlined, FilterOutlined, ClearOutlined } from '@ant-design/icons'
 
 const { useBreakpoint } = Grid
-import { fetchProfilesSearch, fetchProfile, createCampaign, registerCheckoutUser, type ProfileListItem, type ProfilesSearchQuery, type ProfilesSort, type ProfilesSearchFacets } from '../api'
+import {
+  fetchProfilesSearch,
+  fetchProfile,
+  createCampaign,
+  registerCheckoutUser,
+  fetchCampaignAccessDefaults,
+  type ProfileListItem,
+  type ProfilesSearchQuery,
+  type ProfilesSort,
+  type ProfilesSearchFacets,
+} from '../api'
+import { expiresAtIsoFromDurationDays, FALLBACK_CAMPAIGN_ACCESS_DAYS } from '../utils/campaignExpires'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
@@ -64,12 +75,25 @@ function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
   if (query.pricingDestaque?.length) params.pricingDestaque = query.pricingDestaque.join(',')
   if (query.sort) params.sort = query.sort
   if (query.offset != null && query.offset > 0) params.offset = String(query.offset)
+  if (query.llmProfileType?.length) params.llmProfileType = query.llmProfileType.join(',')
+  if (query.llmMainCategory?.length) params.llmMainCategory = query.llmMainCategory.join(',')
+  if (query.llmGender?.length) params.llmGender = query.llmGender.join(',')
+  if (query.llmLanguage?.length) params.llmLanguage = query.llmLanguage.join(',')
+  if (query.llmSubCategories?.length) params.llmSubCategories = query.llmSubCategories.join(',')
+  if (query.llmContentPillars?.length) params.llmContentPillars = query.llmContentPillars.join(',')
+  if (query.llmAudienceType?.length) params.llmAudienceType = query.llmAudienceType.join(',')
+  if (query.llmToneOfVoice?.length) params.llmToneOfVoice = query.llmToneOfVoice.join(',')
+  if (query.llmRiskLevel?.length) params.llmRiskLevel = query.llmRiskLevel.join(',')
+  if (query.llmIsFamilySafe === true) params.llmFamilySafe = '1'
+  if (query.llmIsFamilySafe === false) params.llmFamilySafe = '0'
+  if (query.llmIsAdultContent === true) params.llmAdultContent = '1'
+  if (query.llmIsAdultContent === false) params.llmAdultContent = '0'
   return params
 }
 
 const WIZARD_DONE_PARAM = 'done'
 
-/** Deserializa URL para query. Listagem só aparece se tiver q e done=1 (wizard completo). Categories é opcional (busca só por termo). */
+/** Deserializa URL para query. Listagem aparece quando done=1 (wizard completo), mesmo sem q. */
 function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery> & { hasMandatory: boolean } {
   const q = params.get('q')?.trim()
   const categoriesRaw = params.get('categories')
@@ -77,11 +101,21 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     ? categoriesRaw.split(',').map((c) => c.trim()).filter(Boolean)
     : undefined
   const done = params.get(WIZARD_DONE_PARAM) === '1'
-  const hasMandatory = !!(q && q.length >= 3 && done)
+  const hasMandatory = done
   const parseNumList = (s: string | null): number[] | undefined => {
     if (!s) return undefined
     const arr = s.split(',').map((x) => Number(x.trim())).filter(Number.isFinite)
     return arr.length ? arr : undefined
+  }
+  const parseStrList = (s: string | null): string[] | undefined => {
+    if (!s) return undefined
+    const arr = s.split(',').map((x) => x.trim()).filter(Boolean)
+    return arr.length ? arr : undefined
+  }
+  const parseBool01 = (s: string | null): boolean | undefined => {
+    if (s === '1' || s === 'true') return true
+    if (s === '0' || s === 'false') return false
+    return undefined
   }
   return {
     hasMandatory,
@@ -109,6 +143,17 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     pricingDestaque: parseNumList(params.get('pricingDestaque')),
     sort: (params.get('sort') as ProfilesSort) || undefined,
     offset: params.has('offset') ? Number(params.get('offset')) : undefined,
+    llmProfileType: parseStrList(params.get('llmProfileType')),
+    llmMainCategory: parseStrList(params.get('llmMainCategory')),
+    llmGender: parseStrList(params.get('llmGender')),
+    llmLanguage: parseStrList(params.get('llmLanguage')),
+    llmSubCategories: parseStrList(params.get('llmSubCategories')),
+    llmContentPillars: parseStrList(params.get('llmContentPillars')),
+    llmAudienceType: parseStrList(params.get('llmAudienceType')),
+    llmToneOfVoice: parseStrList(params.get('llmToneOfVoice')),
+    llmRiskLevel: parseStrList(params.get('llmRiskLevel')),
+    llmIsFamilySafe: parseBool01(params.get('llmFamilySafe')),
+    llmIsAdultContent: parseBool01(params.get('llmAdultContent')),
   }
 }
 
@@ -137,11 +182,26 @@ const PAGE_SIZE = 12
 
 const PUBLIC_LIMIT_CODES = ['PUBLIC_PAGE_LIMIT', 'PUBLIC_FILTERS_NOT_ALLOWED', 'PUBLIC_SEARCH_LIMIT']
 
-/** Lê params da hash (#q=moda&categories=...) e retorna URLSearchParams. */
-function getParamsFromHash(location: { hash: string }): URLSearchParams {
+/**
+ * Parâmetros da listagem: o app grava em hash (#...); URLs com query (?...) também são aceitas.
+ * Hash sobrescreve chaves repetidas (navegação in-app).
+ */
+function getMergedUrlParams(location: { search: string; hash: string }): URLSearchParams {
+  const merged = new URLSearchParams()
+  const qs = location.search?.replace(/^\?/, '').trim()
+  if (qs) {
+    new URLSearchParams(qs).forEach((v, k) => merged.set(k, v))
+  }
   const hash = location.hash?.trim().replace(/^#/, '') || ''
-  if (!hash) return new URLSearchParams()
-  return new URLSearchParams(hash)
+  if (hash) {
+    new URLSearchParams(hash).forEach((v, k) => merged.set(k, v))
+  }
+  return merged
+}
+
+/** Chave estável da query para cache e deduplicação (não basta `q`: filtros LLM/tamanho etc. mudam o resultado). */
+function stableProfilesSearchQueryKey(q: ProfilesSearchQuery): string {
+  return JSON.stringify(q, Object.keys(q as Record<string, unknown>).sort())
 }
 
 export default function InfluencerList() {
@@ -151,10 +211,10 @@ export default function InfluencerList() {
   const { user, isPublic, loginWithToken, login } = useAuth()
   const { getCache, saveCache } = useListCache()
   const isLimitedView = !user || isPublic
-  const hashParams = useMemo(() => getParamsFromHash(location), [location.hash])
-  const parsedUrl = useMemo(() => urlParamsToQuery(hashParams), [hashParams])
+  const urlParamsMerged = useMemo(() => getMergedUrlParams(location), [location.search, location.hash])
+  const parsedUrl = useMemo(() => urlParamsToQuery(urlParamsMerged), [urlParamsMerged])
   const hasMandatoryFilters = parsedUrl.hasMandatory
-  const listViewFromHash = hashParams.get(LIST_VIEW_PARAM)
+  const listViewFromHash = urlParamsMerged.get(LIST_VIEW_PARAM)
 
   const setFilterParams = useCallback(
     (params: Record<string, string> | URLSearchParams, options?: { replace?: boolean }) => {
@@ -194,11 +254,10 @@ export default function InfluencerList() {
 
   const handleWizardComplete = useCallback(
     (payload: Partial<ProfilesSearchQuery>) => {
-      const q = payload.q?.trim() || (payload.categories?.[0] ?? 'criadores')
       const categories = payload.categories?.length ? payload.categories : undefined
       const fullPayload = {
         ...payload,
-        q,
+        q: payload.q?.trim() || undefined,
         categories,
         limit: PAGE_SIZE,
         offset: 0,
@@ -223,12 +282,16 @@ export default function InfluencerList() {
     [setFilterParams]
   )
 
-  const fullQueryFromUrl = hasMandatoryFilters
-    ? (() => {
-      const { hasMandatory: _hm, ...rest } = parsedUrl
-      return { ...rest, limit: PAGE_SIZE, offset: rest.offset ?? 0, sort: (rest.sort as ProfilesSort) ?? 'relevance_desc' }
-    })()
-    : null
+  const fullQueryFromUrl = useMemo((): ProfilesSearchQuery | null => {
+    if (!hasMandatoryFilters) return null
+    const { hasMandatory: _hm, ...rest } = parsedUrl
+    return {
+      ...rest,
+      limit: PAGE_SIZE,
+      offset: rest.offset ?? 0,
+      sort: (rest.sort as ProfilesSort) ?? 'relevance_desc',
+    }
+  }, [hasMandatoryFilters, parsedUrl])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [data, setData] = useState<ProfileListItem[]>([])
@@ -252,6 +315,16 @@ export default function InfluencerList() {
   const [loginPassword, setLoginPassword] = useState('')
   const [signupError, setSignupError] = useState<string | null>(null)
   const [signupLoading, setSignupLoading] = useState(false)
+  const [newCampaignExpiresAt, setNewCampaignExpiresAt] = useState(() =>
+    expiresAtIsoFromDurationDays(FALLBACK_CAMPAIGN_ACCESS_DAYS)
+  )
+  useEffect(() => {
+    const c = new AbortController()
+    fetchCampaignAccessDefaults({ signal: c.signal })
+      .then((d) => setNewCampaignExpiresAt(d.defaultExpiresAt))
+      .catch(() => {})
+    return () => c.abort()
+  }, [])
   const filterDrawerRef = useRef<HTMLDivElement>(null)
   const scrollToRestoreRef = useRef<number | null>(null)
   const refetchedForZeroRef = useRef(false)
@@ -411,9 +484,10 @@ export default function InfluencerList() {
 
   useEffect(() => {
     refetchedForZeroRef.current = false
-  }, [location.hash])
+  }, [location.search, location.hash])
 
-  useEffect(() => {
+  /** useLayoutEffect: aplica filtros da URL e chama load antes dos useEffect seguintes, para `loading` já ser true e o efeito do dashboard não disparar fetch com query default (sem hash). */
+  useLayoutEffect(() => {
     if (!hasMandatoryFilters) {
       lastLoadQueryRef.current = null
       setSearchInput(parsedUrl.q ?? '')
@@ -424,11 +498,13 @@ export default function InfluencerList() {
       return
     }
     const fullQuery = fullQueryFromUrl!
-    const queryKey = JSON.stringify(fullQuery, Object.keys(fullQuery as Record<string, unknown>).sort())
+    const queryKey = stableProfilesSearchQueryKey(fullQuery)
     if (lastLoadQueryRef.current === queryKey) return
     lastLoadQueryRef.current = queryKey
     const cached = getCache()
-    if (cached && cached.q === fullQuery.q?.trim()) {
+    const cacheMatches =
+      cached != null && stableProfilesSearchQueryKey(cached.query) === queryKey
+    if (cacheMatches) {
       setData(cached.data)
       setTotal(cached.total)
       setFacets(cached.facets)
@@ -442,19 +518,23 @@ export default function InfluencerList() {
     const controller = new AbortController()
     load(fullQuery, controller.signal)
     return () => controller.abort()
-  }, [hasMandatoryFilters, location.hash, setFilterParams])
+  }, [hasMandatoryFilters, location.search, location.hash, setFilterParams, fullQueryFromUrl])
 
   useEffect(() => {
-    if (!(hasMandatoryFilters && listViewFromHash === 'dashboard') || loading || total !== 0 || !query.q?.trim()) return
+    const isDashboard = hasMandatoryFilters && listViewFromHash === 'dashboard'
+    if (!isDashboard || loading || !fullQueryFromUrl) return
+    /** Recarrega quando o dashboard abre sem amostra em memória. Usa sempre a query da URL — não `query` do state (no 1º tick ainda é o default engagement_desc sem filtros). */
+    const shouldRefetch = total === 0 || data.length === 0
+    if (!shouldRefetch) return
     if (refetchedForZeroRef.current) return
     refetchedForZeroRef.current = true
-    load({ ...query, offset: 0 })
-  }, [hasMandatoryFilters, listViewFromHash, loading, total, query])
+    load({ ...fullQueryFromUrl, offset: 0 })
+  }, [hasMandatoryFilters, listViewFromHash, loading, total, data.length, fullQueryFromUrl])
 
   useEffect(() => {
-    if (!loading && !loadingMore && hasMandatoryFilters && query.q?.trim() && (data.length > 0 || total > 0 || facets != null)) {
+    if (!loading && !loadingMore && hasMandatoryFilters && (data.length > 0 || total > 0 || facets != null)) {
       saveCache({
-        q: query.q.trim(),
+        q: query.q?.trim() ?? '',
         data,
         total,
         facets,
@@ -525,6 +605,21 @@ export default function InfluencerList() {
     selectedPricingStory.length > 0 ||
     selectedPricingDestaque.length > 0
 
+  const hasLlmFilters =
+    (query.llmProfileType?.length ?? 0) > 0 ||
+    (query.llmMainCategory?.length ?? 0) > 0 ||
+    (query.llmGender?.length ?? 0) > 0 ||
+    (query.llmLanguage?.length ?? 0) > 0 ||
+    (query.llmSubCategories?.length ?? 0) > 0 ||
+    (query.llmContentPillars?.length ?? 0) > 0 ||
+    (query.llmAudienceType?.length ?? 0) > 0 ||
+    (query.llmToneOfVoice?.length ?? 0) > 0 ||
+    (query.llmRiskLevel?.length ?? 0) > 0 ||
+    query.llmIsFamilySafe === true ||
+    query.llmIsFamilySafe === false ||
+    query.llmIsAdultContent === true ||
+    query.llmIsAdultContent === false
+
   const updateFilter = (overrides: Partial<ProfilesSearchQuery>) => {
     const newQuery = { ...query, ...overrides, offset: 0 }
     setQuery(newQuery)
@@ -546,7 +641,8 @@ export default function InfluencerList() {
     selectedNeighborhoods.length > 0 ||
     selectedSocial.length > 0 ||
     selectedContentTypes.length > 0 ||
-    hasPricingFilter
+    hasPricingFilter ||
+    hasLlmFilters
 
   const clearFilters = () => {
     updateFilter({
@@ -565,17 +661,29 @@ export default function InfluencerList() {
       pricingReels: undefined,
       pricingStory: undefined,
       pricingDestaque: undefined,
+      llmProfileType: undefined,
+      llmMainCategory: undefined,
+      llmGender: undefined,
+      llmLanguage: undefined,
+      llmSubCategories: undefined,
+      llmContentPillars: undefined,
+      llmAudienceType: undefined,
+      llmToneOfVoice: undefined,
+      llmRiskLevel: undefined,
+      llmIsFamilySafe: undefined,
+      llmIsAdultContent: undefined,
     })
   }
 
   const showDashboard = hasMandatoryFilters && listViewFromHash === 'dashboard'
 
   const doCreateCampaignAndRedirect = useCallback(() => {
-    const expiresAt = new Date()
-    expiresAt.setFullYear(expiresAt.getFullYear() + 1)
-    const expiresAtStr = expiresAt.toISOString().slice(0, 10)
     setCreatingCampaign(true)
-    return createCampaign(query, { maxHandles: total, expiresAt: expiresAtStr, name: query.q?.trim() || undefined })
+    return createCampaign(query, {
+      maxHandles: total,
+      expiresAt: newCampaignExpiresAt,
+      name: query.q?.trim() || undefined,
+    })
       .then((res) => {
         if (res.campaignId) {
           setReportModalOpen(false)
@@ -586,7 +694,7 @@ export default function InfluencerList() {
         message.error((e as Error).message || 'Falha ao criar relatório')
       })
       .finally(() => setCreatingCampaign(false))
-  }, [query, total, navigate])
+  }, [query, total, navigate, newCampaignExpiresAt])
 
   const handleViewListAndReport = useCallback(() => {
     if (total < 1 || creatingCampaign) return
@@ -677,6 +785,17 @@ export default function InfluencerList() {
                 excludePrivate: parsedUrl.excludePrivate,
                 accountTypeFilter: parsedUrl.accountTypeFilter,
                 activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
+                llmProfileType: parsedUrl.llmProfileType?.length ? parsedUrl.llmProfileType : undefined,
+                llmMainCategory: parsedUrl.llmMainCategory?.length ? parsedUrl.llmMainCategory : undefined,
+                llmGender: parsedUrl.llmGender?.length ? parsedUrl.llmGender : undefined,
+                llmLanguage: parsedUrl.llmLanguage?.length ? parsedUrl.llmLanguage : undefined,
+                llmSubCategories: parsedUrl.llmSubCategories?.length ? parsedUrl.llmSubCategories : undefined,
+                llmContentPillars: parsedUrl.llmContentPillars?.length ? parsedUrl.llmContentPillars : undefined,
+                llmAudienceType: parsedUrl.llmAudienceType?.length ? parsedUrl.llmAudienceType : undefined,
+                llmToneOfVoice: parsedUrl.llmToneOfVoice?.length ? parsedUrl.llmToneOfVoice : undefined,
+                llmRiskLevel: parsedUrl.llmRiskLevel?.length ? parsedUrl.llmRiskLevel : undefined,
+                llmIsFamilySafe: parsedUrl.llmIsFamilySafe,
+                llmIsAdultContent: parsedUrl.llmIsAdultContent,
               }
               : undefined
           }
@@ -716,7 +835,6 @@ export default function InfluencerList() {
           query={query}
           total={total}
           facets={facets}
-          sampleItems={data.slice(0, 6)}
           onViewList={handleViewListAndReport}
           onBack={() => {
             const params = queryToUrlParams(query)
@@ -737,132 +855,132 @@ export default function InfluencerList() {
             }
           }}
           footer={null}
-          destroyOnClose
+          destroyOnHidden
           width={420}
         >
           <Form layout="vertical" style={{ marginTop: 8 }}>
-              {reportAuthMode === 'signup' ? (
-                <>
-                  <Form.Item label="Nome">
-                    <Input
-                      placeholder="Seu nome"
-                      value={signupName}
-                      onChange={(e) => setSignupName(e.target.value)}
-                      size="large"
-                      style={{ borderRadius: 8 }}
-                    />
-                  </Form.Item>
-                  <Form.Item label="E-mail" required>
-                    <Input
-                      type="email"
-                      placeholder="seu@email.com"
-                      value={signupEmail}
-                      onChange={(e) => setSignupEmail(e.target.value)}
-                      size="large"
-                      style={{ borderRadius: 8 }}
-                    />
-                  </Form.Item>
-                  <Form.Item label="Senha (mín. 6 caracteres)" required>
-                    <Input.Password
-                      placeholder="••••••••"
-                      value={signupPassword}
-                      onChange={(e) => setSignupPassword(e.target.value)}
-                      size="large"
-                      style={{ borderRadius: 8 }}
-                    />
-                  </Form.Item>
-                  <Form.Item label="Confirmar senha" required>
-                    <Input.Password
-                      placeholder="••••••••"
-                      value={signupPasswordConfirm}
-                      onChange={(e) => setSignupPasswordConfirm(e.target.value)}
-                      size="large"
-                      style={{ borderRadius: 8 }}
-                    />
-                  </Form.Item>
-                </>
-              ) : (
-                <>
-                  <Form.Item label="E-mail ou usuário" required>
-                    <Input
-                      placeholder="seu@email.com ou @usuario"
-                      value={signupEmail}
-                      onChange={(e) => setSignupEmail(e.target.value)}
-                      size="large"
-                      style={{ borderRadius: 8 }}
-                      autoComplete="username"
-                    />
-                  </Form.Item>
-                  <Form.Item label="Senha" required>
-                    <Input.Password
-                      placeholder="••••••••"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      size="large"
-                      style={{ borderRadius: 8 }}
-                      autoComplete="current-password"
-                    />
-                  </Form.Item>
-                </>
-              )}
-              {signupError && (
-                <Alert type="error" message={signupError} showIcon style={{ marginBottom: 12 }} onClose={() => setSignupError(null)} closable />
-              )}
-              {reportAuthMode === 'signup' ? (
-                <>
-                  <Button
-                    type="primary"
+            {reportAuthMode === 'signup' ? (
+              <>
+                <Form.Item label="Nome">
+                  <Input
+                    placeholder="Seu nome"
+                    value={signupName}
+                    onChange={(e) => setSignupName(e.target.value)}
                     size="large"
-                    block
-                    loading={signupLoading || creatingCampaign}
-                    onClick={handleReportModalSubmit}
-                    style={{ borderRadius: 8, marginTop: 8 }}
-                  >
-                    Cadastrar e criar relatório
-                  </Button>
-                  <div style={{ textAlign: 'center', marginTop: 16 }}>
-                    <Button
-                      type="link"
-                      style={{ padding: 0, height: 'auto', fontSize: 14 }}
-                      disabled={signupLoading || creatingCampaign}
-                      onClick={() => {
-                        setSignupError(null)
-                        setReportAuthMode('login')
-                      }}
-                    >
-                      Já tenho cadastro — entrar
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <Button
-                    type="primary"
+                    style={{ borderRadius: 8 }}
+                  />
+                </Form.Item>
+                <Form.Item label="E-mail" required>
+                  <Input
+                    type="email"
+                    placeholder="seu@email.com"
+                    value={signupEmail}
+                    onChange={(e) => setSignupEmail(e.target.value)}
                     size="large"
-                    block
-                    loading={signupLoading || creatingCampaign}
-                    onClick={handleReportModalLoginSubmit}
-                    style={{ borderRadius: 8, marginTop: 8 }}
+                    style={{ borderRadius: 8 }}
+                  />
+                </Form.Item>
+                <Form.Item label="Senha (mín. 6 caracteres)" required>
+                  <Input.Password
+                    placeholder="••••••••"
+                    value={signupPassword}
+                    onChange={(e) => setSignupPassword(e.target.value)}
+                    size="large"
+                    style={{ borderRadius: 8 }}
+                  />
+                </Form.Item>
+                <Form.Item label="Confirmar senha" required>
+                  <Input.Password
+                    placeholder="••••••••"
+                    value={signupPasswordConfirm}
+                    onChange={(e) => setSignupPasswordConfirm(e.target.value)}
+                    size="large"
+                    style={{ borderRadius: 8 }}
+                  />
+                </Form.Item>
+              </>
+            ) : (
+              <>
+                <Form.Item label="E-mail ou usuário" required>
+                  <Input
+                    placeholder="seu@email.com ou @usuario"
+                    value={signupEmail}
+                    onChange={(e) => setSignupEmail(e.target.value)}
+                    size="large"
+                    style={{ borderRadius: 8 }}
+                    autoComplete="username"
+                  />
+                </Form.Item>
+                <Form.Item label="Senha" required>
+                  <Input.Password
+                    placeholder="••••••••"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    size="large"
+                    style={{ borderRadius: 8 }}
+                    autoComplete="current-password"
+                  />
+                </Form.Item>
+              </>
+            )}
+            {signupError && (
+              <Alert type="error" message={signupError} showIcon style={{ marginBottom: 12 }} onClose={() => setSignupError(null)} closable />
+            )}
+            {reportAuthMode === 'signup' ? (
+              <>
+                <Button
+                  type="primary"
+                  size="large"
+                  block
+                  loading={signupLoading || creatingCampaign}
+                  onClick={handleReportModalSubmit}
+                  style={{ borderRadius: 8, marginTop: 8 }}
+                >
+                  Cadastrar e criar relatório
+                </Button>
+                <div style={{ textAlign: 'center', marginTop: 16 }}>
+                  <Button
+                    type="link"
+                    style={{ padding: 0, height: 'auto', fontSize: 14 }}
+                    disabled={signupLoading || creatingCampaign}
+                    onClick={() => {
+                      setSignupError(null)
+                      setReportAuthMode('login')
+                    }}
                   >
-                    Entrar e criar relatório
+                    Já tenho cadastro
                   </Button>
-                  <div style={{ textAlign: 'center', marginTop: 16 }}>
-                    <Button
-                      type="link"
-                      style={{ padding: 0, height: 'auto', fontSize: 14 }}
-                      disabled={signupLoading || creatingCampaign}
-                      onClick={() => {
-                        setSignupError(null)
-                        setLoginPassword('')
-                        setReportAuthMode('signup')
-                      }}
-                    >
-                      Não tenho conta — cadastrar
-                    </Button>
-                  </div>
-                </>
-              )}
-            </Form>
+                </div>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="primary"
+                  size="large"
+                  block
+                  loading={signupLoading || creatingCampaign}
+                  onClick={handleReportModalLoginSubmit}
+                  style={{ borderRadius: 8, marginTop: 8 }}
+                >
+                  Entrar e criar relatório
+                </Button>
+                <div style={{ textAlign: 'center', marginTop: 16 }}>
+                  <Button
+                    type="link"
+                    style={{ padding: 0, height: 'auto', fontSize: 14 }}
+                    disabled={signupLoading || creatingCampaign}
+                    onClick={() => {
+                      setSignupError(null)
+                      setLoginPassword('')
+                      setReportAuthMode('signup')
+                    }}
+                  >
+                    Não tenho cadastro
+                  </Button>
+                </div>
+              </>
+            )}
+          </Form>
         </Modal>
       </div>
     )
@@ -1304,6 +1422,14 @@ export default function InfluencerList() {
               </span>
             }
           />
+        ) : data.length === 0 && total > 0 ? (
+          <Empty
+            description={
+              <span>
+                Encontramos <b>{total}</b> perfis. Para ver os detalhes da lista, acesse <Link to="/premium">Premium</Link>.
+              </span>
+            }
+          />
         ) : data.length === 0 ? (
           <Empty description="Nenhum criador encontrado. Ajusta os filtros ou tenta outro termo." />
         ) : (
@@ -1344,7 +1470,7 @@ export default function InfluencerList() {
         )}
         {total > 0 && (
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 16 }}>
-            {data.length} de {total} perfis
+            {data.length === 0 ? `Encontrados ${total} perfis` : `${data.length} de ${total} perfis`}
           </Typography.Text>
         )}
       </main>

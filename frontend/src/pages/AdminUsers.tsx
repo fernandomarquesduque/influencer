@@ -188,7 +188,7 @@ export default function AdminUsers() {
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={onFinish}>
           <Form.Item

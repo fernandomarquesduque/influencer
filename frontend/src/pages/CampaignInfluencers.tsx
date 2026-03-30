@@ -2,10 +2,11 @@
  * Listagem de influenciadores de uma campanha.
  * Rota: /app/campaigns/:campaignId — filtros baseados nos facets (retorno da API), igual InfluencerList.
  */
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, Tag, Alert, message, Popconfirm, Segmented, Divider } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DeleteOutlined } from '@ant-design/icons'
+import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, message, Segmented, Dropdown } from 'antd'
+import type { MenuProps } from 'antd'
+import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
   fetchCampaignProfiles,
@@ -34,11 +35,9 @@ import {
 } from '../api'
 import { useCreditsOptional } from '../contexts/CreditsContext'
 import { filterAndSortCampaignItems, computeFacetsFromItems } from '../utils/campaignFilterClient'
-import {
-  getInfluencerTierGradientCss,
-  getInfluencerTierShort,
-  getInfluencerTierTooltip,
-} from '../utils/influencerTier'
+import { getLlmDescriptionLine } from '../utils/mapProfileListToPreviewItems'
+import { campaignLlmBadgeStyles, getLlmContentPillarLabels, getLlmGenderBadge, getLlmMainCategoryLabel, getLlmProfileTypeBadge } from '../utils/campaignLlmBadges'
+import InfluencerTierPill from '../components/InfluencerTierPill'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import ProfileAvatar from '../components/ProfileAvatar'
@@ -83,10 +82,15 @@ function campaignQueryToUrlParams(query: Partial<ProfilesSearchQuery>): Record<s
   if (query.accountTypeFilter?.length) params.accountTypeFilter = query.accountTypeFilter.map(String).join(',')
   if (query.contentTypes?.length) params.contentTypes = query.contentTypes.join(',')
   if (query.originMediaKinds?.length) params.originMediaKinds = query.originMediaKinds.join(',')
-  if (query.activationFilter?.length) params.activationFilter = query.activationFilter.join(',')
   if (query.cities?.length) params.cities = query.cities.join(',')
   if (query.states?.length) params.states = query.states.join(',')
   if (query.socialNetworks?.length) params.socialNetworks = query.socialNetworks.join(',')
+  if (query.llmProfileType?.length) params.llmProfileType = query.llmProfileType.join(',')
+  if (query.llmMainCategory?.length) params.llmMainCategory = query.llmMainCategory.join(',')
+  if (query.llmGender?.length) params.llmGender = query.llmGender.join(',')
+  if (query.llmSubCategories?.length) params.llmSubCategories = query.llmSubCategories.join(',')
+  if (query.llmContentPillars?.length) params.llmContentPillars = query.llmContentPillars.join(',')
+  if (query.llmAudienceType?.length) params.llmAudienceType = query.llmAudienceType.join(',')
   if (query.offset != null && query.offset > 0) params.offset = String(query.offset)
   return params
 }
@@ -109,19 +113,118 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
     accountTypeFilter: parseNumList(params.get('accountTypeFilter')),
     contentTypes: parseStrList(params.get('contentTypes')),
     originMediaKinds: parseOriginMediaKindsParam(params.get('originMediaKinds')),
-    activationFilter: parseStrList(params.get('activationFilter')),
     cities: parseStrList(params.get('cities')),
     states: parseStrList(params.get('states')),
     socialNetworks: parseStrList(params.get('socialNetworks')),
+    llmProfileType: parseStrList(params.get('llmProfileType')),
+    llmMainCategory: parseStrList(params.get('llmMainCategory')),
+    llmGender: parseStrList(params.get('llmGender')),
+    llmSubCategories: parseStrList(params.get('llmSubCategories')),
+    llmContentPillars: parseStrList(params.get('llmContentPillars')),
+    llmAudienceType: parseStrList(params.get('llmAudienceType')),
     offset: params.has('offset') ? Number(params.get('offset')) : undefined,
   }
 }
 
-function formatShortNum(n: number | undefined | null): string {
+/** Números inteiros completos na coluna de métricas da lista (sem k/M). */
+function formatCampaignListMetricInt(n: number | undefined | null): string {
   if (n == null || !Number.isFinite(n)) return '0'
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`
-  return String(n)
+  return Math.round(n).toLocaleString('pt-BR')
+}
+
+/** Média de likes/post com separador pt-BR, sem abreviar. */
+function formatCampaignListAvgLikes(n: number | undefined | null): string {
+  if (n == null || !Number.isFinite(n)) return '0'
+  const x = Math.round(n * 100) / 100
+  return x.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+}
+
+const CAMPAIGN_LIST_METRIC_SORT_KEYS = new Set<ProfilesSort>([
+  'followers_desc',
+  'followers_asc',
+  'engagement_desc',
+  'engagement_asc',
+  'total_likes_desc',
+  'total_likes_asc',
+  'total_comments_desc',
+  'total_comments_asc',
+  'avg_likes_desc',
+  'avg_likes_asc',
+])
+
+function isCampaignListMetricSort(s: ProfilesSort): boolean {
+  return CAMPAIGN_LIST_METRIC_SORT_KEYS.has(s)
+}
+
+/** Menu suspenso: escolher critério e direção da ordenação das métricas na lista. */
+const CAMPAIGN_LIST_METRICS_SORT_MENU_ITEMS: MenuProps['items'] = [
+  {
+    key: 'grp-seg',
+    label: 'Seguidores',
+    type: 'group',
+    children: [
+      { key: 'followers_desc', label: 'Maior primeiro' },
+      { key: 'followers_asc', label: 'Menor primeiro' },
+    ],
+  },
+  {
+    key: 'grp-eng',
+    label: 'Engajamento',
+    type: 'group',
+    children: [
+      { key: 'engagement_desc', label: 'Maior primeiro' },
+      { key: 'engagement_asc', label: 'Menor primeiro' },
+    ],
+  },
+  {
+    key: 'grp-like',
+    label: 'Curtidas',
+    type: 'group',
+    children: [
+      { key: 'total_likes_desc', label: 'Maior primeiro' },
+      { key: 'total_likes_asc', label: 'Menor primeiro' },
+    ],
+  },
+  {
+    key: 'grp-com',
+    label: 'Comentários',
+    type: 'group',
+    children: [
+      { key: 'total_comments_desc', label: 'Maior primeiro' },
+      { key: 'total_comments_asc', label: 'Menor primeiro' },
+    ],
+  },
+  {
+    key: 'grp-post',
+    label: 'Média likes / post',
+    type: 'group',
+    children: [
+      { key: 'avg_likes_desc', label: 'Maior primeiro' },
+      { key: 'avg_likes_asc', label: 'Menor primeiro' },
+    ],
+  },
+]
+
+function campaignListMetricSortSummary(sort: ProfilesSort): string {
+  const map: Partial<Record<ProfilesSort, string>> = {
+    followers_desc: 'Seguidores, maior primeiro',
+    followers_asc: 'Seguidores, menor primeiro',
+    engagement_desc: 'Engajamento, maior primeiro',
+    engagement_asc: 'Engajamento, menor primeiro',
+    total_likes_desc: 'Curtidas, maior primeiro',
+    total_likes_asc: 'Curtidas, menor primeiro',
+    total_comments_desc: 'Comentários, maior primeiro',
+    total_comments_asc: 'Comentários, menor primeiro',
+    avg_likes_desc: 'Média likes por post, maior primeiro',
+    avg_likes_asc: 'Média likes por post, menor primeiro',
+  }
+  return map[sort] ?? 'Escolher ordenação'
+}
+
+function campaignListEngagementColor(rate: number): string {
+  if (rate > 70) return 'var(--app-rate-high)'
+  if (rate > 40) return 'var(--app-rate-mid)'
+  return 'var(--app-rate-low)'
 }
 
 /** Uma linha compacta (modo lista tipo tabela) com dados de ativação. */
@@ -156,8 +259,9 @@ function CampaignListRow({
     : null
   const hasWhatsApp = !!(act?.whatsapp?.trim())
   const hasTiktok = !!(act?.tiktok?.trim())
-  const accountTypeValue = (item as { account_type?: number }).account_type
-  const accountTypeLabel = accountTypeValue === 1 ? 'Pessoal' : accountTypeValue === 2 ? 'Criador' : accountTypeValue === 3 ? 'Empresa' : null
+  const llmRow = getLlmDescriptionLine(item)
+  const profileTypeBadge = getLlmProfileTypeBadge(item)
+  const genderBadge = getLlmGenderBadge(item)
   return (
     <tr
       role="button"
@@ -167,118 +271,236 @@ function CampaignListRow({
       className="campaign-list-row"
       style={{ cursor: 'pointer', background: 'var(--app-bg)', transition: 'background 0.15s' }}
     >
-      <td style={{ verticalAlign: 'middle', padding: '4px 6px', textAlign: 'right', width: '1%' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, justifyContent: 'center', minWidth: 0, alignItems: 'flex-end' }}>
-          {accountTypeLabel ? (
-            <Tag
-              color={accountTypeValue === 1 ? 'default' : accountTypeValue === 2 ? 'blue' : 'purple'}
-              style={{ margin: 0, fontSize: 10, padding: '0 5px', lineHeight: '18px', width: 'fit-content' }}
+      <td
+        className="campaign-list-cell campaign-list-fav-avatar-td"
+        style={{
+          verticalAlign: 'top',
+          textAlign: 'center',
+          width: 92,
+          minWidth: 92,
+          padding: '6px 6px 4px',
+        }}
+      >
+        <div className="campaign-list-fav-col-stack" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0, marginTop: 8 }}>
+          <div
+            style={{
+              position: 'relative',
+              width: 40,
+              height: 40,
+              flexShrink: 0,
+            }}
+          >
+            <ProfileAvatar
+              src={pic}
+              stableBackgroundUrl={stablePic}
+              handle={handle}
+              size={40}
+              fallbackIconSize={20}
+              onRefreshQueued={onImageRefreshQueued}
+            />
+            {showFavoriteColumn && onFavoriteToggle != null ? (
+              <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
+                <div
+                  className="campaign-list-fav-on-avatar"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
+                  style={{
+                    position: 'absolute',
+                    top: -14,
+                    left: -10,
+                    zIndex: 3,
+                    lineHeight: 0,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'flex-start',
+                    padding: '4px 18px 18px 4px',
+                    minWidth: 40,
+                    minHeight: 40,
+                    boxSizing: 'content-box',
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onFavoriteToggle(handle)
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onFavoriteToggle(handle)
+                    }
+                  }}
+                >
+                  {isFavorite ? (
+                    <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 15 }} />
+                  ) : (
+                    <HeartOutlined style={{ color: 'var(--app-text-secondary)', fontSize: 15 }} />
+                  )}
+                </div>
+              </Tooltip>
+            ) : null}
+          </div>
+          <InfluencerTierPill followers={followers} />
+          {(profileTypeBadge || genderBadge) ? (
+            <div
+              className="campaign-list-fav-col-llm-badges"
             >
-              {accountTypeLabel}
-            </Tag>
-          ) : (
-            <span style={{ fontSize: 10, color: 'var(--app-text-tertiary)' }}>—</span>
-          )}
+              {profileTypeBadge ? (() => {
+                const st = campaignLlmBadgeStyles(profileTypeBadge.text)
+                return (
+                  <Tooltip key="tipo" title={profileTypeBadge.title}>
+                    <span
+                      className="campaign-list-llm-badge"
+                      style={{ border: st.border, color: st.color, background: st.background }}
+                    >
+                      {profileTypeBadge.text}
+                    </span>
+                  </Tooltip>
+                )
+              })() : null}
+              {genderBadge ? (() => {
+                const st = campaignLlmBadgeStyles(genderBadge.text)
+                return (
+                  <Tooltip key="gender" title={genderBadge.title}>
+                    <span
+                      className="campaign-list-llm-badge"
+                      style={{ border: st.border, color: st.color, background: st.background }}
+                    >
+                      {genderBadge.text}
+                    </span>
+                  </Tooltip>
+                )
+              })() : null}
+            </div>
+          ) : null}
         </div>
       </td>
-      <td style={{ verticalAlign: 'middle', padding: '4px 6px', width: 48 }}>
-        <ProfileAvatar
-          src={pic}
-          stableBackgroundUrl={stablePic}
-          handle={handle}
-          size={40}
-          fallbackIconSize={20}
-          onRefreshQueued={onImageRefreshQueued}
-        />
-      </td>
-      {showFavoriteColumn &&
-        (onFavoriteToggle != null ? (
-          <td className="campaign-list-cell" style={{ textAlign: 'center', width: 36, verticalAlign: 'middle', padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} onClick={(e) => e.stopPropagation()}>
-            <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
-              <Button
-                type="text"
-                size="small"
-                icon={isFavorite ? <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 14 }} /> : <HeartOutlined style={{ color: 'var(--app-text-secondary)', fontSize: 14 }} />}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onFavoriteToggle(handle)
-                }}
-                style={{ minWidth: 24, height: 24, padding: 0 }}
-                aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
-              />
-            </Tooltip>
-          </td>
-        ) : (
-          <td style={{ width: 36, padding: '2px 0', paddingLeft: 0, paddingRight: 0 }} />
-        ))}
-      <td style={{ verticalAlign: 'middle', padding: '4px 4px', width: '100%', maxWidth: 300, minWidth: 0, overflow: 'hidden', textAlign: 'left' }}>
-        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-            <Tooltip title={name}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--app-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {name}
-              </div>
-            </Tooltip>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 14 }}>
+      <td className="campaign-list-profile-cell" style={{ verticalAlign: 'top', padding: '6px 8px 6px 4px', width: '100%', minWidth: 0, textAlign: 'left' }}>
+        <div style={{ position: 'relative', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 8,
+              minWidth: 0,
+              flexWrap: 'wrap',
+              width: '100%',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'baseline',
+                gap: 8,
+                minWidth: 0,
+                flex: '1 1 160px',
+                flexWrap: 'wrap',
+              }}
+            >
+              <Tooltip title={name}>
+                <div
+                  className="campaign-list-profile-name"
+                  style={{ fontWeight: 600, fontSize: 14, color: 'var(--app-text)', lineHeight: 1.35, wordBreak: 'break-word', minWidth: 0 }}
+                >
+                  {name}
+                </div>
+              </Tooltip>
+              <Tooltip title={`@${handle}`}>
+                <span
+                  className="campaign-list-profile-handle"
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--app-text-secondary)',
+                    lineHeight: 1.35,
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  @{handle}
+                </span>
+              </Tooltip>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 14, paddingTop: 2 }}>
               {hasWhatsApp && <Tooltip title="WhatsApp"><MessageOutlined style={{ color: 'var(--app-icon-whatsapp, #25D366)' }} /></Tooltip>}
               {hasTiktok && <Tooltip title="TikTok"><VideoCameraOutlined style={{ color: 'var(--app-text-secondary)' }} /></Tooltip>}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-            <Tooltip title={getInfluencerTierTooltip(followers)}>
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  color: '#fff',
-                  padding: '1px 5px',
-                  borderRadius: 8,
-                  flexShrink: 0,
-                  background: getInfluencerTierGradientCss(getInfluencerTierShort(followers)),
-                }}
-              >
-                {getInfluencerTierShort(followers)}
-              </span>
+          {(() => {
+            const catLabel = getLlmMainCategoryLabel(item)
+            const pillarLabels = getLlmContentPillarLabels(item)
+            if (!catLabel && pillarLabels.length === 0) return null
+            return (
+              <div className="campaign-list-llm-badges" style={{ marginTop: 2 }}>
+                {catLabel ? (
+                  <Tooltip title="Categoria principal (LLM)">
+                    <span
+                      className="campaign-list-llm-badge"
+                      style={campaignLlmBadgeStyles(catLabel)}
+                    >
+                      {catLabel}
+                    </span>
+                  </Tooltip>
+                ) : null}
+                {pillarLabels.map((pillar) => (
+                  <Tooltip key={pillar} title="Pilar de conteúdo (LLM)">
+                    <span className="campaign-list-llm-badge" style={campaignLlmBadgeStyles(pillar)}>
+                      {pillar}
+                    </span>
+                  </Tooltip>
+                ))}
+              </div>
+            )
+          })()}
+          {llmRow ? (
+            <Tooltip title={llmRow.tooltip ?? llmRow.line}>
+              <div className="campaign-list-llm-line">{llmRow.line}</div>
             </Tooltip>
-            <Tooltip title={`@${handle}`}>
-              <span style={{ fontSize: 12, color: 'var(--app-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                @{handle}
-              </span>
-            </Tooltip>
-          </div>
+          ) : null}
           {location && (
             <Tooltip title={location}>
-              <div style={{ fontSize: 11, color: 'var(--app-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div className="campaign-list-profile-location" style={{ fontSize: 11, color: 'var(--app-text-secondary)', lineHeight: 1.4, wordBreak: 'break-word' }}>
                 {location}
               </div>
             </Tooltip>
           )}
         </div>
       </td>
-      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text)', textAlign: 'center', width: 72 }}>
-        <Tooltip title={formatShortNum(followers) !== String(followers) ? String(followers) : undefined}>
-          <span>
-            {formatShortNum(followers)}
-          </span>
-        </Tooltip>
-      </td>
-      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text)', textAlign: 'center', width: 76 }}>
-        {engagementRate.toFixed(1)}%
-      </td>
-      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text)', textAlign: 'center', width: 74 }}>
-        <Tooltip title={formatShortNum(totalLikes) !== String(totalLikes) ? String(totalLikes) : undefined}>
-          <span>{formatShortNum(totalLikes)}</span>
-        </Tooltip>
-      </td>
-      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text-secondary)', textAlign: 'center', width: 74 }}>
-        <Tooltip title={formatShortNum(totalComments) !== String(totalComments) ? String(totalComments) : undefined}>
-          <span>{formatShortNum(totalComments)}</span>
-        </Tooltip>
-      </td>
-      <td className="campaign-list-cell campaign-list-cell-border" style={{ fontSize: 11, color: 'var(--app-text-secondary)', textAlign: 'center', width: 72 }}>
-        <Tooltip title="Média de likes por post">
-          <span>{formatShortNum(avgLikes)}</span>
-        </Tooltip>
+      <td
+        className="campaign-list-cell campaign-list-cell-border campaign-list-metrics-cell"
+        style={{ textAlign: 'right', padding: '4px 6px', verticalAlign: 'top', whiteSpace: 'nowrap', minWidth: 'max-content' }}
+      >
+        <div className="campaign-list-metrics-panel">
+          <div className="campaign-list-metrics-stack">
+            <div
+              className="campaign-list-metrics-row campaign-list-metrics-row--engagement"
+              style={{ '--campaign-list-eng-accent': campaignListEngagementColor(engagementRate) } as CSSProperties}
+            >
+              <span className="campaign-list-metrics-label">Engajamento</span>
+              <span className="campaign-list-metrics-value campaign-list-metrics-value--engagement" style={{ color: campaignListEngagementColor(engagementRate) }}>
+                {engagementRate.toFixed(1)}%
+              </span>
+            </div>
+            <div className="campaign-list-metrics-row">
+              <span className="campaign-list-metrics-label">Seguidores</span>
+              <span className="campaign-list-metrics-value">{formatCampaignListMetricInt(followers)}</span>
+            </div>
+            <div className="campaign-list-metrics-row">
+              <span className="campaign-list-metrics-label">Curtidas</span>
+              <span className="campaign-list-metrics-value">{formatCampaignListMetricInt(totalLikes)}</span>
+            </div>
+            <div className="campaign-list-metrics-row">
+              <span className="campaign-list-metrics-label">Comentários</span>
+              <span className="campaign-list-metrics-value campaign-list-metrics-value--muted">{formatCampaignListMetricInt(totalComments)}</span>
+            </div>
+            <div className="campaign-list-metrics-row">
+              <span className="campaign-list-metrics-label">Likes por post</span>
+              <span className="campaign-list-metrics-value campaign-list-metrics-value--muted">{formatCampaignListAvgLikes(avgLikes)}</span>
+            </div>
+          </div>
+        </div>
       </td>
     </tr>
   )
@@ -339,7 +561,7 @@ export default function CampaignInfluencers() {
   const [filteredList, setFilteredList] = useState<ProfileListItem[]>([])
   const [displayedCount, setDisplayedCount] = useState(DISPLAY_PAGE_SIZE)
   const [campaignMainTab, setCampaignMainTab] = useState<'influencers' | 'origin'>(() =>
-    searchParams.get('tab') === 'influencers' ? 'influencers' : 'origin'
+    searchParams.get('tab') === 'origin' ? 'origin' : 'influencers'
   )
   const [originPostKindCounts, setOriginPostKindCounts] = useState<Partial<Record<MediaKind, number>> | null>(null)
   const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '')
@@ -359,13 +581,13 @@ export default function CampaignInfluencers() {
   const buildCampaignUrlParams = useCallback(
     (nextQuery: Partial<ProfilesSearchQuery>, tab: 'influencers' | 'origin' = campaignMainTab) => {
       const params = campaignQueryToUrlParams(nextQuery)
-      if (tab === 'influencers') params.tab = 'influencers'
+      if (tab === 'origin') params.tab = 'origin'
       return params
     },
     [campaignMainTab]
   )
   useEffect(() => {
-    const nextTab = searchParams.get('tab') === 'influencers' ? 'influencers' : 'origin'
+    const nextTab = searchParams.get('tab') === 'origin' ? 'origin' : 'influencers'
     setCampaignMainTab((prev) => (prev === nextTab ? prev : nextTab))
   }, [searchParams])
   useEffect(() => {
@@ -537,10 +759,8 @@ export default function CampaignInfluencers() {
             setFacets(facetsFromApi != null && facetsFromApi.followers_buckets && !('size_buckets' in facetsFromApi)
               ? { ...facetsFromApi, size_buckets: facetsFromApi.followers_buckets.map((b: { key: string; label: string; count: number }) => ({ key: b.key === 'medio' ? 'mid' : b.key, label: b.label, count: b.count })) }
               : facetsFromApi)
-            setTotal(res.total ?? 0)
             setPricePreview(res.pricePreview ?? null)
-            setContextItems([])
-            setFilteredList([])
+            setContextItems(res.items ?? [])
           } else {
             const facetsFromApi = res.facets ?? null
             setFacets(facetsFromApi != null && facetsFromApi.followers_buckets && !('size_buckets' in facetsFromApi)
@@ -687,9 +907,9 @@ export default function CampaignInfluencers() {
   }, [campaignId, user?.id])
 
   useEffect(() => {
-    if (contextItems == null || pendingPayment) return
+    if (contextItems == null) return
     applyContextFilters(query)
-  }, [contextItems, query, applyContextFilters, pendingPayment])
+  }, [contextItems, query, applyContextFilters])
 
   const maxQuantity = pendingPayment
     ? Math.max(1, total > 0 ? total : (campaignInfo?.handlesCount ?? 1))
@@ -758,15 +978,18 @@ export default function CampaignInfluencers() {
     }).catch(() => { })
   }, [campaignId])
 
-  const handleDeleteCampaign = useCallback(() => {
-    if (!campaignId || campaignId === ALL_CAMPAIGNS_SLUG) return
+  const handleDeleteCampaign = useCallback((): Promise<void> => {
+    if (!campaignId || campaignId === ALL_CAMPAIGNS_SLUG) return Promise.resolve()
     setDeletingCampaign(true)
-    deleteCampaign(campaignId)
+    return deleteCampaign(campaignId)
       .then(() => {
         message.success('Campanha excluída.')
         navigate('/app/campaigns', { replace: true })
       })
-      .catch((err) => message.error(err instanceof Error ? err.message : 'Falha ao excluir'))
+      .catch((err) => {
+        message.error(err instanceof Error ? err.message : 'Falha ao excluir')
+        throw err
+      })
       .finally(() => setDeletingCampaign(false))
   }, [campaignId, navigate])
 
@@ -822,42 +1045,41 @@ export default function CampaignInfluencers() {
   }
 
   const currentSort = query.sort ?? 'engagement_desc'
-  type SortColumn = 'name' | 'followers' | 'engagement' | 'total_likes' | 'total_comments' | 'avg_likes' | 'favorite'
+  type SortColumn = 'name' | 'favorite'
   const handleSortColumn = useCallback(
     (column: SortColumn) => {
       const toggle = (desc: ProfilesSort, asc: ProfilesSort): ProfilesSort =>
         currentSort === desc ? asc : desc
       const next: ProfilesSort =
-        column === 'name' ? toggle('name_desc', 'name_asc')
-          : column === 'followers' ? toggle('followers_desc', 'followers_asc')
-            : column === 'engagement' ? toggle('engagement_desc', 'engagement_asc')
-              : column === 'total_likes' ? toggle('total_likes_desc', 'total_likes_asc')
-                : column === 'total_comments' ? toggle('total_comments_desc', 'total_comments_asc')
-                  : column === 'avg_likes' ? toggle('avg_likes_desc', 'avg_likes_asc')
-                    : toggle('favorite_desc', 'favorite_asc')
+        column === 'name' ? toggle('name_desc', 'name_asc') : toggle('favorite_desc', 'favorite_asc')
       updateFilter({ sort: next })
     },
     [currentSort, updateFilter]
   )
 
-  const selectedActivation = (query.activationFilter ?? []) as string[]
+  const handleMetricSortMenuClick = useCallback(
+    (info: { key: string }) => {
+      const k = info.key as ProfilesSort
+      if (CAMPAIGN_LIST_METRIC_SORT_KEYS.has(k)) updateFilter({ sort: k })
+    },
+    [updateFilter]
+  )
+
   const selectedCities = (query.cities ?? []) as string[]
   const selectedStates = (query.states ?? []) as string[]
   const selectedSocial = (query.socialNetworks ?? []) as string[]
   const selectedContentTypes = (query.contentTypes ?? []) as string[]
   const selectedOriginMediaKinds = (query.originMediaKinds ?? []) as MediaKind[]
   const selectedSizeFilter = (query.sizeFilter ?? []) as string[]
-  const selectedAccountTypeFilter = (query.accountTypeFilter ?? []) as number[]
   const hasActiveFilters =
     (query.q?.trim()?.length ?? 0) > 0 ||
-    selectedActivation.length > 0 ||
     selectedCities.length > 0 ||
     selectedStates.length > 0 ||
     selectedSocial.length > 0 ||
     selectedContentTypes.length > 0 ||
     selectedOriginMediaKinds.length > 0 ||
     selectedSizeFilter.length > 0 ||
-    selectedAccountTypeFilter.length > 0
+    (query.accountTypeFilter?.length ?? 0) > 0
 
   if (authLoading || (campaignId != null && !user)) {
     return (
@@ -893,7 +1115,7 @@ export default function CampaignInfluencers() {
         open={nameModalOpen}
         onCancel={() => setNameModalOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
           {campaignHasName ? 'Altere o nome para organizar melhor em Minhas campanhas.' : 'Assim fica mais fácil organizar e encontrar seus relatórios.'}
@@ -913,21 +1135,26 @@ export default function CampaignInfluencers() {
           </Button>
         </Space.Compact>
         {campaignId && !isAllCampaignsView ? (
-          <>
-            <Divider style={{ margin: '20px 0 12px' }} />
-            <Popconfirm
-              title="Excluir campanha"
-              description="Tem certeza? Esta ação não pode ser desfeita."
-              onConfirm={handleDeleteCampaign}
-              okText="Excluir"
-              cancelText="Cancelar"
-              okButtonProps={{ danger: true }}
+          <div className="campaign-name-modal-remove">
+            <button
+              type="button"
+              className="campaign-name-modal-remove__btn"
+              aria-label="Remover campanha da lista"
+              onClick={() => {
+                Modal.confirm({
+                  title: 'Excluir esta campanha?',
+                  content: 'Ela sai da sua lista. Não dá pra desfazer.',
+                  okText: 'Excluir',
+                  okType: 'danger',
+                  cancelText: 'Cancelar',
+                  onOk: () => handleDeleteCampaign(),
+                })
+              }}
+              disabled={deletingCampaign}
             >
-              <Button danger block icon={<DeleteOutlined />} loading={deletingCampaign}>
-                Excluir campanha
-              </Button>
-            </Popconfirm>
-          </>
+              Excluir esta campanha
+            </button>
+          </div>
         ) : null}
       </Modal>
 
@@ -978,22 +1205,22 @@ export default function CampaignInfluencers() {
           style={{
             ...(isMobile
               ? {
-                  width: '100%',
-                  minWidth: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'stretch',
-                  gap: 10,
-                }
+                width: '100%',
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'stretch',
+                gap: 10,
+              }
               : {
-                  flex: 1,
-                  minWidth: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 8,
-                  flexWrap: 'wrap',
-                }),
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                flexWrap: 'wrap',
+              }),
           }}
         >
           {!pendingPayment ? (
@@ -1013,42 +1240,36 @@ export default function CampaignInfluencers() {
           ) : (
             <span aria-hidden style={{ width: 0, overflow: 'hidden' }} />
           )}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: isMobile ? 'column' : 'row',
-              alignItems: isMobile ? 'stretch' : 'center',
-              gap: 8,
-              flexWrap: isMobile ? 'nowrap' : 'wrap',
-              width: isMobile ? '100%' : undefined,
-              minWidth: 0,
-            }}
-          >
-            <Button
-              type="primary"
-              onClick={() => navigate('/app/campaigns')}
+          {!pendingPayment ? (
+            <div
               style={{
-                ...(isMobile ? { width: '100%' } : {}),
-                background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark, #6b21a8) 100%)',
-                border: 'none',
-                boxShadow: 'var(--app-shadow-cta, 0 2px 8px rgba(124, 58, 237, 0.35))',
+                display: 'flex',
+                flexDirection: isMobile ? 'column' : 'row',
+                alignItems: isMobile ? 'stretch' : 'center',
+                gap: 8,
+                flexWrap: isMobile ? 'nowrap' : 'wrap',
+                width: isMobile ? '100%' : undefined,
+                minWidth: 0,
               }}
             >
-              Minhas campanhas
-            </Button>
-            <Button
-              type="primary"
-              onClick={() => navigate('/search')}
-              style={{
-                ...(isMobile ? { width: '100%' } : {}),
-                background: 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
-                border: 'none',
-                boxShadow: '0 2px 8px rgba(8, 145, 178, 0.35)',
-              }}
-            >
-              Nova busca
-            </Button>
-          </div>
+              <Button
+                type="default"
+                className="campaign-toolbar-quiet-btn"
+                onClick={() => navigate('/app/campaigns')}
+                style={isMobile ? { width: '100%' } : undefined}
+              >
+                Minhas campanhas
+              </Button>
+              <Button
+                type="default"
+                className="campaign-toolbar-quiet-btn"
+                onClick={() => navigate('/search')}
+                style={isMobile ? { width: '100%' } : undefined}
+              >
+                Nova busca
+              </Button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -1070,7 +1291,6 @@ export default function CampaignInfluencers() {
               <CampaignBIPanel
                 items={filteredList}
                 facets={facets}
-                loading={loading}
                 query={query}
                 onFilter={updateFilter}
                 description={campaignInfo?.description ?? null}
@@ -1092,44 +1312,39 @@ export default function CampaignInfluencers() {
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             {pendingPayment ? (
-              <>
-                <Alert
-                  type="warning"
-                  message="Pagamento pendente"
-                  showIcon
-                  style={{ marginBottom: 10, width: '100%', fontSize: 12 }}
-                />
-                <CampaignPaymentCart
-                  query={query}
-                  facets={facets}
-                  onFilter={updateFilter}
-                  valueTotal={(() => {
-                    const baseValue = (pricePreview?.valueBrl ?? campaignInfo?.pendingPayment?.valueBrl) ?? 0
-                    const totalFiltered = Math.max(1, total)
-                    return totalFiltered > 0 ? Math.floor((baseValue / totalFiltered) * maxQuantity) : 0
-                  })()}
-                  maxQuantity={maxQuantity}
-                  canPayWithCredits={canPayWithCredits}
-                  creditsToApply={creditsToApply}
-                  payingWithCredits={payingWithCredits}
-                  onPayWithCredits={handlePayWithCredits}
-                  onBuyCredits={() => void handleOpenBuyCredits()}
-                  amountCentsAfterDiscount={pricePreview?.amountCents}
-                  ownershipDiscount={
-                    pricePreview &&
+              <CampaignPaymentCart
+                query={query}
+                facets={facets}
+                onFilter={updateFilter}
+                valueTotal={(() => {
+                  const baseValue = (pricePreview?.valueBrl ?? campaignInfo?.pendingPayment?.valueBrl) ?? 0
+                  const totalFiltered = Math.max(1, total)
+                  return totalFiltered > 0 ? Math.floor((baseValue / totalFiltered) * maxQuantity) : 0
+                })()}
+                maxQuantity={maxQuantity}
+                canPayWithCredits={canPayWithCredits}
+                creditsToApply={creditsToApply}
+                payingWithCredits={payingWithCredits}
+                onPayWithCredits={handlePayWithCredits}
+                onBuyCredits={() => void handleOpenBuyCredits()}
+                amountCentsAfterDiscount={pricePreview?.amountCents}
+                ownershipDiscount={
+                  pricePreview &&
                     (pricePreview.alreadyOwnedCount ?? 0) > 0 &&
                     pricePreview.originalValueBrl != null
-                      ? {
-                          alreadyOwnedCount: pricePreview.alreadyOwnedCount!,
-                          originalValueBrl: pricePreview.originalValueBrl,
-                          billableProfileCount:
-                            pricePreview.billableProfileCount ??
-                            Math.max(0, maxQuantity - (pricePreview.alreadyOwnedCount ?? 0)),
-                        }
-                      : undefined
-                  }
-                />
-              </>
+                    ? {
+                      alreadyOwnedCount: pricePreview.alreadyOwnedCount!,
+                      originalValueBrl: pricePreview.originalValueBrl,
+                      billableProfileCount:
+                        pricePreview.billableProfileCount ??
+                        Math.max(0, maxQuantity - (pricePreview.alreadyOwnedCount ?? 0)),
+                    }
+                    : undefined
+                }
+                previewItems={filteredList}
+                previewLoading={loading}
+                campaignExpiresAt={campaignInfo?.expires_at ?? null}
+              />
             ) : (
               <>
                 <div style={{ minWidth: 0 }}>
@@ -1230,22 +1445,6 @@ export default function CampaignInfluencers() {
                             maxTagCount={1}
                           />
                         )}
-                        {facets?.account_type && facets.account_type.length > 0 && (
-                          <Select
-                            mode="multiple"
-                            size="small"
-                            placeholder="Tipo conta"
-                            allowClear
-                            value={selectedAccountTypeFilter.length ? selectedAccountTypeFilter : undefined}
-                            options={facets.account_type.map(({ value, label, count }) => ({
-                              value,
-                              label: `${label} (${count})`,
-                            }))}
-                            onChange={(vals) => updateFilter({ accountTypeFilter: vals?.length ? vals : undefined })}
-                            style={{ width: 120 }}
-                            maxTagCount={1}
-                          />
-                        )}
                         {facets?.content_type && facets.content_type.filter((x) => x.count > 0).length > 0 && (
                           <Select
                             mode="multiple"
@@ -1288,22 +1487,6 @@ export default function CampaignInfluencers() {
                               maxTagCount={1}
                             />
                           )}
-                        {facets?.activation && (facets.activation.activated > 0 || facets.activation.not_activated > 0) && (
-                          <Select
-                            mode="multiple"
-                            size="small"
-                            placeholder="Ativado"
-                            allowClear
-                            value={selectedActivation.length ? selectedActivation : undefined}
-                            options={[
-                              facets.activation.activated > 0 && { value: 'activated', label: `Sim (${facets.activation.activated})` },
-                              facets.activation.not_activated > 0 && { value: 'not_activated', label: `Não (${facets.activation.not_activated})` },
-                            ].filter(Boolean) as { value: string; label: string }[]}
-                            onChange={(vals) => updateFilter({ activationFilter: vals?.length && vals.length < 2 ? vals : undefined })}
-                            style={{ width: 100 }}
-                            maxTagCount={1}
-                          />
-                        )}
                         {facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0) && (
                           <Select
                             mode="multiple"
@@ -1361,56 +1544,89 @@ export default function CampaignInfluencers() {
                       </div>
                     )}
                     <div style={{ minWidth: 0 }}>
-                      {loading && (
-                        <div
-                          style={{
-                            marginBottom: 8,
-                            padding: '6px 10px',
-                            fontSize: 13,
-                            color: 'var(--colorTextSecondary)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                          }}
-                        >
-                          <Spin size="small" />
-                          <span>Filtrando...</span>
-                        </div>
-                      )}
-                      {!loading && data.length === 0 && (
+                      {data.length === 0 && (
                         <Empty description="Nenhum perfil nesta campanha." />
                       )}
-                      {(data.length > 0 || loading) && (effectiveViewMode === 'list' ? (
+                      {data.length > 0 && (effectiveViewMode === 'list' ? (
                         <div style={{ overflow: 'auto', border: '1px solid var(--app-border, #f0f0f0)', borderRadius: 8, minWidth: 0 }}>
                           <table className="campaign-list-table" style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--app-bg)' }}>
                             <thead>
                               <tr style={{ background: 'var(--app-bg-secondary, #fafafa)', borderBottom: '1px solid var(--app-border, #f0f0f0)', fontSize: 10, fontWeight: 600, color: 'var(--app-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-                                <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid var(--app-border)', width: '1%', whiteSpace: 'nowrap' }} />
-                                <th style={{ padding: '6px 8px', width: 48 }} />
-                                {showFavoriteColumn && (
-                                  <th style={{ padding: '4px 0', paddingLeft: 0, paddingRight: 0, textAlign: 'center', width: 36, cursor: 'pointer', userSelect: 'none' }} role="button" tabIndex={0} onClick={() => handleSortColumn('favorite')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('favorite')} title="Ordenar por favoritos">
-                                    {currentSort === 'favorite_desc'
-                                      ? <HeartFilled style={{ color: 'var(--app-primary)', fontSize: 12 }} />
-                                      : <HeartOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 12, opacity: 0.5 }} />}
-                                  </th>
-                                )}
-                                <th style={{ padding: '4px 4px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: '100%', maxWidth: 300 }} role="button" tabIndex={0} onClick={() => handleSortColumn('name')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('name')}>
+                                <th
+                                  style={{
+                                    padding: '6px 6px',
+                                    textAlign: 'center',
+                                    width: 92,
+                                    minWidth: 92,
+                                    verticalAlign: 'middle',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {showFavoriteColumn ? (
+                                    <div
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={() => handleSortColumn('favorite')}
+                                      onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('favorite')}
+                                      title="Ordenar por favoritos"
+                                      style={{
+                                        cursor: 'pointer',
+                                        userSelect: 'none',
+                                        display: 'inline-flex',
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 4,
+                                        whiteSpace: 'nowrap',
+                                      }}
+                                    >
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--app-text-tertiary)', lineHeight: 1.2 }}>Favorito</span>
+                                      <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                                        {currentSort === 'favorite_desc'
+                                          ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} />
+                                          : currentSort === 'favorite_asc'
+                                            ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} />
+                                            : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                </th>
+                                <th style={{ padding: '4px 8px 4px 4px', textAlign: 'left', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: '100%', minWidth: 0 }} role="button" tabIndex={0} onClick={() => handleSortColumn('name')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('name')}>
                                   Perfil {currentSort === 'name_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'name_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
                                 </th>
-                                <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 72 }} role="button" tabIndex={0} onClick={() => handleSortColumn('followers')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('followers')}>
-                                  Seg. {currentSort === 'followers_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'followers_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                                </th>
-                                <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 76 }} role="button" tabIndex={0} onClick={() => handleSortColumn('engagement')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('engagement')}>
-                                  Eng. {currentSort === 'engagement_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'engagement_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                                </th>
-                                <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 74 }} role="button" tabIndex={0} onClick={() => handleSortColumn('total_likes')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('total_likes')}>
-                                  Like {currentSort === 'total_likes_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'total_likes_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                                </th>
-                                <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 74 }} role="button" tabIndex={0} onClick={() => handleSortColumn('total_comments')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('total_comments')}>
-                                  Com. {currentSort === 'total_comments_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'total_comments_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
-                                </th>
-                                <th style={{ padding: '6px 8px', textAlign: 'center', borderLeft: '1px solid var(--app-border)', cursor: 'pointer', userSelect: 'none', width: 72 }} role="button" tabIndex={0} onClick={() => handleSortColumn('avg_likes')} onKeyDown={(e) => e.key === 'Enter' && handleSortColumn('avg_likes')}>
-                                  Posts {currentSort === 'avg_likes_desc' ? <CaretDownOutlined style={{ fontSize: 9, opacity: 1 }} /> : currentSort === 'avg_likes_asc' ? <CaretUpOutlined style={{ fontSize: 9, opacity: 1 }} /> : <CaretDownOutlined style={{ fontSize: 9, opacity: 0.45 }} />}
+                                <th
+                                  style={{
+                                    padding: 0,
+                                    textAlign: 'center',
+                                    borderLeft: '1px solid var(--app-border)',
+                                    verticalAlign: 'middle',
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    color: 'var(--app-text-secondary)',
+                                    letterSpacing: '0.02em',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  <Dropdown
+                                    menu={{
+                                      items: CAMPAIGN_LIST_METRICS_SORT_MENU_ITEMS,
+                                      onClick: handleMetricSortMenuClick,
+                                      selectable: true,
+                                      selectedKeys: isCampaignListMetricSort(currentSort) ? [currentSort] : [],
+                                    }}
+                                    trigger={['click']}
+                                    placement="bottomRight"
+                                  >
+                                    <button type="button" className="campaign-list-metrics-sort-btn" aria-label="Ordenar por métrica">
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                        Métricas
+                                        <DownOutlined style={{ fontSize: 9, opacity: 0.85 }} />
+                                      </span>
+                                      <span style={{ fontSize: 9, fontWeight: 500, opacity: 0.8, lineHeight: 1.2, whiteSpace: 'nowrap' }}>
+                                        {isCampaignListMetricSort(currentSort) ? campaignListMetricSortSummary(currentSort) : 'Escolher ordenação'}
+                                      </span>
+                                    </button>
+                                  </Dropdown>
                                 </th>
                               </tr>
                             </thead>
@@ -1453,7 +1669,7 @@ export default function CampaignInfluencers() {
                           ))}
                         </Row>
                       ))}
-                      {!loading && data.length > 0 && (
+                      {data.length > 0 && (
                         <>
                           {data.length < total && (
                             <div

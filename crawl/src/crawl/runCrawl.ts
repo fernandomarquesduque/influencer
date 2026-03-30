@@ -8,6 +8,7 @@ import { crawlLog, crawlLogExtract } from '../utils/crawlLogger.js';
 import { getBusinessBlockReason, getFollowersFromEntity, hasPostWithMinLikes, hasRejectedProfileKeyword, isBlocklistedHandle, isBusinessFromEntity, isPersonOrCreator, isPrivateFromEntity, qualifiesAsInfluencer } from '../utils/entityAccess.js';
 import { reset429Run } from '../utils/rateLimit429.js';
 import { buildSlimProfile } from '../utils/slimProfile.js';
+import { loadExistingProfileRecordForMerge, mergeProfilePreservingLlm } from '../utils/preserveLlmOnProfileMerge.js';
 import { resyncInfluencerS3AfterDbMediaReset } from '../storage/s3InfluencerImage.js';
 /** Storage usado pelo crawl: RocksDB ou Composite (RocksDB + SQLite). */
 export interface CrawlStorage {
@@ -141,7 +142,12 @@ async function processOneProfileWithTimeout(
           await storage.deletePostsByHandle(slim.handle);
         }
         await resyncInfluencerS3AfterDbMediaReset(slim, { posts, reels, tagged, highlights });
-        await storage.save(slim as Entity & { handle: string });
+        const existingRec = await loadExistingProfileRecordForMerge(
+          storage as CrawlStorage & { loadByHandle?: (h: string) => Promise<Entity | null> },
+          slim.handle
+        );
+        const mergedProfile = mergeProfilePreservingLlm(existingRec, slim as Record<string, unknown>);
+        await storage.save(mergedProfile as Entity & { handle: string });
         await storage.savePosts(slim.handle, posts, collectedAt);
         if (typeof storage.saveMedia === 'function') {
           if (reels.length > 0) await storage.saveMedia(slim.handle, 'reel', reels, collectedAt);

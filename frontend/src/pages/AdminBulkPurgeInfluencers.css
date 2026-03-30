@@ -1,0 +1,14 @@
+.admin-bulk-purge {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px 16px 48px;
+}
+
+.admin-bulk-purge-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 12px;
+}

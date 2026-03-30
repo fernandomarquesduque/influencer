@@ -5,10 +5,13 @@
  */
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Typography, Spin, Empty, List, Button, Modal } from 'antd'
-import { HeartFilled, FolderOutlined, StarFilled } from '@ant-design/icons'
+import { Typography, Spin, Empty, List, Modal, Tooltip, Button } from 'antd'
+import { HeartFilled, FolderOutlined, DeleteOutlined } from '@ant-design/icons'
 import { fetchFavorites, fetchProfile, fetchProfileSummary, removeFavorite, getProfilePicUrl, proxyImageUrl, type ProfileItem } from '../api'
 import ProfileAvatar from './ProfileAvatar'
+import InfluencerTierPill from './InfluencerTierPill'
+import { campaignLlmBadgeStyles, getLlmContentPillarLabels, getLlmMainCategoryLabel } from '../utils/campaignLlmBadges'
+import type { ProfileListItem } from '../api'
 
 const { Text } = Typography
 
@@ -21,12 +24,8 @@ function formatFollowers(n: number | undefined | null): string {
   return n.toLocaleString('pt-BR')
 }
 
-function getTierLabel(followers: number | undefined | null): string {
-  if (followers == null || !Number.isFinite(followers)) return 'Influencer'
-  if (followers < 10_000) return 'Nano Influencer'
-  if (followers < 50_000) return 'Micro Influencer'
-  if (followers < 500_000) return 'Mid Influencer'
-  return 'Macro Influencer'
+function formatPtDecimal(n: number, fractionDigits = 1): string {
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits })
 }
 
 interface CampaignRef {
@@ -52,8 +51,8 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
   const [rows, setRows] = useState<FavoriteProfileRow[]>([])
   const [loading, setLoading] = useState(true)
 
-  const handleRemoveFavorite = (handle: string, displayName: string, e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleRemoveFavorite = (handle: string, displayName: string, e?: React.SyntheticEvent) => {
+    e?.stopPropagation()
     Modal.confirm({
       title: 'Remover dos favoritos',
       content: `Tem certeza que deseja remover ${displayName} dos favoritos?`,
@@ -167,8 +166,8 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
             const followers = profile?.followers_count ?? 0
             const engagementRate = engagement?.engagement_rate
             const postsPerWeek = engagement?.posts_per_week
-            const tierLabel = getTierLabel(followers)
-
+            const llmCategory = profile ? getLlmMainCategoryLabel(profile as unknown as ProfileListItem) : null
+            const llmPillars = profile ? getLlmContentPillarLabels(profile as unknown as ProfileListItem) : []
             return (
               <List.Item
                 style={{ padding: 0, alignItems: 'stretch', borderBlockEnd: 'none', marginBottom: 12 }}
@@ -192,19 +191,7 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                     alignItems: 'stretch',
                   }}
                 >
-                  <Button
-                    type="text"
-                    size="small"
-                    danger
-                    icon={<HeartFilled />}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleRemoveFavorite(handle, name !== handle ? `${name} (@${handle})` : `@${handle}`, e)
-                    }}
-                    style={{ position: 'absolute', top: 8, right: 8, padding: '2px 4px', minWidth: 24 }}
-                    title="Remover dos favoritos"
-                  />
-                  {/* Linha superior: (avatar + nano) + nome/handle */}
+                  {/* Linha superior: foto + nome/categoria/handle */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, marginBottom: 6 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                       <ProfileAvatar
@@ -213,55 +200,138 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                         handle={handle}
                         border="1px solid var(--app-border)"
                       />
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 600,
-                          color: '#fff',
-                          background: 'linear-gradient(90deg, var(--app-primary), #e85d8a)',
-                          padding: '2px 6px',
-                          borderRadius: 12,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 2,
-                        }}
-                      >
-                        <StarFilled style={{ fontSize: 9 }} />
-                        {tierLabel.replace(/\s*Influencer\s*$/i, '')}
-                      </span>
+                      <InfluencerTierPill followers={followers} variant="gradient" />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <Text strong ellipsis style={{ display: 'block', fontSize: 13, lineHeight: 1.25, color: 'var(--app-text)' }}>
                         {name}
                       </Text>
+                      {llmCategory || llmPillars.length > 0 ? (
+                        <div
+                          style={{
+                            marginTop: 3,
+                            marginBottom: 2,
+                            minWidth: 0,
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            alignItems: 'center',
+                            gap: '5px 6px',
+                          }}
+                        >
+                          {llmCategory ? (
+                            <Tooltip title="Categoria principal (LLM)">
+                              <span
+                                style={{
+                                  display: 'inline-block',
+                                  maxWidth: '100%',
+                                  fontSize: 10,
+                                  fontWeight: 600,
+                                  lineHeight: 1.35,
+                                  padding: '2px 7px',
+                                  borderRadius: 999,
+                                  whiteSpace: 'normal',
+                                  wordBreak: 'break-word',
+                                  ...campaignLlmBadgeStyles(llmCategory),
+                                }}
+                              >
+                                {llmCategory}
+                              </span>
+                            </Tooltip>
+                          ) : null}
+                          {llmPillars.map((pillar) => (
+                            <Tooltip key={pillar} title="Pilar de conteúdo (LLM)">
+                              <span
+                                style={{
+                                  display: 'inline-block',
+                                  maxWidth: '100%',
+                                  fontSize: 10,
+                                  fontWeight: 600,
+                                  lineHeight: 1.35,
+                                  padding: '2px 7px',
+                                  borderRadius: 999,
+                                  whiteSpace: 'normal',
+                                  wordBreak: 'break-word',
+                                  ...campaignLlmBadgeStyles(pillar),
+                                }}
+                              >
+                                {pillar}
+                              </span>
+                            </Tooltip>
+                          ))}
+                        </div>
+                      ) : null}
                       <Text type="secondary" style={{ fontSize: 11 }}>@{handle}</Text>
                     </div>
                   </div>
-                  <div style={{ marginBottom: 4, fontSize: 10, color: campaigns.some((c) => c.campaignName) ? 'var(--app-primary)' : 'var(--app-text-secondary)', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-                    <FolderOutlined style={{ opacity: 0.9, fontSize: 10, flexShrink: 0 }} />
-                    <Text ellipsis style={{ fontSize: 10 }}>
-                      {campaigns.length > 0
-                        ? campaigns.map((c) => c.campaignName || '—').join(', ')
-                        : '—'}
-                    </Text>
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 10px', fontSize: 11, color: 'var(--app-text)', alignItems: 'center' }}>
-                    <span>
-                      <Text strong style={{ fontSize: 11 }}>{formatFollowers(followers)}</Text>
-                      <Text type="secondary" style={{ fontSize: 10, marginLeft: 2 }}>Seg.</Text>
-                    </span>
-                    {Number.isFinite(engagementRate) && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      paddingTop: 8,
+                      borderTop: '1px solid var(--app-border-light, #f0f0f0)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 10px', fontSize: 11, color: 'var(--app-text)', alignItems: 'center', marginBottom: 6 }}>
                       <span>
-                        <Text strong style={{ fontSize: 11 }}>{engagementRate!.toFixed(1)}%</Text>
-                        <Text type="secondary" style={{ fontSize: 10, marginLeft: 2 }}>ER</Text>
+                        <Text strong style={{ fontSize: 11 }}>{formatFollowers(followers)}</Text>
+                        <Text type="secondary" style={{ fontSize: 10, marginLeft: 2 }}>Seg.</Text>
                       </span>
-                    )}
-                    {Number.isFinite(postsPerWeek) && (
-                      <span>
-                        <Text strong style={{ fontSize: 11 }}>{postsPerWeek!.toFixed(1)}</Text>
-                        <Text type="secondary" style={{ fontSize: 10, marginLeft: 2 }}>posts/sem</Text>
-                      </span>
-                    )}
+                      {Number.isFinite(engagementRate) && (
+                        <span>
+                          <Text strong style={{ fontSize: 11 }}>{formatPtDecimal(engagementRate!)}%</Text>
+                          <Text type="secondary" style={{ fontSize: 10, marginLeft: 2 }}>ER</Text>
+                        </span>
+                      )}
+                      {Number.isFinite(postsPerWeek) && (
+                        <span>
+                          <Text strong style={{ fontSize: 11 }}>{formatPtDecimal(postsPerWeek!)}</Text>
+                          <Text type="secondary" style={{ fontSize: 10, marginLeft: 2 }}>posts/sem</Text>
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          color: campaigns.some((c) => c.campaignName) ? 'var(--app-primary)' : 'var(--app-text-secondary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <FolderOutlined style={{ opacity: 0.9, fontSize: 10, flexShrink: 0 }} />
+                        <Text ellipsis style={{ fontSize: 10 }}>
+                          {campaigns.length > 0
+                            ? campaigns.map((c) => c.campaignName || '—').join(', ')
+                            : '—'}
+                        </Text>
+                      </div>
+                      <Tooltip title="Remover dos favoritos">
+                        <Button
+                          type="text"
+                          danger
+                          size="small"
+                          icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                          style={{ flexShrink: 0, minWidth: 22, height: 22, padding: '0 2px', lineHeight: 1 }}
+                          aria-label="Remover dos favoritos"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRemoveFavorite(handle, name !== handle ? `${name} (@${handle})` : `@${handle}`, e)
+                          }}
+                        />
+                      </Tooltip>
+                    </div>
                   </div>
                 </div>
               </List.Item>

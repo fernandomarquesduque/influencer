@@ -1,8 +1,9 @@
 /**
  * Galeria estilo Instagram: posts/reels onde o termo de busca aparece (dados atuais do índice).
  */
-import { useEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from 'react'
 import { Typography, Spin, Empty, Tooltip } from 'antd'
+import './CampaignOriginGallery.css'
 import {
   fetchCampaignPostMatches,
   getPostCoverDisplayUrl,
@@ -15,42 +16,69 @@ import {
 import { PostPreviewMedia } from './PostPreviewCard'
 import ProfileAvatar from './ProfileAvatar'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
+import { getInfluencerTierShort } from '../utils/influencerTier'
+import InfluencerTierPill from './InfluencerTierPill'
 import {
-  getInfluencerTierGradientCss,
-  getInfluencerTierShort,
-  getInfluencerTierTooltip,
-} from '../utils/influencerTier'
+  campaignLlmBadgeStyles,
+  getLlmTripleBadgesFromLlmRoot,
+  type LlmQualificationBadge,
+} from '../utils/campaignLlmBadges'
 
 const { Text } = Typography
 
-/** Selo Nano/Micro/Mid/Macro — mesmo padrão da tabela de influenciadores da campanha. */
-function InfluencerTierPill({ followers }: { followers: number | undefined | null }) {
-  const short = getInfluencerTierShort(followers)
-  if (short === '—') return null
+const PAGE = 24
+
+const ORIGIN_LOADER_SLIDES = [
+  {
+    headline: 'Reunindo o que importa',
+    line: 'Cada publicação é um sinal — estamos conectando as peças da sua campanha.',
+  },
+  {
+    headline: 'Radar de conteúdo ligado',
+    line: 'Encontrando vozes, formatos e momentos em que sua marca ganha vida.',
+  },
+  {
+    headline: 'Só um instante',
+    line: 'O melhor do índice está a caminho; o que aparecer pode abrir novas ideias.',
+  },
+] as const
+
+function OriginGalleryLoadingState() {
+  const [slide, setSlide] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setSlide((s) => (s + 1) % ORIGIN_LOADER_SLIDES.length)
+    }, 3400)
+    return () => window.clearInterval(id)
+  }, [])
+  const { headline, line } = ORIGIN_LOADER_SLIDES[slide]!
   return (
-    <Tooltip title={getInfluencerTierTooltip(followers)}>
-      <span
-        style={{
-          fontSize: 9,
-          fontWeight: 600,
-          color: '#fff',
-          padding: '1px 5px',
-          borderRadius: 8,
-          flexShrink: 0,
-          background: getInfluencerTierGradientCss(short),
-          lineHeight: 1.2,
-          display: 'inline-block',
-        }}
-      >
-        {short}
-      </span>
-    </Tooltip>
+    <div
+      className="campaign-origin-search-loader"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div className="campaign-origin-search-loader__mesh" aria-hidden />
+      <div className="campaign-origin-search-loader__inner">
+        <div className="campaign-origin-search-loader__orbit" aria-hidden>
+          <span className="campaign-origin-search-loader__dot" />
+          <span className="campaign-origin-search-loader__dot" />
+          <span className="campaign-origin-search-loader__dot" />
+        </div>
+        <div key={slide} className="campaign-origin-search-loader__copy">
+          <h3 className="campaign-origin-search-loader__title">{headline}</h3>
+          <p className="campaign-origin-search-loader__line">{line}</p>
+        </div>
+        <div className="campaign-origin-search-loader__rail" aria-hidden>
+          <div className="campaign-origin-search-loader__beam" />
+        </div>
+      </div>
+    </div>
   )
 }
 
-const PAGE = 24
-
-/** Modo lista: mesma largura para coluna mídia + perfil (feed, marcados, reels). */
+/** Modo lista: largura da coluna só de mídia (legenda e perfil ficam à direita). */
 const LIST_ORIGIN_MEDIA_COLUMN_PX = 256
 
 const MEDIA_KIND_SHORT: Record<MediaKind, string> = {
@@ -114,6 +142,13 @@ function getInstagramPostUrl(post: PostItem): string | null {
   const ct = (post.content_type || 'post') as MediaKind
   if (ct === 'reel') return `https://www.instagram.com/reel/${safe}/`
   return `https://www.instagram.com/p/${safe}/`
+}
+
+function getInstagramProfileUrl(handleKey: string): string | null {
+  if (!handleKey || handleKey === '—') return null
+  const h = handleKey.replace(/^@/, '').trim()
+  if (!h) return null
+  return `https://www.instagram.com/${encodeURIComponent(h)}/`
 }
 
 function influencerBarData(post: PostItem): {
@@ -191,6 +226,34 @@ function highlightKeywordInText(text: string, keyword: string): ReactNode {
   }
 }
 
+/** Tipo, gênero e categoria LLM abaixo do nome (dados em `post.influencer.llm`). */
+function OriginInfluencerLlmBadges({ inf }: { inf: PostItem['influencer'] }) {
+  const rec =
+    inf != null && typeof inf === 'object' ? (inf as unknown as Record<string, unknown>) : undefined
+  const { tipo, genero, categoria } = getLlmTripleBadgesFromLlmRoot(rec)
+  const badges: LlmQualificationBadge[] = [tipo, genero, categoria].filter(
+    (b): b is LlmQualificationBadge => b != null
+  )
+  if (badges.length === 0) return null
+  return (
+    <div className="campaign-origin-llm-badges">
+      {badges.map((b) => {
+        const st = campaignLlmBadgeStyles(b.text)
+        return (
+          <Tooltip key={b.key} title={b.title}>
+            <span
+              className="campaign-origin-llm-badge"
+              style={{ border: st.border, color: st.color, background: st.background }}
+            >
+              {b.text}
+            </span>
+          </Tooltip>
+        )
+      })}
+    </div>
+  )
+}
+
 export type OriginGalleryViewMode = 'list' | 'grid'
 
 export default function CampaignOriginGallery({
@@ -236,7 +299,7 @@ export default function CampaignOriginGallery({
     }
   }, [campaignId, textQuery, kindsKey])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     void reload()
   }, [reload])
 
@@ -273,10 +336,8 @@ export default function CampaignOriginGallery({
 
   return (
     <div style={{ minWidth: 0 }}>
-      {loading && items.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 48 }}>
-          <Spin size="large" />
-        </div>
+      {loading ? (
+        <OriginGalleryLoadingState />
       ) : items.length === 0 ? (
         <Empty description={textQuery.trim() ? 'Nenhum post encontrado com esse termo.' : 'Nenhum post indexado para estes perfis.'} />
       ) : (
@@ -306,6 +367,7 @@ export default function CampaignOriginGallery({
                   }
                 }
                 const igUrl = getInstagramPostUrl(post)
+                const igProfileUrl = getInstagramProfileUrl(handle)
                 const followersCount = post.influencer?.followers_count
                 const mediaShellStyle: CSSProperties = {
                   position: 'relative',
@@ -414,19 +476,43 @@ export default function CampaignOriginGallery({
                         >
                           {bar.displayName}
                         </div>
-                        <div
-                          style={{
-                            fontSize: 11,
-                            lineHeight: 1.25,
-                            color: 'var(--app-primary, #722ed1)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            marginTop: 2,
-                          }}
-                        >
-                          {bar.atLine}
-                        </div>
+                        <OriginInfluencerLlmBadges inf={post.influencer} />
+                        {igProfileUrl ? (
+                          <a
+                            href={igProfileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              display: 'block',
+                              fontSize: 11,
+                              lineHeight: 1.25,
+                              color: 'var(--app-primary, #722ed1)',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              marginTop: 2,
+                              textDecoration: 'none',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {bar.atLine}
+                          </a>
+                        ) : (
+                          <div
+                            style={{
+                              fontSize: 11,
+                              lineHeight: 1.25,
+                              color: 'var(--app-primary, #722ed1)',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              marginTop: 2,
+                            }}
+                          >
+                            {bar.atLine}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -453,6 +539,7 @@ export default function CampaignOriginGallery({
                   }
                 }
                 const igUrl = getInstagramPostUrl(post)
+                const igProfileUrl = getInstagramProfileUrl(handle)
                 const listMediaShellStyle: CSSProperties = {
                   position: 'relative',
                   width: '100%',
@@ -525,19 +612,68 @@ export default function CampaignOriginGallery({
                             <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
                           </div>
                         )}
+                        {igProfileUrl ? (
+                          <a
+                            href={igProfileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: 'block',
+                              padding: '8px 10px 10px',
+                              flexShrink: 0,
+                              borderTop: '1px solid var(--app-border-light, #f0f0f0)',
+                              fontSize: 12,
+                              color: 'var(--app-primary, #722ed1)',
+                              fontWeight: 600,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              cursor: 'pointer',
+                              textDecoration: 'none',
+                            }}
+                          >
+                            {bar.atLine}
+                          </a>
+                        ) : (
+                          <div
+                            style={{
+                              padding: '8px 10px 10px',
+                              flexShrink: 0,
+                              borderTop: '1px solid var(--app-border-light, #f0f0f0)',
+                              fontSize: 12,
+                              color: 'var(--app-primary, #722ed1)',
+                              fontWeight: 600,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {bar.atLine}
+                          </div>
+                        )}
+                      </div>
+                      <div
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          padding: '14px 18px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 12,
+                          background: 'var(--app-bg, #fff)',
+                        }}
+                      >
                         <div
                           role={handle !== '—' ? 'button' : undefined}
                           tabIndex={handle !== '—' ? 0 : undefined}
                           onClick={openInfluencerDetail}
                           onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
                           style={{
-                            padding: '10px 10px 12px',
-                            borderTop: '1px solid var(--app-border-light, #f0f0f0)',
+                            paddingBottom: 12,
+                            borderBottom: '1px solid var(--app-border-light, #f0f0f0)',
                             display: 'flex',
                             flexDirection: 'column',
                             gap: 8,
-                            flex: 1,
-                            minHeight: 0,
                             cursor: handle !== '—' ? 'pointer' : 'default',
                           }}
                         >
@@ -580,19 +716,7 @@ export default function CampaignOriginGallery({
                               >
                                 {bar.displayName}
                               </div>
-                              <div
-                                style={{
-                                  fontSize: 12,
-                                  color: 'var(--app-primary, #722ed1)',
-                                  fontWeight: 600,
-                                  marginTop: 2,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {bar.atLine}
-                              </div>
+                              <OriginInfluencerLlmBadges inf={post.influencer} />
                               {er != null || followersLabel ? (
                                 <div
                                   style={{
@@ -631,18 +755,6 @@ export default function CampaignOriginGallery({
                             </div>
                           </div>
                         </div>
-                      </div>
-                      <div
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          padding: '14px 18px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 12,
-                          background: 'var(--app-bg, #fff)',
-                        }}
-                      >
                         <Text style={{ fontSize: 12, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--app-text)' }}>
                           {highlightKeywordInText(getCaptionSnippet(post, 99999) || '—', textQuery)}
                         </Text>

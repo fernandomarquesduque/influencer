@@ -1,0 +1,26 @@
+{
+  "name": "qualify",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Qualificacao de influencers com Ollama e persistencia no RocksDB",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "qualify": "tsx src/index.ts",
+    "ui": "tsx src/index.ts ui"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "level": "^10.0.0",
+    "ollama": "^0.5.14"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

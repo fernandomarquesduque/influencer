@@ -3,7 +3,7 @@
  * Compra de créditos (PIX/Boleto) fica centralizada em BuyCreditsModal.
  * Fluxo de onboarding por e-mail: quantidade → cadastro leve → verificar e-mail → pagamento com créditos.
  */
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Card, Typography, Button, Spin, Alert, Slider, InputNumber, Space, Input } from 'antd'
 import { WalletOutlined, MailOutlined, DollarOutlined } from '@ant-design/icons'
 import { useAuth } from '../../contexts/AuthContext'
@@ -14,10 +14,12 @@ import {
   registerCheckoutUser,
   resendVerificationEmail,
   fetchMyPendingPayment,
+  fetchCampaignAccessDefaults,
   type ProfilesSearchQuery,
   type AuthScope,
   type CreatePaymentForCreditsResponse,
 } from '../../api'
+import { expiresAtIsoFromDurationDays, FALLBACK_CAMPAIGN_ACCESS_DAYS } from '../../utils/campaignExpires'
 import BuyCreditsModal from '../BuyCreditsModal/BuyCreditsModal'
 
 const { Text, Title } = Typography
@@ -76,12 +78,16 @@ export default function CheckoutContent({
 
   const minProfiles = Math.min(MIN_PROFILES, total)
   const [desiredCount, setDesiredCount] = useState(() => Math.max(minProfiles, total))
-  const defaultExpires = () => {
-    const d = new Date()
-    d.setFullYear(d.getFullYear() + 1)
-    return d.toISOString().slice(0, 10)
-  }
-  const expiresAt = useMemo(() => defaultExpires(), [])
+  const [expiresAt, setExpiresAt] = useState(() =>
+    expiresAtIsoFromDurationDays(FALLBACK_CAMPAIGN_ACCESS_DAYS)
+  )
+  useEffect(() => {
+    const c = new AbortController()
+    fetchCampaignAccessDefaults({ signal: c.signal })
+      .then((d) => setExpiresAt(d.defaultExpiresAt))
+      .catch(() => {})
+    return () => c.abort()
+  }, [])
   useEffect(() => {
     setDesiredCount(Math.max(minProfiles, total))
   }, [total, minProfiles])

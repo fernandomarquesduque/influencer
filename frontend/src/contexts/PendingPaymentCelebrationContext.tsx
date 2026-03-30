@@ -176,7 +176,7 @@ export function PendingPaymentCelebrationProvider({ children }: { children: Reac
         maskClosable
         className="payment-celebration-modal"
         title={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <div className="payment-celebration-modal-body">
           <CheckCircleFilled className="payment-celebration-modal-icon" aria-hidden />

@@ -139,12 +139,16 @@
 
 .my-campaign-card {
   cursor: pointer;
-  height: 100%;
+  height: auto;
   border-radius: var(--app-card-radius);
   box-shadow: var(--app-card-shadow);
   border-left: 4px solid var(--app-primary);
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(104, 39, 143, 0.03));
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-left-color 0.2s ease;
+}
+
+.my-campaign-card .ant-card-body {
+  padding: 14px 16px;
 }
 
 .my-campaign-card:hover {
@@ -153,12 +157,109 @@
   border-left-color: var(--app-accent);
 }
 
+.my-campaign-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Faixa principal: identidade | engajamento (categorias LLM ficam no rodapé do card) */
+.my-campaign-card-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px 24px;
+  min-width: 0;
+}
+
+.my-campaign-card-leading {
+  flex: 0 1 auto;
+  min-width: min(200px, 100%);
+  max-width: 100%;
+}
+
+.my-campaign-card-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 4px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.my-campaign-card-meta-sep {
+  color: var(--app-text-tertiary, #9ca3af);
+  user-select: none;
+}
+
 .my-campaign-card-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
+}
+
+.my-campaign-card-llm-categories {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.my-campaign-card-llm-categories-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0;
+  flex-shrink: 0;
+  color: var(--app-text-tertiary, #6b7280) !important;
+}
+
+.my-campaign-card-llm-categories-chips {
+  display: flex;
+  flex-flow: row wrap;
+  gap: 6px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.my-campaign-card-llm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.my-campaign-card-llm-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.my-campaign-card-llm-chip-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  opacity: 0.92;
+  padding: 0 5px;
+  margin-right: -4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
 }
 
 .my-campaign-card-name {
@@ -171,60 +272,63 @@
   color: var(--app-primary) !important;
 }
 
-.my-campaign-card-stats {
-  margin-bottom: 12px;
-}
-
-.my-campaign-card-engagement {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--app-border-light);
-  background: linear-gradient(135deg, rgba(104, 39, 143, 0.04), transparent);
-  margin-left: -16px;
-  margin-right: -16px;
-  padding-left: 16px;
-  padding-right: 16px;
-  padding-bottom: 8px;
-  border-radius: 0 0 var(--app-card-radius) var(--app-card-radius);
-}
-
-.my-campaign-card-engagement-label {
-  display: block;
-  font-size: 12px;
-  margin-bottom: 8px;
-  font-weight: 600;
-  color: var(--app-primary);
-}
-
-.my-campaign-metric {
-  font-size: 13px;
+/* Painel à direita: gêneros e tipos de perfil (LLM), em linha */
+.my-campaign-card-llm-dimensions {
+  flex: 1 1 280px;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--app-border-light);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(104, 39, 143, 0.05), rgba(255, 255, 255, 0.5));
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.my-campaign-card-llm-dimensions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.my-campaign-card-llm-dimensions-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 0 !important;
+  flex-shrink: 0;
+  color: var(--app-text-tertiary, #6b7280) !important;
+}
+
+.my-campaign-card-llm-dimensions-chips {
+  display: flex;
+  flex-flow: row wrap;
   align-items: center;
   gap: 6px;
-  cursor: help;
+  flex: 1;
+  min-width: 0;
 }
 
-.my-campaign-metric .anticon {
-  opacity: 1;
-  color: var(--app-primary);
-}
-
-.my-campaign-card-stats .ant-statistic-title {
-  font-size: 11px;
-  color: var(--app-text-secondary);
-  margin-bottom: 2px;
-}
-
-.my-campaign-card-stats .ant-statistic-title .anticon {
-  margin-right: 4px;
-  color: var(--app-primary);
-  opacity: 0.9;
+.my-campaign-card-llm-chip--compact {
+  max-width: 180px;
+  font-size: 10px;
+  padding: 2px 6px;
 }
 
 .my-campaign-card-date {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  padding-top: 4px;
+  padding-top: 0;
+}
+
+.my-campaign-card-date-text {
+  font-size: 12px !important;
 }
 
 .my-campaign-card-pending-payment {
@@ -241,12 +345,20 @@
   margin-top: 4px;
 }
 
+.my-campaign-card-pending-payment--inline {
+  margin-top: 0;
+  padding: 2px 8px;
+  font-size: 10px;
+  border-radius: 6px;
+}
+
 .my-campaign-card-pending-payment .anticon {
   font-size: 12px;
 }
 
 .my-campaign-card-footer {
-  padding-top: 12px;
+  padding-top: 8px;
+  margin-top: 2px;
   border-top: 1px solid var(--app-border-light);
 }
 
@@ -254,9 +366,19 @@
   font-size: 12px;
 }
 
-.my-campaign-card-footer.my-campaign-card-footer-hashtags .ant-typography {
-  color: var(--app-primary);
-  font-weight: 500;
+@media (max-width: 900px) {
+  .my-campaign-card-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .my-campaign-card-leading {
+    min-width: 0;
+  }
+
+  .my-campaign-card-llm-dimensions {
+    flex: 1 1 auto;
+  }
 }
 
 @media (max-width: 768px) {

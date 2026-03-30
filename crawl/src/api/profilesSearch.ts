@@ -44,9 +44,12 @@ function applySearchCacheIfCurrent(
 /**
  * Agenda reaquecimento do cache em background. Várias chamadas seguidas disparam cargas em paralelo;
  * apenas a que termina por último com a geração atual aplica (evita snapshot stale).
+ * Zera `searchDataCache` na hora para a próxima busca ler do RocksDB (ex.: após delete de perfil),
+ * em vez de continuar servindo o snapshot antigo até o rewarm terminar.
  */
 export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
   const gen = ++searchCacheGeneration;
+  searchDataCache = null;
   void loadSearchCacheData(db).then((data) => applySearchCacheIfCurrent(gen, data));
 }
 
@@ -148,6 +151,142 @@ function getIsPrivate(profile: Record<string, unknown>): boolean {
 function getAccountType(profile: Record<string, unknown>): number | undefined {
   const v = profile.account_type ?? getIn(profile, 'data.user.account_type');
   return toNum(v) || undefined;
+}
+
+/** `qualification` do LLM quando a classificação terminou com sucesso (`status === "done"`). */
+export function getLlmQualification(record: Record<string, unknown>): Record<string, unknown> | null {
+  const llm = record.llm;
+  if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) return null;
+  const lo = llm as Record<string, unknown>;
+  const status = String(lo.status ?? '').trim().toLowerCase();
+  if (status !== 'done') return null;
+  const q = lo.qualification;
+  if (q == null || typeof q !== 'object' || Array.isArray(q)) return null;
+  return q as Record<string, unknown>;
+}
+
+export function hasCompletedLlmProfile(record: Record<string, unknown>): boolean {
+  const q = getLlmQualification(record);
+  return q != null && Object.keys(q).length > 0;
+}
+
+function bumpFacetString(map: Map<string, number>, raw: string): void {
+  const k = raw.trim().toLowerCase();
+  if (!k) return;
+  map.set(k, (map.get(k) ?? 0) + 1);
+}
+
+function bumpFacetStringArray(map: Map<string, number>, arr: unknown): void {
+  if (!Array.isArray(arr)) return;
+  for (const x of arr) {
+    if (typeof x === 'string' && x.trim()) bumpFacetString(map, x);
+  }
+}
+
+interface LlmFacetMaps {
+  profileType: Map<string, number>;
+  mainCategory: Map<string, number>;
+  gender: Map<string, number>;
+  language: Map<string, number>;
+  subCategories: Map<string, number>;
+  contentPillars: Map<string, number>;
+  audienceType: Map<string, number>;
+  toneOfVoice: Map<string, number>;
+  brandSafetyLevel: Map<string, number>;
+}
+
+function createEmptyLlmFacetMaps(): LlmFacetMaps {
+  return {
+    profileType: new Map(),
+    mainCategory: new Map(),
+    gender: new Map(),
+    language: new Map(),
+    subCategories: new Map(),
+    contentPillars: new Map(),
+    audienceType: new Map(),
+    toneOfVoice: new Map(),
+    brandSafetyLevel: new Map(),
+  };
+}
+
+function mapToNameCountDesc(m: Map<string, number>): { name: string; count: number }[] {
+  return [...m.entries()]
+    .filter(([, count]) => count > 0)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function normalizeBrandSafetyLevel(brandSafety: unknown): 'adulto' | 'sensivel' | 'familia' | null {
+  if (typeof brandSafety === 'string') {
+    const v = brandSafety.trim().toLowerCase();
+    if (v === 'adulto' || v === 'sensivel' || v === 'familia') return v;
+    return null;
+  }
+  if (brandSafety == null || typeof brandSafety !== 'object' || Array.isArray(brandSafety)) return null;
+  const b = brandSafety as Record<string, unknown>;
+  const risk = String(b.riskLevel ?? '').trim().toLowerCase();
+  if (risk === 'low') return 'familia';
+  if (risk === 'medium') return 'sensivel';
+  if (risk === 'high') return 'adulto';
+  if (b.isAdultContent === true) return 'adulto';
+  if (b.isFamilySafe === true) return 'familia';
+  return null;
+}
+
+function accumulateLlmFacetsFromItem(item: ProfileListItem, maps: LlmFacetMaps): void {
+  const q = getLlmQualification(item as unknown as Record<string, unknown>);
+  if (!q) return;
+  bumpFacetString(maps.profileType, String(q.profileType ?? ''));
+  bumpFacetString(maps.mainCategory, String(q.mainCategory ?? ''));
+  bumpFacetString(maps.gender, String(q.gender ?? ''));
+  bumpFacetString(maps.language, String(q.language ?? ''));
+  bumpFacetStringArray(maps.subCategories, q.subCategories);
+  bumpFacetStringArray(maps.contentPillars, q.contentPillars);
+  bumpFacetStringArray(maps.audienceType, q.audienceType);
+  bumpFacetStringArray(maps.toneOfVoice, q.toneOfVoice);
+  const brandSafetyLevel = normalizeBrandSafetyLevel(q.brandSafety);
+  if (brandSafetyLevel) bumpFacetString(maps.brandSafetyLevel, brandSafetyLevel);
+}
+
+function mapsToLlmSearchFacets(maps: LlmFacetMaps): LlmSearchFacets {
+  return {
+    profileType: mapToNameCountDesc(maps.profileType),
+    mainCategory: mapToNameCountDesc(maps.mainCategory),
+    gender: mapToNameCountDesc(maps.gender),
+    language: mapToNameCountDesc(maps.language),
+    subCategories: mapToNameCountDesc(maps.subCategories),
+    contentPillars: mapToNameCountDesc(maps.contentPillars),
+    audienceType: mapToNameCountDesc(maps.audienceType),
+    toneOfVoice: mapToNameCountDesc(maps.toneOfVoice),
+    brandSafety: {
+      level: mapToNameCountDesc(maps.brandSafetyLevel),
+    },
+  };
+}
+
+function emptyLlmSearchFacets(): LlmSearchFacets {
+  return mapsToLlmSearchFacets(createEmptyLlmFacetMaps());
+}
+
+/** Inclui termos da qualificação LLM no texto pesquisável (a busca textual bate em mainCategory, pilares etc.). */
+function addLlmQualificationSearchParts(record: Record<string, unknown>, parts: string[]): void {
+  const q = getLlmQualification(record);
+  if (!q) return;
+  for (const key of ['profileType', 'mainCategory', 'gender', 'language'] as const) {
+    const v = q[key];
+    if (typeof v === 'string' && v.trim()) parts.push(v.trim());
+  }
+  for (const key of ['subCategories', 'contentPillars', 'audienceType', 'toneOfVoice'] as const) {
+    const arr = q[key];
+    if (!Array.isArray(arr)) continue;
+    for (const x of arr) {
+      if (typeof x === 'string' && x.trim()) parts.push(x.trim());
+    }
+  }
+  const ps = String(q.personaSummary ?? '').trim();
+  if (ps) parts.push(ps);
+  const brandSafetyLevel = normalizeBrandSafetyLevel(q.brandSafety);
+  if (brandSafetyLevel) parts.push(brandSafetyLevel);
 }
 
 /** Extrai hashtags do texto (ex.: "#curiosidade #viagem" → ["curiosidade", "viagem"]). */
@@ -321,6 +460,7 @@ function getSearchableText(
     ...categories,
     ...categories.map((c) => c.replace(/\s+/g, ' ')),
   ];
+  addLlmQualificationSearchParts(profile, parts);
   for (let i = 0; i < Math.min(posts.length, MAX_POSTS_FOR_SEARCH); i++) {
     parts.push(getPostTextForSearch(posts[i]!));
   }
@@ -347,6 +487,7 @@ function getSearchableTextProfileOnly(
     ...categories,
     ...categories.map((c) => c.replace(/\s+/g, ' ')),
   ];
+  addLlmQualificationSearchParts(profile, parts);
   return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ');
 }
 
@@ -383,6 +524,7 @@ function getSearchableTextFromItem(item: ProfileListItem): string {
   const bio = (item.biography ?? '').trim();
   const categories = (item.categories ?? []).map((c) => String(c).trim().toLowerCase()).filter(Boolean);
   const parts = [handle, fullName, bio, ...categories];
+  addLlmQualificationSearchParts(item as unknown as Record<string, unknown>, parts);
   return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ');
 }
 
@@ -426,6 +568,26 @@ export interface FacetBucket {
   count: number;
 }
 
+/**
+ * Agregações dos campos de `llm.qualification` (classificador qualify / collector-ingest-llm).
+ * Só perfis com `llm.status === "done"` entram na busca; estes facets refletem esse subconjunto.
+ */
+export interface LlmSearchFacets {
+  profileType: { name: string; count: number }[];
+  mainCategory: { name: string; count: number }[];
+  gender: { name: string; count: number }[];
+  /** Idioma provável do conteúdo (`qualification.language`, ex. BCP-47). */
+  language: { name: string; count: number }[];
+  subCategories: { name: string; count: number }[];
+  contentPillars: { name: string; count: number }[];
+  audienceType: { name: string; count: number }[];
+  toneOfVoice: { name: string; count: number }[];
+  /** Categoria única do prompt qualify: familia | sensivel | adulto. */
+  brandSafety: {
+    level: { name: string; count: number }[];
+  };
+}
+
 /** Sumarização dos resultados para filtros (hashtags/categorias, engajamento, ativação, tipo de conteúdo). */
 export interface ProfilesSearchFacets {
   /** Hashtags/categorias dos perfis (dos posts + perfil). */
@@ -451,6 +613,8 @@ export interface ProfilesSearchFacets {
   pricing?: Record<string, { value: number; count: number }[]>;
   /** Contagem por faixa de preço (low, medium, high, very_high); só entradas com count > 0. */
   cost_tier?: { tier: CostTier; count: number }[];
+  /** Facets da qualificação LLM (`qualification`), quando houver perfis com LLM concluído. */
+  llm?: LlmSearchFacets;
 }
 
 /** Item retornado na listagem (perfil + engajamento + BI quando há posts). */
@@ -522,6 +686,22 @@ export interface ProfilesSearchQuery {
   costTierFilter?: string[];
   /** Filtro por tamanho (seguidores): nano (<10k), micro (10k–50k), mid/medio (50k–200k), macro (200k+). */
   sizeFilter?: string[];
+  /**
+   * Filtros sobre `llm.qualification` (multiselect = OR dentro do campo).
+   * Só têm efeito em perfis que já passaram pelo filtro de LLM concluído.
+   */
+  llmProfileType?: string | string[];
+  llmMainCategory?: string | string[];
+  llmGender?: string | string[];
+  llmLanguage?: string | string[];
+  llmSubCategories?: string | string[];
+  llmContentPillars?: string | string[];
+  llmAudienceType?: string | string[];
+  llmToneOfVoice?: string | string[];
+  llmRiskLevel?: string | string[];
+  /** Quando definido, exige mesmo valor em `qualification.brandSafety`. */
+  llmIsFamilySafe?: boolean;
+  llmIsAdultContent?: boolean;
   /** Ordenação: relevance_desc | engagement_desc | engagement_asc | followers_desc | followers_asc | avg_likes_desc | avg_likes_asc | total_likes_desc | total_likes_asc */
   sort?: string;
   limit?: number;
@@ -544,6 +724,61 @@ function parseStringArray(v: unknown): string[] {
   if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
   if (typeof v === 'string') return v.split(',').map((x) => x.trim()).filter(Boolean);
   return [];
+}
+
+function qualificationArrayMatchesOr(q: Record<string, unknown>, key: string, selected: string[]): boolean {
+  if (selected.length === 0) return true;
+  const set = new Set(selected.map((s) => s.trim().toLowerCase()).filter(Boolean));
+  const arr = q[key];
+  if (!Array.isArray(arr)) return false;
+  return arr.some((x) => typeof x === 'string' && set.has(x.trim().toLowerCase()));
+}
+
+/** Filtro por campos de `llm.qualification` (multiselect = OR dentro do mesmo campo). */
+export function matchesLlmQualificationFilters(record: Record<string, unknown>, query: ProfilesSearchQuery): boolean {
+  const qual = getLlmQualification(record);
+  if (!qual) return false;
+
+  const orScalar = (field: string, selected: string[]): boolean => {
+    if (selected.length === 0) return true;
+    const set = new Set(selected.map((s) => s.trim().toLowerCase()).filter(Boolean));
+    const v = String(qual[field] ?? '').trim().toLowerCase();
+    return set.has(v);
+  };
+
+  if (!orScalar('profileType', parseStringArray(query.llmProfileType))) return false;
+  if (!orScalar('mainCategory', parseStringArray(query.llmMainCategory))) return false;
+  if (!orScalar('gender', parseStringArray(query.llmGender))) return false;
+  if (!orScalar('language', parseStringArray(query.llmLanguage))) return false;
+
+  if (!qualificationArrayMatchesOr(qual, 'subCategories', parseStringArray(query.llmSubCategories))) return false;
+  if (!qualificationArrayMatchesOr(qual, 'contentPillars', parseStringArray(query.llmContentPillars))) return false;
+  if (!qualificationArrayMatchesOr(qual, 'audienceType', parseStringArray(query.llmAudienceType))) return false;
+  if (!qualificationArrayMatchesOr(qual, 'toneOfVoice', parseStringArray(query.llmToneOfVoice))) return false;
+
+  const brandSafetyLevel = normalizeBrandSafetyLevel(qual.brandSafety);
+  const riskSel = parseStringArray(query.llmRiskLevel);
+  if (riskSel.length > 0) {
+    if (!brandSafetyLevel) return false;
+    const normalizedRiskSet = new Set(
+      riskSel
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
+        .map((s) => (s === 'low' ? 'familia' : s === 'medium' ? 'sensivel' : s === 'high' ? 'adulto' : s))
+    );
+    if (!normalizedRiskSet.has(brandSafetyLevel)) return false;
+  }
+
+  if (query.llmIsFamilySafe === true || query.llmIsFamilySafe === false) {
+    if (!brandSafetyLevel) return false;
+    if ((brandSafetyLevel === 'familia') !== query.llmIsFamilySafe) return false;
+  }
+  if (query.llmIsAdultContent === true || query.llmIsAdultContent === false) {
+    if (!brandSafetyLevel) return false;
+    if ((brandSafetyLevel === 'adulto') !== query.llmIsAdultContent) return false;
+  }
+
+  return true;
 }
 
 /** Verifica se rate cai em algum bucket selecionado. Buckets: 0=<1%, 1=1-5%, 5=5%+. */
@@ -757,12 +992,16 @@ export async function searchProfiles(
 
   let items: ProfileListItem[] = [];
   if (useInitialItems) {
-    items = [...options!.initialItems!];
+    // Só rotas de campanha usam initialItems; a lista deve refletir todos os handles do relatório
+    // (o cartão usa handlesCount), não só quem já tem LLM concluída.
+    items = options!.initialItems!;
   } else {
     for (const { key, value } of profilesRaw) {
       const profile = value as Record<string, unknown>;
       const handle = getHandle(profile, key).toLowerCase().replace(/^@/, '');
       if (restrictToHandles && !restrictToHandles.has(handle)) continue;
+      // Busca geral: só perfis com qualificação LLM pronta. Campanha: todos os handles presentes no DB.
+      if (!restrictToHandles && !hasCompletedLlmProfile(profile)) continue;
       const followersCount = getFollowers(profile);
       const fullName = getFullName(profile);
       const baseCategories = getCategories(profile);
@@ -1006,6 +1245,27 @@ export async function searchProfiles(
     });
   }
 
+  const hasAnyLlmFilterInQuery =
+    parseStringArray(query.llmProfileType).length > 0 ||
+    parseStringArray(query.llmMainCategory).length > 0 ||
+    parseStringArray(query.llmGender).length > 0 ||
+    parseStringArray(query.llmLanguage).length > 0 ||
+    parseStringArray(query.llmSubCategories).length > 0 ||
+    parseStringArray(query.llmContentPillars).length > 0 ||
+    parseStringArray(query.llmAudienceType).length > 0 ||
+    parseStringArray(query.llmToneOfVoice).length > 0 ||
+    parseStringArray(query.llmRiskLevel).length > 0 ||
+    query.llmIsFamilySafe === true ||
+    query.llmIsFamilySafe === false ||
+    query.llmIsAdultContent === true ||
+    query.llmIsAdultContent === false;
+
+  if (hasAnyLlmFilterInQuery) {
+    filteredItems = filteredItems.filter((i) =>
+      matchesLlmQualificationFilters(i as unknown as Record<string, unknown>, query)
+    );
+  }
+
   if (q) {
     filteredItems = filteredItems.filter((i) => {
       const text = getSearchableTextFromItem(i);
@@ -1051,10 +1311,10 @@ export async function searchProfiles(
       { key: 'alta', label: 'Alta', min: 5, count: 0 },
     ];
     const followersBuckets = [
-      { key: 'nano', label: 'Nano (até 10k)', min: 0, max: 10_000 as number | undefined, count: 0 },
-      { key: 'micro', label: 'Micro (10k – 50k)', min: 10_000, max: 50_000 as number | undefined, count: 0 },
-      { key: 'medio', label: 'Médio (50k – 200k)', min: 50_000, max: 200_000 as number | undefined, count: 0 },
-      { key: 'macro', label: 'Macro (200k+)', min: 200_000, max: undefined, count: 0 },
+      { key: 'nano', label: 'Nano', min: 0, max: 10_000 as number | undefined, count: 0 },
+      { key: 'micro', label: 'Micro', min: 10_000, max: 50_000 as number | undefined, count: 0 },
+      { key: 'medio', label: 'Médio', min: 50_000, max: 200_000 as number | undefined, count: 0 },
+      { key: 'macro', label: 'Macro', min: 200_000, max: undefined, count: 0 },
     ];
     const accountTypeBuckets = [
       { value: 1, label: 'Pessoal', count: 0 },
@@ -1079,6 +1339,7 @@ export async function searchProfiles(
       destaque: new Map(),
     };
     const costTierCount = new Map<CostTier, number>();
+    const llmFacetMaps = createEmptyLlmFacetMaps();
 
     for (const item of items) {
       if (item.activation) {
@@ -1153,6 +1414,8 @@ export async function searchProfiles(
       if (postsCount < 25) postsCountBuckets[0]!.count++;
       else if (postsCount < 50) postsCountBuckets[1]!.count++;
       else postsCountBuckets[2]!.count++;
+
+      accumulateLlmFacetsFromItem(item, llmFacetMaps);
     }
 
     facets = {
@@ -1187,6 +1450,7 @@ export async function searchProfiles(
         .filter(([, count]) => count > 0)
         .map(([tier, count]) => ({ tier, count }))
         .sort((a, b) => b.count - a.count),
+      llm: mapsToLlmSearchFacets(llmFacetMaps),
     };
   } else {
     facets = {
@@ -1213,10 +1477,10 @@ export async function searchProfiles(
       neighborhoods: [],
       social: { whatsapp: 0, tiktok: 0, facebook: 0, linkedin: 0, twitter: 0 },
       followers_buckets: [
-        { key: 'nano', label: 'Nano (até 10k)', min: 0, max: 10_000, count: 0 },
-        { key: 'micro', label: 'Micro (10k – 50k)', min: 10_000, max: 50_000, count: 0 },
-        { key: 'medio', label: 'Médio (50k – 200k)', min: 50_000, max: 200_000, count: 0 },
-        { key: 'macro', label: 'Macro (200k+)', min: 200_000, max: undefined, count: 0 },
+        { key: 'nano', label: 'Nano', min: 0, max: 10_000, count: 0 },
+        { key: 'micro', label: 'Micro', min: 10_000, max: 50_000, count: 0 },
+        { key: 'medio', label: 'Médio', min: 50_000, max: 200_000, count: 0 },
+        { key: 'macro', label: 'Macro', min: 200_000, max: undefined, count: 0 },
       ],
       account_type: [
         { value: 1, label: 'Pessoal', count: 0 },
@@ -1227,6 +1491,7 @@ export async function searchProfiles(
         pricingActivationKeys.map((actKey) => [actKey, [] as { value: number; count: number }[]])
       ) as Record<(typeof pricingActivationKeys)[number], { value: number; count: number }[]>,
       cost_tier: [],
+      llm: emptyLlmSearchFacets(),
     };
   }
 

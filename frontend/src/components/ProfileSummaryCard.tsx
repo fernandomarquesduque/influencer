@@ -18,7 +18,9 @@ import {
   TwitterOutlined,
   SafetyOutlined,
 } from '@ant-design/icons'
-import { getProfilePicUrl, getStableProfilePicUrl, proxyImageUrl, type EngagementStats, type ProfileActivation } from '../api'
+import { getProfilePicUrl, getStableProfilePicUrl, proxyImageUrl, type EngagementStats, type ProfileActivation, type ProfileListItem } from '../api'
+import { getLlmDescriptionLine } from '../utils/mapProfileListToPreviewItems'
+import { campaignLlmBadgeStyles, getLlmContentPillarLabels, getLlmGenderBadge, getLlmMainCategoryLabel, getLlmProfileTypeBadge } from '../utils/campaignLlmBadges'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { getCostTier } from '../utils/pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
@@ -130,15 +132,52 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
           </div>
         )
       })()}
+
+      {/* Tipo + gênero LLM: canto superior esquerdo, empilhados (lista / grade campanha) */}
       {variant === 'list' && (() => {
-        const accountTypeValue = (item as { account_type?: number }).account_type
-        const accountTypeLabel = accountTypeValue === 1 ? 'Pessoal' : accountTypeValue === 2 ? 'Criador' : accountTypeValue === 3 ? 'Empresa' : null
-        if (!accountTypeLabel) return null
+        const tipo = getLlmProfileTypeBadge(item as unknown as ProfileListItem)
+        const gen = getLlmGenderBadge(item as unknown as ProfileListItem)
+        if (!tipo && !gen) return null
+        const pill = (st: ReturnType<typeof campaignLlmBadgeStyles>) => ({
+          display: 'inline-block' as const,
+          maxWidth: '100%',
+          fontSize: 9,
+          fontWeight: 600,
+          lineHeight: 1.35,
+          padding: '2px 6px',
+          borderRadius: 999,
+          whiteSpace: 'normal' as const,
+          wordBreak: 'break-word' as const,
+          textAlign: 'left' as const,
+          border: st.border,
+          color: st.color,
+          background: st.background,
+        })
         return (
-          <div style={{ position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
-            <Tag color={accountTypeValue === 1 ? 'default' : accountTypeValue === 2 ? 'blue' : 'purple'} style={{ margin: 0, fontSize: 9, padding: '0 4px', lineHeight: '16px' }}>
-              {accountTypeLabel}
-            </Tag>
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              zIndex: 2,
+              maxWidth: 'min(52%, calc(100% - 44px))',
+              pointerEvents: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              gap: 4,
+            }}
+          >
+            {tipo ? (
+              <Tooltip title={tipo.title}>
+                <span style={pill(campaignLlmBadgeStyles(tipo.text))}>{tipo.text}</span>
+              </Tooltip>
+            ) : null}
+            {gen ? (
+              <Tooltip title={gen.title}>
+                <span style={pill(campaignLlmBadgeStyles(gen.text))}>{gen.text}</span>
+              </Tooltip>
+            ) : null}
           </div>
         )
       })()}
@@ -265,13 +304,69 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
               )
             })()}
           </div>
-          {variant === 'list' && (item.handle || item.key) && (
-            <div style={{ marginTop: 1 }}>
-              <span style={{ fontSize: 11, color: 'var(--app-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                @{item.handle ?? item.key}
-              </span>
-            </div>
-          )}
+          {variant === 'list' && (() => {
+            const catLabel = getLlmMainCategoryLabel(item as unknown as ProfileListItem)
+            const pillarLabels = getLlmContentPillarLabels(item as unknown as ProfileListItem)
+            if (!catLabel && pillarLabels.length === 0) return null
+            const badgeBase = {
+              display: 'inline-block' as const,
+              maxWidth: '100%',
+              fontSize: 10,
+              fontWeight: 600,
+              lineHeight: 1.35,
+              padding: '2px 7px',
+              borderRadius: 999,
+              whiteSpace: 'normal' as const,
+              wordBreak: 'break-word' as const,
+              textAlign: 'center' as const,
+            }
+            return (
+              <div
+                style={{
+                  marginTop: 4,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: '5px 6px',
+                  maxWidth: '100%',
+                }}
+              >
+                {catLabel ? (
+                  <Tooltip title="Categoria principal (LLM)">
+                    <span style={{ ...badgeBase, ...campaignLlmBadgeStyles(catLabel) }}>{catLabel}</span>
+                  </Tooltip>
+                ) : null}
+                {pillarLabels.map((pillar) => (
+                  <Tooltip key={pillar} title="Pilar de conteúdo (LLM)">
+                    <span style={{ ...badgeBase, ...campaignLlmBadgeStyles(pillar) }}>{pillar}</span>
+                  </Tooltip>
+                ))}
+              </div>
+            )
+          })()}
+          {variant === 'list' && (() => {
+            const llm = getLlmDescriptionLine(item as unknown as ProfileListItem)
+            if (!llm) return null
+            return (
+              <Tooltip title={llm.tooltip ?? llm.line}>
+                <div
+                  style={{
+                    marginTop: 4,
+                    fontSize: 10,
+                    lineHeight: 1.45,
+                    color: 'var(--app-text-tertiary, #6b7280)',
+                    wordBreak: 'break-word',
+                    overflowWrap: 'anywhere',
+                    maxWidth: '100%',
+                    textAlign: 'center',
+                  }}
+                >
+                  {llm.line}
+                </div>
+              </Tooltip>
+            )
+          })()}
           {location && (
             <div
               style={{
@@ -287,7 +382,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
               {location}
             </div>
           )}
-          {variant !== 'list' && ((item.activation?.content_type && item.activation.content_type.length > 0) || (categories?.length ?? 0) > 0 || (() => { const at = (item as { account_type?: number }).account_type; return at != null && at >= 1 && at <= 3; })()) && (
+          {variant !== 'list' && ((item.activation?.content_type && item.activation.content_type.length > 0) || (categories?.length ?? 0) > 0) && (
             <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 4, marginTop: 8 }}>
               {item.activation?.content_type && item.activation.content_type.length > 0
                 ? (() => {
@@ -306,23 +401,14 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                     </>
                   )
                 })()
-                : (categories?.length ?? 0) > 0
-                  ? (categories ?? []).slice(0, 3).map((c, i) => {
-                    const tagColors = ['blue', 'green', 'orange'] as const
-                    return (
-                      <Tag key={c} color={tagColors[i % 3]} style={{ margin: 0, fontSize: 10, borderRadius: 4 }}>
-                        #{c}
-                      </Tag>
-                    )
-                  })
-                  : (() => {
-                    const at = (item as { account_type?: number }).account_type
-                    const label = at === 1 ? 'Pessoal' : at === 2 ? 'Criador' : at === 3 ? 'Empresa' : null
-                    const color = at === 1 ? 'default' : at === 2 ? 'blue' : 'purple'
-                    return label ? (
-                      <Tag color={color} style={{ margin: 0, fontSize: 10, borderRadius: 4 }}>{label}</Tag>
-                    ) : null
-                  })()}
+                : (categories ?? []).slice(0, 3).map((c, i) => {
+                  const tagColors = ['blue', 'green', 'orange'] as const
+                  return (
+                    <Tag key={c} color={tagColors[i % 3]} style={{ margin: 0, fontSize: 10, borderRadius: 4 }}>
+                      #{c}
+                    </Tag>
+                  )
+                })}
             </div>
           )}
         </div>
@@ -366,17 +452,39 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                   { val: formatShortNum(eng.avg_likes), label: 'Posts', title: 'Média likes/post' },
                   { val: priceLabel, label: 'Preço', title: 'Faixa de preço', color: costTierColor },
                 ]
+                const h = item.handle ?? item.key
                 return (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, fontSize: 10, textAlign: 'center' }}>
-                    {metrics.map((m, i) => (
-                      <Tooltip key={i} title={m.title}>
-                        <div>
-                          <div style={{ fontWeight: 700, color: m.color ?? 'var(--app-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.val}</div>
-                          <div style={{ fontSize: 9, color: 'var(--app-text-tertiary)' }}>{m.label}</div>
-                        </div>
-                      </Tooltip>
-                    ))}
-                  </div>
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, fontSize: 10, textAlign: 'center' }}>
+                      {metrics.map((m, i) => (
+                        <Tooltip key={i} title={m.title}>
+                          <div>
+                            <div style={{ fontWeight: 700, color: m.color ?? 'var(--app-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.val}</div>
+                            <div style={{ fontSize: 9, color: 'var(--app-text-tertiary)' }}>{m.label}</div>
+                          </div>
+                        </Tooltip>
+                      ))}
+                    </div>
+                    {h ? (
+                      <div style={{ marginTop: 8, textAlign: 'center', minWidth: 0 }}>
+                        <Tooltip title={`@${h}`}>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: 'var(--app-text-secondary)',
+                              display: 'inline-block',
+                              maxWidth: '100%',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            @{h}
+                          </span>
+                        </Tooltip>
+                      </div>
+                    ) : null}
+                  </>
                 )
               })()
             ) : (
@@ -418,9 +526,30 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
             )}
           </>
         ) : (
-          <Text type="secondary" style={{ fontSize: 12, textAlign: 'center', display: 'block', padding: '8px 0' }}>
-            Faça login para ver as métricas
-          </Text>
+          <>
+            <Text type="secondary" style={{ fontSize: 12, textAlign: 'center', display: 'block', padding: '8px 0' }}>
+              Faça login para ver as métricas
+            </Text>
+            {variant === 'list' && (item.handle || item.key) && (
+              <div style={{ marginTop: 4, textAlign: 'center', minWidth: 0 }}>
+                <Tooltip title={`@${item.handle ?? item.key}`}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--app-text-secondary)',
+                      display: 'inline-block',
+                      maxWidth: '100%',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    @{item.handle ?? item.key}
+                  </span>
+                </Tooltip>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -17,6 +17,7 @@ import {
   type InfluencerRejectionDiagnostic,
 } from '../utils/entityAccess.js';
 import { buildSlimProfile } from '../utils/slimProfile.js';
+import { loadExistingProfileRecordForMerge, mergeProfilePreservingLlm } from '../utils/preserveLlmOnProfileMerge.js';
 import { resyncInfluencerS3AfterDbMediaReset } from '../storage/s3InfluencerImage.js';
 import type { CrawlStorage } from './runCrawl.js';
 
@@ -135,7 +136,12 @@ export async function extractSingleProfileWithPage(
     logStep('forRefresh: S3 wipe + avatar + capas...');
     await resyncInfluencerS3AfterDbMediaReset(slim, { posts, reels, tagged, highlights });
     logStep('forRefresh: salvando perfil...');
-    await storage.save(slim as Entity & { handle: string });
+    const existingRefresh = await loadExistingProfileRecordForMerge(
+      storage as CrawlStorage & { loadByHandle?: (h: string) => Promise<Entity | null> },
+      slim.handle
+    );
+    const mergedRefresh = mergeProfilePreservingLlm(existingRefresh, slim as Record<string, unknown>);
+    await storage.save(mergedRefresh as Entity & { handle: string });
     logStep('salvando posts, reels, marcados e highlights...');
     const postsSaved = await saveAllMedia(collectedAt);
     logStep(`pronto (${postsSaved} itens).`);
@@ -239,7 +245,12 @@ export async function extractSingleProfileWithPage(
   logStep('S3: apaga prefixo influencer + avatar + capas...');
   await resyncInfluencerS3AfterDbMediaReset(slim, { posts, reels, tagged, highlights });
   logStep('salvando perfil...');
-  await storage.save(slim as Entity & { handle: string });
+  const existingSave = await loadExistingProfileRecordForMerge(
+    storage as CrawlStorage & { loadByHandle?: (h: string) => Promise<Entity | null> },
+    slim.handle
+  );
+  const mergedSave = mergeProfilePreservingLlm(existingSave, slim as Record<string, unknown>);
+  await storage.save(mergedSave as Entity & { handle: string });
   logStep('salvando posts, reels, marcados e highlights...');
   const postsSaved = await saveAllMedia(collectedAt);
   logStep(`pronto (${postsSaved} itens).`);

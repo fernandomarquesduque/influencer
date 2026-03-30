@@ -36,6 +36,7 @@ import {
   getProfileSummary,
   scheduleSearchCacheRewarm,
   warmSearchCache,
+  getLlmQualification,
   matchesQuery,
   getPostSearchableNormalized,
   getPostTimestamp,
@@ -75,6 +76,7 @@ import { createCollectorController } from './controllers/collectorController.js'
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
 import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
 import { logS3StartupStatus, wipeInfluencerS3Prefix } from '../s3/influencerProfileStorage.js';
+import { campaignAccessDurationDays, defaultCampaignExpiresAtIso } from '../config/campaignAccess.js';
 
 const require = createRequire(import.meta.url);
 const openApiRocksdb = require('./openapi-rocksdb.json');
@@ -480,6 +482,17 @@ let crawlAbortRequested = false;
 
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
+});
+
+/**
+ * Público: duração padrão do acesso à campanha (dias) e data de expiração sugerida YYYY-MM-DD.
+ * Alinha front (checkout / criação de relatório) com CAMPAIGN_ACCESS_DURATION_DAYS no servidor.
+ */
+app.get('/api/campaign-access-defaults', (_req: Request, res: Response) => {
+  res.json({
+    durationDays: campaignAccessDurationDays(),
+    defaultExpiresAt: defaultCampaignExpiresAtIso(),
+  });
 });
 
 /** Login: retorna JWT e dados do usuário. Aceita username (handle do influencer ou admin). */
@@ -1648,23 +1661,22 @@ app.get('/api/admin/db/tables/:table', requireScopes('adm'), (req: Request, res:
   }
 });
 
-/**
- * Admin: apaga influenciador por completo — RocksDB (perfil + mídias), SQLite (ativação, fila, favoritos globais,
- * retira o handle das campanhas), prefixo S3 `influencers/<handle>/`, e conta auth + pagamentos/créditos se existir.
- */
-app.delete('/api/admin/influencers/:handle', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
-  const raw = decodeURIComponent(String(req.params.handle ?? '').trim());
-  const handle = raw.replace(/^@+/, '').toLowerCase().trim();
+type AdminPurgeCoreResult =
+  | { ok: true; handle: string; s3ObjectsRemoved: number }
+  | { ok: false; handle: string; error: string; statusCode: 400 | 500 };
+
+/** Núcleo compartilhado: purge completo (sem invalidar cache de campanha). */
+async function purgeInfluencerAsAdminCore(rawInput: string): Promise<AdminPurgeCoreResult> {
+  const handle = rawInput.replace(/^@+/, '').toLowerCase().trim();
   if (!handle || handle.length > 200) {
-    res.status(400).json({ error: 'Handle inválido' });
-    return;
+    return { ok: false, handle: rawInput.trim() || '(vazio)', error: 'Handle inválido', statusCode: 400 };
   }
 
   let s3ObjectsRemoved = 0;
   try {
     s3ObjectsRemoved = await wipeInfluencerS3Prefix(handle);
   } catch (e) {
-    console.error('[DELETE /api/admin/influencers/:handle] S3:', e instanceof Error ? e.message : e);
+    console.error('[admin purge] S3:', e instanceof Error ? e.message : e);
   }
 
   const authUser = authDb.getByProfileHandle(handle);
@@ -1673,9 +1685,8 @@ app.delete('/api/admin/influencers/:handle', requireScopes('adm'), async (req: R
   try {
     await db.deleteProfileCompletely(handle);
   } catch (e) {
-    console.error('[DELETE /api/admin/influencers/:handle] storage:', e instanceof Error ? e.message : e);
-    res.status(500).json({ error: 'Falha ao apagar dados locais do perfil' });
-    return;
+    console.error('[admin purge] storage:', e instanceof Error ? e.message : e);
+    return { ok: false, handle, error: 'Falha ao apagar dados locais do perfil', statusCode: 500 };
   }
 
   try {
@@ -1684,7 +1695,7 @@ app.delete('/api/admin/influencers/:handle', requireScopes('adm'), async (req: R
     authDb.clearProfileVerification(handle);
     creditsCampaignsDb.removeHandleFromAllCampaigns(handle);
   } catch (e) {
-    console.error('[DELETE /api/admin/influencers/:handle] sqlite/auth:', e instanceof Error ? e.message : e);
+    console.error('[admin purge] sqlite/auth:', e instanceof Error ? e.message : e);
   }
 
   if (userId != null && Number.isFinite(userId)) {
@@ -1696,13 +1707,80 @@ app.delete('/api/admin/influencers/:handle', requireScopes('adm'), async (req: R
       authDb.deleteUser(userId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error('[DELETE /api/admin/influencers/:handle] auth user:', msg);
-      res.status(500).json({ error: 'Perfil apagado, mas falhou ao remover usuário vinculado. Verifique logs.' });
-      return;
+      console.error('[admin purge] auth user:', msg);
+      return {
+        ok: false,
+        handle,
+        error: 'Perfil apagado, mas falhou ao remover usuário vinculado. Verifique logs.',
+        statusCode: 500,
+      };
     }
   }
 
-  res.json({ ok: true, s3ObjectsRemoved });
+  return { ok: true, handle, s3ObjectsRemoved };
+}
+
+/**
+ * Admin: apaga influenciador por completo — RocksDB (perfil + mídias), SQLite (ativação, fila, favoritos globais,
+ * retira o handle das campanhas), prefixo S3 `influencers/<handle>/`, e conta auth + pagamentos/créditos se existir.
+ */
+app.delete('/api/admin/influencers/:handle', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
+  const raw = decodeURIComponent(String(req.params.handle ?? '').trim());
+  const result = await purgeInfluencerAsAdminCore(raw);
+  if (!result.ok) {
+    res.status(result.statusCode).json({ error: result.error });
+    return;
+  }
+  clearCampaignContextCache();
+  res.json({ ok: true, s3ObjectsRemoved: result.s3ObjectsRemoved });
+});
+
+const ADMIN_PURGE_BATCH_MAX = 100;
+
+/** Admin: exclusão em lote (mesmo efeito do DELETE por handle). Máx. 100 handles por requisição. */
+app.post('/api/admin/influencers/purge-batch', requireScopes('adm'), rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as { handles?: unknown };
+    if (!Array.isArray(body.handles)) {
+      res.status(400).json({ error: 'Envie um JSON com { handles: string[] }' });
+      return;
+    }
+    const seen = new Set<string>();
+    const handles: string[] = [];
+    for (const x of body.handles) {
+      const n = String(x ?? '')
+        .replace(/^@+/, '')
+        .toLowerCase()
+        .trim();
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      handles.push(n);
+    }
+    if (handles.length === 0) {
+      res.status(400).json({ error: 'Nenhum handle válido' });
+      return;
+    }
+    if (handles.length > ADMIN_PURGE_BATCH_MAX) {
+      res.status(400).json({ error: `Máximo de ${ADMIN_PURGE_BATCH_MAX} handles por requisição` });
+      return;
+    }
+    const removed: string[] = [];
+    const failed: { handle: string; error: string }[] = [];
+    let s3ObjectsRemoved = 0;
+    for (const h of handles) {
+      const r = await purgeInfluencerAsAdminCore(h);
+      if (r.ok) {
+        removed.push(r.handle);
+        s3ObjectsRemoved += r.s3ObjectsRemoved;
+      } else {
+        failed.push({ handle: r.handle, error: r.error });
+      }
+    }
+    if (removed.length > 0) clearCampaignContextCache();
+    res.json({ ok: true, removed, failed, s3ObjectsRemoved });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
 });
 
 /** Admin: excluir usuário (apenas adm). */
@@ -2026,31 +2104,203 @@ function redactPostsItems(items: Array<{ key: string;[k: string]: unknown }>): A
   });
 }
 
-/** Engajamento zerado para respostas sem login (nenhum dado de métrica retornado). */
-const ZERO_ENGAGEMENT = {
-  posts_count: 0,
-  total_likes: 0,
-  total_comments: 0,
-  total_views: 0,
-  avg_likes: 0,
-  avg_comments: 0,
-  avg_views: 0,
-  engagement_rate: 0,
-};
-
-/** Remove dados de métrica da listagem de busca quando o usuário não está logado. */
-function redactSearchResultForAnonymous(result: { total: number; items: Record<string, unknown>[]; facets: Record<string, unknown> }): typeof result {
-  const items = result.items.map((item) => {
-    const out = { ...item };
-    out.followers_count = 0;
-    out.engagement = ZERO_ENGAGEMENT;
-    return out;
-  });
+/** Resposta de busca para público/anônimo: só totais e facets agregados — sem lista de perfis (`items`). */
+function publicSearchPayload(result: { total: number; facets: Record<string, unknown> }): { total: number; facets: Record<string, unknown> } {
   const facets = { ...result.facets };
   facets.engagement_rate = [];
   facets.avg_likes = [];
   facets.posts_count = [];
-  return { total: result.total, items, facets };
+  return { total: result.total, facets };
+}
+
+interface ProfilePreviewItem {
+  firstName: string;
+  profilePicUrl: string;
+  llmDescription: string;
+  size: 'nano' | 'micro' | 'medio' | 'macro';
+  category: string;
+  audience: string;
+  collectedAt: string | null;
+  /** Métricas do perfil (mesma base da listagem / `engagement`). */
+  followersCount: number;
+  /** Taxa de engajamento % (média de interações por post vs seguidores). */
+  engagementRate: number;
+  totalLikes: number;
+  totalComments: number;
+  postsCount: number;
+}
+
+/** Varia o tamanho do texto no preview (cards com alturas diferentes) + um slot mais rico com metadados LLM. */
+function varyPreviewPersonaDescription(raw: string, item: ProfileListItem, previewIndex: number): string {
+  const q = getLlmQualification(item as unknown as Record<string, unknown>);
+  const cat = String(q?.mainCategory ?? '').trim();
+  const aud0 =
+    Array.isArray(q?.audienceType) && q?.audienceType[0] && typeof q.audienceType[0] === 'string'
+      ? q.audienceType[0].trim()
+      : '';
+
+  const base = String(raw ?? '').trim();
+  if (!base) {
+    if (cat || aud0) {
+      const one = [cat && `Conteúdo em ${cat}.`, aud0 && `Público ${aud0}.`].filter(Boolean);
+      if (previewIndex % 2 === 0) return one[0] ?? 'Sem descrição LLM disponível.';
+      return one.join(' ') || 'Sem descrição LLM disponível.';
+    }
+    return 'Sem descrição LLM disponível.';
+  }
+
+  const mode = previewIndex % 5;
+  const firstSentence = (() => {
+    const m = base.match(/^.{1,200}?[.!?](?:\s|$)/);
+    return m ? m[0].trim() : base.slice(0, Math.min(95, base.length));
+  })();
+
+  if (mode === 0) {
+    return firstSentence.length > 100 ? `${firstSentence.slice(0, 97)}…` : firstSentence;
+  }
+  if (mode === 1) {
+    const cut = base.length > 145 ? `${base.slice(0, 142)}…` : base;
+    return cut;
+  }
+  if (mode === 2) {
+    return base.length > 260 ? `${base.slice(0, 257)}…` : base;
+  }
+  if (mode === 3) {
+    return base;
+  }
+  const tail = [cat && `Categoria: ${cat}.`, aud0 && `Público-alvo: ${aud0}.`].filter(Boolean).join(' ');
+  return tail ? `${base} ${tail}` : base;
+}
+
+function buildProfilePreviewItem(item: ProfileListItem, previewIndex: number): ProfilePreviewItem {
+  const fullName = String(item.full_name ?? '').trim();
+  const firstName = (() => {
+    const chooseFromParts = (parts: string[]): string | null => {
+      const clean = parts.map((p) => p.trim()).filter(Boolean);
+      const long = clean.find((p) => p.length > 4);
+      if (long) return long;
+      return clean[0] ?? null;
+    };
+    if (fullName) {
+      const fromName = chooseFromParts(fullName.split(/\s+/));
+      if (fromName) return fromName;
+    }
+    const handleBase = String(item.handle ?? '').replace(/^@/, '').trim();
+    if (!handleBase) return 'Influenciador';
+    const handleParts = handleBase
+      .split(/[._-]+/)
+      .map((x) => x.replace(/\d+/g, '').trim())
+      .filter(Boolean);
+    return chooseFromParts(handleParts) ?? handleBase;
+  })();
+  const q = getLlmQualification(item as unknown as Record<string, unknown>);
+  const personaRaw = String(q?.personaSummary ?? '').trim();
+  const llmDescription = varyPreviewPersonaDescription(personaRaw, item, previewIndex);
+  const category = String(q?.mainCategory ?? '').trim() || '-';
+  const audienceArr = Array.isArray(q?.audienceType)
+    ? (q!.audienceType as unknown[])
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .slice(0, 2)
+    : [];
+  const audience = audienceArr.join(' / ') || '-';
+  const profilePicUrl = String(item.stable_profile_pic_url ?? '').trim();
+  const followers = Number(item.followers_count ?? 0);
+  const size: 'nano' | 'micro' | 'medio' | 'macro' =
+    followers < 10_000 ? 'nano' :
+      followers < 50_000 ? 'micro' :
+        followers < 200_000 ? 'medio' : 'macro';
+  const collectedAtRaw = (item as Record<string, unknown>)._collected_at;
+  const collectedAt = typeof collectedAtRaw === 'string' && collectedAtRaw.trim() ? collectedAtRaw : null;
+  const eng = item.engagement;
+  const engagementRate = Number(eng?.engagement_rate ?? 0);
+  const totalLikes = Number(eng?.total_likes ?? 0);
+  const totalComments = Number(eng?.total_comments ?? 0);
+  const postsCount = Number(eng?.posts_count ?? 0);
+  return {
+    firstName,
+    profilePicUrl,
+    llmDescription,
+    size,
+    category,
+    audience,
+    collectedAt,
+    followersCount: followers,
+    engagementRate: Number.isFinite(engagementRate) ? engagementRate : 0,
+    totalLikes: Number.isFinite(totalLikes) ? totalLikes : 0,
+    totalComments: Number.isFinite(totalComments) ? totalComments : 0,
+    postsCount: Number.isFinite(postsCount) ? postsCount : 0,
+  };
+}
+
+function collectedAtDesc(a: ProfileListItem, b: ProfileListItem): number {
+  const getMs = (it: ProfileListItem): number => {
+    const raw = (it as Record<string, unknown>)._collected_at;
+    if (typeof raw !== 'string' || !raw.trim()) return 0;
+    const ms = new Date(raw).getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  };
+  return getMs(b) - getMs(a);
+}
+
+function getPrimaryAudienceKey(item: ProfileListItem): string {
+  const q = getLlmQualification(item as unknown as Record<string, unknown>);
+  const firstAudience = Array.isArray(q?.audienceType) ? q?.audienceType[0] : null;
+  if (typeof firstAudience === 'string' && firstAudience.trim()) {
+    return firstAudience.trim().toLowerCase();
+  }
+  return 'sem_publico';
+}
+
+function getPrimaryCategoryKey(item: ProfileListItem): string {
+  const q = getLlmQualification(item as unknown as Record<string, unknown>);
+  const cat = typeof q?.mainCategory === 'string' ? q.mainCategory : '';
+  const normalized = cat.trim().toLowerCase();
+  return normalized || 'sem_categoria';
+}
+
+/**
+ * Mistura os perfis por público e categoria principais sem perder recência:
+ * - começa dos mais atuais
+ * - alterna por grupos audiência+categoria (round-robin)
+ * - fallback para preencher com os restantes.
+ */
+function pickMixedRecentPreviewItems(sortedByRecent: ProfileListItem[], limit: number): ProfileListItem[] {
+  const groups = new Map<string, ProfileListItem[]>();
+  for (const item of sortedByRecent) {
+    const key = `${getPrimaryAudienceKey(item)}|${getPrimaryCategoryKey(item)}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(item);
+    else groups.set(key, [item]);
+  }
+  const orderedGroupKeys = [...groups.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([k]) => k);
+  const selected: ProfileListItem[] = [];
+  while (selected.length < limit && orderedGroupKeys.length > 0) {
+    let consumedInRound = 0;
+    for (const key of orderedGroupKeys) {
+      if (selected.length >= limit) break;
+      const arr = groups.get(key);
+      if (arr && arr.length > 0) {
+        const next = arr.shift();
+        if (next) {
+          selected.push(next);
+          consumedInRound++;
+        }
+      }
+    }
+    if (consumedInRound === 0) break;
+  }
+  if (selected.length < limit) {
+    const selectedHandles = new Set(selected.map((i) => i.handle));
+    for (const item of sortedByRecent) {
+      if (selected.length >= limit) break;
+      if (selectedHandles.has(item.handle)) continue;
+      selected.push(item);
+      selectedHandles.add(item.handle);
+    }
+  }
+  return selected.slice(0, limit);
 }
 
 /** Listagem de perfis com filtros avançados e engajamento. Público (anônimo ou scope public): 1ª página.
@@ -2064,6 +2314,30 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       if (typeof v === 'string') return v.split(',').map((x) => Number(x.trim())).filter(Number.isFinite);
       return undefined;
     };
+    const parseStrList = (v: unknown): string[] | undefined => {
+      if (v == null) return undefined;
+      if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+      if (typeof v === 'string') return v.split(',').map((x) => x.trim()).filter(Boolean);
+      return undefined;
+    };
+    const optStrList = (v: unknown): string[] | undefined => {
+      const a = parseStrList(v);
+      return a?.length ? a : undefined;
+    };
+    const llmFamilyRaw = req.query.llmFamilySafe;
+    const llmIsFamilySafe =
+      llmFamilyRaw === '1' || llmFamilyRaw === 'true'
+        ? true
+        : llmFamilyRaw === '0' || llmFamilyRaw === 'false'
+          ? false
+          : undefined;
+    const llmAdultRaw = req.query.llmAdultContent;
+    const llmIsAdultContent =
+      llmAdultRaw === '1' || llmAdultRaw === 'true'
+        ? true
+        : llmAdultRaw === '0' || llmAdultRaw === 'false'
+          ? false
+          : undefined;
 
     const quantitativosOnly = Number(req.query.limit) === 0;
     const isPublicOrAnonymous = !quantitativosOnly && (!req.user || req.user.scope === 'public');
@@ -2130,6 +2404,17 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       pricingDestaque: parseNumList(req.query.pricingDestaque),
       costTierFilter: parseCostTierFilter(req.query.costTierFilter),
       sizeFilter: sizeFilterArr?.length ? sizeFilterArr : undefined,
+      llmProfileType: optStrList(req.query.llmProfileType),
+      llmMainCategory: optStrList(req.query.llmMainCategory),
+      llmGender: optStrList(req.query.llmGender),
+      llmLanguage: optStrList(req.query.llmLanguage),
+      llmSubCategories: optStrList(req.query.llmSubCategories),
+      llmContentPillars: optStrList(req.query.llmContentPillars),
+      llmAudienceType: optStrList(req.query.llmAudienceType),
+      llmToneOfVoice: optStrList(req.query.llmToneOfVoice),
+      llmRiskLevel: optStrList(req.query.llmRiskLevel),
+      ...(llmIsFamilySafe !== undefined ? { llmIsFamilySafe } : {}),
+      ...(llmIsAdultContent !== undefined ? { llmIsAdultContent } : {}),
       sort,
       limit,
       offset,
@@ -2163,15 +2448,33 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       }
     }
     const result = await searchProfiles(db, queryForSearch, restrictToHandles?.length ? { restrictToHandles } : undefined);
-    if (quantitativosOnly) {
-      res.json(result);
-      return;
-    }
-    if (!req.user) {
-      res.json(redactSearchResultForAnonymous(result as unknown as { total: number; items: Record<string, unknown>[]; facets: Record<string, unknown> }));
-      return;
-    }
-    res.json(result);
+    // Segurança: nunca retorne `items` (lista de perfis) neste endpoint.
+    // Este endpoint serve apenas agregações (`total` + `facets`) para qualquer usuário.
+    res.json(publicSearchPayload(result as unknown as { total: number; facets: Record<string, unknown> }));
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Preview de perfis para dashboard: 10 mais atuais com metadados LLM resumidos. */
+app.post('/api/profiles/preview', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as { query?: ProfilesSearchQuery; limit?: number };
+    const query = (body.query ?? {}) as ProfilesSearchQuery;
+    const limitRaw = Number(body.limit);
+    const limit = Number.isFinite(limitRaw) ? Math.min(50, Math.max(1, Math.floor(limitRaw))) : 10;
+    const searchQuery: ProfilesSearchQuery = {
+      ...query,
+      sort: 'relevance_desc',
+      limit: Math.max(100, limit),
+      offset: 0,
+      includeFacets: false,
+    };
+    const result = await searchProfiles(db, searchQuery);
+    const recent = [...result.items].sort(collectedAtDesc);
+    const mixed = pickMixedRecentPreviewItems(recent, limit);
+    const items = mixed.map((it, index) => buildProfilePreviewItem(it, index));
+    res.json({ total: result.total, items });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -3413,6 +3716,12 @@ interface CampaignStatsResult {
   avgViews: number;
   previewProfiles: Array<{ handle: string; profile_pic_url?: string; full_name?: string; followers_count?: number }>;
   topHashtags: string[];
+  /** Categorias principais LLM mais frequentes entre os perfis (rótulo + quantidade de perfis, até 8). */
+  topLlmCategories: Array<{ label: string; count: number }>;
+  /** Gênero inferido pelo LLM (feminino, masculino, etc.) por quantidade de perfis. */
+  topLlmGenders: Array<{ label: string; count: number }>;
+  /** Tipo de perfil inferido pelo LLM (criador, empresa, etc.) por quantidade de perfis. */
+  topLlmProfileTypes: Array<{ label: string; count: number }>;
   /** Cidades presentes nos perfis ativados (nome e quantidade). */
   cities: Array<{ name: string; count: number }>;
   /** Estados presentes nos perfis ativados (nome e quantidade). */
@@ -3478,6 +3787,51 @@ async function getCampaignStats(campaignId: string, userId: number): Promise<Cam
     .slice(0, 2)
     .map(([key]) => key);
 
+  const llmCategoryByNorm = new Map<string, { count: number; label: string }>();
+  for (const item of result.items) {
+    const q = getLlmQualification(item as unknown as Record<string, unknown>);
+    if (!q) continue;
+    const raw = String(q.mainCategory ?? '').trim();
+    if (!raw || raw === '-') continue;
+    const norm = raw.toLowerCase();
+    const cur = llmCategoryByNorm.get(norm);
+    if (cur) cur.count += 1;
+    else llmCategoryByNorm.set(norm, { count: 1, label: raw });
+  }
+  const topLlmCategories = [...llmCategoryByNorm.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+    .map((v) => ({ label: v.label, count: v.count }));
+
+  const llmGenderByNorm = new Map<string, { count: number; label: string }>();
+  const llmProfileTypeByNorm = new Map<string, { count: number; label: string }>();
+  for (const item of result.items) {
+    const q = getLlmQualification(item as unknown as Record<string, unknown>);
+    if (!q) continue;
+    const genderRaw = String(q.gender ?? '').trim();
+    if (genderRaw && genderRaw !== '-') {
+      const gn = genderRaw.toLowerCase();
+      const gCur = llmGenderByNorm.get(gn);
+      if (gCur) gCur.count += 1;
+      else llmGenderByNorm.set(gn, { count: 1, label: genderRaw });
+    }
+    const ptRaw = String(q.profileType ?? '').trim();
+    if (ptRaw && ptRaw !== '-') {
+      const pn = ptRaw.toLowerCase();
+      const pCur = llmProfileTypeByNorm.get(pn);
+      if (pCur) pCur.count += 1;
+      else llmProfileTypeByNorm.set(pn, { count: 1, label: ptRaw });
+    }
+  }
+  const topLlmGenders = [...llmGenderByNorm.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+    .map((v) => ({ label: v.label, count: v.count }));
+  const topLlmProfileTypes = [...llmProfileTypeByNorm.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+    .map((v) => ({ label: v.label, count: v.count }));
+
   const cityCount = new Map<string, number>();
   const stateCount = new Map<string, number>();
   let activatedCount = 0;
@@ -3519,6 +3873,9 @@ async function getCampaignStats(campaignId: string, userId: number): Promise<Cam
     avgViews: n > 0 ? Math.round(avgViewsSum / n) : 0,
     previewProfiles,
     topHashtags,
+    topLlmCategories,
+    topLlmGenders,
+    topLlmProfileTypes,
     cities,
     states,
     activatedCount,
@@ -3604,8 +3961,16 @@ app.get('/api/me/campaigns', async (req: RequestWithAuth, res: Response) => {
         }
         const data = await getCampaignStats(r.id, userId);
         if (!data) return base;
-        const { previewProfiles, topHashtags, ...stats } = data;
-        return { ...base, stats, previewProfiles, topHashtags };
+        const { previewProfiles, topHashtags, topLlmCategories, topLlmGenders, topLlmProfileTypes, ...stats } = data;
+        return {
+          ...base,
+          stats,
+          previewProfiles,
+          topHashtags,
+          topLlmCategories,
+          topLlmGenders,
+          topLlmProfileTypes,
+        };
       })
     );
     res.json({ campaigns });
@@ -4142,6 +4507,30 @@ function buildCampaignProfilesQuery(req: { query: Record<string, unknown> }): Pr
     if (typeof v === 'string') return v.split(',').map((x) => Number(x.trim())).filter(Number.isFinite);
     return undefined;
   };
+  const parseStrList = (v: unknown): string[] | undefined => {
+    if (v == null) return undefined;
+    if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+    if (typeof v === 'string') return v.split(',').map((x) => x.trim()).filter(Boolean);
+    return undefined;
+  };
+  const optStrList = (v: unknown): string[] | undefined => {
+    const a = parseStrList(v);
+    return a?.length ? a : undefined;
+  };
+  const llmFamilyRaw = req.query.llmFamilySafe;
+  const llmIsFamilySafe =
+    llmFamilyRaw === '1' || llmFamilyRaw === 'true'
+      ? true
+      : llmFamilyRaw === '0' || llmFamilyRaw === 'false'
+        ? false
+        : undefined;
+  const llmAdultRaw = req.query.llmAdultContent;
+  const llmIsAdultContent =
+    llmAdultRaw === '1' || llmAdultRaw === 'true'
+      ? true
+      : llmAdultRaw === '0' || llmAdultRaw === 'false'
+        ? false
+        : undefined;
   const minFollowers = req.query.minFollowers != null ? Number(req.query.minFollowers) : undefined;
   const maxFollowers = req.query.maxFollowers != null ? Number(req.query.maxFollowers) : undefined;
   const minEngagementRate = req.query.minEngagementRate != null ? Number(req.query.minEngagementRate) : undefined;
@@ -4188,11 +4577,52 @@ function buildCampaignProfilesQuery(req: { query: Record<string, unknown> }): Pr
     pricingDestaque: parseNumList(req.query.pricingDestaque),
     costTierFilter: parseCostTierFilter(req.query.costTierFilter),
     sizeFilter: sizeFilterArr?.length ? sizeFilterArr : undefined,
+    llmProfileType: optStrList(req.query.llmProfileType),
+    llmMainCategory: optStrList(req.query.llmMainCategory),
+    llmGender: optStrList(req.query.llmGender),
+    llmLanguage: optStrList(req.query.llmLanguage),
+    llmSubCategories: optStrList(req.query.llmSubCategories),
+    llmContentPillars: optStrList(req.query.llmContentPillars),
+    llmAudienceType: optStrList(req.query.llmAudienceType),
+    llmToneOfVoice: optStrList(req.query.llmToneOfVoice),
+    llmRiskLevel: optStrList(req.query.llmRiskLevel),
+    ...(llmIsFamilySafe !== undefined ? { llmIsFamilySafe } : {}),
+    ...(llmIsAdultContent !== undefined ? { llmIsAdultContent } : {}),
     sort,
     limit,
     offset,
   };
 }
+
+/** Admin: lista todos os perfis (índice) com filtros iguais à busca de campanha + facetas LLM; até 500 por página. */
+app.get('/api/admin/influencers', requireScopes('adm'), rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+  try {
+    const base = buildCampaignProfilesQuery(req);
+    const limitParam = Number(req.query.limit);
+    const offsetParam = Number(req.query.offset);
+    const adminLimit = Math.min(Math.max(1, Number.isFinite(limitParam) ? limitParam : 50), 500);
+    const adminOffset = Math.max(0, Number.isFinite(offsetParam) ? offsetParam : 0);
+    const categoriesRaw = req.query.categories;
+    const categories =
+      Array.isArray(categoriesRaw)
+        ? categoriesRaw.map(String).filter(Boolean)
+        : typeof categoriesRaw === 'string'
+          ? categoriesRaw.split(',').map((x) => x.trim()).filter(Boolean)
+          : undefined;
+    const query: ProfilesSearchQuery = {
+      ...base,
+      limit: adminLimit,
+      offset: adminOffset,
+      ...(categories?.length ? { categories } : {}),
+      includeFacets: req.query.includeFacets === 'false' ? false : true,
+    };
+    const result = await searchProfiles(db, query, { allowLargeLimit: true });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ total: result.total, items: result.items, facets: result.facets });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
 
 /** Cache do contexto (lista completa) por campanha para aplicar filtros em cima sem refazer a busca. TTL 5 min. */
 const CAMPAIGN_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -4209,6 +4639,11 @@ function getCachedCampaignContext(campaignId: string): ProfileListItem[] | null 
 
 function setCachedCampaignContext(campaignId: string, items: ProfileListItem[]): void {
   campaignContextCache.set(campaignId, { items, ts: Date.now() });
+}
+
+/** Invalida listagens agregadas de campanha (ex.: após purge admin ou mudança em handles_json). */
+function clearCampaignContextCache(): void {
+  campaignContextCache.clear();
 }
 
 /** Nome do header para contexto de campanha. Obrigatório ao acessar dados de outro influenciador. */
@@ -4384,7 +4819,7 @@ app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWith
   }
 });
 
-/** Listagem de perfis de uma campanha (paginação + filtros iguais à busca principal). Com pagamento pendente: retorna facets + total + pricePreview, sem items. */
+/** Listagem de perfis de uma campanha (paginação + filtros iguais à busca principal). Com pagamento pendente: retorna também items para preview/checkout no cliente (facets + total + pricePreview inalterados). */
 app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
     if (!req.user) {
@@ -4454,7 +4889,7 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
       const billableProfileCount = result.items.length - priceSums.alreadyOwnedCount;
       res.json({
         total: result.total,
-        items: [],
+        items: result.items,
         facets: result.facets,
         pricePreview: {
           amountCents,
@@ -4976,12 +5411,16 @@ function influencerFieldsFromProfile(profile: Record<string, unknown> | null | u
   const unameRaw = (profile.username ?? u?.username ?? uRoot?.username ?? profile.handle) as string | undefined;
   const username =
     typeof unameRaw === 'string' && unameRaw.trim() ? normalizeHandle(unameRaw) : undefined;
+  const llmRaw = profile.llm;
+  const llm =
+    llmRaw != null && typeof llmRaw === 'object' && !Array.isArray(llmRaw) ? llmRaw : undefined;
   return {
     followers_count,
     ...(full_name ? { full_name } : {}),
     ...(profile_pic_url ? { profile_pic_url } : {}),
     ...(stable_profile_pic_url ? { stable_profile_pic_url } : {}),
     ...(username ? { username } : {}),
+    ...(llm ? { llm } : {}),
   };
 }
 
@@ -5080,6 +5519,8 @@ async function runPostMatchesForHandles(
           if (!handleSet.has(h)) continue;
           const item = value as Record<string, unknown>;
           const ct = getContentTypeFromItem(key, item);
+          // Marcados (tagged): só entram no índice de post-matches quando há busca por palavra (`q`).
+          if (!qRaw && ct === 'tagged') continue;
           if (qRaw) {
             const searchable = getPostSearchableNormalized(item);
             const { match } = matchesQuery(searchable, qRaw);
@@ -5168,6 +5609,7 @@ async function runPostMatchesForHandles(
       delete base.hd_profile_pic_url;
       delete base.hd_profile_pic_url_info;
       delete base.stable_profile_pic_url;
+      delete base.llm;
       (row as Record<string, unknown>).influencer = {
         ...base,
         ...fromProfile,

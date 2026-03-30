@@ -41,6 +41,7 @@ import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
 import AdminDashboard from './pages/AdminDashboard'
 import AdminMentionReport from './pages/AdminMentionReport'
+import AdminBulkPurgeInfluencers from './pages/AdminBulkPurgeInfluencers'
 import ListAndDetailModal from './pages/ListAndDetailModal'
 import MyCampaigns from './pages/MyCampaigns'
 import CampaignInfluencers from './pages/CampaignInfluencers'
@@ -118,6 +119,14 @@ export default function App() {
                 </RequireAuth>
               }
             />
+            <Route
+              path="admin/influencers/bulk-purge"
+              element={
+                <RequireAuth requireAdm>
+                  <AdminBulkPurgeInfluencers />
+                </RequireAuth>
+              }
+            />
           </Route>
 
           <Route path="/extraction" element={<Extraction />} />
@@ -129,6 +138,7 @@ export default function App() {
             path="/admin/reports/unregistered-mentions"
             element={<Navigate to="/app/admin/reports/unregistered-mentions" replace />}
           />
+          <Route path="/admin/influencers/bulk-purge" element={<Navigate to="/app/admin/influencers/bulk-purge" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </PendingPaymentCelebrationProvider>

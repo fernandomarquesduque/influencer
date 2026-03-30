@@ -1,30 +1,24 @@
-/**
- * Dashboard do resultado da busca: agregações e visão que gera desejo pelo relatório.
- * Exibido após o wizard de filtros; o usuário decide aqui se quer comprar/ver a lista completa.
- */
-import { Card, Typography, Button, Statistic, Space } from 'antd'
-import { RocketOutlined, UnlockOutlined, CheckCircleOutlined, MinusCircleOutlined, EnvironmentOutlined, UserOutlined, ContactsOutlined, ArrowLeftOutlined } from '@ant-design/icons'
-import type { ProfilesSearchQuery, ProfilesSearchFacets, ProfileListItem } from '../../api'
-import { getProfilePicUrl, proxyImageUrl } from '../../api'
+import { Card, Typography, Button, Progress } from 'antd'
+import { RocketOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import type { ProfilesSearchQuery, ProfilesSearchFacets } from '../../api'
+import InfluencerPreviewTable from '../InfluencerPreviewTable/InfluencerPreviewTable'
 import './ReportDashboard.css'
 
 const { Title, Text } = Typography
 
 export interface ReportDashboardProps {
-  /** Query aplicada (termo + filtros). */
   query: ProfilesSearchQuery
-  /** Total de perfis no resultado. */
   total: number
-  /** Facets da busca (categorias, engajamento, ativação, etc.). */
   facets: ProfilesSearchFacets | null
-  /** Amostra de itens para preview (ex.: primeiros 6). */
-  sampleItems?: ProfileListItem[]
-  /** Chamado quando o usuário clica para ver a lista completa / comprar relatório. */
   onViewList: () => void
-  /** Chamado quando o usuário clica em Voltar (retornar ao wizard). */
   onBack?: () => void
-  /** Carregando dados do dashboard. */
   loading?: boolean
+}
+
+function prettyLabel(raw: string): string {
+  const s = raw.replace(/[_-]+/g, ' ').trim()
+  if (!s) return raw
+  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 function formatNumber(n: number): string {
@@ -33,167 +27,184 @@ function formatNumber(n: number): string {
   return n.toLocaleString('pt-BR')
 }
 
-/** Primeiro nome para exibição: usa full_name quando existir, senão handle sem @ com inicial maiúscula. */
-function getDisplayFirstName(item: { full_name?: string; handle: string }): string {
-  const name = (item.full_name ?? '').trim()
-  if (name) {
-    const first = name.split(/\s+/)[0]
-    if (first) return first
-  }
-  const handle = (item.handle ?? '').replace(/^@/, '').trim()
-  if (!handle) return ''
-  return handle.charAt(0).toUpperCase() + handle.slice(1).toLowerCase()
+function topItems(arr: { name: string; count: number }[] | undefined, n = 6): { name: string; count: number }[] {
+  if (!arr?.length) return []
+  return [...arr]
+    .filter((x) => (x.count ?? 0) > 0 && x.name?.trim())
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
+    .slice(0, n)
 }
+
+function asPercent(count: number, total: number): number {
+  if (total <= 0) return 0
+  return Math.max(0, Math.min(100, Math.round((count / total) * 100)))
+}
+
+function levelCount(items: { name: string; count: number }[], level: 'familia' | 'sensivel' | 'adulto'): number {
+  return items.find((x) => x.name.trim().toLowerCase() === level)?.count ?? 0
+}
+
+const AUDIENCE_RING_STROKES: Array<string | { '0%': string; '100%': string }> = [
+  { '0%': '#8b82ff', '100%': '#5b4dff' },
+  { '0%': '#6ba3f5', '100%': '#3d6fd4' },
+  { '0%': '#d27ee8', '100%': '#9d4fbf' },
+  { '0%': '#4ed4b3', '100%': '#2aa88a' },
+]
 
 export default function ReportDashboard({
   query,
   total,
   facets,
-  sampleItems = [],
   onViewList,
   onBack,
   loading = false,
 }: ReportDashboardProps) {
-  const engagementRate = facets?.engagement_rate ?? []
-  const activation = facets?.activation
-
-  const cities = facets?.cities ?? []
-  const states = facets?.states ?? []
-  const neighborhoods = facets?.neighborhoods ?? []
-  const countWithLocation = cities.reduce((s, c) => s + c.count, 0) || states.reduce((s, c) => s + c.count, 0) || neighborhoods.reduce((s, c) => s + c.count, 0)
-  const hasLocation = countWithLocation > 0
-  const hasActivation = (activation?.activated ?? 0) > 0
-  const activatedCount = activation?.activated ?? 0
-  const social = facets?.social
-  const countWithSocial = social ? Math.max(social.whatsapp, social.tiktok, social.facebook, social.linkedin, social.twitter) : 0
-  const hasSocial = countWithSocial > 0
-
-  const reportIncludes = [
-    { icon: <EnvironmentOutlined />, label: 'Localização (cidade, estado, bairro) quando preenchida', count: countWithLocation, has: hasLocation },
-    { icon: <UserOutlined />, label: 'Tipo de perfil (pessoal, criador, empresa)', count: total, has: true },
-    { icon: <UnlockOutlined />, label: 'Dados de ativação salvos (preços, tipo de conteúdo)', count: activatedCount, has: hasActivation },
-    { icon: <ContactsOutlined />, label: 'Contatos e redes (WhatsApp, TikTok, Facebook, etc.)', count: countWithSocial, has: !!hasSocial },
-  ]
+  const llm = facets?.llm
+  const mainCategory = topItems(llm?.mainCategory, 4)
+  const subCategories = topItems(llm?.subCategories, 5)
+  const showMainCategories = mainCategory.length > 0
+  const showSubCategories = subCategories.length > 0
+  const audiences = topItems(llm?.audienceType, 4)
+  const brandSafety = topItems(llm?.brandSafety?.level, 3)
+  const familyCount = levelCount(brandSafety, 'familia')
+  const sensitiveCount = levelCount(brandSafety, 'sensivel')
+  const adultCount = levelCount(brandSafety, 'adulto')
 
   return (
-    <div className="report-dashboard">
-      <div className="report-dashboard-hero">
-        <Title level={1} className="report-dashboard-title">
-          Seu relatório está pronto
-        </Title>
-        <Text type="secondary" className="report-dashboard-subtitle">
-          {query.q ? `Busca: "${query.q}"` : 'Filtros aplicados'} · Resumo do que encontramos
-        </Text>
-        <Statistic
-          title="Total de perfis no resultado"
-          value={total}
-          formatter={(v) => formatNumber(Number(v))}
-          className="report-dashboard-total"
-        />
-        {engagementRate.some((b) => (b.count ?? 0) > 0) && (
-          <div className="report-dashboard-hero-engagement">
-            <Text type="secondary" className="report-dashboard-hero-engagement-title">
-              Por nível de engajamento
-            </Text>
-            <div className="report-dashboard-hero-engagement-list">
-              {engagementRate
-                .filter((bucket) => (bucket.count ?? 0) > 0)
-                .map((bucket, i) => (
-                  <span key={bucket.key ?? bucket.label} className="report-dashboard-hero-engagement-item">
-                    {i > 0 && <span className="report-dashboard-hero-engagement-sep"> · </span>}
-                    <Text>{bucket.label ?? bucket.key}</Text>
-                    <Text strong>{formatNumber(bucket.count)}</Text>
-                  </span>
-                ))}
-            </div>
-          </div>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 8 }}>
-          <Button
-            type="primary"
-            size="large"
-            onClick={onViewList}
-            loading={loading}
-            className="report-dashboard-cta"
-            icon={<RocketOutlined />}
-            style={{ borderRadius: 10 }}
-          >
-            Ver lista completa e acessar relatório
-          </Button>
+    <div className="rdv2">
+      <div className="rdv2-content">
+        <div className="rdv2-left-col">
           {onBack && (
-            <Button
-              size="middle"
-              onClick={onBack}
-              icon={<ArrowLeftOutlined />}
-              style={{ borderRadius: 10 }}
-            >
-              Voltar
-            </Button>
+            <div className="rdv2-top-actions">
+              <Button onClick={onBack} icon={<ArrowLeftOutlined />}>
+                Ajustar filtros
+              </Button>
+            </div>
           )}
-        </div>
-      </div>
 
-      <Card title="O que o relatório contém" className="report-dashboard-card report-dashboard-includes">
-        <p style={{ marginBottom: 16, color: 'var(--colorTextSecondary)' }}>
-          As informações abaixo estão disponíveis nos perfis deste resultado (quando preenchidas na ativação ou no perfil):
-        </p>
-        <ul className="report-dashboard-includes-list">
-          {reportIncludes.map((item) => (
-            <li key={item.label} className={item.has ? 'report-dashboard-includes-item' : 'report-dashboard-includes-item muted'}>
-              {item.has ? (
-                <CheckCircleOutlined className="report-dashboard-includes-icon" />
+          <section className="rdv2-hero">
+            <div className="rdv2-head">
+              <div>
+                <Text className="rdv2-kicker">Relatorio de Influencers</Text>
+                <Title level={1} className="rdv2-head-title">
+                  <span className="rdv2-head-count">{formatNumber(total)}</span>
+                  <span className="rdv2-head-label"> perfis</span>
+                </Title>
+                <div className="rdv2-safety-strip rdv2-safety-strip--compact">
+                  <div className="rdv2-safety-item safe">
+                    <span>Familia</span>
+                    <strong>{asPercent(familyCount, total)}%</strong>
+                  </div>
+                  <div className="rdv2-safety-item warning">
+                    <span>Sensivel</span>
+                    <strong>{asPercent(sensitiveCount, total)}%</strong>
+                  </div>
+                  <div className="rdv2-safety-item danger">
+                    <span>Adulto</span>
+                    <strong>{asPercent(adultCount, total)}%</strong>
+                  </div>
+                </div>
+                <div className="rdv2-cta-row">
+                  <Button
+                    type="primary"
+                    size="large"
+                    block
+                    onClick={onViewList}
+                    loading={loading}
+                    icon={<RocketOutlined />}
+                    className="rdv2-primary"
+                  >
+                    Abrir lista completa
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="rdv2-grid rdv2-grid-top">
+            <div className="rdv2-audience-section">
+              <Text className="rdv2-audience-section-title">Público alvo</Text>
+              {audiences.length === 0 ? (
+                <Text type="secondary">Sem dados de público neste recorte.</Text>
               ) : (
-                <MinusCircleOutlined className="report-dashboard-includes-icon" />
+                <div className="rdv2-audience-cards">
+                  {audiences.map((item, index) => {
+                    const pct = asPercent(item.count, total)
+                    const stroke = AUDIENCE_RING_STROKES[index % AUDIENCE_RING_STROKES.length]
+                    return (
+                      <div key={`aud-${item.name}`} className="rdv2-audience-card">
+                        <div className="rdv2-audience-card-chart">
+                          <Progress
+                            type="circle"
+                            percent={pct}
+                            width={64}
+                            strokeWidth={7}
+                            strokeColor={stroke}
+                            trailColor="#eeeffa"
+                            format={(p) => `${p ?? 0}%`}
+                          />
+                        </div>
+                        <div className="rdv2-audience-card-label">
+                          <span>{prettyLabel(item.name)}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               )}
-              <div className="report-dashboard-includes-content">
-                <Space size="small">
-                  {item.icon}
-                  <Text>{item.label}</Text>
-                  {!item.has && <Text type="secondary">(não disponível neste resultado)</Text>}
-                </Space>
-                {item.has && item.count > 0 && (
-                  <Text strong className="report-dashboard-includes-count">
-                    {item.count.toLocaleString('pt-BR')} perfil{item.count !== 1 ? 's' : ''}
-                  </Text>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </Card>
+            </div>
 
-      {sampleItems.length > 0 && (
-        <div className="report-dashboard-preview">
-          <Title level={4}>Prévia de alguns perfis</Title>
-          <div className="report-dashboard-preview-grid">
-            {sampleItems.slice(0, 6).map((item) => (
-              <div key={item.key} className="report-dashboard-preview-card">
-                <div
-                  className="report-dashboard-preview-avatar"
-                  style={{
-                    backgroundImage: `url(${proxyImageUrl(getProfilePicUrl(item)) || ''})`,
-                  }}
-                />
-                <Text strong className="report-dashboard-preview-handle">
-                  {getDisplayFirstName(item)}
-                </Text>
-              </div>
-            ))}
-          </div>
+            <Card className="rdv2-card rdv2-card--categories" title="Categorias">
+              {!showMainCategories && !showSubCategories && (
+                <Text type="secondary">Sem dados de categorias neste recorte.</Text>
+              )}
+              {showMainCategories && (
+                <div className="rdv2-facet-block">
+                  <Text className="rdv2-facet-section-title">Categoria principal</Text>
+                  {mainCategory.map((item) => {
+                    const pct = asPercent(item.count, total)
+                    return (
+                      <div key={`main-cat-${item.name}`} className="rdv2-row">
+                        <div className="rdv2-row-label">
+                          <span>{prettyLabel(item.name)}</span>
+                          <b>{pct}%</b>
+                        </div>
+                        <div className="rdv2-bar">
+                          <i style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {showSubCategories && (
+                <div className={`rdv2-facet-block${showMainCategories ? ' rdv2-facet-block--after-main' : ''}`}>
+                  <Text className="rdv2-facet-section-title">Subcategorias com maior potencial</Text>
+                  {subCategories.map((item) => {
+                    const pct = asPercent(item.count, total)
+                    return (
+                      <div key={`subcat-${item.name}`} className="rdv2-row">
+                        <div className="rdv2-row-label">
+                          <span>{prettyLabel(item.name)}</span>
+                          <b>{pct}%</b>
+                        </div>
+                        <div className="rdv2-bar">
+                          <i style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+          </section>
         </div>
-      )}
 
-      <div className="report-dashboard-cta-bottom">
-        <Button
-          type="primary"
-          size="large"
-          onClick={onViewList}
-          loading={loading}
-          icon={<RocketOutlined />}
-        >
-          Ver lista completa e acessar relatório
-        </Button>
+        <aside className="rdv2-right-col">
+          <InfluencerPreviewTable query={query} loading={loading} limit={5} onViewMore={onViewList} />
+        </aside>
       </div>
+
     </div>
   )
 }

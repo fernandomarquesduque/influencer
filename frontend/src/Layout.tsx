@@ -267,6 +267,11 @@ export default function Layout() {
                                       label: 'Relatório @ não cadastrados',
                                       onClick: () => navigate('/app/admin/reports/unregistered-mentions'),
                                     },
+                                    {
+                                      key: 'admin-bulk-purge',
+                                      label: 'Exclusão em lote (LLM)',
+                                      onClick: () => navigate('/app/admin/influencers/bulk-purge'),
+                                    },
                                   ]
                                 : []),
                               ...(isAdm ? [{ key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') }] : []),
@@ -497,6 +502,18 @@ export default function Layout() {
                         onClick={() => setMobileMenuOpen(false)}
                       >
                         Relatório @ não cadastrados
+                      </Link>
+                    )}
+                    {isAdm && (
+                      <Link
+                        to="/app/admin/influencers/bulk-purge"
+                        style={{
+                          ...drawerLinkStyle,
+                          ...(isActive('/app/admin/influencers/bulk-purge') ? drawerLinkActiveStyle : {}),
+                        }}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        Exclusão em lote (LLM)
                       </Link>
                     )}
                     {isAdm && (

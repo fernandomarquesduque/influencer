@@ -6,26 +6,6 @@
   scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
 }
 
-/* Indicador de carregamento discreto: painel permanece visível, sem piscar */
-.campaign-bi-panel-loading-wrap {
-  position: relative;
-  min-height: 80px;
-}
-
-.campaign-bi-panel-loading-indicator {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
-  padding: 4px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .campaign-bi-panel::-webkit-scrollbar {
   width: 6px;
 }
@@ -64,12 +44,43 @@
   color: var(--app-text);
 }
 
+.campaign-bi-card-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campaign-bi-card-title-icon {
+  font-size: 12px;
+  color: var(--app-primary);
+  opacity: 0.92;
+}
+
 .campaign-bi-card .ant-card-body {
   padding: 5px 6px 6px;
 }
 
+/* Datas do relatório: fora do card, rodapé do painel */
+.campaign-bi-report-dates {
+  margin-top: 8px;
+  padding: 0 4px 2px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--app-text-tertiary);
+  opacity: 0.88;
+}
+
+.campaign-bi-report-dates-sep {
+  margin: 0 4px;
+}
+
 .campaign-bi-description {
   margin-bottom: 8px;
+}
+
+.campaign-bi-description-above {
+  margin-bottom: 10px;
 }
 
 .campaign-bi-description-input {
@@ -89,6 +100,10 @@
   grid-template-columns: repeat(2, 1fr);
   gap: 3px;
   margin: 10px 0px;
+}
+
+.campaign-bi-stats-above {
+  margin: 0 0 10px;
 }
 
 .campaign-bi-stat {
@@ -143,7 +158,19 @@
 
 .campaign-bi-section {
   padding: 6px 0px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.campaign-bi-category-sub-pair-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.campaign-bi-category-sub-col {
+  min-width: 0;
+  width: 100%;
 }
 
 .campaign-bi-section-title {
@@ -178,16 +205,6 @@
   flex-wrap: wrap;
   gap: 3px;
   font-size: 10px;
-}
-
-/* Tipo de conteúdo (categorias): uma linha com scroll em vez de quebrar pill isolado */
-.campaign-bi-content-scroll {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: 2px;
-  max-width: 100%;
 }
 
 .campaign-bi-price span,

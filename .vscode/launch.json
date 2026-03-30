@@ -11,8 +11,7 @@
                 "api"
             ],
             "cwd": "${workspaceFolder}/crawl",
-            "console": "integratedTerminal",
-            "preLaunchTask": "kill-api-and-frontend"
+            "console": "integratedTerminal"
         },
         {
             "type": "node",
@@ -91,8 +90,19 @@
                 "dev"
             ],
             "cwd": "${workspaceFolder}/frontend",
-            "console": "integratedTerminal",
-            "preLaunchTask": "kill-api-and-frontend"
+            "console": "integratedTerminal"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Qualify UI",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "ui"
+            ],
+            "cwd": "${workspaceFolder}/qualify",
+            "console": "integratedTerminal"
         },
         {
             "type": "node",

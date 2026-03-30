@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
+import { defaultCampaignExpiresAtIso } from '../config/campaignAccess.js';
 
 const DEFAULT_PATH = './data/influencer.db';
 
@@ -194,9 +195,7 @@ export class CreditsCampaignsDb {
   }
 
   private defaultExpiresAt(): string {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() + 1);
-    return d.toISOString().slice(0, 10);
+    return defaultCampaignExpiresAtIso();
   }
 
   getCampaign(campaignId: string, userId: number): CampaignRow | null {

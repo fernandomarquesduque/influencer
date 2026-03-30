@@ -2,13 +2,13 @@
  * Painel de pagamento da campanha: apenas créditos.
  * PIX/boleto ficam só em BuyCreditsModal (compra de créditos).
  */
-import { Card, Button, Tag, Alert, Popconfirm } from 'antd'
-import { WalletOutlined, DollarOutlined } from '@ant-design/icons'
-import type { ProfilesSearchQuery, ProfilesSearchFacets } from '../../api'
+import { Button, Tag, Popconfirm, Tooltip, Modal } from 'antd'
+import { WalletOutlined, DollarOutlined, RocketOutlined } from '@ant-design/icons'
+import type { ProfileListItem, ProfilesSearchQuery, ProfilesSearchFacets } from '../../api'
 import { CONTENT_TYPE_LABELS } from '../../constants/contentTypes'
+import InfluencerPreviewTable from '../InfluencerPreviewTable/InfluencerPreviewTable'
+import { formatCampaignExpiresLong } from '../../utils/campaignExpires'
 import './CampaignPaymentCart.css'
-
-const COST_TIER_LABELS: Record<string, string> = { low: 'Preço baixo', medium: 'Preço normal', high: 'Preço acima', very_high: 'Preço acima' }
 
 function buildActiveFilters(
   query: Partial<ProfilesSearchQuery>,
@@ -26,10 +26,6 @@ function buildActiveFilters(
     const label = accountTypes.find((a) => a.value === value)?.label ?? String(value)
     out.push({ id: `account-${value}`, label, onRemove: () => onFilter({ accountTypeFilter: query.accountTypeFilter?.filter((v) => v !== value).length ? query.accountTypeFilter!.filter((v) => v !== value) : undefined }) })
   })
-  query.activationFilter?.forEach((val) => {
-    const label = val === 'activated' ? 'Ativados' : 'Não ativados'
-    out.push({ id: `act-${val}`, label, onRemove: () => onFilter({ activationFilter: query.activationFilter?.filter((v) => v !== val).length ? query.activationFilter!.filter((v) => v !== val) : undefined }) })
-  })
   query.contentTypes?.forEach((name) => {
     out.push({ id: `content-${name}`, label: CONTENT_TYPE_LABELS[name] ?? name, onRemove: () => onFilter({ contentTypes: query.contentTypes?.filter((c) => c !== name).length ? query.contentTypes!.filter((c) => c !== name) : undefined }) })
   })
@@ -39,12 +35,29 @@ function buildActiveFilters(
   query.states?.forEach((name) => {
     out.push({ id: `state-${name}`, label: name, onRemove: () => onFilter({ states: query.states?.filter((s) => s !== name).length ? query.states!.filter((s) => s !== name) : undefined }) })
   })
-  query.costTierFilter?.forEach((tier) => {
-    out.push({ id: `cost-${tier}`, label: COST_TIER_LABELS[tier] ?? tier, onRemove: () => onFilter({ costTierFilter: query.costTierFilter?.filter((t) => t !== tier).length ? query.costTierFilter!.filter((t) => t !== tier) : undefined }) })
-  })
   query.socialNetworks?.forEach((net) => {
     out.push({ id: `social-${net}`, label: net, onRemove: () => onFilter({ socialNetworks: query.socialNetworks?.filter((n) => n !== net).length ? query.socialNetworks!.filter((n) => n !== net) : undefined }) })
   })
+  const pushLlmArr = (key: keyof ProfilesSearchQuery, prefix: string, labelFn: (v: string) => string) => {
+    const arr = query[key] as string[] | undefined
+    arr?.forEach((v) => {
+      out.push({
+        id: `${prefix}-${v}`,
+        label: labelFn(v),
+        onRemove: () => {
+          const cur = (query[key] as string[] | undefined) ?? []
+          const next = cur.filter((x) => x !== v)
+          onFilter({ [key]: next.length ? next : undefined } as Partial<ProfilesSearchQuery>)
+        },
+      })
+    })
+  }
+  pushLlmArr('llmProfileType', 'llm-pt', (v) => `Perfil: ${v}`)
+  pushLlmArr('llmMainCategory', 'llm-cat', (v) => `Categoria: ${v}`)
+  pushLlmArr('llmGender', 'llm-gen', (v) => `Gênero: ${v}`)
+  pushLlmArr('llmSubCategories', 'llm-sub', (v) => `Sub: ${v}`)
+  pushLlmArr('llmContentPillars', 'llm-pillar', (v) => `Pilar: ${v}`)
+  pushLlmArr('llmAudienceType', 'llm-aud', (v) => `Público: ${v}`)
   if (query.q?.trim()) {
     out.push({ id: 'q', label: `Busca: "${query.q.trim().slice(0, 20)}${query.q!.trim().length > 20 ? '…' : ''}"`, onRemove: () => onFilter({ q: undefined }) })
   }
@@ -75,9 +88,24 @@ export interface CampaignPaymentCartProps {
   }
   /** Valor em centavos após desconto (para liberar grátis quando 0). */
   amountCentsAfterDiscount?: number
+  /** Lista filtrada para preview no checkout (pagamento pendente). */
+  previewItems?: ProfileListItem[]
+  previewLoading?: boolean
+  /** Data de expiração do acesso ao relatório (`YYYY-MM-DD`, vinda da campanha). */
+  campaignExpiresAt?: string | null
 }
 
 const formatBrl = (n: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(n)
+
+function openFinalizePurchaseModal() {
+  Modal.info({
+    title: 'Finalize a compra',
+    content:
+      'Esta é só uma amostra. Para ver todos os perfis da seleção no relatório completo, utilize seus créditos ou compre créditos e quite o pagamento acima.',
+    okText: 'Entendi',
+    centered: true,
+  })
+}
 
 export default function CampaignPaymentCart({
   query,
@@ -92,63 +120,108 @@ export default function CampaignPaymentCart({
   onBuyCredits,
   ownershipDiscount,
   amountCentsAfterDiscount,
+  previewItems,
+  previewLoading = false,
+  campaignExpiresAt,
 }: CampaignPaymentCartProps) {
   const activeFilters = buildActiveFilters(query, facets, onFilter)
   const freeUnlock = canPayWithCredits && creditsToApply === 0 && amountCentsAfterDiscount === 0
+  const hasDiscount = ownershipDiscount && ownershipDiscount.alreadyOwnedCount > 0
+  const expiresLabel = formatCampaignExpiresLong(campaignExpiresAt ?? null)
 
   return (
-    <Card
-      className="campaign-payment-panel campaign-payment-cart"
-      size="small"
-      style={{
-        width: '100%',
-        background: 'var(--app-card-bg)',
-        border: '1px solid var(--app-border)',
-        borderRadius: 12,
-        overflow: 'hidden',
-      }}
-      bodyStyle={{ padding: '14px 16px' }}
-    >
-      <div className="campaign-payment-cart__summary">
-        <strong>{maxQuantity}</strong> perfil{maxQuantity !== 1 ? 's' : ''}
-        <span>·</span>
-        {ownershipDiscount && ownershipDiscount.alreadyOwnedCount > 0 ? (
-          <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '6px 10px' }}>
-            <span style={{ textDecoration: 'line-through', opacity: 0.65, fontWeight: 500 }}>
-              {formatBrl(ownershipDiscount.originalValueBrl)}
-            </span>
-            <span style={{ fontWeight: 700 }}>{formatBrl(valueTotal)}</span>
-          </span>
-        ) : (
-          <span>{formatBrl(valueTotal)}</span>
-        )}
+    <div className="campaign-payment-panel campaign-payment-cart">
+      <div className="campaign-payment-cart__top-grid">
+        <div className="campaign-payment-cart__summary-col">
+          <div className="campaign-payment-cart__checkout-block">
+            <button
+              type="button"
+              className="campaign-payment-cart__hook"
+              onClick={openFinalizePurchaseModal}
+              aria-label="Como liberar o relatório completo"
+            >
+              <RocketOutlined className="campaign-payment-cart__hook-icon" aria-hidden />
+              <span className="campaign-payment-cart__hook-text">
+                Quase pronto: libere o relatório completo e decida com dados reais sobre quem leva sua campanha adiante.
+              </span>
+            </button>
+            {expiresLabel ? (
+              <p className="campaign-payment-cart__expires-line">
+                Acesso ao relatório até <strong>{expiresLabel}</strong>
+              </p>
+            ) : null}
+            {hasDiscount ? (
+              <p className="campaign-payment-cart__discount-note">
+                <strong>{ownershipDiscount!.alreadyOwnedCount}</strong>{' '}
+                {ownershipDiscount!.alreadyOwnedCount === 1 ? 'perfil sem custo' : 'perfis sem custo'} (já em outro relatório seu).
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="campaign-payment-cart__actions-col">
+          <div className="campaign-payment-cart__paybox">
+            <div className="campaign-payment-cart__paybox-total" aria-label={`Total a pagar ${formatBrl(valueTotal)}`}>
+              <span className="campaign-payment-cart__total-label">Total a pagar</span>
+              <span className="campaign-payment-cart__price-value">{formatBrl(valueTotal)}</span>
+            </div>
+            <div className="campaign-payment-cart__actions">
+              {canPayWithCredits ? (
+                <div className="campaign-payment-cart__cta">
+                  <Popconfirm
+                    title={freeUnlock ? 'Liberar relatório sem custo?' : 'Confirmar pagamento com créditos?'}
+                    description={
+                      freeUnlock
+                        ? 'Todos os perfis desta seleção já estão em outros relatórios seus ou não há valor a cobrar. O relatório será liberado sem debitar créditos.'
+                        : `Debitar ${creditsToApply} crédito${creditsToApply !== 1 ? 's' : ''} e liberar o relatório. Não dá para desfazer.`
+                    }
+                    okText={freeUnlock ? 'Liberar relatório' : 'Confirmar pagamento'}
+                    cancelText="Cancelar"
+                    okButtonProps={{ loading: payingWithCredits }}
+                    disabled={payingWithCredits}
+                    onConfirm={() => Promise.resolve(onPayWithCredits())}
+                  >
+                    <span className="campaign-payment-cart__cta-inner">
+                      <Button type="primary" icon={<WalletOutlined />} loading={payingWithCredits} block>
+                        {payingWithCredits
+                          ? 'Processando...'
+                          : freeUnlock
+                            ? 'Liberar relatório (sem custo)'
+                            : 'Utilizar Créditos'}
+                      </Button>
+                    </span>
+                  </Popconfirm>
+                </div>
+              ) : null}
+              <div className="campaign-payment-cart__cta">
+                <Tooltip title="Compra por PIX ou boleto; depois use o botão roxo para liberar este relatório.">
+                  <Button type="default" icon={<DollarOutlined />} block onClick={onBuyCredits} disabled={payingWithCredits}>
+                    Comprar créditos
+                  </Button>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {ownershipDiscount && ownershipDiscount.alreadyOwnedCount > 0 && (
-        <Alert
-          type="success"
-          showIcon
-          message={
-            <span>
-              <strong>{ownershipDiscount.alreadyOwnedCount}</strong>{' '}
-              {ownershipDiscount.alreadyOwnedCount === 1
-                ? 'perfil já está em outro relatório seu'
-                : 'perfis já estão em outros relatórios seus'}
-              {' — sem cobrança de novo.'}
-            </span>
-          }
-          description={
-            <span style={{ fontSize: 13 }}>
-              Cobramos apenas <strong>{ownershipDiscount.billableProfileCount}</strong>{' '}
-              {ownershipDiscount.billableProfileCount === 1 ? 'perfil novo' : 'perfis novos'} (
-              {formatBrl(valueTotal)} no total desta seleção).
-            </span>
-          }
-          style={{ marginBottom: 12, textAlign: 'left' }}
-        />
-      )}
+      {previewItems !== undefined ? (
+        <div className="campaign-payment-cart__preview-wrap">
+          <InfluencerPreviewTable
+            className="iprv-preview--in-payment-cart"
+            campaignProfiles={previewItems}
+            selectionTotalCount={maxQuantity}
+            loading={previewLoading}
+            limit={5}
+            title="Quem entra neste relatório"
+            previewStablePicOnly
+            hideSelectionCountInTitle
+            onSelectionOverflowClick={openFinalizePurchaseModal}
+          />
+        </div>
+      ) : null}
 
-      {activeFilters.length > 0 && (
+      {activeFilters.length > 0 ? (
         <div className="campaign-payment-cart__filters">
           {activeFilters.map((f) => (
             <Tag key={f.id} closable onClose={f.onRemove}>
@@ -156,66 +229,7 @@ export default function CampaignPaymentCart({
             </Tag>
           ))}
         </div>
-      )}
-
-      <div className="campaign-payment-cart__total-row">
-        <span className="campaign-payment-cart__total-label">Total</span>
-        <span className="campaign-payment-cart__total-value" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          {ownershipDiscount && ownershipDiscount.alreadyOwnedCount > 0 && (
-            <span style={{ fontSize: 13, fontWeight: 500, textDecoration: 'line-through', opacity: 0.55 }}>
-              {formatBrl(ownershipDiscount.originalValueBrl)}
-            </span>
-          )}
-          <span>{formatBrl(valueTotal)}</span>
-        </span>
-      </div>
-
-      <Alert
-        type="info"
-        showIcon
-        message="Liberação com créditos"
-        description="Compre créditos (PIX ou boleto) no botão abaixo e quite o relatório com um clique."
-        style={{ marginBottom: 12 }}
-      />
-
-      {canPayWithCredits && (
-        <div className="campaign-payment-cart__cta">
-          <Popconfirm
-            title={freeUnlock ? 'Liberar relatório sem custo?' : 'Confirmar pagamento com créditos?'}
-            description={
-              freeUnlock
-                ? 'Todos os perfis desta seleção já estão em outros relatórios seus ou não há valor a cobrar. O relatório será liberado sem debitar créditos.'
-                : `Serão usados ${creditsToApply} crédito${creditsToApply !== 1 ? 's' : ''} do seu saldo para liberar o relatório desta campanha. Esta ação não pode ser desfeita.`
-            }
-            okText={freeUnlock ? 'Liberar relatório' : 'Confirmar pagamento'}
-            cancelText="Cancelar"
-            okButtonProps={{ loading: payingWithCredits }}
-            disabled={payingWithCredits}
-            onConfirm={() => Promise.resolve(onPayWithCredits())}
-          >
-            <span style={{ display: 'block', width: '100%' }}>
-              <Button
-                type="primary"
-                icon={<WalletOutlined />}
-                loading={payingWithCredits}
-                style={{ fontWeight: 600, boxShadow: 'var(--app-shadow-cta)', background: 'linear-gradient(135deg, var(--app-primary) 0%, var(--app-primary-dark) 100%)', border: 'none' }}
-              >
-                {payingWithCredits
-                  ? 'Processando...'
-                  : freeUnlock
-                    ? 'Liberar relatório (sem custo)'
-                    : `Pagar com ${creditsToApply} crédito${creditsToApply !== 1 ? 's' : ''}`}
-              </Button>
-            </span>
-          </Popconfirm>
-        </div>
-      )}
-
-      <div className="campaign-payment-cart__cta" style={{ marginTop: canPayWithCredits ? 10 : 0 }}>
-        <Button type="default" icon={<DollarOutlined />} block onClick={onBuyCredits} disabled={payingWithCredits}>
-          Comprar créditos (PIX ou boleto)
-        </Button>
-      </div>
-    </Card>
+      ) : null}
+    </div>
   )
 }

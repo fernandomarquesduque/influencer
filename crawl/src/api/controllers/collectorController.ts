@@ -1,10 +1,13 @@
 import type { Request, Response } from 'express';
-import { warmSearchCache } from '../profilesSearch.js';
+import { hasCompletedLlmProfile, warmSearchCache } from '../profilesSearch.js';
 import type { CompositeStorage } from '../../storage/compositeStorage.js';
 import type { Entity } from '../../types/index.js';
 import { resyncInfluencerS3AfterDbMediaReset } from '../../storage/s3InfluencerImage.js';
 import { buildNormalizedPost } from '../../utils/slimPost.js';
 import type { SlimProfile } from '../../utils/slimProfile.js';
+import { mergeProfilePreservingLlm } from '../../utils/preserveLlmOnProfileMerge.js';
+
+type JsonRecord = Record<string, unknown>;
 
 export interface CollectorIngestResponse {
   ok: true;
@@ -17,6 +20,16 @@ export interface CollectorIngestFullResponse extends CollectorIngestResponse {
   savedPosts: number;
   savedReels: number;
   savedTagged: number;
+}
+
+export interface CollectorLlmPendingItem {
+  handle: string;
+  profile: Record<string, unknown>;
+}
+
+interface LlmQueueCandidate extends CollectorLlmPendingItem {
+  missingLlmInfo: boolean;
+  qualifiedAtMs: number;
 }
 
 function normalizeRawMediaNodes(nodes: unknown[], collectedAt: string): Entity[] {
@@ -41,6 +54,103 @@ function normalizeRawMediaNodes(nodes: unknown[], collectedAt: string): Entity[]
 
 function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
+}
+
+function firstNonEmptyString(values: unknown[]): string {
+  for (const value of values) {
+    const s = String(value ?? '').trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+function extractPostText(post: Record<string, unknown>): string {
+  const content =
+    post.content != null && typeof post.content === 'object' && !Array.isArray(post.content)
+      ? (post.content as Record<string, unknown>)
+      : null;
+  const direct = firstNonEmptyString([
+    content?.caption_text,
+    content?.accessibility_caption,
+    post.caption_text,
+    post.caption,
+    post.text,
+    post.description,
+    post.title,
+  ]);
+  if (direct) return direct;
+  const captionObj = post.caption;
+  if (captionObj != null && typeof captionObj === 'object' && !Array.isArray(captionObj)) {
+    const nested = firstNonEmptyString([(captionObj as Record<string, unknown>).text]);
+    if (nested) return nested;
+  }
+  const nodeCaption = post.edge_media_to_caption;
+  if (nodeCaption != null && typeof nodeCaption === 'object' && !Array.isArray(nodeCaption)) {
+    const edges = asArray((nodeCaption as Record<string, unknown>).edges);
+    for (const edge of edges) {
+      if (edge == null || typeof edge !== 'object' || Array.isArray(edge)) continue;
+      const node = (edge as Record<string, unknown>).node;
+      if (node == null || typeof node !== 'object' || Array.isArray(node)) continue;
+      const text = firstNonEmptyString([(node as Record<string, unknown>).text]);
+      if (text) return text;
+    }
+  }
+  return '';
+}
+
+function extractPostHashtags(post: Record<string, unknown>): string[] {
+  const content =
+    post.content != null && typeof post.content === 'object' && !Array.isArray(post.content)
+      ? (post.content as Record<string, unknown>)
+      : null;
+  const raw = asArray(content?.hashtags ?? post.hashtags);
+  const tags: string[] = [];
+  for (const item of raw) {
+    const tag = String(item ?? '')
+      .trim()
+      .replace(/^#/, '')
+      .toLowerCase();
+    if (!tag || tags.includes(tag)) continue;
+    tags.push(tag);
+    if (tags.length >= 10) break;
+  }
+  return tags;
+}
+
+function buildLlmContentContext(rows: Array<{ key: string; value: Record<string, unknown> }>, maxItems: number): JsonRecord {
+  const counts = { post: 0, reel: 0, tagged: 0, other: 0 };
+  const normalized = rows
+    .map(({ key, value }) => {
+      const parts = String(key).split(':');
+      const kind = parts[1] || 'other';
+      const shortcode = parts[2] || String(value.shortcode ?? '').trim();
+      const collectedAt = firstNonEmptyString([value._collected_at, value.collected_at, value.taken_at]);
+      const text = extractPostText(value);
+      const hashtags = extractPostHashtags(value);
+      return { kind, shortcode, collectedAt, text, hashtags };
+    })
+    .filter((item) => item.shortcode || item.text);
+
+  for (const item of normalized) {
+    if (item.kind === 'post') counts.post += 1;
+    else if (item.kind === 'reel') counts.reel += 1;
+    else if (item.kind === 'tagged') counts.tagged += 1;
+    else counts.other += 1;
+  }
+
+  normalized.sort((a, b) => Date.parse(b.collectedAt || '') - Date.parse(a.collectedAt || ''));
+  const samples = normalized.slice(0, Math.max(1, maxItems)).map((item) => ({
+    kind: item.kind,
+    shortcode: item.shortcode || null,
+    collectedAt: item.collectedAt || null,
+    text: item.text || '',
+    hashtags: item.hashtags,
+  }));
+
+  return {
+    mediaCounts: counts,
+    samples,
+  };
 }
 
 /**
@@ -76,10 +186,11 @@ export function createCollectorController(storage: CompositeStorage) {
         }
 
         const existing = await storage.loadByHandle(handle);
-        const merged =
+        const existingRec =
           existing != null && typeof existing === 'object' && !Array.isArray(existing)
-            ? { ...(existing as Record<string, unknown>), ...body, handle }
-            : { ...body, handle };
+            ? (existing as Record<string, unknown>)
+            : null;
+        const merged = mergeProfilePreservingLlm(existingRec, { ...body, handle });
 
         await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
 
@@ -146,10 +257,11 @@ export function createCollectorController(storage: CompositeStorage) {
         const tagged = normalizeRawMediaNodes(taggedRaw, collectedAt);
 
         const existing = await storage.loadByHandle(handle);
-        const slimMerge =
+        const existingRec =
           existing != null && typeof existing === 'object' && !Array.isArray(existing)
-            ? { ...(existing as Record<string, unknown>), ...flatProfile, handle }
-            : { ...flatProfile, handle };
+            ? (existing as Record<string, unknown>)
+            : null;
+        const slimMerge = mergeProfilePreservingLlm(existingRec, { ...flatProfile, handle });
 
         await storage.deletePostsByHandle(handle);
         await resyncInfluencerS3AfterDbMediaReset(slimMerge as SlimProfile, {
@@ -258,6 +370,172 @@ export function createCollectorController(storage: CompositeStorage) {
         res.status(500).json({
           error: e instanceof Error ? e.message : String(e),
           code: 'COLLECTOR_VERIFY_ERROR',
+        });
+      }
+    },
+
+    /**
+     * Lista perfis ainda não qualificados por LLM (llm.status !== "done").
+     * Usado pelo worker qualify rodando fora do servidor (via API segura por X-Collector-Key).
+     */
+    async listLlmPending(req: Request, res: Response): Promise<void> {
+      try {
+        const limitRaw = Number(req.query.limit ?? 20);
+        const offsetRaw = Number(req.query.offset ?? 0);
+        const refreshAllRaw = String(req.query.refreshAll ?? '').trim().toLowerCase();
+        const refreshAll = refreshAllRaw === '1' || refreshAllRaw === 'true' || refreshAllRaw === 'yes';
+        const includeContentRaw = String(req.query.includeContent ?? '').trim().toLowerCase();
+        const includeContent =
+          includeContentRaw === '1' || includeContentRaw === 'true' || includeContentRaw === 'yes';
+        const mediaLimitRaw = Number(req.query.mediaLimit ?? 24);
+        const mediaLimit = Math.max(1, Math.min(60, Number.isFinite(mediaLimitRaw) ? Math.floor(mediaLimitRaw) : 24));
+        const limit = Math.max(1, Math.min(200, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 20));
+        const offset = Math.max(0, Number.isFinite(offsetRaw) ? Math.floor(offsetRaw) : 0);
+        const handleFilter = String(req.query.handle ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/^@/, '');
+
+        const profiles = await storage.getByBucket<Record<string, unknown>>('profile');
+        const pending: LlmQueueCandidate[] = [];
+        for (const { key, value } of profiles) {
+          const profile = value as Record<string, unknown>;
+          const llm = profile.llm;
+          const llmObj =
+            llm != null && typeof llm === 'object' && !Array.isArray(llm) ? (llm as Record<string, unknown>) : null;
+          const llmStatus = llmObj != null ? String(llmObj.status ?? '') : '';
+          const qualifiedAtRaw = llmObj != null ? String(llmObj.qualifiedAt ?? '') : '';
+          const qualifiedAtMs = qualifiedAtRaw ? Date.parse(qualifiedAtRaw) : Number.NaN;
+          const hasValidQualifiedAt = Number.isFinite(qualifiedAtMs);
+          const missingLlmInfo = llmStatus !== 'done' || !hasValidQualifiedAt;
+          if (!refreshAll && !missingLlmInfo) continue;
+          const handle = String(profile.handle ?? key ?? '')
+            .trim()
+            .toLowerCase()
+            .replace(/^@/, '');
+          if (!handle) continue;
+          pending.push({
+            handle,
+            profile: { ...profile, handle },
+            missingLlmInfo,
+            qualifiedAtMs: hasValidQualifiedAt ? qualifiedAtMs : 0,
+          });
+        }
+
+        pending.sort((a, b) => {
+          if (a.missingLlmInfo !== b.missingLlmInfo) return a.missingLlmInfo ? -1 : 1;
+          if (a.qualifiedAtMs !== b.qualifiedAtMs) return a.qualifiedAtMs - b.qualifiedAtMs;
+          return a.handle.localeCompare(b.handle, 'pt-BR');
+        });
+
+        const filtered = handleFilter ? pending.filter((p) => p.handle === handleFilter) : pending;
+        const totalPending = filtered.length;
+        const page = filtered.slice(offset, offset + limit);
+        const items: CollectorLlmPendingItem[] = [];
+        for (const item of page) {
+          if (!includeContent) {
+            items.push({ handle: item.handle, profile: item.profile });
+            continue;
+          }
+          const mediaRows = await storage.getByBucket<Record<string, unknown>>('post', `${item.handle}:`);
+          const llmContent = buildLlmContentContext(mediaRows, mediaLimit);
+          items.push({
+            handle: item.handle,
+            profile: {
+              ...item.profile,
+              _llm_content: llmContent,
+            },
+          });
+        }
+        res.status(200).json({
+          ok: true,
+          totalPending,
+          limit,
+          offset,
+          items,
+        });
+      } catch (e) {
+        console.error('[collectorController.listLlmPending]', e instanceof Error ? e.stack : e);
+        res.status(500).json({
+          error: e instanceof Error ? e.message : String(e),
+          code: 'COLLECTOR_LLM_PENDING_ERROR',
+        });
+      }
+    },
+
+    /**
+     * Ingest de classificação LLM no mesmo JSON do perfil.
+     * Body: { handle: string, llm: object }
+     */
+    async ingestLlm(req: Request, res: Response): Promise<void> {
+      try {
+        const body = req.body as Record<string, unknown> | null;
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+          res.status(400).json({
+            error: 'Body deve ser objeto JSON com { handle, llm }.',
+            code: 'COLLECTOR_LLM_INVALID_BODY',
+          });
+          return;
+        }
+        const handle = String(body.handle ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/^@/, '');
+        if (!handle) {
+          res.status(400).json({
+            error: 'Campo handle é obrigatório.',
+            code: 'COLLECTOR_LLM_MISSING_HANDLE',
+          });
+          return;
+        }
+        const llm = body.llm;
+        if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) {
+          res.status(400).json({
+            error: 'Campo llm deve ser um objeto.',
+            code: 'COLLECTOR_LLM_MISSING_PAYLOAD',
+          });
+          return;
+        }
+
+        const existing = await storage.loadByHandle(handle);
+        if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+          res.status(404).json({
+            error: 'Perfil não encontrado para este handle.',
+            code: 'COLLECTOR_LLM_PROFILE_NOT_FOUND',
+          });
+          return;
+        }
+
+        const allowRaw = String(req.query.allowLlmReplace ?? '').trim().toLowerCase();
+        const allowLlmReplace = allowRaw === '1' || allowRaw === 'true' || allowRaw === 'yes';
+        const exRec = existing as Record<string, unknown>;
+        if (!allowLlmReplace && hasCompletedLlmProfile(exRec)) {
+          res.status(409).json({
+            error:
+              'Já existe classificação LLM concluída para este perfil. Inclua ?allowLlmReplace=1 na URL para substituir (reprocessamento explícito).',
+            code: 'COLLECTOR_LLM_ALREADY_COMPLETED',
+          });
+          return;
+        }
+
+        const merged = {
+          ...exRec,
+          handle,
+          llm,
+        };
+        await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
+        await warmSearchCache(storage);
+
+        res.status(200).json({
+          ok: true,
+          handle,
+          updated: true,
+        });
+      } catch (e) {
+        console.error('[collectorController.ingestLlm]', e instanceof Error ? e.stack : e);
+        res.status(500).json({
+          error: e instanceof Error ? e.message : String(e),
+          code: 'COLLECTOR_LLM_INGEST_ERROR',
         });
       }
     },

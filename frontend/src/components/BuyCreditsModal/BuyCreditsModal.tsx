@@ -366,7 +366,7 @@ export default function BuyCreditsModal({
         onCancel={handleCloseFormModal}
         footer={null}
         width={500}
-        destroyOnClose={false}
+        destroyOnHidden={false}
         maskClosable={!creating}
         zIndex={1000}
       >
@@ -502,7 +502,7 @@ export default function BuyCreditsModal({
         }
         width={440}
         centered
-        destroyOnClose
+        destroyOnHidden
         zIndex={1150}
         className="buy-credits-payment-result-modal"
       >
@@ -586,7 +586,7 @@ export default function BuyCreditsModal({
         open={cpfModalOpen}
         onCancel={() => { setCpfModalOpen(false); setCpfCnpjInput('') }}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
         width={420}
         zIndex={1100}
       >
