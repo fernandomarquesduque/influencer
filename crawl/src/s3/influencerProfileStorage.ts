@@ -40,6 +40,7 @@ import {
 } from '@aws-sdk/client-s3';
 import type { Entity } from '../types/index.js';
 import type { SlimProfile } from '../utils/slimProfile.js';
+import { logMemorySnapshot, memoryDiagS3CoverEvery } from '../utils/memoryDiag.js';
 
 const MIN_BYTES = 2000;
 const MIN_SIDE = 64;
@@ -128,6 +129,10 @@ function getOptionalObjectAcl(): ObjectCannedACL | undefined {
   if (v === 'private') return 'private';
   return raw as ObjectCannedACL;
 }
+
+/** Depois do 1º AccessControlListNotSupported, deixamos de enviar ACL (evita log/retry em todo PutObject). */
+let s3BucketAclUnsupported = false;
+let loggedS3AclUnsupportedHint = false;
 
 let s3Client: S3Client | null = null;
 
@@ -280,7 +285,7 @@ async function putPublicObject(opts: { key: string; body: Buffer; contentType: s
   const bucket = getBucket();
   await ensureBucketExists(bucket);
   const client = getClient();
-  const acl = getOptionalObjectAcl();
+  const acl = s3BucketAclUnsupported ? undefined : getOptionalObjectAcl();
   const putBase = {
     Bucket: bucket,
     Key: opts.key,
@@ -297,10 +302,17 @@ async function putPublicObject(opts: { key: string; body: Buffer; contentType: s
         putErr && typeof putErr === 'object' && 'Code' in putErr
           ? String((putErr as { Code?: string }).Code)
           : awsErrorMeta(putErr).name;
-      if (code === 'AccessControlListNotSupported') {
-        logInfo(
-          'Bucket sem ACLs (Object Ownership enforced). Reenviando PutObject sem ACL — remova AWS_S3_OBJECT_ACL do .env ou use política de bucket para leitura pública.',
-        );
+      if (
+        code === 'AccessControlListNotSupported' ||
+        awsErrorMeta(putErr).name === 'AccessControlListNotSupported'
+      ) {
+        s3BucketAclUnsupported = true;
+        if (!loggedS3AclUnsupportedHint) {
+          loggedS3AclUnsupportedHint = true;
+          logInfo(
+            'Bucket sem ACLs (Object Ownership enforced). Próximos uploads sem ACL — remova AWS_S3_OBJECT_ACL do crawl/.env ou use política de bucket para leitura pública.',
+          );
+        }
         await client.send(new PutObjectCommand({ ...putBase }));
       } else {
         throw putErr;
@@ -394,6 +406,10 @@ export async function attachStablePostCoversToMedia(handle: string, ...batches: 
   const h = sanitizeHandleForS3Key(handle);
   if (!h) return;
 
+  const itensMedia = batches.reduce((n, b) => n + (Array.isArray(b) ? b.length : 0), 0);
+  logMemorySnapshot(`S3 capas: início @${h}`, { itens_media_lote: itensMedia });
+  const coverEvery = memoryDiagS3CoverEvery();
+
   let ok = 0;
   let skipped = 0;
 
@@ -450,12 +466,16 @@ export async function attachStablePostCoversToMedia(handle: string, ...batches: 
         await putPublicObject({ key, body: uploadBody, contentType: uploadContentType });
         media.stable_cover_url = publicUrlForKey(key);
         ok += 1;
+        if (coverEvery > 0 && ok % coverEvery === 0) {
+          logMemorySnapshot(`S3 capas: após ${ok} uploads @${h}`, { ultima_key: fileKey });
+        }
       } catch (e) {
         logPost('erro numa capa (continuando)', { message: e instanceof Error ? e.message : String(e) });
       }
     }
   }
   logPost(`capas estáveis: ${ok} ok, ${skipped} sem URL/id`, { handle: h });
+  logMemorySnapshot(`S3 capas: fim @${h}`, { ok, skipped });
 }
 
 /**
@@ -469,8 +489,15 @@ export async function resyncInfluencerS3AfterDbMediaReset(
 ): Promise<void> {
   if (!isS3Configured()) return;
 
+  logMemorySnapshot(`resync S3: início @${slim.handle}`, {
+    posts: batches.posts.length,
+    reels: batches.reels.length,
+    tagged: batches.tagged.length,
+    highlights: batches.highlights.length,
+  });
   await wipeInfluencerS3Prefix(slim.handle);
   delete slim.stable_profile_pic_url;
+  logMemorySnapshot(`resync S3: pós-wipe @${slim.handle}`);
 
   await attachStableProfilePicToSlim(slim);
   injectStableProfilePicIntoMediaItems(
@@ -480,6 +507,7 @@ export async function resyncInfluencerS3AfterDbMediaReset(
     batches.tagged,
     batches.highlights,
   );
+  logMemorySnapshot(`resync S3: pós-avatar @${slim.handle}`);
 
   await attachStablePostCoversToMedia(
     slim.handle,
@@ -488,6 +516,7 @@ export async function resyncInfluencerS3AfterDbMediaReset(
     batches.tagged,
     batches.highlights,
   );
+  logMemorySnapshot(`resync S3: fim @${slim.handle}`);
 }
 
 /** Baixa imagem da URL e retorna buffer + content-type (ou null). */
@@ -662,8 +691,11 @@ export async function uploadInfluencerProfileImageToS3(opts: {
     temProfilePicUrl: hasStd,
   });
 
-  const results = await Promise.all(urls.map((u) => fetchImageCandidate(u)));
-  const candidates = results.filter((x): x is ImageCandidate => x != null);
+  const candidates: ImageCandidate[] = [];
+  for (const u of urls) {
+    const c = await fetchImageCandidate(u);
+    if (c) candidates.push(c);
+  }
   if (candidates.length === 0) {
     logInfo(`@${handle} nenhuma imagem passou no mínimo (${MIN_BYTES} bytes / dimensões)`, {
       urlsTentadas: urls.length,

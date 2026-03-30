@@ -34,6 +34,7 @@ import {
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, adminPurgeInfluencer, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
+import { getInfluencerTierLongLabel } from '../utils/influencerTier'
 import { buildReportInsights, getWeekdayName, getPostsByWeekday } from '../utils/reportInsights'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { GENDER_LABELS, AUDIENCE_GENDER_LABELS, INFLUENCE_AGE_RANGE_LABELS } from '../constants/activationLabels'
@@ -556,7 +557,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
 
   const isRedacted = dataRedacted && isLimitedView
 
-  const tierLabel = followersCount < 10_000 ? 'Nano Influencer' : followersCount < 50_000 ? 'Micro Influencer' : followersCount < 500_000 ? 'Mid Influencer' : 'Macro Influencer'
+  const tierLabel = getInfluencerTierLongLabel(followersCount)
 
   const engagementScore = reportInsights?.score.total ?? Math.min(100, Math.round((engagement.engagement_rate / 12) * 100))
   const scoreSelo = reportInsights?.score.selo ?? 'Alto Engajamento'

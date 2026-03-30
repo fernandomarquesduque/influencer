@@ -17,6 +17,7 @@ import {
   deleteCampaign,
   payCampaignWithCredits,
   fetchMyPendingPayment,
+  fetchCampaignPostSearchHandles,
   fetchFavorites,
   addFavorite,
   removeFavorite,
@@ -551,6 +552,9 @@ export default function CampaignInfluencers() {
   const [payingWithCredits, setPayingWithCredits] = useState(false)
   const [deletingCampaign, setDeletingCampaign] = useState(false)
   const [filteredList, setFilteredList] = useState<ProfileListItem[]>([])
+  /** Com `q` preenchido: handles com post que casa com o termo (API post-matches), alinhado à aba Origem. */
+  const [postCaptionSearch, setPostCaptionSearch] = useState<{ handles: Set<string>; totalPosts: number } | null>(null)
+  const [postCaptionSearchLoading, setPostCaptionSearchLoading] = useState(false)
   const [displayedCount, setDisplayedCount] = useState(DISPLAY_PAGE_SIZE)
   const [campaignMainTab, setCampaignMainTab] = useState<'influencers' | 'origin'>(() =>
     searchParams.get('tab') === 'origin' ? 'origin' : 'influencers'
@@ -648,12 +652,32 @@ export default function CampaignInfluencers() {
       setDisplayedCount(DISPLAY_PAGE_SIZE)
       return
     }
+    const qTrim = (requestQuery.q ?? '').trim()
+    if (qTrim.length > 0) {
+      if (postCaptionSearchLoading || postCaptionSearch == null) {
+        setFilteredList([])
+        setTotal(0)
+        setFacets(computeFacetsFromItems([]))
+        setDisplayedCount(DISPLAY_PAGE_SIZE)
+        return
+      }
+      const queryWithoutProfileQ = { ...requestQuery, q: undefined }
+      const sorted = filterAndSortCampaignItems(contextItems, queryWithoutProfileQ, {
+        favoriteHandles,
+        postCaptionMatchHandles: postCaptionSearch.handles,
+      })
+      setFilteredList(sorted)
+      setTotal(sorted.length)
+      setFacets(computeFacetsFromItems(sorted))
+      setDisplayedCount(DISPLAY_PAGE_SIZE)
+      return
+    }
     const sorted = filterAndSortCampaignItems(contextItems, requestQuery, { favoriteHandles })
     setFilteredList(sorted)
     setTotal(sorted.length)
     setFacets(computeFacetsFromItems(sorted))
     setDisplayedCount(DISPLAY_PAGE_SIZE)
-  }, [contextItems, favoriteHandles])
+  }, [contextItems, favoriteHandles, postCaptionSearch, postCaptionSearchLoading])
 
   useEffect(() => {
     setData(filteredList.slice(0, displayedCount))
@@ -741,7 +765,11 @@ export default function CampaignInfluencers() {
       if (campaignId == null) return
       setLoading(true)
       const baseQuery = queryOverride ?? query
-      const q = pendingPayment ? { ...baseQuery, limit: 10000 } : { ...defaultQuery, ...baseQuery, limit: 10000 }
+      /** `q` aqui é só busca em legendas/posts (post-matches + cliente); não enviar para /profiles — senão o backend filtra nome/bio e zera a lista (ex.: "marcado" só em posts marcados). */
+      const { q: _wordSearchOmit, ...baseWithoutWordSearch } = baseQuery
+      const q = pendingPayment
+        ? { ...baseWithoutWordSearch, limit: 10000 }
+        : { ...defaultQuery, ...baseWithoutWordSearch, limit: 10000 }
       fetchCampaignProfiles(campaignId, q, { signal })
         .then((res) => {
           if (signal?.aborted) return
@@ -854,6 +882,47 @@ export default function CampaignInfluencers() {
     loadContext(controller.signal)
     return () => controller.abort()
   }, [campaignId, user?.id, loadContext, pendingPayment])
+
+  const originMediaKindsKey =
+    query.originMediaKinds?.length ? [...query.originMediaKinds].sort().join(',') : ''
+
+  useEffect(() => {
+    if (campaignId == null || campaignId === ALL_CAMPAIGNS_SLUG) {
+      setPostCaptionSearch(null)
+      setPostCaptionSearchLoading(false)
+      return
+    }
+    const q = query.q?.trim()
+    if (!q) {
+      setPostCaptionSearch(null)
+      setPostCaptionSearchLoading(false)
+      return
+    }
+    const kinds = query.originMediaKinds
+    const ac = new AbortController()
+    setPostCaptionSearchLoading(true)
+    setPostCaptionSearch(null)
+    void fetchCampaignPostSearchHandles(
+      campaignId,
+      { q, mediaKinds: kinds?.length ? kinds : undefined },
+      { signal: ac.signal }
+    )
+      .then((res) => {
+        if (ac.signal.aborted) return
+        const handles = new Set(
+          res.handles.map((h) => h.toLowerCase().replace(/^@/, '').trim()).filter(Boolean)
+        )
+        setPostCaptionSearch({ handles, totalPosts: res.totalPosts })
+      })
+      .catch(() => {
+        if (ac.signal.aborted) return
+        setPostCaptionSearch({ handles: new Set(), totalPosts: 0 })
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setPostCaptionSearchLoading(false)
+      })
+    return () => ac.abort()
+  }, [campaignId, query.q, originMediaKindsKey])
 
   useEffect(() => {
     if (campaignId == null || !user) return
@@ -1269,6 +1338,11 @@ export default function CampaignInfluencers() {
                   avgEngagementRate: pricePreview.avgEngagementRate ?? 0,
                   count: total > 0 ? total : (campaignInfo?.handlesCount ?? 0),
                 } : undefined}
+                postCaptionMatchTotal={
+                  !pendingPayment && query.q?.trim() && postCaptionSearch && !postCaptionSearchLoading
+                    ? postCaptionSearch.totalPosts
+                    : null
+                }
               />
             </div>
           )}

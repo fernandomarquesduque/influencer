@@ -769,13 +769,238 @@ select,
   }
 }
 
+/* Lista antes do wizard completo: coluna centralizada dentro de .app-page (ou /search). */
+.influencer-list-wizard-shell {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* /search: pai em coluna com min-height da viewport — ocupa o espaço sob o logo */
+  flex: 1 1 auto;
+  min-height: 0;
+  justify-content: center;
+}
+
+/* Wizard dentro de Layout (.app-page): sem pai flex, força altura útil para centralizar */
+.app-page .influencer-list-wizard-shell {
+  min-height: calc(100dvh - 140px);
+}
+
 /* Search wizard: pré-filtragem gamificada */
 .search-wizard {
   animation: reportFadeIn 0.35s ease-out;
 }
 
+/* Preenche a área do shell e deixa o conteúdo da etapa centralizado na altura */
+.search-wizard--with-fixed-footer {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-self: stretch;
+}
+
+/* Rodapé fixo: barra de progresso, contador e Próximo/Voltar */
+.search-wizard--with-fixed-footer .search-wizard__scroll {
+  width: 100%;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow-y: auto;
+  /* Evita que o último conteúdo fique sob o rodapé fixo (~progresso + botões + safe area) */
+  padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+}
+
+.search-wizard-footer-fixed {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: var(--app-page-bg, var(--app-bg, #fff));
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.07);
+  box-sizing: border-box;
+}
+
+.search-wizard-footer-fixed__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+}
+
+.search-wizard--category-wide {
+  max-width: min(1040px, 100%) !important;
+  width: 100%;
+  padding-left: 16px;
+  padding-right: 16px;
+  box-sizing: border-box;
+}
+
+.search-wizard-category-pane {
+  text-align: center;
+  width: 100%;
+}
+
+.search-wizard-category-pane-sub {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.5);
+  margin: 0 0 16px;
+  line-height: 1.45;
+}
+
+/* Flex + wrap: bloco de categorias fica centrado mesmo com poucos itens (evita grid 8 col com células vazias à direita). */
+.search-wizard-category-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: stretch;
+  gap: 6px;
+}
+
+@media (max-width: 640px) {
+  .search-wizard-category-grid {
+    gap: 6px;
+  }
+}
+
+/* Tiles um pouco mais compactos quando há 8 colunas (largura ampla do wizard) */
+.search-wizard--category-wide .search-wizard-category-tile {
+  padding: 10px 6px;
+  min-height: 96px;
+  gap: 6px;
+}
+
+.search-wizard--category-wide .search-wizard-category-tile-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.search-wizard--category-wide .search-wizard-category-tile-icon .anticon {
+  font-size: 20px !important;
+}
+
+.search-wizard--category-wide .search-wizard-category-tile-label {
+  font-size: 11px;
+}
+
+.search-wizard-category-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 108px;
+  padding: 12px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #fff;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
+  font: inherit;
+  color: inherit;
+  flex: 0 0 auto;
+  width: 112px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+  .search-wizard-category-tile {
+    width: 100px;
+  }
+}
+
+@media (max-width: 640px) {
+  .search-wizard-category-tile {
+    flex: 0 1 calc((100% - 12px) / 3);
+    width: auto;
+    min-width: 0;
+  }
+}
+
+.search-wizard-category-tile:hover {
+  border-color: var(--app-primary, #68278f);
+  box-shadow: 0 6px 20px rgba(104, 39, 143, 0.12);
+}
+
+.search-wizard-category-tile:active {
+  transform: scale(0.98);
+}
+
+.search-wizard-category-tile--active {
+  border-color: var(--app-primary, #68278f);
+  background: linear-gradient(180deg, rgba(104, 39, 143, 0.08) 0%, #fff 100%);
+  box-shadow: 0 4px 16px rgba(104, 39, 143, 0.14);
+}
+
+.search-wizard-category-tile--limit {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.search-wizard-category-tile--limit:hover {
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: none;
+}
+
+.search-wizard-category-tile-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.search-wizard-category-tile-label {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--app-text, #141414);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-transform: capitalize;
+}
+
+.search-wizard-category-tile-count {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.55;
+  margin-top: auto;
+  text-transform: capitalize;
+}
+
+/* Porte e chips LLM: mesma capitalização (não inclui rodapé Próximo/Voltar) */
+.search-wizard__scroll .ant-btn {
+  text-transform: capitalize;
+}
+
 .search-wizard-progress .ant-progress-outer {
   paddingRight: 0;
+}
+
+.search-wizard .search-wizard-progress .ant-progress-inner {
+  background: rgba(0, 0, 0, 0.09) !important;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.search-wizard .search-wizard-progress .ant-progress-bg {
+  background: #1677ff !important;
+  border-radius: 999px;
 }
 
 .search-wizard-step {
@@ -831,10 +1056,6 @@ select,
   background: #4096ff !important;
   border-color: #4096ff !important;
   box-shadow: 0 4px 12px rgba(22, 119, 255, 0.4);
-}
-
-.search-wizard .search-wizard-progress .ant-progress-bg {
-  background: rgba(0, 0, 0, 0.12) !important;
 }
 
 .search-wizard-icon {
@@ -983,12 +1204,10 @@ select,
   padding: 12px 14px 14px;
   text-align: center;
   border-radius: 12px;
-  background: linear-gradient(
-    165deg,
-    rgba(82, 196, 26, 0.1) 0%,
-    rgba(82, 196, 26, 0.04) 45%,
-    rgba(104, 39, 143, 0.06) 100%
-  );
+  background: linear-gradient(165deg,
+      rgba(82, 196, 26, 0.1) 0%,
+      rgba(82, 196, 26, 0.04) 45%,
+      rgba(104, 39, 143, 0.06) 100%);
   border: 1px solid rgba(82, 196, 26, 0.28);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.65) inset;
 }
@@ -1118,11 +1337,13 @@ select,
 }
 
 @keyframes layout-credits-count-pulse {
+
   0%,
   100% {
     transform: scale(1);
     opacity: 1;
   }
+
   50% {
     transform: scale(1.06);
     opacity: 0.95;

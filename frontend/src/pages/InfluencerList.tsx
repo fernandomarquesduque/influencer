@@ -322,7 +322,7 @@ export default function InfluencerList() {
     const c = new AbortController()
     fetchCampaignAccessDefaults({ signal: c.signal })
       .then((d) => setNewCampaignExpiresAt(d.defaultExpiresAt))
-      .catch(() => {})
+      .catch(() => { })
     return () => c.abort()
   }, [])
   const filterDrawerRef = useRef<HTMLDivElement>(null)
@@ -332,26 +332,33 @@ export default function InfluencerList() {
   const screens = useBreakpoint()
   const showFiltersSidebar = screens.lg
 
-  const [wizardInitialFacets, setWizardInitialFacets] = useState<ProfilesSearchFacets | null>(null)
+  type WizardPrefetchState = { status: 'loading' } | { status: 'ready'; facets: ProfilesSearchFacets | null }
+  const [wizardPrefetch, setWizardPrefetch] = useState<WizardPrefetchState>({ status: 'loading' })
   const wizardFacetsAbortRef = useRef<AbortController | null>(null)
   useEffect(() => {
     if (!hasMandatoryFilters) {
       wizardFacetsAbortRef.current?.abort()
       const controller = new AbortController()
       wizardFacetsAbortRef.current = controller
+      setWizardPrefetch({ status: 'loading' })
       fetchProfilesSearch({ limit: 1, offset: 0, sort: 'engagement_desc' }, { signal: controller.signal })
         .then((res) => {
-          if (!controller.signal.aborted) setWizardInitialFacets(res.facets ?? null)
+          if (controller.signal.aborted) return
+          setWizardPrefetch({
+            status: 'ready',
+            facets: res.facets ?? null,
+          })
         })
         .catch((e) => {
-          if ((e as Error).name !== 'AbortError' && !controller.signal.aborted) setWizardInitialFacets(null)
+          if ((e as Error).name === 'AbortError' || controller.signal.aborted) return
+          setWizardPrefetch({ status: 'ready', facets: null })
         })
       return () => {
         controller.abort()
         wizardFacetsAbortRef.current = null
       }
     }
-    setWizardInitialFacets(null)
+    setWizardPrefetch({ status: 'ready', facets: null })
   }, [hasMandatoryFilters])
 
   /** Handles cuja foto falhou e foi enfileirado refresh; atualizamos só esse item na lista quando o perfil voltar com URL nova. */
@@ -770,9 +777,10 @@ export default function InfluencerList() {
 
   if (!hasMandatoryFilters) {
     return (
-      <div>
+      <div className="influencer-list-wizard-shell">
         <SearchWizard
-          initialFacets={wizardInitialFacets}
+          initialFacets={wizardPrefetch.status === 'ready' ? wizardPrefetch.facets : null}
+          wizardPrefetchLoading={wizardPrefetch.status === 'loading'}
           initialSearchTerm={parsedUrl.q ?? ''}
           initialFilters={
             (parsedUrl.q || parsedUrl.categories?.length)

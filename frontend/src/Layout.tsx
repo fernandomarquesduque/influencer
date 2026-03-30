@@ -11,7 +11,6 @@ import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import Logo from './components/Logo'
 import ProfileAvatar from './components/ProfileAvatar'
-import ThemeFooterButton from './components/ThemeFooterButton'
 import MissionsBar from './components/MissionsBar/MissionsBar'
 import { Grid } from 'antd'
 
@@ -580,8 +579,6 @@ export default function Layout() {
           <Outlet />
         </div>
       </Content>
-
-      <ThemeFooterButton />
     </AntLayout>
   )
 }

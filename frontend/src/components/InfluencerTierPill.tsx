@@ -12,7 +12,7 @@ import {
 export interface InfluencerTierPillProps {
   /** Se definido e finito, patamar derivado dos seguidores (prioridade). */
   followers?: number | null
-  /** Chave da API (`nano` | `micro` | `medio` | `macro`) quando não se usa seguidores. */
+  /** Chave da API (`nano` … `celebridade`; `mid` = `medio`) quando não se usa seguidores. */
   sizeKey?: string | null
   /**
    * `gradient`: selo compacto (campanha, galeria).
@@ -21,7 +21,7 @@ export interface InfluencerTierPillProps {
   variant?: 'gradient' | 'chip'
 }
 
-/** Selo Nano/Micro/Mid/Macro — cores de `influencerTier.ts`. */
+/** Selo de patamar — cores de `influencerTier.ts` (fonte: `@repo/followersSizeBuckets`). */
 export default function InfluencerTierPill({ followers, sizeKey, variant = 'gradient' }: InfluencerTierPillProps) {
   let tier: InfluencerTierLabel
   let tooltip: string | undefined

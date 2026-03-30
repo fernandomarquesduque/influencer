@@ -4,6 +4,7 @@
  */
 import type { ProfileListItem, ProfilesSearchQuery, ProfilesSearchFacets, LlmSearchFacets } from '../api'
 import type { ProfilesSort } from '../api'
+import { FOLLOWERS_SIZE_BUCKETS, followersCountToSizeKey } from '@repo/followersSizeBuckets'
 import { getCostTier } from './pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
@@ -162,13 +163,16 @@ function matchesQuery(searchableText: string, q: string): { match: boolean; rele
   return { match: false, relevance: 0 }
 }
 
+/** Normaliza chaves de filtro da URL/UI (`mid` legado → `medio`, mesma base do crawl). */
+function normalizeSizeFilterQueryKey(s: string): string {
+  const x = s.toLowerCase().trim()
+  return x === 'mid' ? 'medio' : x
+}
+
 function getSizeFromItem(item: ProfileListItem): string | null {
   const fc = item.followers_count
   if (fc == null || !Number.isFinite(fc)) return null
-  if (fc < 10_000) return 'nano'
-  if (fc < 50_000) return 'micro'
-  if (fc < 500_000) return 'mid'
-  return 'macro'
+  return followersCountToSizeKey(fc)
 }
 
 function getCostTierFromItem(item: ProfileListItem): CostTier | null {
@@ -195,6 +199,11 @@ function hasSocial(act: { whatsapp?: string; tiktok?: string; facebook?: string;
 export interface FilterAndSortOptions {
   /** Handles favoritados pelo usuário (para ordenação por favorito). */
   favoriteHandles?: Set<string>
+  /**
+   * Restringe a estes handles (busca por legenda/conteúdo dos posts na campanha).
+   * Quando definido, `q` no query não é aplicado em nome/bio (evita zerar a lista quando o termo só aparece em posts).
+   */
+  postCaptionMatchHandles?: Set<string>
 }
 
 export function filterAndSortCampaignItems(
@@ -204,7 +213,7 @@ export function filterAndSortCampaignItems(
 ): ProfileListItem[] {
   let list = [...items]
   const q = (query.q ?? '').trim().toLowerCase()
-  const sizeFilter = (query.sizeFilter ?? []).map((s) => s.toLowerCase())
+  const sizeFilter = (query.sizeFilter ?? []).map((s) => normalizeSizeFilterQueryKey(String(s)))
   const accountTypeFilter = (query.accountTypeFilter ?? [])
   const contentTypesFilter = (query.contentTypes ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean)
   const citiesFilter = (query.cities ?? []).map((s) => s.toLowerCase())
@@ -260,7 +269,13 @@ export function filterAndSortCampaignItems(
   if (hasAnyLlmFilter(query)) {
     list = list.filter((i) => matchesLlmQualificationFilters(i as unknown as Record<string, unknown>, query))
   }
-  if (q) {
+  const postHandles = options?.postCaptionMatchHandles
+  if (postHandles != null) {
+    list = list.filter((i) => {
+      const h = (i.handle ?? i.key ?? '').toString().toLowerCase().replace(/^@/, '').trim()
+      return !!h && postHandles.has(h)
+    })
+  } else if (q) {
     list = list.filter((i) => {
       const text = getSearchableTextFromItem(i)
       const { match, relevance } = matchesQuery(text, q)
@@ -425,12 +440,11 @@ export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearch
     neighborhoods: [...neighborhoodCount.entries()].filter(([, count]) => count > 0).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     social: socialCount,
     cost_tier: [],
-    size_buckets: [
-      { key: 'nano', label: 'Nano', count: sizeCount.get('nano') ?? 0 },
-      { key: 'micro', label: 'Micro', count: sizeCount.get('micro') ?? 0 },
-      { key: 'mid', label: 'Mid', count: sizeCount.get('mid') ?? 0 },
-      { key: 'macro', label: 'Macro', count: sizeCount.get('macro') ?? 0 },
-    ].filter((x) => x.count > 0),
+    size_buckets: FOLLOWERS_SIZE_BUCKETS.map((b) => ({
+      key: b.key === 'medio' ? 'mid' : b.key,
+      label: b.key === 'medio' ? 'Mid' : b.label,
+      count: sizeCount.get(b.key) ?? 0,
+    })).filter((x) => x.count > 0),
     account_type: [
       { value: 1, label: 'Pessoal', count: accountTypeCount.get(1) ?? 0 },
       { value: 2, label: 'Criador', count: accountTypeCount.get(2) ?? 0 },

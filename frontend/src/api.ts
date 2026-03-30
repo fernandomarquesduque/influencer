@@ -237,7 +237,7 @@ export interface ProfilesSearchQuery {
   pricingDestaque?: number[]
   /** Faixa de preço: low = abaixo da média, medium = normal, high/very_high = acima da média. */
   costTierFilter?: string[]
-  /** Tamanho: nano, micro, mid, macro. */
+  /** Tamanho: nano, micro, medio (ou mid), macro, celebridade. */
   sizeFilter?: string[]
   /** Filtros sobre classificação LLM (`llm.qualification`); multiselect = OR no mesmo campo. */
   llmProfileType?: string[]
@@ -313,7 +313,7 @@ export interface ProfilesSearchFacets {
   }
   /** Faixa de preço (low, medium, high, very_high); só entradas com count > 0. */
   cost_tier?: { tier: string; count: number }[]
-  /** Contagem por tamanho (nano, micro, mid, macro). */
+  /** Contagem por tamanho (UI pode usar `mid` no lugar de `medio`). */
   size_buckets?: { key: string; label: string; count: number }[]
   llm?: LlmSearchFacets
 }
@@ -354,7 +354,7 @@ export interface ProfilePreviewItem {
   firstName: string
   profilePicUrl: string
   llmDescription: string
-  size: 'nano' | 'micro' | 'medio' | 'macro'
+  size: 'nano' | 'micro' | 'medio' | 'macro' | 'celebridade'
   category: string
   audience: string
   collectedAt: string | null
@@ -1233,6 +1233,40 @@ export async function fetchCampaignPostMatches(
     throw new Error((err as { error?: string }).error || 'Falha ao carregar posts da campanha')
   }
   return res.json()
+}
+
+const POST_SEARCH_HANDLES_PAGE = 200
+
+/**
+ * Handles únicos na campanha com ao menos um post que casa com `q` (mesma API da galeria Origem).
+ * Pagina até cobrir `total` para o painel BI bater com a listagem de posts.
+ */
+export async function fetchCampaignPostSearchHandles(
+  campaignId: string,
+  params: { q: string; mediaKinds?: MediaKind[] },
+  options?: { signal?: AbortSignal }
+): Promise<{ handles: string[]; totalPosts: number }> {
+  const q = params.q.trim()
+  if (!q) return { handles: [], totalPosts: 0 }
+  const handles = new Set<string>()
+  let offset = 0
+  let totalPosts = 0
+  for (; ;) {
+    const res = await fetchCampaignPostMatches(
+      campaignId,
+      { q, mediaKinds: params.mediaKinds, limit: POST_SEARCH_HANDLES_PAGE, offset },
+      options
+    )
+    totalPosts = res.total
+    for (const it of res.items) {
+      const raw = it.profile_handle ?? it.influencer?.username ?? ''
+      const h = String(raw).toLowerCase().replace(/^@/, '').trim()
+      if (h) handles.add(h)
+    }
+    if (res.items.length === 0 || offset + res.items.length >= res.total) break
+    offset += res.items.length
+  }
+  return { handles: [...handles], totalPosts }
 }
 
 export async function fetchProfiles(

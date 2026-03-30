@@ -19,6 +19,7 @@ import {
 import { buildSlimProfile } from '../utils/slimProfile.js';
 import { loadExistingProfileRecordForMerge, mergeProfilePreservingLlm } from '../utils/preserveLlmOnProfileMerge.js';
 import { resyncInfluencerS3AfterDbMediaReset } from '../storage/s3InfluencerImage.js';
+import { logMemorySnapshot } from '../utils/memoryDiag.js';
 import type { CrawlStorage } from './runCrawl.js';
 
 const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? (parseInt(process.env.MIN_FOLLOWERS, 10) || 0) : 0;
@@ -134,7 +135,14 @@ export async function extractSingleProfileWithPage(
       await storage.deletePostsByHandle(slim.handle);
     }
     logStep('forRefresh: S3 wipe + avatar + capas...');
+    logMemorySnapshot(`forRefresh @${cleanHandle}: antes de resync S3`, {
+      posts: posts.length,
+      reels: reels.length,
+      tagged: tagged.length,
+      highlights: highlights.length,
+    });
     await resyncInfluencerS3AfterDbMediaReset(slim, { posts, reels, tagged, highlights });
+    logMemorySnapshot(`forRefresh @${cleanHandle}: depois de resync S3`);
     logStep('forRefresh: salvando perfil...');
     const existingRefresh = await loadExistingProfileRecordForMerge(
       storage as CrawlStorage & { loadByHandle?: (h: string) => Promise<Entity | null> },

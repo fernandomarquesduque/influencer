@@ -2,16 +2,39 @@
  * Wizard de pré-filtragem gamificado: etapas visuais antes de ver os resultados.
  * Afunila o resultado: a cada escolha o usuário vê a quantidade de perfis que os filtros retornam.
  */
-import { useState, useEffect, useLayoutEffect, useRef, type ReactElement } from 'react'
-import { Button, Typography, Progress, Alert } from 'antd'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ComponentType } from 'react'
+import { Button, Typography, Progress, Spin, Modal, message } from 'antd'
 import {
   TeamOutlined,
   UserOutlined,
   RocketOutlined,
-  IdcardOutlined,
   ApartmentOutlined,
+  CrownOutlined,
+  GlobalOutlined,
+  MedicineBoxOutlined,
+  SmileOutlined,
+  BankOutlined,
+  CoffeeOutlined,
+  FireOutlined,
+  VideoCameraOutlined,
+  HomeOutlined,
+  RiseOutlined,
+  ReadOutlined,
+  ThunderboltOutlined,
+  LineChartOutlined,
+  PictureOutlined,
+  CarOutlined,
+  TrophyOutlined,
+  FlagOutlined,
+  ShoppingOutlined,
+  HeartOutlined,
+  AppstoreOutlined,
+  AudioOutlined,
+  SkinOutlined,
+  StarOutlined,
 } from '@ant-design/icons'
 import type { ProfilesSearchQuery, ProfilesSearchFacets } from '../../api'
+import { formatPatamarRangeCompact } from '../../utils/influencerTier'
 
 const { Text } = Typography
 
@@ -21,29 +44,27 @@ export interface EstimateResult {
   facets: ProfilesSearchFacets | null
 }
 
+/** Máximo de categorias principais no passo 1 (filtro na busca). */
+const LLM_MAIN_CATEGORY_MAX = 3
+
 const STEPS = [
-  { key: 'llmMainCategory', icon: ApartmentOutlined, title: 'Qual a categoria principal?', subtitle: 'Opcional' },
-  { key: 'porte', icon: TeamOutlined, title: 'Qual o porte?', subtitle: 'Escolha uma ou mais faixas de seguidores (opcional)' },
-  { key: 'llmProfileType', icon: IdcardOutlined, title: 'Qual o tipo de perfil?', subtitle: 'Escolha uma ou mais opções (opcional), com base na classificação automática' },
-  { key: 'llmGender', icon: UserOutlined, title: 'Gênero (classificação IA)', subtitle: 'Opcional' },
-  { key: 'llmAudience', icon: TeamOutlined, title: 'Qual o público-alvo do conteúdo?', subtitle: 'Opcional' },
+  {
+    key: 'llmMainCategory',
+    icon: ApartmentOutlined,
+    title: 'Qual a categoria deseja buscar?',
+    subtitle: `Selecione de 1 a ${LLM_MAIN_CATEGORY_MAX} itens para buscar o influencer ideal para sua campanha`,
+  },
+  { key: 'porte', icon: TeamOutlined, title: 'Qual o tamanho do influencer?', subtitle: 'Escolha uma ou mais faixas de seguidores' },
+  { key: 'llmGender', icon: UserOutlined, title: 'Gênero do Influenciador', subtitle: 'Opcional' },
+  { key: 'llmAudience', icon: TeamOutlined, title: 'Qual o público-alvo que você busca?', subtitle: 'Opcional' },
 ] as const
 
 const STEP_LLM_FIRST = 0
 const STEP_LLM_MAIN_CATEGORY = 0
 const STEP_PORTE = 1
-const STEP_LLM_PROFILE_TYPE = 2
-const STEP_LLM_GENDER = 3
-const STEP_LLM_AUDIENCE = 4
-const STEP_LLM_LAST = 4
-
-/** Chaves alinhadas a `followers_buckets` e ao filtro `sizeFilter` da API (OR entre selecionados). */
-const PORTE_OPTIONS = [
-  { key: 'nano', label: 'Nano', min: 0, max: 10_000 },
-  { key: 'micro', label: 'Micro', min: 10_000, max: 50_000 },
-  { key: 'medio', label: 'Médio', min: 50_000, max: 200_000 },
-  { key: 'macro', label: 'Macro', min: 200_000, max: undefined as number | undefined },
-] as const
+const STEP_LLM_GENDER = 2
+const STEP_LLM_AUDIENCE = 3
+const STEP_LLM_LAST = 3
 
 /**
  * Alinha `sizeFilter` aos buckets com count > 0 (igual aos chips renderizados).
@@ -75,6 +96,88 @@ const LLM_ENUM_LABELS: Record<string, string> = {
 function llmOptionLabel(raw: string): string {
   const k = raw.trim().toLowerCase()
   return LLM_ENUM_LABELS[k] ?? raw
+}
+
+type CategoryIconComp = ComponentType<{ style?: React.CSSProperties }>
+
+function categoryVisualForLabel(rawName: string): { Icon: CategoryIconComp; fg: string; bg: string } {
+  const n = rawName.toLowerCase()
+  const rules: { test: (s: string) => boolean; Icon: CategoryIconComp; fg: string; bg: string }[] = [
+    { test: (s) => /beleza|maquiagem|skincare|cosm[eé]/.test(s), Icon: CrownOutlined, fg: '#c41d7f', bg: 'rgba(196, 29, 127, 0.14)' },
+    { test: (s) => /moda|estilo|fashion/.test(s), Icon: SkinOutlined, fg: '#531dab', bg: 'rgba(83, 29, 171, 0.12)' },
+    { test: (s) => /maternidade|paternidade|beb[eê]|gesta[cç][aã]o/.test(s), Icon: TeamOutlined, fg: '#08979c', bg: 'rgba(8, 151, 156, 0.14)' },
+    { test: (s) => /viagem|turismo/.test(s), Icon: GlobalOutlined, fg: '#1677ff', bg: 'rgba(22, 119, 255, 0.12)' },
+    { test: (s) => /sa[uú]de|bem[- ]estar|wellness/.test(s), Icon: MedicineBoxOutlined, fg: '#52c41a', bg: 'rgba(82, 196, 26, 0.14)' },
+    { test: (s) => /humor|com[eé]dia|entretenimento/.test(s), Icon: SmileOutlined, fg: '#fa8c16', bg: 'rgba(250, 140, 22, 0.14)' },
+    { test: (s) => /neg[oó]cio|carreira|empreendedor|startup/.test(s), Icon: BankOutlined, fg: '#2f54eb', bg: 'rgba(47, 84, 235, 0.12)' },
+    { test: (s) => /lifestyle|vlog/.test(s), Icon: CoffeeOutlined, fg: '#d48806', bg: 'rgba(212, 136, 6, 0.14)' },
+    { test: (s) => /gastronomia|culin[aá]ria|receita|food/.test(s), Icon: FireOutlined, fg: '#cf1322', bg: 'rgba(207, 19, 34, 0.1)' },
+    { test: (s) => /cinema|cultura pop|celebridade|s[eé]rie/.test(s), Icon: VideoCameraOutlined, fg: '#722ed1', bg: 'rgba(114, 46, 209, 0.12)' },
+    { test: (s) => /decora[cç][aã]o|home office|lar|casa /.test(s), Icon: HomeOutlined, fg: '#13c2c2', bg: 'rgba(19, 194, 194, 0.14)' },
+    { test: (s) => /desenvolvimento pessoal|produtivida|mindset/.test(s), Icon: RiseOutlined, fg: '#237804', bg: 'rgba(35, 120, 4, 0.12)' },
+    { test: (s) => /educa[cç][aã]o|idioma|curso|ensino/.test(s), Icon: ReadOutlined, fg: '#096dd9', bg: 'rgba(9, 109, 217, 0.12)' },
+    { test: (s) => /pet|animal/.test(s), Icon: StarOutlined, fg: '#fa541c', bg: 'rgba(250, 84, 28, 0.12)' },
+    { test: (s) => /m[uú]sica|dança|dance/.test(s), Icon: AudioOutlined, fg: '#eb2f96', bg: 'rgba(235, 47, 150, 0.12)' },
+    { test: (s) => /tecnologia|inova[cç][aã]o|tech|gadget/.test(s), Icon: ThunderboltOutlined, fg: '#0050b3', bg: 'rgba(0, 80, 179, 0.12)' },
+    { test: (s) => /finanças|investimento|crypto|bitcoin|mercado financeiro/.test(s), Icon: LineChartOutlined, fg: '#135200', bg: 'rgba(19, 82, 0, 0.12)' },
+    { test: (s) => /arte|design|ilustra/.test(s), Icon: PictureOutlined, fg: '#c41d7f', bg: 'rgba(196, 29, 127, 0.1)' },
+    { test: (s) => /automobil|motor|carro|moto/.test(s), Icon: CarOutlined, fg: '#434343', bg: 'rgba(67, 67, 67, 0.1)' },
+    { test: (s) => /fitness|academia|muscula/.test(s), Icon: RiseOutlined, fg: '#ad4e00', bg: 'rgba(173, 78, 0, 0.12)' },
+    { test: (s) => /^esportes$|futebol|atleta|basquete|v[oô]lei/.test(s), Icon: TrophyOutlined, fg: '#d4380d', bg: 'rgba(212, 56, 13, 0.12)' },
+    { test: (s) => /pol[ií]tica|governo|elei[cç][aã]o/.test(s), Icon: FlagOutlined, fg: '#595959', bg: 'rgba(89, 89, 89, 0.12)' },
+    { test: (s) => /compra|desconto|promo[cç][aã]o|oferta/.test(s), Icon: ShoppingOutlined, fg: '#f5222d', bg: 'rgba(245, 34, 45, 0.1)' },
+    { test: (s) => /relacionamento|casal|amor /.test(s), Icon: HeartOutlined, fg: '#eb2f96', bg: 'rgba(235, 47, 150, 0.12)' },
+  ]
+  for (const r of rules) {
+    if (r.test(n)) return { Icon: r.Icon, fg: r.fg, bg: r.bg }
+  }
+  let h = 0
+  for (let i = 0; i < rawName.length; i++) h = (h * 31 + rawName.charCodeAt(i)) >>> 0
+  const hues = [280, 200, 24, 145, 265, 198]
+  const hue = hues[h % hues.length]!
+  const fg = `hsl(${hue} 72% 36%)`
+  const bg = `hsla(${hue} 60% 50% / 0.15)`
+  return { Icon: AppstoreOutlined, fg, bg }
+}
+
+function MainCategoryGridSection(props: {
+  items: { name: string; count: number }[]
+  selected: string[] | undefined
+  /** Quando definido, tiles não selecionados ficam visualmente indisponíveis ao atingir o limite. */
+  maxSelectable?: number
+  onToggle: (normalizedKey: string) => void
+}) {
+  const list = props.items.filter((x) => x.count > 0).sort((a, b) => b.count - a.count)
+  if (!list.length) return null
+  const selectedCount = props.selected?.length ?? 0
+  const max = props.maxSelectable
+  return (
+    <div className="search-wizard-category-grid" role="list">
+      {list.map((it) => {
+        const norm = it.name.trim().toLowerCase()
+        const active = props.selected?.includes(norm) ?? false
+        const atLimit = max != null && selectedCount >= max && !active
+        const { Icon, fg, bg } = categoryVisualForLabel(it.name)
+        return (
+          <button
+            key={norm}
+            type="button"
+            role="listitem"
+            className={`search-wizard-category-tile${active ? ' search-wizard-category-tile--active' : ''}${atLimit ? ' search-wizard-category-tile--limit' : ''}`}
+            onClick={() => props.onToggle(norm)}
+            aria-pressed={active}
+            aria-disabled={atLimit}
+          >
+            <span className="search-wizard-category-tile-icon" style={{ background: bg, color: fg }} aria-hidden>
+              <Icon style={{ fontSize: 22 }} />
+            </span>
+            <span className="search-wizard-category-tile-label">{llmOptionLabel(it.name)}</span>
+            <span className="search-wizard-category-tile-count">{it.count.toLocaleString('pt-BR')} perfis</span>
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 function LlmChipSection(props: {
@@ -121,7 +224,7 @@ export const NO_PERFIL_CATEGORY_KEY = 'no_perfil'
 export interface WizardState {
   q?: string
   categories?: string[]
-  /** Porte(s): nano | micro | medio | macro — multiselect; opcional na etapa de porte. */
+  /** Porte(s): chaves de `followers_buckets` (ex.: nano … celebridade); multiselect opcional. */
   sizeFilter?: string[]
   /** Legado (URL antiga); convertido para `sizeFilter` ao hidratar. */
   minFollowers?: number
@@ -191,20 +294,41 @@ export interface SearchWizardProps {
   onSearchTermChange?: (q: string) => void
   /** Callback quando qualquer filtro é selecionado (para sincronizar com URL). */
   onFiltersChange?: (query: Partial<ProfilesSearchQuery>) => void
+  /** Enquanto o primeiro fetch (facets iniciais) não termina. */
+  wizardPrefetchLoading?: boolean
 }
 
-function boundsToSizeKey(min?: number, max?: number): string | undefined {
-  if (min === 0 && max === 10_000) return 'nano'
-  if (min === 10_000 && max === 50_000) return 'micro'
-  if (min === 50_000 && max === 200_000) return 'medio'
-  if (min === 200_000 && max === undefined) return 'macro'
+/**
+ * Lista de categorias LLM na etapa 1: usa facetas do prefetch (`initialFacets`) quando existem,
+ * pois não têm filtro `llmMainCategory` — ao voltar do porte, `facets` pode estar restrita à categoria
+ * selecionada e só mostraria um chip.
+ */
+function mainCategoryFacetItemsForWizard(
+  facetsState: ProfilesSearchFacets | null,
+  initial: ProfilesSearchFacets | null | undefined
+): { name: string; count: number }[] {
+  const pre = initial?.llm?.mainCategory ?? []
+  if (pre.some((i) => i.count > 0)) return pre
+  return facetsState?.llm?.mainCategory ?? initial?.llm?.mainCategory ?? []
+}
+
+function boundsToSizeKeyFromBuckets(
+  buckets: NonNullable<ProfilesSearchFacets['followers_buckets']> | undefined,
+  min?: number | null,
+  max?: number | null | undefined
+): string | undefined {
+  if (!buckets?.length) return undefined
+  if (min == null && max == null) return undefined
+  for (const b of buckets) {
+    if (b.min !== min) continue
+    if (b.max === max || (b.max == null && max == null)) return b.key
+  }
   return undefined
 }
 
 /** Maior índice de etapa LLM com filtro preenchido (para retomar a jornada pela URL). */
 function maxLlmStepFromFilters(f: Partial<WizardState>): number {
   let max = -1
-  if ((f.llmProfileType?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_PROFILE_TYPE)
   if ((f.llmMainCategory?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_MAIN_CATEGORY)
   if ((f.llmGender?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_GENDER)
   if ((f.llmAudienceType?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
@@ -227,8 +351,6 @@ function filterPatchForWizardStep(stepIndex: number): Partial<WizardState> {
   switch (stepIndex) {
     case STEP_PORTE:
       return { sizeFilter: undefined, minFollowers: undefined, maxFollowers: undefined }
-    case STEP_LLM_PROFILE_TYPE:
-      return { llmProfileType: undefined }
     case STEP_LLM_MAIN_CATEGORY:
       return { llmMainCategory: undefined }
     case STEP_LLM_GENDER:
@@ -269,11 +391,14 @@ function copyStrArr(a?: string[]): string[] | undefined {
   return a?.length ? [...a] : undefined
 }
 
-function filtersToWizardState(f: Partial<WizardState> | undefined): WizardState {
+function filtersToWizardState(
+  f: Partial<WizardState> | undefined,
+  followersBuckets?: ProfilesSearchFacets['followers_buckets']
+): WizardState {
   if (!f?.categories?.length && !f?.q) return {}
   let sizeFilter = f.sizeFilter?.length ? [...f.sizeFilter] : undefined
   if (!sizeFilter?.length && (f.minFollowers != null || f.maxFollowers != null)) {
-    const k = boundsToSizeKey(f.minFollowers, f.maxFollowers)
+    const k = boundsToSizeKeyFromBuckets(followersBuckets, f.minFollowers, f.maxFollowers)
     if (k) sizeFilter = [k]
   }
   return {
@@ -286,7 +411,11 @@ function filtersToWizardState(f: Partial<WizardState> | undefined): WizardState 
     accountTypeFilter: f.accountTypeFilter?.length ? f.accountTypeFilter : undefined,
     activationFilter: f.activationFilter?.length ? f.activationFilter : undefined,
     llmProfileType: copyStrArr(f.llmProfileType?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmMainCategory: copyStrArr(f.llmMainCategory?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    llmMainCategory: (() => {
+      const v = copyStrArr(f.llmMainCategory?.map((x) => x.trim().toLowerCase()).filter(Boolean))
+      if (!v?.length) return undefined
+      return v.length > LLM_MAIN_CATEGORY_MAX ? v.slice(0, LLM_MAIN_CATEGORY_MAX) : v
+    })(),
     llmGender: copyStrArr(f.llmGender?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmLanguage: copyStrArr(f.llmLanguage?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmSubCategories: copyStrArr(f.llmSubCategories?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
@@ -299,13 +428,25 @@ function filtersToWizardState(f: Partial<WizardState> | undefined): WizardState 
   }
 }
 
-export default function SearchWizard({ onComplete, onEstimate, initialFacets, initialSearchTerm = '', initialFilters, onFiltersChange }: SearchWizardProps) {
-  const [step, setStep] = useState(() => stepFromFilters(filtersToWizardState(initialFilters)))
-  const [state, setState] = useState<WizardState>(() => filtersToWizardState(initialFilters))
+export default function SearchWizard({
+  onComplete,
+  onEstimate,
+  initialFacets,
+  initialSearchTerm = '',
+  initialFilters,
+  onFiltersChange,
+  wizardPrefetchLoading = false,
+}: SearchWizardProps) {
+  const initialBuckets = initialFacets?.followers_buckets
+  const [step, setStep] = useState(() => stepFromFilters(filtersToWizardState(initialFilters, initialBuckets)))
+  const [state, setState] = useState<WizardState>(() => filtersToWizardState(initialFilters, initialBuckets))
   const fixedSearchTerm = initialSearchTerm.trim()
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
   const [nextStepLoading, setNextStepLoading] = useState(false)
-  const [porteValidationError, setPorteValidationError] = useState(false)
+  const mainCategoryItems = useMemo(
+    () => mainCategoryFacetItemsForWizard(facets, initialFacets),
+    [facets, initialFacets]
+  )
   /** Evita disparar duas vezes o auto-avanço do porte quando a URL pede buckets inexistentes. */
   const porteAutoSkipRef = useRef(false)
   /** Evita corrida entre prune do porte e o auto-avanço quando não há buckets válidos. */
@@ -318,7 +459,6 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
     const patch = filterPatchForWizardStep(step)
     if (Object.keys(patch).length === 0) return
     setState((prev) => ({ ...prev, ...patch }))
-    setPorteValidationError(false)
   }, [step])
 
   /** Sincroniza seleções com a URL conforme os filtros do wizard. */
@@ -343,6 +483,19 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
     update({ [key]: next.length ? (next as WizardState[typeof key]) : undefined })
   }
 
+  const toggleLlmMainCategory = (norm: string) => {
+    const arr = state.llmMainCategory ?? []
+    if (arr.includes(norm)) {
+      toggleArray('llmMainCategory', norm)
+      return
+    }
+    if (arr.length >= LLM_MAIN_CATEGORY_MAX) {
+      message.info(`Você pode selecionar no máximo ${LLM_MAIN_CATEGORY_MAX} categorias.`)
+      return
+    }
+    toggleArray('llmMainCategory', norm)
+  }
+
   const syncUrl = (stateOverride?: WizardState, hashStep?: number) => {
     if (!onFiltersChange) return
     const s = stateOverride ?? state
@@ -352,11 +505,27 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
   }
 
   const nextStep = async () => {
+    if (step === STEP_LLM_MAIN_CATEGORY) {
+      const hasCats = mainCategoryItems.some((i) => i.count > 0)
+      if (!wizardPrefetchLoading && hasCats && !(state.llmMainCategory?.length ?? 0)) {
+        Modal.warning({
+          title: 'Categoria obrigatória',
+          content: 'Selecione pelo menos uma categoria para continuar.',
+          okText: 'Entendi',
+          centered: true,
+        })
+        return
+      }
+    }
     if (step === STEP_PORTE && !(state.sizeFilter?.length ?? 0)) {
-      setPorteValidationError(true)
+      Modal.warning({
+        title: 'Porte obrigatório',
+        content: 'Selecione pelo menos 1 porte para continuar.',
+        okText: 'Entendi',
+        centered: true,
+      })
       return
     }
-    setPorteValidationError(false)
     syncUrl()
     if (step < STEPS.length - 1) {
       if (step === STEP_LLM_LAST) {
@@ -373,8 +542,13 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
             const nextIdx = step + 1
             setStep(nextIdx)
           }
-        } catch {
-          // mantém na mesma etapa em erro
+        } catch (e) {
+          Modal.error({
+            title: 'Não foi possível atualizar',
+            content: (e as Error)?.message || 'Não foi possível atualizar a busca. Tente novamente.',
+            okText: 'Entendi',
+            centered: true,
+          })
         } finally {
           setNextStepLoading(false)
         }
@@ -398,8 +572,13 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
           const query = stateToQuery(cleaned)
           const { facets: nextFacets } = await onEstimate(query)
           setFacets(nextFacets ?? null)
-        } catch {
-          /* mantém facets */
+        } catch (e) {
+          Modal.error({
+            title: 'Não foi possível atualizar',
+            content: (e as Error)?.message || 'Não foi possível atualizar a busca. Tente novamente.',
+            okText: 'Entendi',
+            centered: true,
+          })
         } finally {
           setNextStepLoading(false)
         }
@@ -431,7 +610,13 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
         const finalPatch =
           target === STEP_LLM_MAIN_CATEGORY ? filterPatchesBackToFirstStep() : { ...patch, ...entryClear }
         applyPrevStateAndUrl(finalPatch, target)
-      } catch {
+      } catch (e) {
+        Modal.error({
+          title: 'Não foi possível atualizar',
+          content: (e as Error)?.message || 'Não foi possível atualizar a busca. Tente novamente.',
+          okText: 'Entendi',
+          centered: true,
+        })
         if (target === STEP_LLM_MAIN_CATEGORY) {
           patch = filterPatchesBackToFirstStep()
         }
@@ -504,7 +689,13 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
           const { facets: nextFacets } = await onEstimate(query)
           setFacets(nextFacets ?? null)
           setStep(STEP_LLM_FIRST)
-        } catch {
+        } catch (e) {
+          Modal.error({
+            title: 'Não foi possível atualizar',
+            content: (e as Error)?.message || 'Não foi possível atualizar a busca. Tente novamente.',
+            okText: 'Entendi',
+            centered: true,
+          })
           porteAutoSkipRef.current = false
           porteAutoSkipInProgressRef.current = false
         } finally {
@@ -513,19 +704,25 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
       })()
   }, [step, facets, initialFacets, state, onEstimate])
 
-  const isLoadingOptions = nextStepLoading || (step >= 1 && !(facets ?? initialFacets))
+  const isLoadingOptions =
+    nextStepLoading || (step >= 1 && !(facets ?? initialFacets)) || (step === STEP_LLM_MAIN_CATEGORY && wizardPrefetchLoading)
   const showFullScreenLoader = step >= 1 && !(facets ?? initialFacets)
 
-  const canAdvance = () => {
-    if (isLoadingOptions) return false
-    return true
-  }
+  /** Só bloqueia o botão durante carregamento; validação de etapa mostra erro ao clicar. */
+  const nextButtonDisabled = isLoadingOptions
+
+  const isMainCategoryStep = step === STEP_LLM_MAIN_CATEGORY
+  const contentMaxWidth = isMainCategoryStep ? 'min(1040px, 100%)' : 580
 
   return (
     <div
-      className="search-wizard"
+      className={
+        (isMainCategoryStep ? 'search-wizard search-wizard--category-wide' : 'search-wizard') +
+        ' search-wizard--with-fixed-footer'
+      }
       style={{
-        maxWidth: 680,
+        maxWidth: isMainCategoryStep ? 'min(1040px, 100%)' : 680,
+        width: '100%',
         margin: '0 auto',
         overflow: 'visible',
         display: 'flex',
@@ -570,147 +767,150 @@ export default function SearchWizard({ onComplete, onEstimate, initialFacets, in
           </div>
         </div>
       )}
-      {/* Cada etapa em tela separada */}
-      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', overflow: 'visible', position: 'relative', alignItems: 'center' }} className="search-wizard-step">
-        <div key={step} className="search-wizard-stage" style={{ display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', textAlign: 'center' }}>
-          <Typography.Title level={2} style={{ marginBottom: 4, fontSize: 22, fontWeight: 600, flexShrink: 0 }}>
-            {currentStep.title}
-          </Typography.Title>
-          <Text type="secondary" style={{ fontSize: 14, lineHeight: 1.4, flexShrink: 0 }}>
-            {currentStep.subtitle}
-          </Text>
+      {/* Conteúdo rolável; rodapé (progresso + ações) fica fixo na viewport */}
+      <div className="search-wizard__scroll">
+        <div
+          style={{ width: '100%', display: 'flex', flexDirection: 'column', overflow: 'visible', position: 'relative', alignItems: 'center' }}
+          className="search-wizard-step"
+        >
+          <div key={step} className="search-wizard-stage" style={{ display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', textAlign: 'center' }}>
+            <Typography.Title level={2} style={{ marginBottom: 4, fontSize: 22, fontWeight: 600, flexShrink: 0 }}>
+              {currentStep.title}
+            </Typography.Title>
+            <Text type="secondary" style={{ fontSize: 14, lineHeight: 1.4, flexShrink: 0 }}>
+              {currentStep.subtitle}
+            </Text>
 
-          <div style={{ marginTop: 20, width: '100%', maxWidth: 580, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            {step === STEP_PORTE && (
-              <div style={{ width: '100%', textAlign: 'center' }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
-                  {PORTE_OPTIONS.map((p) => {
-                    const f = facets ?? initialFacets
-                    const bucket = f?.followers_buckets?.find((b) => b.key === p.key)
-                    const count = bucket?.count ?? 0
-                    if (count === 0) return null
-                    const active = state.sizeFilter?.includes(p.key) ?? false
-                    return (
-                      <Button
-                        key={p.key}
-                        type={active ? 'primary' : 'default'}
-                        size="large"
-                        onClick={() => {
-                          const cur = state.sizeFilter ?? []
-                          const next = cur.includes(p.key) ? cur.filter((k) => k !== p.key) : [...cur, p.key]
-                          update({ sizeFilter: next.length ? next : undefined, minFollowers: undefined, maxFollowers: undefined })
-                          if (next.length > 0) setPorteValidationError(false)
-                        }}
-                        style={{ borderRadius: 14, fontSize: 15 }}
-                      >
-                        {p.label}
-                        <span style={{ marginLeft: 8, opacity: 0.9 }}>
-                          ({count.toLocaleString('pt-BR')})
-                        </span>
-                      </Button>
-                    )
-                  })}
+            <div style={{ marginTop: 20, width: '100%', maxWidth: contentMaxWidth, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              {step === STEP_PORTE && (
+                <div style={{ width: '100%', textAlign: 'center' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
+                    {((facets ?? initialFacets)?.followers_buckets ?? [])
+                      .filter((b) => b.count > 0)
+                      .map((p) => {
+                        const active = state.sizeFilter?.includes(p.key) ?? false
+                        const max = p.max ?? undefined
+                        return (
+                          <Button
+                            key={p.key}
+                            type={active ? 'primary' : 'default'}
+                            size="large"
+                            onClick={() => {
+                              const cur = state.sizeFilter ?? []
+                              const next = cur.includes(p.key) ? cur.filter((k) => k !== p.key) : [...cur, p.key]
+                              update({ sizeFilter: next.length ? next : undefined, minFollowers: undefined, maxFollowers: undefined })
+                            }}
+                            style={{ borderRadius: 14, fontSize: 15 }}
+                          >
+                            {p.label}
+                            <span style={{ marginLeft: 6, opacity: 0.92, fontWeight: 500 }}>
+                              · {formatPatamarRangeCompact({ min: p.min, max })}
+                            </span>
+                            <span style={{ marginLeft: 8, opacity: 0.9 }}>
+                              ({p.count.toLocaleString('pt-BR')})
+                            </span>
+                          </Button>
+                        )
+                      })}
+                  </div>
                 </div>
-                {porteValidationError && (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message="Selecione pelo menos 1 porte para continuar."
-                    style={{ marginTop: 14, maxWidth: 520, marginInline: 'auto' }}
-                  />
-                )}
-              </div>
-            )}
-
-            {step >= STEP_LLM_FIRST && step <= STEP_LLM_LAST && (
-              <div style={{ width: '100%', textAlign: 'center' }}>
-                {(() => {
-                  const llm = (facets ?? initialFacets)?.llm
-                  if (!llm) {
-                    return <Text type="secondary">Nenhuma classificação IA para este recorte — avance para continuar.</Text>
-                  }
-                  const emptyHint = <Text type="secondary">Nenhuma opção neste recorte — pode avançar.</Text>
-                  const chipOrHint = (items: { name: string; count: number }[], el: ReactElement) =>
-                    (items ?? []).some((i) => i.count > 0) ? el : emptyHint
-                  switch (step) {
-                    case STEP_LLM_PROFILE_TYPE:
-                      return chipOrHint(llm.profileType ?? [], (
-                        <LlmChipSection
-                          items={llm.profileType ?? []}
-                          selected={state.llmProfileType}
-                          onToggle={(k) => toggleArray('llmProfileType', k)}
-                        />
-                      ))
-                    case STEP_LLM_MAIN_CATEGORY:
-                      return chipOrHint(llm.mainCategory ?? [], (
-                        <LlmChipSection
-                          items={llm.mainCategory ?? []}
-                          selected={state.llmMainCategory}
-                          onToggle={(k) => toggleArray('llmMainCategory', k)}
-                        />
-                      ))
-                    case STEP_LLM_GENDER:
-                      return chipOrHint(llm.gender ?? [], (
-                        <LlmChipSection
-                          items={llm.gender ?? []}
-                          selected={state.llmGender}
-                          onToggle={(k) => toggleArray('llmGender', k)}
-                        />
-                      ))
-                    case STEP_LLM_AUDIENCE:
-                      return chipOrHint(llm.audienceType ?? [], (
-                        <LlmChipSection
-                          items={llm.audienceType ?? []}
-                          selected={state.llmAudienceType}
-                          onToggle={(k) => toggleArray('llmAudienceType', k)}
-                        />
-                      ))
-                    default:
-                      return null
-                  }
-                })()}
-              </div>
-            )}
-
-          </div>
-
-          {/* Progress e botões */}
-          <div style={{ paddingTop: 20, width: '100%', maxWidth: 580, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, flexShrink: 0 }}>
-            <div className="search-wizard-progress" style={{ width: '100%', maxWidth: 400 }}>
-              <Progress
-                percent={progressPercent}
-                showInfo={false}
-                strokeColor="rgba(0, 0, 0, 0.12)"
-                trailColor="var(--colorFillTertiary)"
-                strokeWidth={4}
-                style={{ borderRadius: 2 }}
-              />
-              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block', opacity: 0.8, textAlign: 'center' }}>
-                {step + 1} / {STEPS.length}
-              </Text>
-            </div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
-              {step > 0 && (
-                <Button size="middle" onClick={prevStep} disabled={!!isLoadingOptions} style={{ borderRadius: 10, minWidth: 100, height: 40, fontSize: 15 }}>
-                  Voltar
-                </Button>
               )}
-              <Button
-                type="primary"
-                size="middle"
-                onClick={nextStep}
-                disabled={!canAdvance()}
-                loading={!!isLoadingOptions}
-                icon={step === STEPS.length - 1 ? <RocketOutlined /> : undefined}
-                className="search-wizard-next-btn"
-                style={{ borderRadius: 10, minWidth: 200, height: 40, fontSize: 15 }}
-              >
-                {step === STEPS.length - 1 ? 'Ver resultados' : 'Próximo'}
-              </Button>
+
+              {step >= STEP_LLM_FIRST && step <= STEP_LLM_LAST && (
+                <div style={{ width: '100%', textAlign: 'center' }}>
+                  {(() => {
+                    const llm = (facets ?? initialFacets)?.llm
+                    if (step === STEP_LLM_MAIN_CATEGORY && wizardPrefetchLoading) {
+                      return (
+                        <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0', width: '100%' }}>
+                          <Spin size="large" />
+                        </div>
+                      )
+                    }
+                    if (!llm) {
+                      return <Text type="secondary">Nenhuma classificação IA para este recorte — avance para continuar.</Text>
+                    }
+                    const emptyHint = <Text type="secondary">Nenhuma opção neste recorte — pode avançar.</Text>
+                    const chipOrHint = (items: { name: string; count: number }[], el: ReactElement) =>
+                      (items ?? []).some((i) => i.count > 0) ? el : emptyHint
+                    switch (step) {
+                    case STEP_LLM_MAIN_CATEGORY: {
+                        if (!mainCategoryItems.some((i) => i.count > 0)) return emptyHint
+                        return (
+                          <div className="search-wizard-category-pane">
+                            <MainCategoryGridSection
+                              items={mainCategoryItems}
+                              selected={state.llmMainCategory}
+                              maxSelectable={LLM_MAIN_CATEGORY_MAX}
+                              onToggle={toggleLlmMainCategory}
+                            />
+                          </div>
+                        )
+                      }
+                      case STEP_LLM_GENDER:
+                        return chipOrHint(llm.gender ?? [], (
+                          <LlmChipSection
+                            items={llm.gender ?? []}
+                            selected={state.llmGender}
+                            onToggle={(k) => toggleArray('llmGender', k)}
+                          />
+                        ))
+                      case STEP_LLM_AUDIENCE:
+                        return chipOrHint(llm.audienceType ?? [], (
+                          <LlmChipSection
+                            items={llm.audienceType ?? []}
+                            selected={state.llmAudienceType}
+                            onToggle={(k) => toggleArray('llmAudienceType', k)}
+                          />
+                        ))
+                      default:
+                        return null
+                    }
+                  })()}
+                </div>
+              )}
+
             </div>
           </div>
         </div>
       </div>
+
+      <footer className="search-wizard-footer-fixed" role="contentinfo">
+        <div className="search-wizard-footer-fixed__inner" style={{ width: '100%', maxWidth: contentMaxWidth }}>
+          <div className="search-wizard-progress" style={{ width: '100%', maxWidth: 400, marginInline: 'auto' }}>
+            <Progress
+              percent={progressPercent}
+              showInfo={false}
+              strokeColor="#1677ff"
+              trailColor="rgba(0, 0, 0, 0.09)"
+              strokeWidth={3}
+              style={{ borderRadius: 999 }}
+            />
+            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block', opacity: 0.8, textAlign: 'center' }}>
+              {step + 1} / {STEPS.length}
+            </Text>
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
+            {step > 0 && (
+              <Button size="middle" onClick={prevStep} disabled={!!isLoadingOptions} style={{ borderRadius: 10, minWidth: 100, height: 40, fontSize: 15 }}>
+                Voltar
+              </Button>
+            )}
+            <Button
+              type="primary"
+              size="middle"
+              onClick={nextStep}
+              disabled={nextButtonDisabled}
+              loading={!!isLoadingOptions}
+              icon={step === STEPS.length - 1 ? <RocketOutlined /> : undefined}
+              className="search-wizard-next-btn"
+              style={{ borderRadius: 10, minWidth: 200, height: 40, fontSize: 15 }}
+            >
+              {step === STEPS.length - 1 ? 'Ver resultados' : 'Próximo'}
+            </Button>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }

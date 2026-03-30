@@ -14,12 +14,12 @@ import type { ProfileItem, ProfileActivation, PostsResponse } from '../api'
 import QRCode from 'qrcode'
 import { MediaKitDocument } from './MediaKitDocument'
 import { reportTokens as t } from './reportTokens'
-import { useTheme } from '../contexts/ThemeContext'
 import type { ThemeMode } from '../contexts/ThemeContext'
+import { useTheme } from '../contexts/ThemeContext'
 
 const { Text } = Typography
 
-/** Cores para as bolinhas do seletor de tema (uma por tema, fixas) */
+/** Cores das bolinhas = paleta do PDF apenas (não altera o tema da aplicação) */
 const THEME_SWATCH_COLORS: Record<ThemeMode, string> = {
   light: '#68278f',
   dark: '#00b4d8',
@@ -117,9 +117,11 @@ function setCachedMediaKit(handle: string, entry: Omit<MediaKitCacheEntry, 'cach
 export default function MediaKit() {
   const { handle } = useParams<{ handle: string }>()
   const navigate = useNavigate()
-  const { theme, setTheme } = useTheme()
-  const themeRef = useRef(theme)
-  themeRef.current = theme
+  const { theme: appTheme } = useTheme()
+  /** Paleta de cores do PDF; independente do tema claro/escuro da interface */
+  const [pdfPalette, setPdfPalette] = useState<ThemeMode>(appTheme)
+  const pdfPaletteRef = useRef(pdfPalette)
+  pdfPaletteRef.current = pdfPalette
   const [status, setStatus] = useState<Status>('loading_data')
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState('Carregando perfil...')
@@ -340,7 +342,7 @@ export default function MediaKit() {
     setStatus('generating')
     setProgress('Gerando PDF...')
     try {
-      const themeToUse = themeRef.current
+      const themeToUse = pdfPaletteRef.current
       const instagramUrl = `https://www.instagram.com/${h}/`
       const qrCodeDataUrl = await QRCode.toDataURL(instagramUrl, { width: 200, margin: 1 })
       const doc = (
@@ -439,15 +441,15 @@ export default function MediaKit() {
 
           <div style={{ marginBottom: s.lg, display: 'flex', justifyContent: 'center', gap: 12 }}>
             {THEME_ORDER.map((themeId) => {
-              const isSelected = theme === themeId
+              const isSelected = pdfPalette === themeId
               const swatchColor = THEME_SWATCH_COLORS[themeId]
               return (
                 <button
                   key={themeId}
                   type="button"
-                  title={`Tema ${themeId}`}
-                  aria-label={`Tema: ${themeId}`}
-                  onClick={() => setTheme(themeId)}
+                  title={`Cor do Media Kit: ${themeId}`}
+                  aria-label={`Cor do Media Kit: ${themeId}`}
+                  onClick={() => setPdfPalette(themeId)}
                   style={{
                     width: 36,
                     height: 36,
@@ -472,8 +474,8 @@ export default function MediaKit() {
                 borderRadius: 12,
                 paddingLeft: 24,
                 paddingRight: 24,
-                background: 'var(--app-primary)',
-                borderColor: 'var(--app-primary)',
+                background: THEME_SWATCH_COLORS[pdfPalette],
+                borderColor: THEME_SWATCH_COLORS[pdfPalette],
               }}
             >
               Baixar Media Kit
@@ -579,15 +581,15 @@ export default function MediaKit() {
 
           <div style={{ marginBottom: s.lg, display: 'flex', justifyContent: 'center', gap: 12 }}>
             {THEME_ORDER.map((themeId) => {
-              const isSelected = theme === themeId
+              const isSelected = pdfPalette === themeId
               const swatchColor = THEME_SWATCH_COLORS[themeId]
               return (
                 <button
                   key={themeId}
                   type="button"
-                  title={`Tema ${themeId}`}
-                  aria-label={`Tema: ${themeId}`}
-                  onClick={() => setTheme(themeId)}
+                  title={`Cor do Media Kit: ${themeId}`}
+                  aria-label={`Cor do Media Kit: ${themeId}`}
+                  onClick={() => setPdfPalette(themeId)}
                   style={{
                     width: 36,
                     height: 36,
@@ -613,8 +615,8 @@ export default function MediaKit() {
                   borderRadius: 12,
                   paddingLeft: 24,
                   paddingRight: 24,
-                  background: 'var(--app-primary)',
-                  borderColor: 'var(--app-primary)',
+                  background: THEME_SWATCH_COLORS[pdfPalette],
+                  borderColor: THEME_SWATCH_COLORS[pdfPalette],
                 }}
               >
                 Baixar de novo

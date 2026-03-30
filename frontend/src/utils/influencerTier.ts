@@ -1,40 +1,102 @@
-/** Patamar por seguidores — mesmos cortes da listagem de campanha (Nano / Micro / Mid / Macro). */
+/**
+ * Rótulos e cores de patamar alinhados a `@repo/followersSizeBuckets` (mesmo arquivo que o crawl).
+ * Chave de API: nano | micro | medio | macro | celebridade (`mid` é alias legado de `medio`).
+ */
 
-export type InfluencerTierLabel = 'Nano' | 'Micro' | 'Mid' | 'Macro' | '—'
+import {
+  FOLLOWERS_SIZE_BUCKETS,
+  followersCountToSizeKey,
+  type FollowersSizeBucketDef,
+  type FollowersSizeKey,
+} from '@repo/followersSizeBuckets'
+
+export type InfluencerTierLabel = 'Nano' | 'Micro' | 'Mid' | 'Macro' | 'Celebridade' | '—'
+
+/** Limiar de seguidores em forma curta (ex.: 10k, 200k, 1M) — chips do wizard e UI densa. */
+export function formatFollowersBoundCompact(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '0'
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000
+    const t = Number.isInteger(m) ? String(m) : m.toFixed(1).replace(/\.0$/, '')
+    return `${t}M`
+  }
+  if (n >= 1_000) {
+    const k = n / 1_000
+    const t = Number.isInteger(k) ? String(k) : k.toFixed(1).replace(/\.0$/, '')
+    return `${t}k`
+  }
+  return String(Math.round(n))
+}
+
+/** Faixa de patamar curta (ex.: `até 10k`, `200k – 1M`, `1M+`). */
+export function formatPatamarRangeCompact(p: { min: number; max: number | undefined }): string {
+  const f = formatFollowersBoundCompact
+  if (p.max == null) return `${f(p.min)}+`
+  if (p.min === 0) return `até ${f(p.max)}`
+  return `${f(p.min)} – ${f(p.max)}`
+}
+
+function formatPatamarRange(b: FollowersSizeBucketDef): string {
+  const fmt = (n: number) => n.toLocaleString('pt-BR')
+  if (b.max == null) return `${fmt(b.min)}+`
+  if (b.min === 0) return `até ${fmt(b.max)}`
+  return `${fmt(b.min)} – ${fmt(b.max)}`
+}
+
+/** Chave API → rótulo curto na UI (Mid para `medio`). */
+export function sizeKeyToShortTierLabel(key: FollowersSizeKey): InfluencerTierLabel {
+  if (key === 'nano') return 'Nano'
+  if (key === 'micro') return 'Micro'
+  if (key === 'medio') return 'Mid'
+  if (key === 'macro') return 'Macro'
+  return 'Celebridade'
+}
 
 export function getInfluencerTierShort(followers: number | undefined | null): InfluencerTierLabel {
   if (followers == null || !Number.isFinite(followers)) return '—'
-  if (followers < 10_000) return 'Nano'
-  if (followers < 50_000) return 'Micro'
-  if (followers < 500_000) return 'Mid'
-  return 'Macro'
+  const key = followersCountToSizeKey(followers)
+  return sizeKeyToShortTierLabel(key)
 }
 
 export function getInfluencerTierTooltip(followers: number | undefined | null): string | undefined {
   if (followers == null || !Number.isFinite(followers) || followers < 0) return undefined
-  if (followers < 10_000) return 'Nano (até 10k seg.)'
-  if (followers < 50_000) return 'Micro (10k–50k)'
-  if (followers < 500_000) return 'Mid (50k–500k)'
-  return 'Macro (500k+)'
+  const key = followersCountToSizeKey(followers)
+  const b = FOLLOWERS_SIZE_BUCKETS.find((x) => x.key === key)
+  if (!b) return undefined
+  const short = sizeKeyToShortTierLabel(key)
+  return `${short} (${formatPatamarRange(b)} seg.)`
 }
 
-/** Chave de porte vinda da API (`size`, buckets de busca): nano | micro | medio | macro. */
+/** Título estilo detalhe (ex.: página do perfil / media kit). */
+export function getInfluencerTierLongLabel(followers: number | undefined | null): string {
+  const short = getInfluencerTierShort(followers)
+  if (short === '—') return '—'
+  if (short === 'Celebridade') return 'Celebridade'
+  return `${short} Influencer`
+}
+
+/** Chave de porte vinda da API (`size`, buckets de busca). */
 export function sizeBucketKeyToTierLabel(key: string | undefined | null): InfluencerTierLabel {
   const k = String(key ?? '').trim().toLowerCase()
-  if (k === 'nano') return 'Nano'
-  if (k === 'micro') return 'Micro'
-  if (k === 'medio' || k === 'mid') return 'Mid'
-  if (k === 'macro') return 'Macro'
+  if (k === 'mid') return 'Mid'
+  if (k === 'nano' || k === 'micro' || k === 'medio' || k === 'macro' || k === 'celebridade') {
+    return sizeKeyToShortTierLabel(k as FollowersSizeKey)
+  }
   return '—'
 }
 
 export function getInfluencerTierTooltipFromLabel(tier: InfluencerTierLabel): string | undefined {
   if (tier === '—') return undefined
-  if (tier === 'Nano') return 'Nano (até 10k seg.)'
-  if (tier === 'Micro') return 'Micro (10k–50k)'
-  if (tier === 'Mid') return 'Mid (50k–500k)'
-  if (tier === 'Macro') return 'Macro (500k+)'
-  return undefined
+  const keyMap: Record<Exclude<InfluencerTierLabel, '—'>, FollowersSizeKey> = {
+    Nano: 'nano',
+    Micro: 'micro',
+    Mid: 'medio',
+    Macro: 'macro',
+    Celebridade: 'celebridade',
+  }
+  const b = FOLLOWERS_SIZE_BUCKETS.find((x) => x.key === keyMap[tier])
+  if (!b) return undefined
+  return `${tier} (${formatPatamarRange(b)} seg.)`
 }
 
 const TIER_SOLID_HEX: Record<Exclude<InfluencerTierLabel, '—'>, string> = {
@@ -42,6 +104,7 @@ const TIER_SOLID_HEX: Record<Exclude<InfluencerTierLabel, '—'>, string> = {
   Micro: '#1890ff',
   Mid: '#13c2c2',
   Macro: '#eb2f96',
+  Celebridade: '#d48806',
 }
 
 /** Cor sólida (tom base do gradiente do selo) para chaves de bucket da API. */
@@ -63,5 +126,6 @@ export function getInfluencerTierGradientCss(tier: InfluencerTierLabel): string 
   if (tier === 'Micro') return 'linear-gradient(90deg, #1890ff, #40a9ff)'
   if (tier === 'Mid') return 'linear-gradient(90deg, #13c2c2, #36cfc9)'
   if (tier === 'Macro') return 'linear-gradient(90deg, #eb2f96, #f759ab)'
+  if (tier === 'Celebridade') return 'linear-gradient(90deg, #ad6800, #ffc53d)'
   return 'rgba(0,0,0,0.25)'
 }

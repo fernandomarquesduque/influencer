@@ -8,7 +8,6 @@ import {
   CheckCircleOutlined,
 } from '@ant-design/icons'
 import Logo from '../components/Logo'
-import ThemeFooterButton from '../components/ThemeFooterButton'
 
 const sectionMaxWidth = 1000
 
@@ -661,7 +660,6 @@ export default function Home() {
           .home-benefits-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
-      <ThemeFooterButton />
     </div>
   )
 }

@@ -68,79 +68,108 @@ export default function App() {
     <AuthProvider>
       <CreditsProvider>
         <PendingPaymentCelebrationProvider>
-        <FocusScrollHandler />
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/premium" element={<Premium />} />
-          <Route path="search" element={<div style={{ padding: '20px 20px' }}><div style={{ marginBottom: '30px', display: 'flex', justifyContent: 'center', padding: '24px 24px 0' }}><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /></div><ListAndDetailModal /></div>} />
-          <Route path="/checkout" element={<><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /><CheckoutCredits /></>} />
-          <Route path="/verify-email" element={<VerifyEmail />} />
-          <Route path="/missions/reward" element={<MissionReward />} />
-          <Route path="/" element={<Home />} />
+          <FocusScrollHandler />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/premium" element={<Premium />} />
+            <Route
+              path="search"
+              element={
+                <div
+                  style={{
+                    minHeight: '100dvh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    padding: '20px',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
+                    <Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" />
+                  </div>
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                      width: '100%',
+                    }}
+                  >
+                    <ListAndDetailModal />
+                  </div>
+                </div>
+              }
+            />
+            <Route path="/checkout" element={<><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /><CheckoutCredits /></>} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/missions/reward" element={<MissionReward />} />
+            <Route path="/" element={<Home />} />
 
-          <Route path="/app" element={<Layout />}>
-            <Route index element={<MyCampaigns />} />
-            <Route path="campaigns" element={<MyCampaigns />} />
-            <Route path="campaigns/create" element={<ListAndDetailModal />} />
-            <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
-            <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail />} />
-            <Route path="payments" element={<Payments />} />
-            <Route path="profile" element={<Profile />} />
-            <Route path="projects" element={<Projects />} />
-            <Route path="projects/:projectId" element={<Projects />} />
-            <Route path="bulk-message" element={<BulkMessage />} />
-            <Route path="create" element={<Auth />} />
-            <Route path="create/password" element={<AuthPassword />} />
-            <Route path="missions/link-instagram" element={<LinkInstagramMission />} />
-            <Route path="influencer/:handle" element={<InfluencerDetail />} />
-            <Route path="influencer/:handle/media-kit" element={<MediaKit />} />
-            <Route path="influencer/:handle/send-message" element={<SendMessage />} />
-            <Route
-              path="admin/dashboard"
-              element={
-                <RequireAuth requireAdm>
-                  <AdminDashboard />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="admin/users"
-              element={
-                <RequireAuth requireAdm>
-                  <AdminUsers />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="admin/reports/unregistered-mentions"
-              element={
-                <RequireAuth requireAdm>
-                  <AdminMentionReport />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="admin/influencers/bulk-purge"
-              element={
-                <RequireAuth requireAdm>
-                  <AdminBulkPurgeInfluencers />
-                </RequireAuth>
-              }
-            />
-          </Route>
+            <Route path="/app" element={<Layout />}>
+              <Route index element={<MyCampaigns />} />
+              <Route path="campaigns" element={<MyCampaigns />} />
+              <Route path="campaigns/create" element={<ListAndDetailModal />} />
+              <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
+              <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail />} />
+              <Route path="payments" element={<Payments />} />
+              <Route path="profile" element={<Profile />} />
+              <Route path="projects" element={<Projects />} />
+              <Route path="projects/:projectId" element={<Projects />} />
+              <Route path="bulk-message" element={<BulkMessage />} />
+              <Route path="create" element={<Auth />} />
+              <Route path="create/password" element={<AuthPassword />} />
+              <Route path="missions/link-instagram" element={<LinkInstagramMission />} />
+              <Route path="influencer/:handle" element={<InfluencerDetail />} />
+              <Route path="influencer/:handle/media-kit" element={<MediaKit />} />
+              <Route path="influencer/:handle/send-message" element={<SendMessage />} />
+              <Route
+                path="admin/dashboard"
+                element={
+                  <RequireAuth requireAdm>
+                    <AdminDashboard />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="admin/users"
+                element={
+                  <RequireAuth requireAdm>
+                    <AdminUsers />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="admin/reports/unregistered-mentions"
+                element={
+                  <RequireAuth requireAdm>
+                    <AdminMentionReport />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="admin/influencers/bulk-purge"
+                element={
+                  <RequireAuth requireAdm>
+                    <AdminBulkPurgeInfluencers />
+                  </RequireAuth>
+                }
+              />
+            </Route>
 
-          <Route path="/extraction" element={<Extraction />} />
-          <Route path="/extract-profile" element={<ExtractProfile />} />
-          <Route path="/activate/:handle" element={<Activate />} />
-          <Route path="/admin/dashboard" element={<Navigate to="/app/admin/dashboard" replace />} />
-          <Route path="/admin/users" element={<Navigate to="/app/admin/users" replace />} />
-          <Route
-            path="/admin/reports/unregistered-mentions"
-            element={<Navigate to="/app/admin/reports/unregistered-mentions" replace />}
-          />
-          <Route path="/admin/influencers/bulk-purge" element={<Navigate to="/app/admin/influencers/bulk-purge" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            <Route path="/extraction" element={<Extraction />} />
+            <Route path="/extract-profile" element={<ExtractProfile />} />
+            <Route path="/activate/:handle" element={<Activate />} />
+            <Route path="/admin/dashboard" element={<Navigate to="/app/admin/dashboard" replace />} />
+            <Route path="/admin/users" element={<Navigate to="/app/admin/users" replace />} />
+            <Route
+              path="/admin/reports/unregistered-mentions"
+              element={<Navigate to="/app/admin/reports/unregistered-mentions" replace />}
+            />
+            <Route path="/admin/influencers/bulk-purge" element={<Navigate to="/app/admin/influencers/bulk-purge" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </PendingPaymentCelebrationProvider>
       </CreditsProvider>
     </AuthProvider >

@@ -3,7 +3,7 @@ import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import express, { type Request, type Response } from 'express';
+import express, { type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +15,7 @@ const CRAWL_ROOT = path.basename(_twoUp) === 'dist' ? path.resolve(__dirname, '.
 const CRAWL_ENV_PATH = path.join(CRAWL_ROOT, '.env');
 dotenv.config({ path: CRAWL_ENV_PATH });
 dotenv.config();
+logMemorySnapshot('API pós-.env (baseline de processo)');
 
 function resolveAuthStatePath(relativeOrAbsolute: string): string {
   if (path.isAbsolute(relativeOrAbsolute)) return relativeOrAbsolute;
@@ -34,7 +35,9 @@ import {
 import {
   searchProfiles,
   getProfileSummary,
+  isSearchCacheWarmBlockedError,
   scheduleSearchCacheRewarm,
+  scheduleSearchCacheWarmRetries,
   warmSearchCache,
   getLlmQualification,
   matchesQuery,
@@ -51,6 +54,7 @@ import { InstagramClient } from '../instagramClient/index.js';
 import { loginWithCredentials } from '../instagramClient/login.js';
 import { profileExtractDelay, profileExtractDelayForApi } from '../utils/delay.js';
 import { logTimestamp } from '../utils/logTimestamp.js';
+import { logMemorySnapshot } from '../utils/memoryDiag.js';
 import {
   getSuggestedPricingFromFollowers,
   suggestedPricingToActivationFormat,
@@ -74,6 +78,7 @@ import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
 import { getAdminStatsSnapshot } from './adminStats.js';
 import { createCollectorController } from './controllers/collectorController.js';
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
+import { followersCountToSizeKey, type FollowersSizeKey } from './followersSizeBuckets.js';
 import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
 import { logS3StartupStatus, wipeInfluencerS3Prefix } from '../s3/influencerProfileStorage.js';
 import { campaignAccessDurationDays, defaultCampaignExpiresAtIso } from '../config/campaignAccess.js';
@@ -88,8 +93,34 @@ const rocksPath = process.env.STORAGE_DB_PATH ?? './data/rocksdb';
 const sqlitePath = process.env.SQLITE_DB_PATH ?? './data/influencer.db';
 
 const app = express();
-const jsonDefault = express.json({ limit: '2mb' });
-const jsonCollectorFull = express.json({ limit: '80mb' });
+
+function wrapJsonBodyParser(parser: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    parser(req, res, ((err?: unknown) => {
+      if (!err) {
+        next();
+        return;
+      }
+      const meta = err as { type?: string };
+      const isParseFail = err instanceof SyntaxError || meta.type === 'entity.parse.failed';
+      if (isParseFail && req.method !== 'GET' && req.method !== 'HEAD') {
+        const pathOnly = (req.originalUrl ?? req.url ?? '').split('?')[0];
+        console.warn(
+          '[API] Body JSON inválido:',
+          req.method,
+          pathOnly,
+          err instanceof Error ? err.message : String(err),
+        );
+        res.status(400).json({ error: 'Body JSON inválido', code: 'INVALID_JSON_BODY' });
+        return;
+      }
+      next(err);
+    }) as NextFunction);
+  };
+}
+
+const jsonDefault = wrapJsonBodyParser(express.json({ limit: '2mb' }));
+const jsonCollectorFull = wrapJsonBodyParser(express.json({ limit: '80mb' }));
 app.use((req, res, next) => {
   const p = req.url?.split('?')[0] ?? '';
   if (req.method === 'POST' && p.includes('collector-ingest-full')) {
@@ -2117,7 +2148,7 @@ interface ProfilePreviewItem {
   firstName: string;
   profilePicUrl: string;
   llmDescription: string;
-  size: 'nano' | 'micro' | 'medio' | 'macro';
+  size: FollowersSizeKey;
   category: string;
   audience: string;
   collectedAt: string | null;
@@ -2205,10 +2236,7 @@ function buildProfilePreviewItem(item: ProfileListItem, previewIndex: number): P
   const audience = audienceArr.join(' / ') || '-';
   const profilePicUrl = String(item.stable_profile_pic_url ?? '').trim();
   const followers = Number(item.followers_count ?? 0);
-  const size: 'nano' | 'micro' | 'medio' | 'macro' =
-    followers < 10_000 ? 'nano' :
-      followers < 50_000 ? 'micro' :
-        followers < 200_000 ? 'medio' : 'macro';
+  const size = followersCountToSizeKey(followers);
   const collectedAtRaw = (item as Record<string, unknown>)._collected_at;
   const collectedAt = typeof collectedAtRaw === 'string' && collectedAtRaw.trim() ? collectedAtRaw : null;
   const eng = item.engagement;
@@ -5547,9 +5575,14 @@ async function runPostMatchesForHandles(
         }
       }
 
-      const sorted = [...deduped.values()].sort(
-        (a, b) => b.ts - a.ts || a.key.localeCompare(b.key)
-      );
+      /** Marcados (`tagged`) sempre no fim; dentro de cada grupo, mais recente primeiro. */
+      const postMatchTaggedRank = (ct: string): number => (ct === 'tagged' ? 1 : 0);
+      const sorted = [...deduped.values()].sort((a, b) => {
+        const rankA = postMatchTaggedRank(a.ct);
+        const rankB = postMatchTaggedRank(b.ct);
+        if (rankA !== rankB) return rankA - rankB;
+        return b.ts - a.ts || a.key.localeCompare(b.key);
+      });
 
       mediaKindCounts = {};
       for (const row of deduped.values()) {
@@ -6045,21 +6078,33 @@ app.get('/api-docs', (_req: Request, res: Response) => {
 });
 
 (async () => {
-  console.log('Aquecendo cache de busca (perfis + posts)...');
+  const warmSearch =
+    process.env.API_WARM_SEARCH_CACHE !== '0' &&
+    String(process.env.API_WARM_SEARCH_CACHE ?? '').toLowerCase() !== 'false';
   const t0 = Date.now();
   try {
-    await warmSearchCache(db);
-    console.log(`Cache de busca aquecido em ${((Date.now() - t0) / 1000).toFixed(1)}s.`);
+    if (warmSearch) {
+      console.log('Aquecendo cache de busca (perfis + posts)...');
+      await warmSearchCache(db);
+      console.log(`Cache de busca aquecido em ${((Date.now() - t0) / 1000).toFixed(1)}s.`);
+    } else {
+      console.log(
+        'Cache de busca: aquecimento na subida desligado (API_WARM_SEARCH_CACHE=false). Menor pico de RAM; a 1ª busca pode ler o disco.',
+      );
+    }
   } catch (err: unknown) {
-    const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: string }).code : undefined;
-    const causeCode = err instanceof Error && err.cause && typeof err.cause === 'object' && 'code' in err.cause ? (err.cause as { code?: string }).code : undefined;
-    if (code === 'LEVEL_DATABASE_NOT_OPEN' || causeCode === 'LEVEL_LOCKED') {
-      console.warn('Cache de busca não carregado (banco em uso por outro processo?). API sobe sem cache; buscas podem ser mais lentas.');
+    if (isSearchCacheWarmBlockedError(err)) {
+      console.warn(
+        'Cache de busca não carregado no startup (banco em uso?). Retentativas em background até liberar — buscas ficam rápidas assim que o lock cessar.',
+      );
+      scheduleSearchCacheWarmRetries(db);
     } else {
       throw err;
     }
   }
+  logMemorySnapshot('antes de HTTP listen (warm/cache resolvido)');
   app.listen(PORT, () => {
+    logMemorySnapshot('HTTP listen ativo');
     console.log(`API: http://localhost:${PORT}`);
     console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
     console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
@@ -6067,7 +6112,10 @@ app.get('/api-docs', (_req: Request, res: Response) => {
     // Aquecer o browser em background para o primeiro extract-profile não esperar abrir o Chromium
     getApiExtractClient()
       .init()
-      .then(() => console.log('Browser (Chromium) aquecido e pronto para extract-profile.'))
+      .then(() => {
+        logMemorySnapshot('Browser (Chromium) pronto p/ extract');
+        console.log('Browser (Chromium) aquecido e pronto para extract-profile.');
+      })
       .catch((err) => console.warn('Warmup do browser falhou (primeiro extract-profile pode demorar):', err instanceof Error ? err.message : err));
     // Worker de fila de disparo em background (roda sempre que há pendentes)
     startDirectQueueWorker();

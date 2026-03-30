@@ -128,6 +128,8 @@ export interface CampaignBIPanelProps {
   createdAt?: string | null
   /** Quando há pagamento pendente, a API envia stats agregados; use em vez de computeStats(items). */
   statsOverride?: { totalLikes: number; totalComments: number; totalViews: number; totalFollowers: number; postsCount: number; avgEngagementRate: number; count: number }
+  /** Com busca por palavra nos posts: total de posts que casam com o termo (substitui a soma de posts_count dos perfis). */
+  postCaptionMatchTotal?: number | null
 }
 
 function toggleInArray(arr: string[] | undefined, value: string): string[] | undefined {
@@ -161,10 +163,15 @@ export default function CampaignBIPanel({
   expiresAt,
   createdAt,
   statsOverride,
+  postCaptionMatchTotal,
 }: CampaignBIPanelProps) {
   const [descLocal, setDescLocal] = useState(description ?? '')
   useEffect(() => { setDescLocal(description ?? '') }, [description])
-  const stats = statsOverride ?? computeStats(items)
+  const baseStats = statsOverride ?? computeStats(items)
+  const stats =
+    postCaptionMatchTotal != null && postCaptionMatchTotal >= 0
+      ? { ...baseStats, postsCount: postCaptionMatchTotal }
+      : baseStats
   const social = facets?.social
   const cities = facets?.cities ?? []
   const states = facets?.states ?? []
@@ -225,14 +232,14 @@ export default function CampaignBIPanel({
   const llmSubCategoriesLongList = allLlmSubCategories.length > LLM_LONG_FACET_LIST_OVER
   const llmSubCategoriesHiddenLowCount = llmSubCategoriesLongList
     ? allLlmSubCategories.filter(
-        (r) => (r.count ?? 0) < 2 && !llmArraySelected(selectedLlmSubCategories, r.name),
-      ).length
+      (r) => (r.count ?? 0) < 2 && !llmArraySelected(selectedLlmSubCategories, r.name),
+    ).length
     : 0
   const llmSubCategoriesRowsForDisplay =
     llmSubCategoriesLongList && !llmSubCategoriesExpanded
       ? allLlmSubCategories.filter(
-          (r) => (r.count ?? 0) >= 2 || llmArraySelected(selectedLlmSubCategories, r.name),
-        )
+        (r) => (r.count ?? 0) >= 2 || llmArraySelected(selectedLlmSubCategories, r.name),
+      )
       : allLlmSubCategories
   const showLlmSubCategoriesVerMaisToggle = llmSubCategoriesLongList && llmSubCategoriesHiddenLowCount > 0
 
@@ -240,14 +247,14 @@ export default function CampaignBIPanel({
   const llmContentPillarsLongList = allLlmContentPillars.length > LLM_LONG_FACET_LIST_OVER
   const llmContentPillarsHiddenLowCount = llmContentPillarsLongList
     ? allLlmContentPillars.filter(
-        (r) => (r.count ?? 0) < 2 && !llmArraySelected(selectedLlmContentPillars, r.name),
-      ).length
+      (r) => (r.count ?? 0) < 2 && !llmArraySelected(selectedLlmContentPillars, r.name),
+    ).length
     : 0
   const llmContentPillarsRowsForDisplay =
     llmContentPillarsLongList && !llmContentPillarsExpanded
       ? allLlmContentPillars.filter(
-          (r) => (r.count ?? 0) >= 2 || llmArraySelected(selectedLlmContentPillars, r.name),
-        )
+        (r) => (r.count ?? 0) >= 2 || llmArraySelected(selectedLlmContentPillars, r.name),
+      )
       : allLlmContentPillars
   const showLlmContentPillarsVerMaisToggle = llmContentPillarsLongList && llmContentPillarsHiddenLowCount > 0
 

@@ -17,28 +17,6 @@ import {
 
 const { Text, Paragraph } = Typography
 
-function formatBrandSafety(raw: string): string {
-  const s = raw.trim().toLowerCase()
-  if (s === 'familia' || s === 'família') return 'Família (adequado para marcas sensíveis)'
-  if (s === 'sensivel' || s === 'sensível') return 'Sensível'
-  if (s === 'adulto') return 'Adulto'
-  return raw.trim() || '—'
-}
-
-function formatLanguage(raw: string): string {
-  const s = raw.trim().toLowerCase()
-  const map: Record<string, string> = {
-    'pt-br': 'Português (BR)',
-    pt: 'Português',
-    en: 'Inglês',
-    es: 'Espanhol',
-    uk: 'Ucraniano',
-    ru: 'Russo',
-    desconhecido: 'Desconhecido',
-  }
-  return (map[s] ?? raw.trim()) || '—'
-}
-
 function strList(arr: unknown): string[] {
   if (!Array.isArray(arr)) return []
   const out: string[] = []
@@ -48,12 +26,6 @@ function strList(arr: unknown): string[] {
     if (t && t !== '-') out.push(t)
   }
   return out
-}
-
-function formatConfidence(n: unknown): string | null {
-  if (typeof n !== 'number' || !Number.isFinite(n)) return null
-  const pct = Math.round(Math.max(0, Math.min(1, n)) * 100)
-  return `${pct}%`
 }
 
 function renderLlmBadge(b: LlmQualificationBadge) {
@@ -121,10 +93,6 @@ export function ProfileLlmDetailPanel({ profile, variant = 'card' }: ProfileLlmD
   const q =
     qRaw != null && typeof qRaw === 'object' && !Array.isArray(qRaw) ? (qRaw as Record<string, unknown>) : null
 
-  const qualifiedAt = typeof lo.qualifiedAt === 'string' ? lo.qualifiedAt : null
-  const model = typeof lo.model === 'string' ? lo.model.trim() : null
-  const confStr = formatConfidence(lo.confidence)
-
   const itemForBadges =
     profile && q
       ? ({ ...(profile as unknown as ProfileListItem), llm: { ...lo, status: 'done', qualification: q } } as ProfileListItem)
@@ -139,18 +107,6 @@ export function ProfileLlmDetailPanel({ profile, variant = 'card' }: ProfileLlmD
   const personaSummary = q ? String(q.personaSummary ?? '').trim() : ''
   const subCategories = q ? strList(q.subCategories) : []
   const audienceType = q ? strList(q.audienceType) : []
-  const toneRaw = q?.toneOfVoice
-  const toneOfVoice =
-    q == null
-      ? []
-      : Array.isArray(toneRaw)
-        ? strList(toneRaw)
-        : typeof toneRaw === 'string' && toneRaw.trim()
-          ? [toneRaw.trim()]
-          : []
-  const language = q ? String(q.language ?? '').trim() : ''
-  const brandSafety = q ? String(q.brandSafety ?? '').trim() : ''
-  const riskLevel = q ? String((q as Record<string, unknown>).riskLevel ?? '').trim() : ''
 
   const hasBody =
     Boolean(doneQual || (q && Object.keys(q).length > 0 && (personaSummary || mainCatLabel || subCategories.length)))

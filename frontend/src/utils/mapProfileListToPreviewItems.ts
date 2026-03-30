@@ -1,8 +1,9 @@
 /**
  * Converte `ProfileListItem` (listagem/campanha) para o formato de `ProfilePreviewItem`
- * usado pelo mesmo layout do dashboard — espelha a lógica de `buildProfilePreviewItem` no servidor.
+ * usado pelo mesmo layout do dashboard — campo `size` via `followersCountToSizeKey` (mesmo módulo que o crawl).
  */
 import type { ProfileListItem, ProfilePreviewItem } from '../api'
+import { followersCountToSizeKey } from '@repo/followersSizeBuckets'
 import { getProfilePicUrl, getStableProfilePicUrl, proxyImageUrl } from '../api'
 
 export function getLlmQualification(record: Record<string, unknown>): Record<string, unknown> | null {
@@ -136,10 +137,7 @@ export function mapProfileListItemToPreviewItem(
   const audience = audienceArr.join(' / ') || '-'
 
   const followers = Number(item.followers_count ?? 0)
-  const size: ProfilePreviewItem['size'] =
-    followers < 10_000 ? 'nano' :
-      followers < 50_000 ? 'micro' :
-        followers < 200_000 ? 'medio' : 'macro'
+  const size: ProfilePreviewItem['size'] = followersCountToSizeKey(followers)
 
   const collectedAtRaw = (item as Record<string, unknown>)._collected_at
   const collectedAt = typeof collectedAtRaw === 'string' && collectedAtRaw.trim() ? collectedAtRaw : null

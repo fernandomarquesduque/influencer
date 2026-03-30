@@ -4,9 +4,15 @@
  */
 
 import type { CompositeStorage } from '../storage/compositeStorage.js';
+import { logMemorySnapshot } from '../utils/memoryDiag.js';
 import type { ProfileActivationData } from '../storage/sqliteSync.js';
 import { computeInstagramBi, type InstagramBi, type PostForBi } from '../utils/instagramBi.js';
 import { getCostTierFromPricing, getSuggestedPricingFromFollowers, type CostTier } from '../utils/suggestedPricing.js';
+import {
+  followersCountToSizeKey,
+  createEmptyFollowersBucketsForFacets,
+  incrementFollowersBucketCount,
+} from './followersSizeBuckets.js';
 
 /** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: substituído ao concluir warmSearchCache ou scheduleSearchCacheRewarm (swap atômico; durante reload segue servindo o snapshot anterior). */
 let searchDataCache: {
@@ -41,15 +47,36 @@ function applySearchCacheIfCurrent(
   }
 }
 
+/** Só uma leitura full profile+post por vez — evita N loads em paralelo após save+savePosts+vários saveMedia (OOM). */
+let searchCacheRewarmInFlight = false;
+let searchCacheRewarmPending = false;
+
+function runSearchCacheRewarmPass(db: CompositeStorage): void {
+  searchCacheRewarmInFlight = true;
+  const gen = ++searchCacheGeneration;
+  void loadSearchCacheData(db)
+    .then((data) => applySearchCacheIfCurrent(gen, data))
+    .catch((err) => console.warn('[search-cache] rewarm falhou:', err))
+    .finally(() => {
+      searchCacheRewarmInFlight = false;
+      if (searchCacheRewarmPending) {
+        searchCacheRewarmPending = false;
+        runSearchCacheRewarmPass(db);
+      }
+    });
+}
+
 /**
  * Agenda reaquecimento do cache em background (stale-while-revalidate).
- * Mantém o snapshot atual até a carga terminar; então substitui de uma vez (se a geração ainda for a vigente).
- * Várias chamadas seguidas incrementam a geração: só o load que bate com `searchCacheGeneration` ao concluir aplica,
- * evitando que um rewarm antigo sobrescreva um mais novo. Assim a busca não perde cache nem dispara leitura full no disco no meio do reload.
+ * Chamadas em rajada (ex.: refresh — 1× save + 1× savePosts + 3× saveMedia) viram no máximo 2 passadas sequenciais,
+ * nunca várias Promise.all(profile+post) simultâneas.
  */
 export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
-  const gen = ++searchCacheGeneration;
-  void loadSearchCacheData(db).then((data) => applySearchCacheIfCurrent(gen, data));
+  if (searchCacheRewarmInFlight) {
+    searchCacheRewarmPending = true;
+    return;
+  }
+  runSearchCacheRewarmPass(db);
 }
 
 /** Invalidação forte: esvazia o cache (próxima busca lê do RocksDB e repovoa). Uso pontual; reaquecimento após save usa scheduleSearchCacheRewarm. */
@@ -61,8 +88,87 @@ export function clearSearchCache(): void {
 /** Aquece o cache carregando perfis e posts do storage. Chamar na subida da API para a 1ª busca já ser rápida. */
 export async function warmSearchCache(db: CompositeStorage): Promise<void> {
   const gen = ++searchCacheGeneration;
+  logMemorySnapshot('search-cache: antes de ler profile+post do disco');
   const data = await loadSearchCacheData(db);
   applySearchCacheIfCurrent(gen, data);
+  logMemorySnapshot('search-cache: snapshot em RAM aplicado', {
+    profiles_n: data.profilesRaw.length,
+    posts_n: data.postsRaw.length,
+  });
+}
+
+function collectLevelCodes(err: unknown): Set<string> {
+  const out = new Set<string>();
+  let cur: unknown = err;
+  let depth = 0;
+  while (cur != null && depth++ < 8) {
+    if (typeof cur === 'object' && cur !== null && 'code' in cur) {
+      const c = (cur as { code?: unknown }).code;
+      if (typeof c === 'string' && c) out.add(c);
+    }
+    cur = cur instanceof Error ? cur.cause : null;
+  }
+  return out;
+}
+
+/** Erro ao ler o Level/RocksDB por lock ou DB não aberto — outro processo pode estar usando o mesmo caminho. */
+export function isSearchCacheWarmBlockedError(err: unknown): boolean {
+  const codes = collectLevelCodes(err);
+  return codes.has('LEVEL_LOCKED') || codes.has('LEVEL_DATABASE_NOT_OPEN');
+}
+
+let searchCacheWarmRetryTimer: ReturnType<typeof setInterval> | null = null;
+let searchCacheWarmRetryInFlight = false;
+
+/**
+ * Quando o aquecimento na subida falha por lock, agenda tentativas até o banco liberar.
+ * Assim a busca volta a usar RAM cheia sem exigir que o usuário espere o “1º hit” lento ao disco.
+ */
+export function scheduleSearchCacheWarmRetries(db: CompositeStorage): void {
+  if (searchCacheWarmRetryTimer != null) return;
+
+  const intervalMsRaw = parseInt(process.env.SEARCH_CACHE_WARM_RETRY_MS ?? '2500', 10);
+  const intervalMs = Number.isFinite(intervalMsRaw) ? Math.max(500, intervalMsRaw) : 2500;
+
+  const tryOnce = async (): Promise<'ok' | 'retry' | 'abort'> => {
+    if (searchCacheWarmRetryInFlight) return 'retry';
+    searchCacheWarmRetryInFlight = true;
+    try {
+      await warmSearchCache(db);
+      return 'ok';
+    } catch (err) {
+      if (isSearchCacheWarmBlockedError(err)) return 'retry';
+      console.warn('[search-cache] Aquecimento em background interrompido (erro não é lock):', err);
+      return 'abort';
+    } finally {
+      searchCacheWarmRetryInFlight = false;
+    }
+  };
+
+  const stopTimer = (): void => {
+    if (searchCacheWarmRetryTimer != null) {
+      clearInterval(searchCacheWarmRetryTimer);
+      searchCacheWarmRetryTimer = null;
+    }
+  };
+
+  const tick = async (): Promise<void> => {
+    const r = await tryOnce();
+    if (r === 'ok') {
+      stopTimer();
+      console.log('[search-cache] Cache aquecido em background — buscas usam snapshot em RAM.');
+    } else if (r === 'abort') {
+      stopTimer();
+    }
+  };
+
+  console.log(
+    `[search-cache] Lock no RocksDB no startup; reaquecendo a cada ${intervalMs}ms até o banco liberar (feche o outro processo que usa o mesmo STORAGE_DB_PATH).`,
+  );
+  void tick();
+  searchCacheWarmRetryTimer = setInterval(() => {
+    void tick();
+  }, intervalMs);
 }
 
 function getIn(obj: unknown, ...paths: string[]): unknown {
@@ -604,7 +710,7 @@ export interface ProfilesSearchFacets {
   neighborhoods: { name: string; count: number }[];
   /** Contagem por rede social preenchida (apenas ativados). */
   social: { whatsapp: number; tiktok: number; facebook: number; linkedin: number; twitter: number };
-  /** Contagem por faixa de seguidores (porte): nano, micro, médio, macro. */
+  /** Contagem por faixa de seguidores (porte); definição em `followersSizeBuckets.ts`. */
   followers_buckets: { key: string; label: string; min: number; max: number | undefined; count: number }[];
   /** Contagem por tipo de conta (1=pessoal, 2=criador, 3=empresa). */
   account_type: { value: number; label: string; count: number }[];
@@ -683,7 +789,7 @@ export interface ProfilesSearchQuery {
   pricingDestaque?: number[];
   /** Filtro por faixa de preço: low = abaixo da média, medium = normal, high | very_high = acima da média. */
   costTierFilter?: string[];
-  /** Filtro por tamanho (seguidores): nano (<10k), micro (10k–50k), mid/medio (50k–200k), macro (200k+). */
+  /** Filtro por tamanho (seguidores); patamares em `followersSizeBuckets.ts`. */
   sizeFilter?: string[];
   /**
    * Filtros sobre `llm.qualification` (multiselect = OR dentro do campo).
@@ -967,11 +1073,16 @@ export async function searchProfiles(
       profilesRaw = searchDataCache.profilesRaw;
       postsRaw = searchDataCache.postsRaw;
     } else {
+      logMemorySnapshot('search: cache vazio — lendo profile+post do disco nesta requisição');
       [profilesRaw, postsRaw] = await Promise.all([
         db.getByBucket<Record<string, unknown>>('profile'),
         db.getByBucket<Record<string, unknown>>('post'),
       ]);
       searchDataCache = { profilesRaw, postsRaw };
+      logMemorySnapshot('search: cache preenchido a partir do disco', {
+        profiles_n: profilesRaw.length,
+        posts_n: postsRaw.length,
+      });
     }
   } else {
     profilesRaw = [];
@@ -1235,12 +1346,7 @@ export async function searchProfiles(
   if (sizeFilterSet != null && sizeFilterSet.size > 0) {
     filteredItems = filteredItems.filter((i) => {
       const fc = i.followers_count ?? 0;
-      const key =
-        fc < 10_000 ? 'nano'
-          : fc < 50_000 ? 'micro'
-            : fc < 200_000 ? 'medio'
-              : 'macro';
-      return sizeFilterSet.has(key);
+      return sizeFilterSet.has(followersCountToSizeKey(fc));
     });
   }
 
@@ -1309,12 +1415,7 @@ export async function searchProfiles(
       { key: 'media', label: 'Média', min: 1, count: 0 },
       { key: 'alta', label: 'Alta', min: 5, count: 0 },
     ];
-    const followersBuckets = [
-      { key: 'nano', label: 'Nano', min: 0, max: 10_000 as number | undefined, count: 0 },
-      { key: 'micro', label: 'Micro', min: 10_000, max: 50_000 as number | undefined, count: 0 },
-      { key: 'medio', label: 'Médio', min: 50_000, max: 200_000 as number | undefined, count: 0 },
-      { key: 'macro', label: 'Macro', min: 200_000, max: undefined, count: 0 },
-    ];
+    const followersBuckets = createEmptyFollowersBucketsForFacets();
     const accountTypeBuckets = [
       { value: 1, label: 'Pessoal', count: 0 },
       { value: 2, label: 'Criador', count: 0 },
@@ -1398,11 +1499,7 @@ export async function searchProfiles(
       if (rate < 1) engagementRateBuckets[0]!.count++;
       else if (rate < 5) engagementRateBuckets[1]!.count++;
       else engagementRateBuckets[2]!.count++;
-      const fc = item.followers_count;
-      if (fc < 10_000) followersBuckets[0]!.count++;
-      else if (fc < 50_000) followersBuckets[1]!.count++;
-      else if (fc < 200_000) followersBuckets[2]!.count++;
-      else followersBuckets[3]!.count++;
+      incrementFollowersBucketCount(followersBuckets, item.followers_count);
       const at = (item as ProfileListItem & { account_type?: number }).account_type;
       if (at === 1) accountTypeBuckets[0]!.count++;
       else if (at === 2) accountTypeBuckets[1]!.count++;
@@ -1475,12 +1572,7 @@ export async function searchProfiles(
       states: [],
       neighborhoods: [],
       social: { whatsapp: 0, tiktok: 0, facebook: 0, linkedin: 0, twitter: 0 },
-      followers_buckets: [
-        { key: 'nano', label: 'Nano', min: 0, max: 10_000, count: 0 },
-        { key: 'micro', label: 'Micro', min: 10_000, max: 50_000, count: 0 },
-        { key: 'medio', label: 'Médio', min: 50_000, max: 200_000, count: 0 },
-        { key: 'macro', label: 'Macro', min: 200_000, max: undefined, count: 0 },
-      ],
+      followers_buckets: createEmptyFollowersBucketsForFacets(),
       account_type: [
         { value: 1, label: 'Pessoal', count: 0 },
         { value: 2, label: 'Criador', count: 0 },

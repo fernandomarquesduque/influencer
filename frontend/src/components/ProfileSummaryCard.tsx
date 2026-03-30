@@ -26,6 +26,7 @@ import { getCostTier } from '../utils/pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
 import ProfileAvatar from './ProfileAvatar'
+import { getInfluencerTierGradientCss, getInfluencerTierShort } from '../utils/influencerTier'
 
 const { Text } = Typography
 
@@ -50,14 +51,6 @@ function formatShortNum(n: number | undefined | null): string {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k'
   return String(n)
-}
-
-function getTierShort(followers: number | undefined | null): string {
-  if (followers == null || !Number.isFinite(followers)) return '—'
-  if (followers < 10_000) return 'Nano'
-  if (followers < 50_000) return 'Micro'
-  if (followers < 500_000) return 'Mid'
-  return 'Macro'
 }
 
 /** Cor do engajamento: >70% verde, >40% amarelo, >0% rosa. */
@@ -260,17 +253,10 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                 color: '#fff',
                 padding: '1px 5px',
                 borderRadius: 8,
-                background: (() => {
-                  const t = getTierShort(item.followers_count)
-                  if (t === 'Nano') return 'linear-gradient(90deg, #722ed1, #9254de)'
-                  if (t === 'Micro') return 'linear-gradient(90deg, #1890ff, #40a9ff)'
-                  if (t === 'Mid') return 'linear-gradient(90deg, #13c2c2, #36cfc9)'
-                  if (t === 'Macro') return 'linear-gradient(90deg, #eb2f96, #f759ab)'
-                  return 'rgba(0,0,0,0.25)'
-                })(),
+                background: getInfluencerTierGradientCss(getInfluencerTierShort(item.followers_count)),
               }}
             >
-              {getTierShort(item.followers_count)}
+              {getInfluencerTierShort(item.followers_count)}
             </span>
           </div>
         )}

@@ -593,12 +593,16 @@ export function getOportunidades(profile: ProfileItem | null, posts: PostItem[])
   return out
 }
 
-/** Benchmark por faixa de seguidores (Nano/Micro/Mid/Macro). Percentil estimado. */
+/**
+ * Benchmark por faixa de seguidores — alinhado a `crawl/src/api/followersSizeBuckets.ts`
+ * (macro até 1M; celebridade 1M+). Percentil estimado.
+ */
 const BENCHMARKS: { min: number; max: number; label: string; erMin: number; erMid: number; erMax: number }[] = [
   { min: 0, max: 10_000, label: 'Nano', erMin: 2, erMid: 5, erMax: 10 },
   { min: 10_000, max: 50_000, label: 'Micro', erMin: 1.5, erMid: 4, erMax: 7 },
-  { min: 50_000, max: 500_000, label: 'Mid', erMin: 1, erMid: 3, erMax: 5 },
-  { min: 500_000, max: Infinity, label: 'Macro', erMin: 0.5, erMid: 1.5, erMax: 3 },
+  { min: 50_000, max: 200_000, label: 'Mid', erMin: 1, erMid: 3, erMax: 5 },
+  { min: 200_000, max: 1_000_000, label: 'Macro', erMin: 0.5, erMid: 1.5, erMax: 3 },
+  { min: 1_000_000, max: Infinity, label: 'Celebridade', erMin: 0.2, erMid: 0.8, erMax: 2 },
 ]
 
 /** Retorna info sobre próximo patamar e progresso no atual. */
@@ -614,7 +618,7 @@ export function getPatamarProximo(followersCount: number, er?: number): {
   const tierIdx = BENCHMARKS.findIndex((r) => followersCount >= r.min && followersCount < r.max)
   const tierRow = tierIdx >= 0 ? BENCHMARKS[tierIdx] : BENCHMARKS[0]
   const proximoRow = tierIdx >= 0 && tierIdx < BENCHMARKS.length - 1 ? BENCHMARKS[tierIdx + 1] : null
-  const rangeTier = tierRow.max === Infinity ? 500_000 - tierRow.min : tierRow.max - tierRow.min
+  const rangeTier = tierRow.max === Infinity ? 10_000_000 - tierRow.min : tierRow.max - tierRow.min
   const percentualNoPatamar = rangeTier > 0
     ? Math.min(100, Math.round(((followersCount - tierRow.min) / rangeTier) * 100))
     : 0
@@ -623,7 +627,10 @@ export function getPatamarProximo(followersCount: number, er?: number): {
 
   let insightPatamar: string
   if (!proximoRow) {
-    insightPatamar = 'Você está no patamar Macro — foco em consolidação e monetização.'
+    insightPatamar =
+      tierRow.label === 'Celebridade'
+        ? 'Você está no patamar Celebridade — foco em marca pessoal, mídia e parcerias premium.'
+        : 'Você está no último patamar — foco em consolidação e monetização.'
   } else {
     const falta = faltaSeguidores.toLocaleString('pt-BR')
     const proximo = proximoRow.label

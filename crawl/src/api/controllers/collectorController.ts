@@ -1,5 +1,9 @@
 import type { Request, Response } from 'express';
-import { hasCompletedLlmProfile, warmSearchCache } from '../profilesSearch.js';
+import {
+  hasCompletedLlmProfile,
+  scheduleSearchCacheRewarm,
+  warmSearchCache,
+} from '../profilesSearch.js';
 import type { CompositeStorage } from '../../storage/compositeStorage.js';
 import type { Entity } from '../../types/index.js';
 import { resyncInfluencerS3AfterDbMediaReset } from '../../storage/s3InfluencerImage.js';
@@ -524,7 +528,9 @@ export function createCollectorController(storage: CompositeStorage) {
           llm,
         };
         await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
-        await warmSearchCache(storage);
+        // Nao await warmSearchCache aqui: recarrega profile+post inteiro do disco e pode levar minutos,
+        // fazendo o qualify abortar o POST (QUALIFY_INGEST_TIMEOUT_MS). Rewarm em background mantem o mesmo destino final.
+        scheduleSearchCacheRewarm(storage);
 
         res.status(200).json({
           ok: true,

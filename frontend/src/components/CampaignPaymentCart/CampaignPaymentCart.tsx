@@ -19,7 +19,8 @@ function buildActiveFilters(
   const sizeBuckets = facets?.size_buckets ?? []
   const accountTypes = facets?.account_type ?? []
   query.sizeFilter?.forEach((key) => {
-    const label = sizeBuckets.find((b) => b.key === key)?.label ?? key
+    const bucketKey = key === 'medio' ? 'mid' : key
+    const label = sizeBuckets.find((b) => b.key === bucketKey || b.key === key)?.label ?? key
     out.push({ id: `size-${key}`, label, onRemove: () => onFilter({ sizeFilter: query.sizeFilter?.filter((k) => k !== key).length ? query.sizeFilter!.filter((k) => k !== key) : undefined }) })
   })
   query.accountTypeFilter?.forEach((value) => {

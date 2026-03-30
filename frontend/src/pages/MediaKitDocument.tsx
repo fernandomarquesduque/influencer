@@ -25,6 +25,7 @@ import {
   type PricingFieldKey,
 } from '../constants/pricingBuckets'
 import { getPdfPaletteFromTheme, type PdfPalette as PdfPaletteType, type ThemeMode } from '../utils/getPdfPaletteFromCss'
+import { getInfluencerTierLongLabel } from '../utils/influencerTier'
 
 type ReportInsights = ReturnType<typeof buildReportInsights>
 
@@ -1485,14 +1486,7 @@ export function MediaKitDocument({
   const er = engagement.engagement_rate ?? 0
   const postsPerWeek = engagement.posts_per_week ?? 0
 
-  const tierLabel =
-    followersCount < 10_000
-      ? 'Nano Influencer'
-      : followersCount < 50_000
-        ? 'Micro Influencer'
-        : followersCount < 500_000
-          ? 'Mid Influencer'
-          : 'Macro Influencer'
+  const tierLabel = getInfluencerTierLongLabel(followersCount)
 
   const scoreSelo = reportInsights?.score?.selo ?? 'Alto Engajamento'
   const diagnostico = reportInsights?.diagnostico ?? { headline: '', fazBem: '', trava: '', fazerPrimeiro: '' }
