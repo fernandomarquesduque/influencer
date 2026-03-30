@@ -333,12 +333,12 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                 }}
               >
                 {catLabel ? (
-                  <Tooltip title="Categoria principal (LLM)">
+                  <Tooltip title="Categoria principal">
                     <span style={{ ...badgeBase, ...campaignLlmBadgeStyles(catLabel) }}>{catLabel}</span>
                   </Tooltip>
                 ) : null}
                 {pillarLabels.map((pillar) => (
-                  <Tooltip key={pillar} title="Pilar de conteúdo (LLM)">
+                  <Tooltip key={pillar} title="Pilar de conteúdo">
                     <span style={{ ...badgeBase, ...campaignLlmBadgeStyles(pillar) }}>{pillar}</span>
                   </Tooltip>
                 ))}

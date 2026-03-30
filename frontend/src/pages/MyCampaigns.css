@@ -123,14 +123,32 @@
 
 .my-campaign-card-perfis {
   font-size: 13px;
-  display: flex;
-  align-items: center;
+  display: inline-flex;
+  align-items: baseline;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .my-campaign-card-perfis .anticon {
   color: var(--app-primary);
   opacity: 0.9;
+  font-size: 14px;
+  align-self: center;
+}
+
+.my-campaign-card-perfis-count {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--app-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.my-campaign-card-perfis-suffix {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--app-text-secondary);
 }
 
 .my-campaigns-grid {
@@ -187,6 +205,24 @@
   gap: 6px 4px;
   margin-top: 6px;
   font-size: 12px;
+}
+
+.my-campaign-card-perfis--hero {
+  flex: 1;
+  min-width: 0;
+}
+
+.my-campaign-card-perfis--hero .my-campaign-card-perfis-count {
+  font-size: 22px;
+}
+
+.my-campaign-card-subtitle {
+  display: block !important;
+  margin-top: 4px !important;
+  font-size: 14px !important;
+  font-weight: 500;
+  line-height: 1.35;
+  max-width: 100%;
 }
 
 .my-campaign-card-meta-sep {
@@ -262,17 +298,8 @@
   background: rgba(0, 0, 0, 0.06);
 }
 
-.my-campaign-card-name {
-  margin: 0 !important;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 16px !important;
-  color: var(--app-primary) !important;
-}
 
-/* Painel à direita: gêneros e tipos de perfil (LLM), em linha */
+/* Painel à direita: gêneros e tipos de perfil, em linha */
 .my-campaign-card-llm-dimensions {
   flex: 1 1 280px;
   min-width: 0;

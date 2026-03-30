@@ -1031,6 +1031,8 @@ export interface MyCampaignItem {
   handlesCount: number
   creditsUsed: number
   created_at: string
+  /** Fim da vigência do relatório (mesmo campo da campanha em detalhe). */
+  expires_at?: string
   /** Stats de engajamento (preenchido pela API). */
   stats?: MyCampaignStats | null
   /** Amostra de perfis para preview com fotos. */
@@ -1039,9 +1041,9 @@ export interface MyCampaignItem {
   topHashtags?: string[]
   /** Categorias principais LLM mais frequentes nos perfis (rótulo + quantidade, até 8). */
   topLlmCategories?: Array<{ label: string; count: number }>
-  /** Gênero (LLM) agregado na campanha. */
+  /** Gênero agregado na campanha. */
   topLlmGenders?: Array<{ label: string; count: number }>
-  /** Tipo de perfil (LLM) agregado na campanha. */
+  /** Tipo de perfil agregado na campanha. */
   topLlmProfileTypes?: Array<{ label: string; count: number }>
   /** Pagamento pendente (PIX/Boleto) para esta campanha. */
   pendingPayment?: {

@@ -8,7 +8,7 @@ import type { ProfileActivationData } from '../storage/sqliteSync.js';
 import { computeInstagramBi, type InstagramBi, type PostForBi } from '../utils/instagramBi.js';
 import { getCostTierFromPricing, getSuggestedPricingFromFollowers, type CostTier } from '../utils/suggestedPricing.js';
 
-/** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: só é substituído quando um novo reaquecimento termina (warmSearchCache ou scheduleSearchCacheRewarm). */
+/** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: substituído ao concluir warmSearchCache ou scheduleSearchCacheRewarm (swap atômico; durante reload segue servindo o snapshot anterior). */
 let searchDataCache: {
   profilesRaw: { key: string; value: Record<string, unknown> }[];
   postsRaw: { key: string; value: Record<string, unknown> }[];
@@ -42,18 +42,17 @@ function applySearchCacheIfCurrent(
 }
 
 /**
- * Agenda reaquecimento do cache em background. Várias chamadas seguidas disparam cargas em paralelo;
- * apenas a que termina por último com a geração atual aplica (evita snapshot stale).
- * Zera `searchDataCache` na hora para a próxima busca ler do RocksDB (ex.: após delete de perfil),
- * em vez de continuar servindo o snapshot antigo até o rewarm terminar.
+ * Agenda reaquecimento do cache em background (stale-while-revalidate).
+ * Mantém o snapshot atual até a carga terminar; então substitui de uma vez (se a geração ainda for a vigente).
+ * Várias chamadas seguidas incrementam a geração: só o load que bate com `searchCacheGeneration` ao concluir aplica,
+ * evitando que um rewarm antigo sobrescreva um mais novo. Assim a busca não perde cache nem dispara leitura full no disco no meio do reload.
  */
 export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
   const gen = ++searchCacheGeneration;
-  searchDataCache = null;
   void loadSearchCacheData(db).then((data) => applySearchCacheIfCurrent(gen, data));
 }
 
-/** Invalida o cache da busca (próxima busca recarrega do RocksDB). */
+/** Invalidação forte: esvazia o cache (próxima busca lê do RocksDB e repovoa). Uso pontual; reaquecimento após save usa scheduleSearchCacheRewarm. */
 export function clearSearchCache(): void {
   searchCacheGeneration += 1;
   searchDataCache = null;

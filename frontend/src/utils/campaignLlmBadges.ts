@@ -12,7 +12,7 @@ export function getLlmMainCategoryLabel(item: ProfileListItem): string | null {
   return mainCategory
 }
 
-/** Pilares de conteúdo (LLM) para exibir ao lado da categoria principal. */
+/** Pilares de conteúdo para exibir ao lado da categoria principal. */
 export function getLlmContentPillarLabels(item: ProfileListItem): string[] {
   const q = getLlmQualification(item as unknown as Record<string, unknown>)
   if (!q) return []
@@ -34,7 +34,7 @@ export function getLlmContentPillarLabels(item: ProfileListItem): string[] {
   return out
 }
 
-/** Tipo de perfil / influenciador (LLM) — canto superior esquerdo flutuante no card. */
+/** Tipo de perfil / influenciador — canto superior esquerdo flutuante no card. */
 export function getLlmProfileTypeBadge(item: ProfileListItem): LlmQualificationBadge | null {
   const q = getLlmQualification(item as unknown as Record<string, unknown>)
   if (!q) return null
@@ -43,11 +43,11 @@ export function getLlmProfileTypeBadge(item: ProfileListItem): LlmQualificationB
   return {
     key: 'profileType',
     text: profileType.charAt(0).toUpperCase() + profileType.slice(1).toLowerCase(),
-    title: 'Tipo de perfil (LLM)',
+    title: 'Tipo de perfil',
   }
 }
 
-/** Gênero inferido (LLM) — ao lado da categoria, abaixo do nome. */
+/** Gênero inferido — ao lado da categoria, abaixo do nome. */
 export function getLlmGenderBadge(item: ProfileListItem): LlmQualificationBadge | null {
   const q = getLlmQualification(item as unknown as Record<string, unknown>)
   if (!q) return null
@@ -56,7 +56,7 @@ export function getLlmGenderBadge(item: ProfileListItem): LlmQualificationBadge 
   return {
     key: 'gender',
     text: gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase(),
-    title: 'Gênero inferido (LLM)',
+    title: 'Gênero inferido',
   }
 }
 
@@ -73,7 +73,7 @@ export function getLlmTripleBadgesFromLlmRoot(record: Record<string, unknown> | 
   const catLabel = getLlmMainCategoryLabel(item)
   const categoria =
     catLabel != null
-      ? ({ key: 'mainCategory', text: catLabel, title: 'Categoria principal (LLM)' } satisfies LlmQualificationBadge)
+      ? ({ key: 'mainCategory', text: catLabel, title: 'Categoria principal' } satisfies LlmQualificationBadge)
       : null
   return {
     tipo: getLlmProfileTypeBadge(item),

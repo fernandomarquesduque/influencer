@@ -171,9 +171,15 @@ export default function MyCampaigns() {
                     <div className="my-campaign-card-row">
                       <div className="my-campaign-card-leading">
                         <div className="my-campaign-card-header">
-                          <Title level={5} className="my-campaign-card-name">
-                            {c.name || 'Campanha'}
-                          </Title>
+                          <span className="my-campaign-card-perfis my-campaign-card-perfis--hero">
+                            <UserOutlined aria-hidden />
+                            <span className="my-campaign-card-perfis-count">
+                              {formatShortNum(c.handlesCount)}
+                            </span>
+                            <span className="my-campaign-card-perfis-suffix">
+                              {c.handlesCount === 1 ? 'perfil' : 'perfis'}
+                            </span>
+                          </span>
                           <Button
                             type="text"
                             size="small"
@@ -184,17 +190,21 @@ export default function MyCampaigns() {
                             }}
                           />
                         </div>
+                        <Text
+                          type="secondary"
+                          className="my-campaign-card-subtitle"
+                          ellipsis={{ tooltip: c.name || 'Campanha' }}
+                        >
+                          {c.name || 'Campanha'}
+                        </Text>
                         <div className="my-campaign-card-meta-row">
-                          <span className="my-campaign-card-perfis">
-                            <UserOutlined /> {formatShortNum(c.handlesCount)} perfis
-                          </span>
-                          <span className="my-campaign-card-meta-sep" aria-hidden>
-                            ·
-                          </span>
-                          <div className="my-campaign-card-date">
+                          <div
+                            className="my-campaign-card-date"
+                            title={c.expires_at ? 'Data de término da vigência do relatório' : undefined}
+                          >
                             <CalendarOutlined style={{ marginRight: 4, opacity: 0.7 }} />
                             <Text type="secondary" className="my-campaign-card-date-text">
-                              {formatDate(c.created_at)}
+                              Até {c.expires_at ? formatDate(c.expires_at) : '—'}
                             </Text>
                           </div>
                           {c.pendingPayment && (
@@ -220,17 +230,17 @@ export default function MyCampaigns() {
                         if (c.topLlmGenders?.length) {
                           llmRows.push({
                             key: 'genders',
-                            sectionLabel: 'Gêneros (LLM)',
+                            sectionLabel: 'Gêneros',
                             entries: c.topLlmGenders,
-                            tooltipLabel: 'gênero (LLM)',
+                            tooltipLabel: 'Gênero dos influencers nesta campanha',
                           })
                         }
                         if (c.topLlmProfileTypes?.length) {
                           llmRows.push({
                             key: 'profileTypes',
-                            sectionLabel: 'Tipos de perfil (LLM)',
+                            sectionLabel: 'Tipos de perfil',
                             entries: c.topLlmProfileTypes,
-                            tooltipLabel: 'tipo de perfil (LLM)',
+                            tooltipLabel: 'Tipo de perfil dos influencers nesta campanha',
                           })
                         }
                         if (llmRows.length === 0) return null
@@ -276,9 +286,7 @@ export default function MyCampaigns() {
                     <div className="my-campaign-card-footer">
                       {c.topLlmCategories && c.topLlmCategories.length > 0 ? (
                         <div className="my-campaign-card-llm-categories">
-                          <Text type="secondary" className="my-campaign-card-llm-categories-label">
-                            Categorias (LLM)
-                          </Text>
+
                           <div className="my-campaign-card-llm-categories-chips">
                             {c.topLlmCategories.map((entry) => {
                               const st = campaignLlmBadgeStyles(entry.label)
@@ -287,7 +295,7 @@ export default function MyCampaigns() {
                               return (
                                 <Tooltip
                                   key={entry.label}
-                                  title={`${entry.label}: ${n} ${perfis} com esta categoria principal (LLM)`}
+                                  title={`${entry.label}: ${n} ${perfis} com esta categoria principal`}
                                 >
                                   <span
                                     className="my-campaign-card-llm-chip"
@@ -336,9 +344,9 @@ export default function MyCampaigns() {
                 </div>
               )}
               <div className="my-campaigns-summary my-campaigns-summary-sidebar">
-                <Statistic title="Campanhas" value={campaigns.length} suffix="relatórios" />
+                <Statistic title={<><FolderOpenOutlined /> Campanhas</>} value={campaigns.length} suffix="relatórios" />
                 <Statistic
-                  title="Perfis"
+                  title={<><UserOutlined /> Influencers</>}
                   value={campaigns.reduce((s, c) => s + c.handlesCount, 0)}
                   formatter={(v) => formatShortNum(Number(v))}
                 />

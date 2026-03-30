@@ -6,7 +6,7 @@ import { useEffect, useState, useCallback, useRef, type CSSProperties } from 're
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, message, Segmented, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
   fetchCampaignProfiles,
@@ -31,7 +31,6 @@ import {
   type CampaignInfo,
   type CreatePaymentForCreditsResponse,
   type MediaKind,
-  fetchCampaignPostMatches,
 } from '../api'
 import { useCreditsOptional } from '../contexts/CreditsContext'
 import { filterAndSortCampaignItems, computeFacetsFromItems } from '../utils/campaignFilterClient'
@@ -56,14 +55,7 @@ const CAMPAIGN_MAIN_COLUMN_GAP_PX = 24
 
 const CAMPAIGN_ID_GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-const ORIGIN_MEDIA_KIND_ORDER: MediaKind[] = ['post', 'reel', 'tagged', 'highlight']
-const ORIGIN_MEDIA_KIND_LABELS: Record<MediaKind, string> = {
-  post: 'Feed',
-  reel: 'Reels',
-  tagged: 'Marcados',
-  highlight: 'Destaques',
-}
-const ORIGIN_MEDIA_KIND_SET = new Set<string>(ORIGIN_MEDIA_KIND_ORDER)
+const ORIGIN_MEDIA_KIND_SET = new Set<string>(['post', 'reel', 'tagged', 'highlight'])
 
 function parseOriginMediaKindsParam(s: string | null): MediaKind[] | undefined {
   if (!s?.trim()) return undefined
@@ -435,7 +427,7 @@ function CampaignListRow({
             return (
               <div className="campaign-list-llm-badges" style={{ marginTop: 2 }}>
                 {catLabel ? (
-                  <Tooltip title="Categoria principal (LLM)">
+                  <Tooltip title="Categoria principal">
                     <span
                       className="campaign-list-llm-badge"
                       style={campaignLlmBadgeStyles(catLabel)}
@@ -445,7 +437,7 @@ function CampaignListRow({
                   </Tooltip>
                 ) : null}
                 {pillarLabels.map((pillar) => (
-                  <Tooltip key={pillar} title="Pilar de conteúdo (LLM)">
+                  <Tooltip key={pillar} title="Pilar de conteúdo">
                     <span className="campaign-list-llm-badge" style={campaignLlmBadgeStyles(pillar)}>
                       {pillar}
                     </span>
@@ -563,7 +555,6 @@ export default function CampaignInfluencers() {
   const [campaignMainTab, setCampaignMainTab] = useState<'influencers' | 'origin'>(() =>
     searchParams.get('tab') === 'origin' ? 'origin' : 'influencers'
   )
-  const [originPostKindCounts, setOriginPostKindCounts] = useState<Partial<Record<MediaKind, number>> | null>(null)
   const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '')
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const [favoriteHandles, setFavoriteHandles] = useState<Set<string>>(new Set())
@@ -783,26 +774,6 @@ export default function CampaignInfluencers() {
     },
     [campaignId, pendingPayment, query]
   )
-
-  useEffect(() => {
-    if (!campaignId || !user || pendingPayment) {
-      setOriginPostKindCounts(null)
-      return
-    }
-    const ac = new AbortController()
-    fetchCampaignPostMatches(
-      campaignId,
-      { q: query.q?.trim() || undefined, limit: 0, offset: 0 },
-      { signal: ac.signal }
-    )
-      .then((r) => {
-        if (!ac.signal.aborted) setOriginPostKindCounts(r.mediaKindCounts ?? null)
-      })
-      .catch(() => {
-        if (!ac.signal.aborted) setOriginPostKindCounts(null)
-      })
-    return () => ac.abort()
-  }, [campaignId, user?.id, pendingPayment, query.q])
 
   const updateFilter = useCallback(
     (overrides: Partial<ProfilesSearchQuery>) => {
@@ -1258,15 +1229,7 @@ export default function CampaignInfluencers() {
                 onClick={() => navigate('/app/campaigns')}
                 style={isMobile ? { width: '100%' } : undefined}
               >
-                Minhas campanhas
-              </Button>
-              <Button
-                type="default"
-                className="campaign-toolbar-quiet-btn"
-                onClick={() => navigate('/search')}
-                style={isMobile ? { width: '100%' } : undefined}
-              >
-                Nova busca
+                <ArrowLeftOutlined /> Voltar
               </Button>
             </div>
           ) : null}
@@ -1306,7 +1269,6 @@ export default function CampaignInfluencers() {
                   avgEngagementRate: pricePreview.avgEngagementRate ?? 0,
                   count: total > 0 ? total : (campaignInfo?.handlesCount ?? 0),
                 } : undefined}
-                originMediaKindCounts={originPostKindCounts}
               />
             </div>
           )}
@@ -1465,28 +1427,6 @@ export default function CampaignInfluencers() {
                             maxTagCount={1}
                           />
                         )}
-                        {campaignMainTab === 'origin' &&
-                          originPostKindCounts &&
-                          ORIGIN_MEDIA_KIND_ORDER.some((k) => (originPostKindCounts[k] ?? 0) > 0) && (
-                            <Select
-                              mode="multiple"
-                              size="small"
-                              placeholder="Tipo post"
-                              allowClear
-                              value={selectedOriginMediaKinds.length ? selectedOriginMediaKinds : undefined}
-                              options={ORIGIN_MEDIA_KIND_ORDER.filter((k) => (originPostKindCounts[k] ?? 0) > 0).map(
-                                (k) => ({
-                                  value: k,
-                                  label: `${ORIGIN_MEDIA_KIND_LABELS[k]} (${originPostKindCounts[k]})`,
-                                })
-                              )}
-                              onChange={(vals) =>
-                                updateFilter({ originMediaKinds: vals?.length ? (vals as MediaKind[]) : undefined })
-                              }
-                              style={{ width: 150 }}
-                              maxTagCount={1}
-                            />
-                          )}
                         {facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0) && (
                           <Select
                             mode="multiple"

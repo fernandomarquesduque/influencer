@@ -293,7 +293,7 @@ export default function AdminBulkPurgeInfluencers() {
                 <Row gutter={[12, 12]}>
                   <Col xs={24} sm={12} md={8}>
                     <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-                      Tipo de perfil (LLM)
+                      Tipo de perfil
                     </Typography.Text>
                     <Select
                       mode="multiple"
@@ -429,7 +429,7 @@ export default function AdminBulkPurgeInfluencers() {
                   </Col>
                   <Col xs={24} sm={12} md={8}>
                     <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-                      Nível de risco (LLM)
+                      Nível de risco
                     </Typography.Text>
                     <Input
                       allowClear

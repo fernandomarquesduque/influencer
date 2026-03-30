@@ -219,7 +219,7 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                           }}
                         >
                           {llmCategory ? (
-                            <Tooltip title="Categoria principal (LLM)">
+                            <Tooltip title="Categoria principal">
                               <span
                                 style={{
                                   display: 'inline-block',
@@ -239,7 +239,7 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                             </Tooltip>
                           ) : null}
                           {llmPillars.map((pillar) => (
-                            <Tooltip key={pillar} title="Pilar de conteúdo (LLM)">
+                            <Tooltip key={pillar} title="Pilar de conteúdo">
                               <span
                                 style={{
                                   display: 'inline-block',

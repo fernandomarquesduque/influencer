@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Layout as AntLayout, Button, Drawer, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
 import { CaretDownFilled, MenuOutlined } from '@ant-design/icons'
@@ -98,6 +98,53 @@ export default function Layout() {
   }, [user, location.pathname, navigate])
 
   const isAssinante = user?.scope === 'assinante'
+
+  const userMenuItems = useMemo((): MenuProps['items'] => {
+    if (!user) return []
+    const items: MenuProps['items'] = [
+      { key: 'edit-profile', label: 'Editar perfil', onClick: () => navigate('/app/profile') },
+    ]
+
+    const influencerChildren: NonNullable<MenuProps['items']> = []
+    if (isAdm) influencerChildren.push({ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') })
+    influencerChildren.push(
+      { key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') },
+      { key: 'payments', label: 'Meus pagamentos', onClick: () => navigate('/app/payments') },
+    )
+    items.push({ type: 'group', label: 'Influenciador', children: influencerChildren })
+
+    const assinanteChildren: NonNullable<MenuProps['items']> = []
+    if (isAssinante) assinanteChildren.push({ key: 'campaigns/create', label: 'Buscar Influencer', onClick: () => navigate('/app/campaigns/create') })
+    if (isAdm) assinanteChildren.push({ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') })
+    if (assinanteChildren.length > 0) {
+      items.push({ type: 'group', label: 'Assinante', children: assinanteChildren })
+    }
+
+    if (isAdm) {
+      items.push({
+        type: 'group',
+        label: 'Administrativo',
+        children: [
+          { key: 'admin-dash', label: 'Painel admin', onClick: () => navigate('/app/admin/dashboard') },
+          { key: 'users', label: 'Usuários', onClick: () => navigate('/app/admin/users') },
+          {
+            key: 'admin-mentions',
+            label: 'Relatório @ não cadastrados',
+            onClick: () => navigate('/app/admin/reports/unregistered-mentions'),
+          },
+          {
+            key: 'admin-bulk-purge',
+            label: 'Exclusão em lote',
+            onClick: () => navigate('/app/admin/influencers/bulk-purge'),
+          },
+          { key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') },
+        ],
+      })
+    }
+
+    items.push({ type: 'divider' }, { key: 'logout', label: 'Sair', onClick: () => logout() })
+    return items
+  }, [user, isAdm, isAssinante, navigate, logout])
   /** Barra de missões/recompensas só na lista Minhas campanhas (não em create, detalhe de campanha, etc.). */
   const missionsBarPath = location.pathname.replace(/\/$/, '') || '/'
   const showMissionsBar =
@@ -249,36 +296,7 @@ export default function Layout() {
                     {user ? (
                       <>
                         <Dropdown
-                          menu={{
-                            items: [
-                              { key: 'edit-profile', label: 'Editar perfil', onClick: () => navigate('/app/profile') },
-
-                              ...(isAssinante ? [{ key: 'campaigns/create', label: 'Buscar Influencer', onClick: () => navigate('/app/campaigns/create') }] : []),
-                              ...(isAdm ? [{ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') }] : []),
-                              ...(user ? [{ key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') }] : []),
-                              ...(user ? [{ key: 'payments', label: 'Meus pagamentos', onClick: () => navigate('/app/payments') }] : []),
-                              ...(isAdm ? [{ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') }] : []),
-                              ...(isAdm ? [{ key: 'admin-dash', label: 'Painel admin', onClick: () => navigate('/app/admin/dashboard') }] : []),
-                              ...(isAdm ? [{ key: 'users', label: 'Usuários', onClick: () => navigate('/app/admin/users') }] : []),
-                              ...(isAdm
-                                ? [
-                                    {
-                                      key: 'admin-mentions',
-                                      label: 'Relatório @ não cadastrados',
-                                      onClick: () => navigate('/app/admin/reports/unregistered-mentions'),
-                                    },
-                                    {
-                                      key: 'admin-bulk-purge',
-                                      label: 'Exclusão em lote (LLM)',
-                                      onClick: () => navigate('/app/admin/influencers/bulk-purge'),
-                                    },
-                                  ]
-                                : []),
-                              ...(isAdm ? [{ key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') }] : []),
-                              { type: 'divider' as const },
-                              { key: 'logout', label: 'Sair', onClick: () => logout() },
-                            ] as MenuProps['items'],
-                          }}
+                          menu={{ items: userMenuItems }}
                           trigger={['click']}
                           placement="bottomRight"
                         >
@@ -513,7 +531,7 @@ export default function Layout() {
                         }}
                         onClick={() => setMobileMenuOpen(false)}
                       >
-                        Exclusão em lote (LLM)
+                        Exclusão em lote
                       </Link>
                     )}
                     {isAdm && (

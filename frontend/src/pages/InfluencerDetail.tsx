@@ -60,6 +60,7 @@ import { PostAnalysisSection } from '../components/PostAnalysisSection'
 import { ReelsAnalysisSection } from '../components/ReelsAnalysisSection'
 import { TaggedAnalysisSection } from '../components/TaggedAnalysisSection'
 import { PrivateProfileMessage } from '../components/PrivateProfileMessage'
+import { ProfileLlmDetailPanel } from '../components/ProfileLlmDetailPanel'
 
 const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh, typography: typ, layout: lay } = t
@@ -496,11 +497,11 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
       const val = p ? parseNum(p[actKey]) : null
       if (val != null) {
         const original = (rocks as unknown as Record<string, { min: number; max: number; porque?: string }>)[tipoKey]
-        ;(out as unknown as Record<string, { min: number; max: number; porque?: string }>)[tipoKey] = {
-          min: val,
-          max: val,
-          porque: original?.porque ?? '',
-        }
+          ; (out as unknown as Record<string, { min: number; max: number; porque?: string }>)[tipoKey] = {
+            min: val,
+            max: val,
+            porque: original?.porque ?? '',
+          }
       }
     }
     return out
@@ -719,9 +720,9 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                       icon={<FolderOpenOutlined />}
                       onClick={() => navigate('/app/campaigns')}
                       style={DETAIL_SUBTLE_ACTION.reports}
-                      aria-label="Meus relatórios"
+                      aria-label="Minhas campanhas"
                     >
-                      Meus relatórios
+                      Campanhas
                     </Button>
                   </Tooltip>
                 )}
@@ -869,126 +870,129 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                 }
               }}
               extraContent={
-                !isLimitedView ? (
-                  <>
-                    {reportInsights ? (
-                      <ScoreOverview
-                        embedded
-                        tierInHero
-                        hidePostsPerWeek
-                        hideExplanationInEmbedded
-                        score={engagementScore}
-                        tierLabel={tierLabel}
-                        scoreSelo={scoreSelo}
-                        percentil={reportInsights.benchmark?.percentil ?? null}
-                        explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
-                        scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
-                        statPills={layout.showScorePills ? [
-                          { label: 'Seguidores', value: formatShortNum(followersCount) },
-                          { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
-                          { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
-                        ] : []}
-                        postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
-                        bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
-                        bestHour={reportInsights.consistency.bestHour}
-                      />
-                    ) : null}
-                    {!isRedacted && hasActivationData && activation ? (
-                      <div className="collapse-endereco-transparent">
-                        <Collapse
-                          ghost
-                          defaultActiveKey={[]}
-                          items={[{
-                            key: 'contato',
-                            label: (
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
-                                <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />{[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || 'Localização'}</span>
-                                {canEdit && handle && (
-                                  <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
-                                    Editar
-                                  </Button>
-                                )}
-                              </div>
-                            ),
-                            children: (
-                              <>
-                                {activation.pricing && (() => {
-                                  const costTier = getCostTier(activation.pricing)
-                                  const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
-                                    const val = activation.pricing![key as keyof typeof activation.pricing]
-                                    return val !== undefined && val !== null && String(val).trim() !== ''
-                                  })
-                                  if (!hasAnyPricing) return null
-                                  return (
-                                    <>
-                                      <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
-                                      <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
-                                        {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
-                                        {PRICING_FIELD_KEYS.map((key) => {
-                                          const val = activation.pricing![key as keyof typeof activation.pricing]
-                                          if (val === undefined || val === null || String(val).trim() === '') return null
-                                          const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
-                                          return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
-                                        })}
-                                      </Descriptions>
-                                    </>
-                                  )
-                                })()}
-                                <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
-
-                                  <Descriptions column={1} bordered size="small">
-                                    {activation.gender && (
-                                      <Descriptions.Item label="Gênero">{GENDER_LABELS[activation.gender] ?? activation.gender}</Descriptions.Item>
-                                    )}
-                                    {activation.audience_gender && (
-                                      <Descriptions.Item label="Gênero predominante do público">{AUDIENCE_GENDER_LABELS[activation.audience_gender] ?? activation.audience_gender}</Descriptions.Item>
-                                    )}
-                                    {activation.content_type?.length ? (
-                                      <Descriptions.Item label="Tipos de conteúdo">{activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}</Descriptions.Item>
-                                    ) : null}
-                                    {activation.influence_audience?.length ? (
-                                      <Descriptions.Item label="Público que influencia (A, B, C, D)">{activation.influence_audience.join(', ')}</Descriptions.Item>
-                                    ) : null}
-                                    {activation.influence_age_range?.length ? (
-                                      <Descriptions.Item label="Faixa etária que influencia">{activation.influence_age_range.map((fa) => INFLUENCE_AGE_RANGE_LABELS[fa] ?? fa).join(', ')}</Descriptions.Item>
-                                    ) : null}
-                                    {activation.description?.trim() && (
-                                      <Descriptions.Item label="Fala de você (trajetória e proposta)"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.description.trim()}</Text></Descriptions.Item>
-                                    )}
-                                    {activation.brands_worked_with?.trim() && (
-                                      <Descriptions.Item label="Marcas que já trabalhou"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.brands_worked_with.trim()}</Text></Descriptions.Item>
-                                    )}
-                                    {(activation.city || activation.state || activation.neighborhood || activation.country) && (
-                                      <Descriptions.Item label="Localização">
-                                        {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
-                                      </Descriptions.Item>
-                                    )}
-                                    {activation.address && (
-                                      <Descriptions.Item label="Endereço">
-                                        {[activation.address, activation.address_number].filter(Boolean).join(', ')}
-                                      </Descriptions.Item>
-                                    )}
-                                    {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
-                                    {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
-                                    {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
-                                    {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
-                                    {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
-                                    {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
-                                    {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
-                                    {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
-                                    {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
-                                    {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
-                                  </Descriptions>
-                                </div>
-                              </>
-                            ),
-                          }]}
-                          style={{ borderRadius: r, overflow: 'hidden', border: 'none', background: 'transparent' }}
+                <>
+                  <ProfileLlmDetailPanel profile={profile} variant="embedded" />
+                  {!isLimitedView ? (
+                    <>
+                      {reportInsights ? (
+                        <ScoreOverview
+                          embedded
+                          tierInHero
+                          hidePostsPerWeek
+                          hideExplanationInEmbedded
+                          score={engagementScore}
+                          tierLabel={tierLabel}
+                          scoreSelo={scoreSelo}
+                          percentil={reportInsights.benchmark?.percentil ?? null}
+                          explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
+                          scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
+                          statPills={layout.showScorePills ? [
+                            { label: 'Seguidores', value: formatShortNum(followersCount) },
+                            { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
+                            { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
+                          ] : []}
+                          postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
+                          bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
+                          bestHour={reportInsights.consistency.bestHour}
                         />
-                      </div>
-                    ) : null}
-                  </>
-                ) : null
+                      ) : null}
+                      {!isRedacted && hasActivationData && activation ? (
+                        <div className="collapse-endereco-transparent">
+                          <Collapse
+                            ghost
+                            defaultActiveKey={[]}
+                            items={[{
+                              key: 'contato',
+                              label: (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
+                                  <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />{[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || 'Localização'}</span>
+                                  {canEdit && handle && (
+                                    <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
+                                      Editar
+                                    </Button>
+                                  )}
+                                </div>
+                              ),
+                              children: (
+                                <>
+                                  {activation.pricing && (() => {
+                                    const costTier = getCostTier(activation.pricing)
+                                    const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
+                                      const val = activation.pricing![key as keyof typeof activation.pricing]
+                                      return val !== undefined && val !== null && String(val).trim() !== ''
+                                    })
+                                    if (!hasAnyPricing) return null
+                                    return (
+                                      <>
+                                        <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
+                                        <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
+                                          {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
+                                          {PRICING_FIELD_KEYS.map((key) => {
+                                            const val = activation.pricing![key as keyof typeof activation.pricing]
+                                            if (val === undefined || val === null || String(val).trim() === '') return null
+                                            const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
+                                            return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
+                                          })}
+                                        </Descriptions>
+                                      </>
+                                    )
+                                  })()}
+                                  <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
+
+                                    <Descriptions column={1} bordered size="small">
+                                      {activation.gender && (
+                                        <Descriptions.Item label="Gênero">{GENDER_LABELS[activation.gender] ?? activation.gender}</Descriptions.Item>
+                                      )}
+                                      {activation.audience_gender && (
+                                        <Descriptions.Item label="Gênero predominante do público">{AUDIENCE_GENDER_LABELS[activation.audience_gender] ?? activation.audience_gender}</Descriptions.Item>
+                                      )}
+                                      {activation.content_type?.length ? (
+                                        <Descriptions.Item label="Tipos de conteúdo">{activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}</Descriptions.Item>
+                                      ) : null}
+                                      {activation.influence_audience?.length ? (
+                                        <Descriptions.Item label="Público que influencia (A, B, C, D)">{activation.influence_audience.join(', ')}</Descriptions.Item>
+                                      ) : null}
+                                      {activation.influence_age_range?.length ? (
+                                        <Descriptions.Item label="Faixa etária que influencia">{activation.influence_age_range.map((fa) => INFLUENCE_AGE_RANGE_LABELS[fa] ?? fa).join(', ')}</Descriptions.Item>
+                                      ) : null}
+                                      {activation.description?.trim() && (
+                                        <Descriptions.Item label="Fala de você (trajetória e proposta)"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.description.trim()}</Text></Descriptions.Item>
+                                      )}
+                                      {activation.brands_worked_with?.trim() && (
+                                        <Descriptions.Item label="Marcas que já trabalhou"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.brands_worked_with.trim()}</Text></Descriptions.Item>
+                                      )}
+                                      {(activation.city || activation.state || activation.neighborhood || activation.country) && (
+                                        <Descriptions.Item label="Localização">
+                                          {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
+                                        </Descriptions.Item>
+                                      )}
+                                      {activation.address && (
+                                        <Descriptions.Item label="Endereço">
+                                          {[activation.address, activation.address_number].filter(Boolean).join(', ')}
+                                        </Descriptions.Item>
+                                      )}
+                                      {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
+                                      {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
+                                      {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
+                                      {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
+                                      {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
+                                      {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
+                                      {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
+                                      {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
+                                      {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
+                                      {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
+                                    </Descriptions>
+                                  </div>
+                                </>
+                              ),
+                            }]}
+                            style={{ borderRadius: r, overflow: 'hidden', border: 'none', background: 'transparent' }}
+                          />
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </>
               }
             />
           </>
