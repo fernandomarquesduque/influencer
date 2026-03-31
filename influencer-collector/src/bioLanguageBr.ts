@@ -93,9 +93,14 @@ function looksLikePortuguese(text: string): boolean {
 /**
  * @returns mensagem de regra se deve rejeitar; `null` se aprovar neste critério.
  */
-export function explainBioNotBrazilianPortuguese(entity: Record<string, unknown>): string | null {
-  const bioLista = explainRejectedEstablishmentKeywordInBio(entity);
-  if (bioLista) return bioLista;
+export function explainBioNotBrazilianPortuguese(
+  entity: Record<string, unknown>,
+  options?: { skipEstablishmentKeywordInBio?: boolean }
+): string | null {
+  if (!options?.skipEstablishmentKeywordInBio) {
+    const bioLista = explainRejectedEstablishmentKeywordInBio(entity);
+    if (bioLista) return bioLista;
+  }
 
   const text = prepBio(pickBio(entity));
   const minStrict = minCharsStrict();

@@ -8,6 +8,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import {
   getLedger,
   getGoogleQueue,
+  getProblemasDbCount,
+  getProblemasEventosSessao,
   removeFromGoogleQueue,
   clearGoogleQueue,
   removeProfile,
@@ -19,6 +21,7 @@ import { loadConfig } from './config.js';
 import type { InstagramClient } from './instagram.js';
 import type { Page } from 'playwright';
 import { freePortForUi } from './freeUiPort.js';
+import { isRemoteIngestConfigured } from './serverIngest.js';
 
 const PORT = Number(process.env.COLLECTOR_UI_PORT) || 3967;
 
@@ -78,6 +81,8 @@ export function createCollectorRequestHandler(
         requireBioBrazilianPortuguese: !!c.requireBioBrazilianPortuguese,
         skipIfAlreadyInRemoteDb: !!c.skipIfAlreadyInRemoteDb,
         allowedAccountTypes: Array.isArray(c.allowedAccountTypes) ? c.allowedAccountTypes : [],
+        /** Sem isso, «Pular @ se já estiver no banco» não consulta a API (fica sem efeito). */
+        remoteIngestConfigured: isRemoteIngestConfigured(),
       });
       return;
     }
@@ -320,7 +325,9 @@ export function createCollectorRequestHandler(
           {
             counts: {
               coletados: L.coletados.length,
-              problemas: L.problemas.length,
+              problemas: getProblemasDbCount(),
+              problemasUi: L.problemas.length,
+              problemasEventosSessao: getProblemasEventosSessao(),
               integrados: L.integrados.length,
               googleQueue: googleQueue.length,
               emProcessamento: processing ? 1 : 0,
@@ -449,6 +456,7 @@ export function createCollectorRequestHandler(
     <label style="margin-top:0.75rem;"><input type="checkbox" id="excludeBusiness" checked> Excluir perfis de empresa / estabelecimento</label>
     <label style="margin-top:0.5rem;"><input type="checkbox" id="requireBioPtBr" checked> Exigir bio em português brasileiro (rejeita outros idiomas e pt-PT sem sinais de BR)</label>
     <label style="margin-top:0.5rem;"><input type="checkbox" id="skipIfAlreadyInRemoteDb" checked> Pular @ se já estiver no banco (consulta à API antes de extrair — exige <code>COLLECTOR_API_BASE</code> + chave)</label>
+    <p id="remoteIngestWarn" class="hint" style="display:none;color:#f59e0b;margin-top:0.35rem;border-left:3px solid #f59e0b;padding-left:0.65rem;"></p>
     <p class="hint">Filtro por tipo: se marcar ao menos um, o coletor rejeita na primeira leitura do perfil quando o <code>account_type</code> do Instagram não estiver na lista (aparece em Problemas). .env: <code>COLLECTOR_ALLOWED_ACCOUNT_TYPES=1,2,3</code> (vazio = todos). Bio com menos de ~22 caracteres úteis (sem links e @) é aceita como <strong>pt-BR</strong> sem checagem de idioma. Opcional no .env: <code>COLLECTOR_BIO_PT_BR_MIN_USEFUL_CHARS</code> (padrão 22; 0 = sempre checar idioma). Para desligar toda a regra de idioma: <code>COLLECTOR_REQUIRE_BIO_PT_BR=false</code>. Pular @ no banco: também <code>COLLECTOR_SKIP_IF_ALREADY_IN_DB=false</code>. Valores salvos no navegador (localStorage).</p>
   </fieldset>
   <div class="controls">
@@ -481,9 +489,10 @@ export function createCollectorRequestHandler(
   <div class="count">
     <strong id="countC" class="n-pend">0</strong> coletados (aguardando API ou sem API)
     · <strong id="countI" class="n-ok">0</strong> integrados
-    · <strong id="countP" class="n-err">0</strong> erros
+    · <strong id="countP" class="n-err">0</strong> erros<span id="countPEvents" style="color:#94a3b8;font-weight:500"></span>
     · <strong id="countG" class="n-queue">0</strong> na fila Google — atualiza a cada 5s
   </div>
+  <p id="listProgressLine" style="display:none;margin:-0.35rem 0 1rem;font-size:0.95rem;color:#a5b4fc;"></p>
   <h2 class="section">Linhas da busca (progresso)</h2>
   <p class="hint" style="margin-top:0">Qual consulta está em execução e as próximas — atualiza durante a coleta no modo Google.</p>
   <div class="table-scroll" id="searchLinesWrap" style="margin-bottom:1.25rem">
@@ -517,7 +526,11 @@ export function createCollectorRequestHandler(
   </table>
   </div>
   <h2 class="section">3 — Erro (após processamento)</h2>
-  <p class="hint" style="margin-top:0">Lista gravada em disco (<code>data/collector-issues.json</code> ou <code>COLLECTOR_ISSUES_PATH</code>) para consulta entre execuções. <strong>Remover</strong> uma linha tira o @ da lista de bloqueio — na próxima coleta o perfil pode ser processado de novo.</p>
+  <p id="problemasTotalizer" class="problemas-totalizer" style="margin:0.25rem 0 0.65rem;padding:0.55rem 0.75rem;border-radius:6px;background:linear-gradient(90deg,#2c1518 0%,#1f1a24 100%);border:1px solid #7f1d1d;font-size:1rem;line-height:1.45;">
+    <span style="color:#fecaca">Total de registros de erro (SQLite; todos na tabela abaixo, mais recentes primeiro):</span>
+    <strong id="problemasTotalCount" style="color:#fca5a5;font-size:1.15rem;margin:0 0.25rem">0</strong>
+  </p>
+  <p class="hint" style="margin-top:0">Problemas ficam no <strong>SQLite</strong> (<code>data/collector-issues.sqlite</code> ou <code>COLLECTOR_ISSUES_DB_PATH</code>). Migração automática do JSON antigo na primeira subida. Opcional: append <code>collector-issues-append.jsonl</code> (<code>COLLECTOR_ISSUES_APPEND=off</code> desliga). <strong>Remover</strong> uma linha tira o @ da lista de bloqueio — na próxima coleta o perfil pode ser processado de novo.</p>
   <div class="table-scroll">
   <table>
     <thead><tr><th>#</th><th>Handle</th><th>Tipo</th><th>Detalhe</th><th>Host</th><th>POST tentado</th><th>Quando</th><th></th></tr></thead>
@@ -531,6 +544,19 @@ export function createCollectorRequestHandler(
   function showApiErr(msg) {
     var el = document.getElementById('apiHint');
     if (el) { el.textContent = msg; el.style.display = 'block'; }
+  }
+  var remoteIngestOk = false;
+  function updateRemoteSkipWarning() {
+    var w = document.getElementById('remoteIngestWarn');
+    var sk = document.getElementById('skipIfAlreadyInRemoteDb');
+    if (!w || !sk) return;
+    if (!remoteIngestOk && sk.checked) {
+      w.style.display = 'block';
+      w.textContent = 'API remota não configurada neste coletor — «Pular @ no banco» não consulta nada. No .env: COLLECTOR_API_BASE (ex.: https://seu-dominio.com/api) e COLLECTOR_INGEST_KEY igual ao COLLECTOR_INGEST_SECRET do servidor. Reinicie após editar.';
+    } else {
+      w.style.display = 'none';
+      w.textContent = '';
+    }
   }
   function initUi() {
     var modeEl = document.getElementById('mode');
@@ -669,7 +695,7 @@ export function createCollectorRequestHandler(
       var rb = document.getElementById('requireBioPtBr');
       if (rb) rb.addEventListener('change', saveUiFilters);
       var skDb = document.getElementById('skipIfAlreadyInRemoteDb');
-      if (skDb) skDb.addEventListener('change', saveUiFilters);
+      if (skDb) skDb.addEventListener('change', function() { saveUiFilters(); updateRemoteSkipWarning(); });
       var tagsEl = document.getElementById('tags');
       if (tagsEl) tagsEl.addEventListener('input', saveUiFilters);
       var gqEl = document.getElementById('googleQuery');
@@ -744,9 +770,11 @@ export function createCollectorRequestHandler(
         if (rb) rb.checked = d.requireBioBrazilianPortuguese !== false;
         var skDb = document.getElementById('skipIfAlreadyInRemoteDb');
         if (skDb) skDb.checked = d.skipIfAlreadyInRemoteDb !== false;
+        remoteIngestOk = d.remoteIngestConfigured === true;
         applyAccountTypeCheckboxes(Array.isArray(d.allowedAccountTypes) ? d.allowedAccountTypes : []);
         var saved = loadUiFilters();
         if (saved) applyUiFilters(saved);
+        updateRemoteSkipWarning();
       })
       .catch(function() {
         showApiErr('Não foi possível carregar regras do servidor — usando valores exibidos nos campos. Verifique se o app (npm start) está rodando.');
@@ -757,6 +785,12 @@ export function createCollectorRequestHandler(
     function escapeAttr(s) {
       return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
     }
+    function listProgressHuman(p) {
+      if (!p || p.listTotal == null || p.listIndex == null || !(p.listTotal > 0)) return '';
+      var rem = p.listRemaining != null ? p.listRemaining : (p.listTotal - p.listIndex + 1);
+      var label = p.listKind === 'handles' ? 'Lista de arrobas' : p.listKind === 'hashtag' ? 'Hashtags' : p.listKind === 'google_queries' ? 'Consultas Google' : 'Lista';
+      return label + ': ' + p.listIndex + '/' + p.listTotal + ' — faltam ' + rem + ' até o fim';
+    }
     function refreshList() {
       fetch(apiUrl('/api/list'), { cache: 'no-store' })
         .then(function(r) {
@@ -766,7 +800,22 @@ export function createCollectorRequestHandler(
         .then(function(d) {
           var c = d.counts || {};
           document.getElementById('countC').textContent = c.coletados != null ? c.coletados : 0;
-          document.getElementById('countP').textContent = c.problemas != null ? c.problemas : 0;
+          var probDb = c.problemas != null ? c.problemas : 0;
+          var probUi = c.problemasUi != null ? c.problemasUi : probDb;
+          document.getElementById('countP').textContent = probDb;
+          var ptot = document.getElementById('problemasTotalCount');
+          if (ptot) ptot.textContent = probDb;
+          var evHint = document.getElementById('countPEvents');
+          if (evHint) {
+            var evN = c.problemasEventosSessao != null ? c.problemasEventosSessao : 0;
+            if (probDb > probUi) {
+              evHint.textContent = ' · tabela: ' + probUi + ' linha(s) carregadas; total SQLite: ' + probDb;
+            } else if (evN > probDb) {
+              evHint.textContent = ' · ' + evN + ' eventos nesta execução';
+            } else {
+              evHint.textContent = '';
+            }
+          }
           document.getElementById('countI').textContent = c.integrados != null ? c.integrados : 0;
           var countGEl = document.getElementById('countG');
           if (countGEl) countGEl.textContent = c.googleQueue != null ? c.googleQueue : 0;
@@ -774,7 +823,14 @@ export function createCollectorRequestHandler(
           var problemas = Array.isArray(d.problemas) ? d.problemas : [];
           var integrados = Array.isArray(d.integrados) ? d.integrados : [];
           var googleQueue = Array.isArray(d.googleQueue) ? d.googleQueue : [];
-          var proc = d.processing && d.processing.handle ? d.processing : null;
+          var procFull = d.processing;
+          var proc = procFull && procFull.handle ? procFull : null;
+          var lpLine = document.getElementById('listProgressLine');
+          if (lpLine) {
+            var lhRow = listProgressHuman(procFull);
+            if (lhRow) { lpLine.style.display = 'block'; lpLine.textContent = lhRow; }
+            else { lpLine.style.display = 'none'; lpLine.textContent = ''; }
+          }
           var gqState = d.googleQueriesState && Array.isArray(d.googleQueriesState.queries) ? d.googleQueriesState : null;
           var searchLinesEl = document.getElementById('rowsSearchLines');
           var searchLinesWrap = document.getElementById('searchLinesWrap');
@@ -826,7 +882,19 @@ export function createCollectorRequestHandler(
             var sub = bits.length
               ? '<br><span class="proc-profile-detail" style="display:block;margin-top:0.25rem;opacity:0.92;font-size:0.82em;font-weight:normal;line-height:1.35">' + escapeAttr(bits.join(' · ')) + '</span>'
               : '';
-            return '<tr class="row-processing row-clickable" data-handle="' + escapeAttr(hk) + '"><td>…</td><td>@' + escapeAttr(p.handle) + '</td><td><span class="pulse-dot"></span><strong>Em processamento</strong> — ' + escapeAttr(p.stage || '') + sub + '</td><td>' + folCell + '</td><td>' + escapeAttr(t) + '</td></tr>';
+            var listHint = listProgressHuman(p);
+            var listHtml = listHint
+              ? '<br><span class="list-qty-hint" style="display:block;margin-top:0.35rem;font-size:0.88em;font-weight:600;color:#a5b4fc">' + escapeAttr(listHint) + '</span>'
+              : '';
+            var apiLine = '';
+            if (p.remotePrecheck === 'not_in_db') {
+              apiLine = '<br><span class="verify-ok proc-api-precheck" style="display:block;margin-top:0.35rem;font-size:0.86em;font-weight:600;line-height:1.4">API crawl: perfil <strong>não</strong> encontrado no banco remoto (<code>collector-verify-profile</code>).</span>';
+            } else if (p.remotePrecheck === 'unknown') {
+              apiLine = '<br><span class="verify-warn proc-api-precheck" style="display:block;margin-top:0.35rem;font-size:0.86em;font-weight:600;line-height:1.4">API crawl: não foi possível verificar no servidor (rede, timeout ou rota indisponível).</span>';
+            } else if (p.remotePrecheck === 'off') {
+              apiLine = '<br><span class="verify-skip proc-api-precheck" style="display:block;margin-top:0.35rem;font-size:0.86em;line-height:1.4">API crawl: pré-check não usado (sem <code>COLLECTOR_API_BASE</code>/chave ou «Pular @…» desmarcado).</span>';
+            }
+            return '<tr class="row-processing row-clickable" data-handle="' + escapeAttr(hk) + '"><td>…</td><td>@' + escapeAttr(p.handle) + '</td><td><span class="pulse-dot"></span><strong>Em processamento</strong> — ' + escapeAttr(p.stage || '') + listHtml + apiLine + sub + '</td><td>' + folCell + '</td><td>' + escapeAttr(t) + '</td></tr>';
           }
           function rowColetado(x, i) {
             var hk = x.handleKey || String(x.handle).replace(/^@/,'').toLowerCase();
@@ -872,7 +940,7 @@ export function createCollectorRequestHandler(
             return '<tr class="row-clickable" data-handle="' + escapeAttr(h) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td class="snippet-cell">' + escapeAttr(snip) + '</td><td>' + escapeAttr(added) + '</td><td><button type="button" class="btn-remove-queue" data-handle="' + escapeAttr(h) + '">Excluir</button></td></tr>';
           }
           var rowsC = [];
-          if (proc) rowsC.push(rowProcessing(proc));
+          if (proc) rowsC.push(rowProcessing(procFull));
           coletados.forEach(function(x, i) { rowsC.push(rowColetado(x, i)); });
           document.getElementById('rowsColetados').innerHTML = rowsC.length ? rowsC.join('') : '<tr><td colspan="5" style="color:#666">Nenhum nesta lista (nem em processamento).</td></tr>';
           var gqEl = document.getElementById('rowsGoogleQueue');
@@ -883,6 +951,10 @@ export function createCollectorRequestHandler(
         .catch(function() {
           document.getElementById('countC').textContent = '?';
           document.getElementById('countP').textContent = '?';
+          var ptotE = document.getElementById('problemasTotalCount');
+          if (ptotE) ptotE.textContent = '?';
+          var evH = document.getElementById('countPEvents');
+          if (evH) evH.textContent = '';
           document.getElementById('countI').textContent = '?';
           var countGEl = document.getElementById('countG');
           if (countGEl) countGEl.textContent = '?';
@@ -1074,11 +1146,15 @@ export function createCollectorRequestHandler(
           var active = d.running || d.scheduled;
           var stEl = document.getElementById('status');
           var msg = d.message || '';
-          var procSt = d.processing && d.processing.handle ? d.processing : null;
+          var procRaw = d.processing;
+          var procSt = procRaw && procRaw.handle ? procRaw : null;
+          var listHintSt = listProgressHuman(procRaw);
           if (active) {
             stEl.className = 'status running';
             if (procSt && procSt.handle) {
-              stEl.textContent = 'Coletando… @' + procSt.handle + ' — ' + (procSt.stage || 'em andamento');
+              stEl.textContent = 'Coletando… @' + procSt.handle + ' — ' + (procSt.stage || 'em andamento') + (listHintSt ? ' · ' + listHintSt : '');
+            } else if (listHintSt) {
+              stEl.textContent = 'Coletando… ' + listHintSt + (msg ? ' · ' + msg : '');
             } else {
               stEl.textContent = d.scheduled && !d.running ? 'Iniciando coleta…' : ('Coletando… ' + msg);
             }

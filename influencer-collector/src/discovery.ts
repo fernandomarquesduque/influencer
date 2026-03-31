@@ -42,40 +42,55 @@ import {
   takeNextFromGoogleQueue,
 } from './memoryStorage.js';
 import {
-  isProfileAlreadyOnRemoteServer,
   isRemoteIngestConfigured,
   pushProfileFullToServer,
   pushProfileToServerRocksDb,
+  runRemoteDuplicatePrecheck,
+  type RemoteDuplicatePrecheckLookup,
 } from './serverIngest.js';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 import { existsSync } from 'fs';
 import type { CollectorConfig } from './config.js';
 import { coletaLog } from './coletaLog.js';
-import { setProcessingState } from './processingStatus.js';
+import {
+  formatListProgressLogSuffix,
+  setListQueueProgress,
+  setProcessingState,
+  type RemotePrecheckUi,
+} from './processingStatus.js';
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Se o perfil já está no servidor, marca duplicata, atualiza existingHandles e retorna true (caller retorna cedo). */
-async function skipIfHandleAlreadyOnRemoteServer(
+function remotePrecheckUiFromLookup(lookup: RemoteDuplicatePrecheckLookup): RemotePrecheckUi {
+  if (lookup === 'skipped') return 'off';
+  if (lookup === 'not_found') return 'not_in_db';
+  return 'unknown';
+}
+
+/** Pré-check GET crawl + eventual skip por duplicata remota (uma única chamada à API). */
+async function checkRemoteDuplicateAndMaybeSkip(
   config: CollectorConfig,
   handle: string,
   existingHandles: Set<string>,
   handleLower: string,
   logSuffix?: string
-): Promise<boolean> {
-  if (!isRemoteIngestConfigured() || !config.skipIfAlreadyInRemoteDb) return false;
+): Promise<{ skipped: boolean; remotePrecheck: RemotePrecheckUi }> {
   const hk = handle.replace(/^@/, '').trim().toLowerCase();
-  if (!(await isProfileAlreadyOnRemoteServer(hk))) return false;
+  const r = await runRemoteDuplicatePrecheck(hk, config.skipIfAlreadyInRemoteDb);
+  const remotePrecheck = remotePrecheckUiFromLookup(r.lookup);
+  if (!r.skipAsDuplicate) {
+    return { skipped: false, remotePrecheck };
+  }
   recordDuplicate(handle);
   coletaLog(
     `@${hk}: já cadastrado no banco (API/RocksDB), pulando${logSuffix ? ` ${logSuffix}` : ''}.`
   );
   existingHandles.add(hk);
   if (handleLower !== hk) existingHandles.add(handleLower);
-  return true;
+  return { skipped: true, remotePrecheck };
 }
 
 /** true = rejeitou (já registrou issue + log). */
@@ -85,7 +100,8 @@ function rejectByAllowedAccountTypes(
   minimal: Record<string, unknown> | null | undefined,
   followers: number | null | undefined,
   logCtx: string,
-  issuePrefix?: string
+  issuePrefix?: string,
+  skipEstablishmentKeywordRules?: boolean
 ): boolean {
   if (!config.allowedAccountTypes.length || !minimal) return false;
   const entity = {
@@ -94,7 +110,9 @@ function rejectByAllowedAccountTypes(
     ...minimal,
     followers_count: followers ?? getFollowersFromEntity(minimal),
   } as Record<string, unknown>;
-  const msg = explainAccountTypeFilterMismatch(entity, config.allowedAccountTypes);
+  const msg = explainAccountTypeFilterMismatch(entity, config.allowedAccountTypes, {
+    skipEstablishmentCategoryHeuristic: !!skipEstablishmentKeywordRules,
+  });
   if (!msg) return false;
   recordIssue(handle, 'extracao', issuePrefix ? `${issuePrefix} ${msg}` : msg, {
     followers_count: followers ?? undefined,
@@ -122,7 +140,8 @@ async function probeAccountTypeIfStillUnknown(
   handle: string,
   minimal: Record<string, unknown>,
   followers: number | null | undefined,
-  proc: (stage: string, patch?: ProfileUiPatch) => void
+  proc: (stage: string, patch?: ProfileUiPatch) => void,
+  skipEstablishmentKeywordRules = false
 ): Promise<boolean> {
   if (!config.allowedAccountTypes.length) return true;
   const f0 = followers ?? getFollowersFromEntity(minimal);
@@ -145,7 +164,8 @@ async function probeAccountTypeIfStillUnknown(
   }
   const min = typeSnap.minimalProfile ?? minimal;
   const f = typeSnap.followers ?? followers;
-  if (rejectByAllowedAccountTypes(config, handle, min, f, `@${handle}`)) return false;
+  if (rejectByAllowedAccountTypes(config, handle, min, f, `@${handle}`, undefined, skipEstablishmentKeywordRules))
+    return false;
   proc(
     'Validando perfil…',
     summarizeProfileForUi(
@@ -163,12 +183,15 @@ function runCollectorProfileRules(
   handle: string,
   config: CollectorConfig,
   proc: (stage: string, patch?: ProfileUiPatch) => void,
-  validationStageLabel: string
+  validationStageLabel: string,
+  skipEstablishmentKeywordRules = false
 ): boolean {
   const followers = getFollowersFromEntity(raw);
   proc(validationStageLabel, summarizeProfileForUi(raw, followers));
 
-  const typeRej = explainAccountTypeFilterMismatch(raw, config.allowedAccountTypes);
+  const typeRej = explainAccountTypeFilterMismatch(raw, config.allowedAccountTypes, {
+    skipEstablishmentCategoryHeuristic: skipEstablishmentKeywordRules,
+  });
   if (typeRej) {
     recordIssue(handle, 'extracao', typeRej);
     coletaLog(`@${handle}: ${typeRej}`);
@@ -184,15 +207,19 @@ function runCollectorProfileRules(
     return false;
   }
 
-  const rejListaPosExtract = explainRejectedEstablishmentKeywordInBio(raw);
-  if (rejListaPosExtract) {
-    recordIssue(handle, 'regra', rejListaPosExtract);
-    coletaLog(`@${handle}: rejeitado por bio (lista) após leitura do perfil — não envia à API.`);
-    return false;
+  if (!skipEstablishmentKeywordRules) {
+    const rejListaPosExtract = explainRejectedEstablishmentKeywordInBio(raw);
+    if (rejListaPosExtract) {
+      recordIssue(handle, 'regra', rejListaPosExtract);
+      coletaLog(`@${handle}: rejeitado por bio (lista) após leitura do perfil — não envia à API.`);
+      return false;
+    }
   }
 
   if (config.requireBioBrazilianPortuguese) {
-    const bioRegra = explainBioNotBrazilianPortuguese(raw);
+    const bioRegra = explainBioNotBrazilianPortuguese(raw, {
+      skipEstablishmentKeywordInBio: skipEstablishmentKeywordRules,
+    });
     if (bioRegra) {
       recordIssue(handle, 'regra', bioRegra);
       return false;
@@ -206,20 +233,21 @@ function runCollectorProfileRules(
     );
     return false;
   }
-  if (hasRejectedProfileKeyword(raw)) {
+  if (!skipEstablishmentKeywordRules && hasRejectedProfileKeyword(raw)) {
     recordIssue(handle, 'regra', explainRejectedProfileKeyword(raw));
     return false;
   }
-  if (isBusinessFromEntity(raw)) {
+  if (!skipEstablishmentKeywordRules && isBusinessFromEntity(raw)) {
     recordIssue(handle, 'regra', explainCommercialOrEstablishment(raw));
     return false;
   }
-  if (config.excludeBusinessProfiles && !qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
+  const qualOpts = skipEstablishmentKeywordRules ? { skipEstablishmentKeywordRules: true } : undefined;
+  if (config.excludeBusinessProfiles && !qualifiesAsInfluencer(raw, config.minFollowersToSave, qualOpts)) {
     recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave));
     return false;
   }
   if (!config.excludeBusinessProfiles) {
-    if (!qualifiesAsInfluencer(raw, config.minFollowersToSave)) {
+    if (!qualifiesAsInfluencer(raw, config.minFollowersToSave, qualOpts)) {
       recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave));
       return false;
     }
@@ -403,19 +431,24 @@ async function processOneProfile(
     skipGate?: boolean;
     /** Dados já lidos no pipeline (ex.: Google) — preenche a UI antes da extração completa. */
     prefillProfileSnap?: { minimal: Record<string, unknown>; followers?: number | null };
+    /** Modo Arrobas: não aplicar lista ESTABLISHMENT_KEYWORDS_RAW (bio, @, nome, categoria, «negócio»). */
+    skipEstablishmentKeywordRules?: boolean;
   },
   onCollected?: (handle: string, followers: number) => void
 ): Promise<boolean> {
   const handleLower = handle.toLowerCase();
+  const skipEst = options?.skipEstablishmentKeywordRules === true;
   if (existingHandles.has(handleLower)) {
     recordDuplicate(handle);
     coletaLog(`@${handle}: duplicado (processOneProfile), ignorado.`);
     return false;
   }
 
-  if (await skipIfHandleAlreadyOnRemoteServer(config, handle, existingHandles, handleLower)) {
+  const remoteDup = await checkRemoteDuplicateAndMaybeSkip(config, handle, existingHandles, handleLower);
+  if (remoteDup.skipped) {
     return false;
   }
+  const remotePrecheckUi = remoteDup.remotePrecheck;
 
   const hk = handle.replace(/^@/, '').trim().toLowerCase();
   let profileUi: {
@@ -430,8 +463,13 @@ async function processOneProfile(
       handle: hk,
       stage,
       since: new Date().toISOString(),
+      remotePrecheck: remotePrecheckUi,
       ...profileUi,
     });
+    const listSuf = formatListProgressLogSuffix();
+    coletaLog(
+      `@${hk}: Em processamento — ${stage}` + (listSuf ? ` | ${listSuf}` : '')
+    );
   };
   proc('Validando perfil…');
   const prefill = options?.prefillProfileSnap;
@@ -512,10 +550,12 @@ async function processOneProfile(
     }
     if (gateSnap.minimalProfile) {
       const minimal = gateSnap.minimalProfile as Record<string, unknown>;
-      const rejEst = explainRejectedEstablishmentKeywordInBio(minimal);
-      if (rejEst) {
-        recordIssue(handle, 'regra', rejEst);
-        return false;
+      if (!skipEst) {
+        const rejEst = explainRejectedEstablishmentKeywordInBio(minimal);
+        if (rejEst) {
+          recordIssue(handle, 'regra', rejEst);
+          return false;
+        }
       }
       if (config.requireBioBrazilianPortuguese) {
         const gateEntity = {
@@ -524,7 +564,9 @@ async function processOneProfile(
           ...minimal,
           followers_count: gateFollowers ?? gateSnap.followers ?? getFollowersFromEntity(minimal),
         } as Record<string, unknown>;
-        const rejLang = explainBioNotBrazilianPortuguese(gateEntity);
+        const rejLang = explainBioNotBrazilianPortuguese(gateEntity, {
+          skipEstablishmentKeywordInBio: skipEst,
+        });
         if (rejLang) {
           recordIssue(handle, 'regra', rejLang);
           return false;
@@ -536,7 +578,9 @@ async function processOneProfile(
           handle,
           minimal,
           gateFollowers ?? gateSnap.followers,
-          `@${handle}`
+          `@${handle}`,
+          undefined,
+          skipEst
         )
       ) {
         return false;
@@ -550,7 +594,8 @@ async function processOneProfile(
           handle,
           minimal,
           gateFollowers ?? gateSnap.followers,
-          proc
+          proc,
+          skipEst
         ))
       ) {
         return false;
@@ -561,7 +606,8 @@ async function processOneProfile(
     if (config.allowedAccountTypes.length > 0 && options?.prefillProfileSnap?.minimal) {
       const pf = options.prefillProfileSnap;
       const pfFol = pf.followers ?? null;
-      if (rejectByAllowedAccountTypes(config, handle, pf.minimal, pfFol, `@${handle}`)) return false;
+      if (rejectByAllowedAccountTypes(config, handle, pf.minimal, pfFol, `@${handle}`, undefined, skipEst))
+        return false;
       if (
         !(await probeAccountTypeIfStillUnknown(
           page,
@@ -571,7 +617,8 @@ async function processOneProfile(
           handle,
           pf.minimal,
           pfFol,
-          proc
+          proc,
+          skipEst
         ))
       ) {
         return false;
@@ -588,16 +635,20 @@ async function processOneProfile(
       const fullResult = await extractProfileFull(page, handle, profileUrl, {
         pageAlreadyOnProfile: pageAlready,
         afterInitialLoad: async ({ profile: p }) => {
-          const bioListaEarly = explainRejectedEstablishmentKeywordInBio(p);
-          if (bioListaEarly) {
-            recordIssue(handle, 'regra', bioListaEarly, {
-              followers_count: getFollowersFromEntity(p) || undefined,
-            });
-            coletaLog(`@${handle}: rejeitado por bio (pré-extração completa).`);
-            return false;
+          if (!skipEst) {
+            const bioListaEarly = explainRejectedEstablishmentKeywordInBio(p);
+            if (bioListaEarly) {
+              recordIssue(handle, 'regra', bioListaEarly, {
+                followers_count: getFollowersFromEntity(p) || undefined,
+              });
+              coletaLog(`@${handle}: rejeitado por bio (pré-extração completa).`);
+              return false;
+            }
           }
           if (config.requireBioBrazilianPortuguese) {
-            const bioLangEarly = explainBioNotBrazilianPortuguese(p);
+            const bioLangEarly = explainBioNotBrazilianPortuguese(p, {
+              skipEstablishmentKeywordInBio: skipEst,
+            });
             if (bioLangEarly) {
               recordIssue(handle, 'regra', bioLangEarly, {
                 followers_count: getFollowersFromEntity(p) || undefined,
@@ -607,7 +658,9 @@ async function processOneProfile(
             }
           }
           if (config.allowedAccountTypes.length > 0) {
-            const msg = explainAccountTypeFilterMismatch(p, config.allowedAccountTypes);
+            const msg = explainAccountTypeFilterMismatch(p, config.allowedAccountTypes, {
+              skipEstablishmentCategoryHeuristic: skipEst,
+            });
             if (msg) {
               recordIssue(handle, 'extracao', msg, {
                 followers_count: getFollowersFromEntity(p) || undefined,
@@ -625,7 +678,8 @@ async function processOneProfile(
             handle,
             config,
             proc,
-            'Validando regras (antes de Reels/Marcados)…'
+            'Validando regras (antes de Reels/Marcados)…',
+            skipEst
           ),
       });
       if (fullResult.ok) {
@@ -684,7 +738,8 @@ async function processOneProfile(
         handle,
         config,
         proc,
-        'Validando regras (perfil final, antes da API)…'
+        'Validando regras (perfil final, antes da API)…',
+        skipEst
       )
     ) {
       return false;
@@ -1012,11 +1067,21 @@ async function profileExtractionPipelineNewTab(
   logCtx: string
 ): Promise<{ saved: number; processed: number }> {
   const handleLower = handle.toLowerCase();
-  if (await skipIfHandleAlreadyOnRemoteServer(config, handle, existingHandles, handleLower, `(${logCtx})`)) {
+  const remoteDupTab = await checkRemoteDuplicateAndMaybeSkip(
+    config,
+    handle,
+    existingHandles,
+    handleLower,
+    `(${logCtx})`
+  );
+  if (remoteDupTab.skipped) {
     triedInSession.add(handleLower);
     sess?.add(handleLower);
     return { saved: 0, processed: 0 };
   }
+  const remotePrecheckUi = remoteDupTab.remotePrecheck;
+  /** Modo Arrobas: lista digitada pelo usuário — sem filtro por ESTABLISHMENT_KEYWORDS_RAW. */
+  const skipEstList = discoveredBy === 'handles';
   const hkUi = handle.replace(/^@/, '').trim().toLowerCase();
   const processingSince = new Date().toISOString();
   const touchProcessing = (stage: string, patch?: ProfileUiPatch): void => {
@@ -1024,8 +1089,13 @@ async function profileExtractionPipelineNewTab(
       handle: hkUi,
       stage,
       since: processingSince,
+      remotePrecheck: remotePrecheckUi,
       ...(patch ?? {}),
     });
+    const listSuf = formatListProgressLogSuffix();
+    coletaLog(
+      `@${hkUi}: Em processamento — ${stage}` + (listSuf ? ` | ${listSuf}` : '')
+    );
   };
   /** Mostra @ e etapa na UI desde a abertura da aba (goto + gate rápido podem levar vários segundos). */
   touchProcessing('Abrindo perfil no Instagram…');
@@ -1114,7 +1184,7 @@ async function profileExtractionPipelineNewTab(
       }
     }
 
-    if (snapH.minimalProfile) {
+    if (snapH.minimalProfile && !skipEstList) {
       const rejBioH = explainRejectedEstablishmentKeywordInBio(
         snapH.minimalProfile as Record<string, unknown>
       );
@@ -1133,7 +1203,9 @@ async function profileExtractionPipelineNewTab(
         handle,
         snapH.minimalProfile as Record<string, unknown>,
         followersResolved ?? snapH.followers,
-        logCtx
+        logCtx,
+        undefined,
+        skipEstList
       )
     ) {
       triedInSession.add(handleLower);
@@ -1144,12 +1216,15 @@ async function profileExtractionPipelineNewTab(
       const followers = followersResolved!;
       const bioEarlyHashtag =
         config.requireBioBrazilianPortuguese && snapH.minimalProfile
-          ? explainBioNotBrazilianPortuguese({
-            handle,
-            username: handle,
-            ...snapH.minimalProfile,
-            followers_count: followers,
-          } as Record<string, unknown>)
+          ? explainBioNotBrazilianPortuguese(
+            {
+              handle,
+              username: handle,
+              ...snapH.minimalProfile,
+              followers_count: followers,
+            } as Record<string, unknown>,
+            { skipEstablishmentKeywordInBio: skipEstList }
+          )
           : null;
       if (bioEarlyHashtag) {
         recordIssue(handle, 'regra', bioEarlyHashtag, {
@@ -1165,21 +1240,25 @@ async function profileExtractionPipelineNewTab(
           ...snapH.minimalProfile,
           followers_count: followers,
         } as Record<string, unknown>;
-        if (hasRejectedProfileKeyword(entity)) {
+        if (!skipEstList && hasRejectedProfileKeyword(entity)) {
           recordIssue(handle, 'regra', explainRejectedProfileKeyword(entity), {
             followers_count: followers,
           });
           triedInSession.add(handleLower);
           return { saved: 0, processed: 1 };
         }
-        if (isBusinessFromEntity(entity)) {
+        if (!skipEstList && isBusinessFromEntity(entity)) {
           recordIssue(handle, 'regra', explainCommercialOrEstablishment(entity), {
             followers_count: followers,
           });
           triedInSession.add(handleLower);
           return { saved: 0, processed: 1 };
         }
-        if (!qualifiesAsInfluencer(entity, config.minFollowersToSave)) {
+        if (
+          !qualifiesAsInfluencer(entity, config.minFollowersToSave, {
+            skipEstablishmentKeywordRules: skipEstList,
+          })
+        ) {
           recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(entity, config.minFollowersToSave), {
             followers_count: followers,
           });
@@ -1189,11 +1268,14 @@ async function profileExtractionPipelineNewTab(
       }
     } else {
       if (config.requireBioBrazilianPortuguese && snapH.minimalProfile) {
-        const bioEarly0 = explainBioNotBrazilianPortuguese({
-          handle,
-          username: handle,
-          ...snapH.minimalProfile,
-        } as Record<string, unknown>);
+        const bioEarly0 = explainBioNotBrazilianPortuguese(
+          {
+            handle,
+            username: handle,
+            ...snapH.minimalProfile,
+          } as Record<string, unknown>,
+          { skipEstablishmentKeywordInBio: skipEstList }
+        );
         if (bioEarly0) {
           recordIssue(handle, 'regra', bioEarly0);
           triedInSession.add(handleLower);
@@ -1211,17 +1293,21 @@ async function profileExtractionPipelineNewTab(
           ...snapH.minimalProfile,
           followers_count: fol,
         } as Record<string, unknown>;
-        if (hasRejectedProfileKeyword(entity)) {
+        if (!skipEstList && hasRejectedProfileKeyword(entity)) {
           recordIssue(handle, 'regra', explainRejectedProfileKeyword(entity));
           triedInSession.add(handleLower);
           return { saved: 0, processed: 1 };
         }
-        if (isBusinessFromEntity(entity)) {
+        if (!skipEstList && isBusinessFromEntity(entity)) {
           recordIssue(handle, 'regra', explainCommercialOrEstablishment(entity));
           triedInSession.add(handleLower);
           return { saved: 0, processed: 1 };
         }
-        if (!qualifiesAsInfluencer(entity, config.minFollowersToSave)) {
+        if (
+          !qualifiesAsInfluencer(entity, config.minFollowersToSave, {
+            skipEstablishmentKeywordRules: skipEstList,
+          })
+        ) {
           recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(entity, config.minFollowersToSave));
           triedInSession.add(handleLower);
           return { saved: 0, processed: 1 };
@@ -1251,6 +1337,7 @@ async function profileExtractionPipelineNewTab(
                 followers: followersResolved ?? snapH.followers ?? null,
               }
             : undefined,
+        skipEstablishmentKeywordRules: skipEstList,
       },
       onCollected
     );
@@ -2402,57 +2489,62 @@ export async function discoverByHandles(
     return { saved: 0, processed: 0 };
   }
 
-  for (let i = 0; i < handles.length && !shouldAbort() && saved < options.maxProfiles; i++) {
-    const handle = handles[i]!;
-    const handleLower = handle.toLowerCase();
+  try {
+    for (let i = 0; i < handles.length && !shouldAbort() && saved < options.maxProfiles; i++) {
+      setListQueueProgress({ kind: 'handles', index: i + 1, total: handles.length });
+      const handle = handles[i]!;
+      const handleLower = handle.toLowerCase();
 
-    if (existingHandles.has(handleLower)) {
-      recordDuplicate(handle);
-      continue;
-    }
-    if (triedInSession.has(handleLower) || sess?.has(handleLower)) {
-      continue;
-    }
-    if (isBlocklistedHandle(handle) || containsRejectedKeyword(handle)) {
-      triedInSession.add(handleLower);
-      sess?.add(handleLower);
-      continue;
-    }
-
-    const remaining = options.maxProfiles - saved;
-    if (remaining <= 0) break;
-    coletaLog(`Arrobas ${i + 1}/${handles.length}: @${handle} — restam ${remaining} perfil(is) para salvar.`);
-
-    let rPipe: { saved: number; processed: number };
-    try {
-      rPipe = await profileExtractionPipelineNewTab(
-        ctx,
-        handle,
-        config,
-        existingHandles,
-        triedInSession,
-        sess,
-        'handles',
-        'manual-list',
-        onCollected,
-        'Arrobas'
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
-      if (isClosed) {
-        coletaLog(`Arrobas: @${handle} — janela/aba fechada durante extração, indo para o próximo.`);
-      } else {
-        coletaLog(`Arrobas: @${handle} — erro na extração, indo para o próximo: ${msg}`);
+      if (existingHandles.has(handleLower)) {
+        recordDuplicate(handle);
+        continue;
       }
-      recordIssue(handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
-      rPipe = { saved: 0, processed: 1 };
+      if (triedInSession.has(handleLower) || sess?.has(handleLower)) {
+        continue;
+      }
+      if (isBlocklistedHandle(handle)) {
+        triedInSession.add(handleLower);
+        sess?.add(handleLower);
+        continue;
+      }
+
+      const remaining = options.maxProfiles - saved;
+      if (remaining <= 0) break;
+      coletaLog(`Arrobas ${i + 1}/${handles.length}: @${handle} — restam ${remaining} perfil(is) para salvar.`);
+
+      let rPipe: { saved: number; processed: number };
+      try {
+        rPipe = await profileExtractionPipelineNewTab(
+          ctx,
+          handle,
+          config,
+          existingHandles,
+          triedInSession,
+          sess,
+          'handles',
+          'manual-list',
+          onCollected,
+          'Arrobas'
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
+        if (isClosed) {
+          coletaLog(`Arrobas: @${handle} — janela/aba fechada durante extração, indo para o próximo.`);
+        } else {
+          coletaLog(`Arrobas: @${handle} — erro na extração, indo para o próximo: ${msg}`);
+        }
+        recordIssue(handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
+        rPipe = { saved: 0, processed: 1 };
+      }
+
+      saved += rPipe.saved;
+      processed += rPipe.processed;
+      await randomDelay(80, 180);
     }
 
-    saved += rPipe.saved;
-    processed += rPipe.processed;
-    await randomDelay(80, 180);
+    return { saved, processed };
+  } finally {
+    setListQueueProgress(null);
   }
-
-  return { saved, processed };
 }

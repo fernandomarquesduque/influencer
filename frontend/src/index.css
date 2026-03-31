@@ -989,7 +989,7 @@ select,
 }
 
 .search-wizard-progress .ant-progress-outer {
-  paddingRight: 0;
+  padding-right: 0;
 }
 
 .search-wizard .search-wizard-progress .ant-progress-inner {

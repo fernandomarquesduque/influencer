@@ -3,10 +3,21 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'fs';
-import { mkdir, writeFile } from 'fs/promises';
+import { appendFile, mkdir } from 'fs/promises';
 import { dirname, join } from 'path';
 import type { Entity } from './entityRules.js';
+import {
+  countIssueRows,
+  deleteAllIssueRows,
+  deleteIssueRowById,
+  distinctIssueHandleKeys,
+  insertIssueRow,
+  hasIssueRowForHandleKey,
+  migrateLegacyJsonIfNeeded,
+  openIssuesDb,
+  selectAllIssuesOrderByAtDesc,
+  type SqlIssueRow,
+} from './issuesSqlite.js';
 
 export type IssueKind = 'duplicado' | 'extracao' | 'regra' | 'erro_api';
 
@@ -53,8 +64,30 @@ export interface IntegrationPushResult {
   apiHost?: string;
 }
 
-const MAX_ISSUES = 2000;
 const MAX_GOOGLE_QUEUE = 5000;
+
+/** Novos registros em Problemas desde o start do processo (sempre incrementa). */
+let problemasEventosSessao = 0;
+
+export function getProblemasEventosSessao(): number {
+  return problemasEventosSessao;
+}
+
+/** Total de linhas de Problemas no SQLite (pode ser maior que a fatia em memória). */
+export function getProblemasDbCount(): number {
+  return countIssueRows();
+}
+
+/** true se o @ já tem linha na lista de erros (SQLite; fallback para fatia em memória). */
+export function hasOpenIssueForHandle(rawHandle: string): boolean {
+  const k = norm(rawHandle);
+  if (!k) return false;
+  try {
+    return hasIssueRowForHandleKey(k);
+  } catch {
+    return issues.some((r) => norm(r.handleKey || r.handle) === k);
+  }
+}
 
 const pending = new Map<string, PendingRow>();
 const integrated = new Map<string, IntegratedRow>();
@@ -66,74 +99,64 @@ function issuesFilePath(): string {
   return join(process.cwd(), 'data', 'collector-issues.json');
 }
 
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
+function issuesAppendDisabled(): boolean {
+  const v = process.env.COLLECTOR_ISSUES_APPEND?.trim().toLowerCase();
+  return v === '0' || v === 'false' || v === 'off';
+}
 
-async function flushIssuesToDisk(): Promise<void> {
-  const path = issuesFilePath();
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify(issues, null, 2), 'utf-8');
-  } catch (e) {
-    console.warn(
-      '[ledger] Não foi possível gravar collector-issues.json:',
-      e instanceof Error ? e.message : e
-    );
+function issuesAppendLogPathResolved(): string | null {
+  if (issuesAppendDisabled()) return null;
+  const raw = process.env.COLLECTOR_ISSUES_APPEND_PATH?.trim();
+  if (raw) return raw;
+  return join(dirname(issuesFilePath()), 'collector-issues-append.jsonl');
+}
+
+let warnedAppendFailure = false;
+
+function appendIssueToJsonlLine(row: IssueRow): void {
+  const path = issuesAppendLogPathResolved();
+  if (!path) return;
+  const line = JSON.stringify(row) + '\n';
+  void (async () => {
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      await appendFile(path, line, 'utf-8');
+    } catch (e) {
+      if (!warnedAppendFailure) {
+        warnedAppendFailure = true;
+        console.warn(
+          '[ledger] Append de problemas (JSONL) falhou:',
+          e instanceof Error ? e.message : e
+        );
+      }
+    }
+  })();
+}
+
+function reloadIssuesWorkingSetFromDb(): void {
+  openIssuesDb();
+  const rows = selectAllIssuesOrderByAtDesc();
+  issues.length = 0;
+  for (const r of rows) {
+    issues.push(r as IssueRow);
   }
 }
 
-function schedulePersistIssues(): void {
-  if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    void flushIssuesToDisk();
-  }, 400);
-}
-
 /**
- * Carrega a lista de problemas do disco (chame após dotenv, antes de iniciar coleta).
- * Caminho: COLLECTOR_ISSUES_PATH ou data/collector-issues.json na raiz do projeto.
+ * Abre SQLite, migra JSON legado se preciso, carrega todos os problemas em memória para a UI.
  */
 export function loadPersistedIssuesSync(): void {
-  const path = issuesFilePath();
   try {
-    if (!existsSync(path)) return;
-    const raw = readFileSync(path, 'utf-8');
-    const arr = JSON.parse(raw) as unknown;
-    if (!Array.isArray(arr)) return;
-    const loaded: IssueRow[] = [];
-    for (const item of arr) {
-      if (item == null || typeof item !== 'object') continue;
-      const o = item as Record<string, unknown>;
-      const k = norm(String(o.handle ?? ''));
-      if (!k) continue;
-      const kind = o.kind as IssueKind;
-      if (kind !== 'extracao' && kind !== 'regra' && kind !== 'erro_api') continue;
-      const id = typeof o.id === 'string' && o.id.trim() ? o.id.trim() : randomUUID();
-      loaded.push({
-        id,
-        handle: k,
-        handleKey: k,
-        kind,
-        detail: typeof o.detail === 'string' ? o.detail : undefined,
-        at: typeof o.at === 'string' ? o.at : new Date().toISOString(),
-        full_name: typeof o.full_name === 'string' ? o.full_name : undefined,
-        followers_count: typeof o.followers_count === 'number' ? o.followers_count : undefined,
-        attemptedEndpoint: typeof o.attemptedEndpoint === 'string' ? o.attemptedEndpoint : undefined,
-      });
-    }
-    loaded.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
-    issues.length = 0;
-    for (const row of loaded.slice(0, MAX_ISSUES)) {
-      issues.push(row);
-    }
-    if (loaded.length > 0) {
-      console.log(
-        `[ledger] ${issues.length} registro(s) em “Problemas” carregado(s) de ${path}`
-      );
+    openIssuesDb();
+    migrateLegacyJsonIfNeeded();
+    reloadIssuesWorkingSetFromDb();
+    const total = countIssueRows();
+    if (total > 0) {
+      console.log(`[ledger] Problemas: ${total} registro(s) no SQLite (lista completa na UI)`);
     }
   } catch (e) {
     console.warn(
-      '[ledger] Falha ao carregar problemas persistidos:',
+      '[ledger] Falha ao abrir SQLite de problemas:',
       e instanceof Error ? e.message : e
     );
   }
@@ -160,20 +183,27 @@ function norm(h: string): string {
 
 function pushIssue(row: Omit<IssueRow, 'id'> & { id?: string }): void {
   const id = row.id?.trim() ? row.id.trim() : randomUUID();
-  issues.unshift({ ...row, id });
-  if (issues.length > MAX_ISSUES) issues.length = MAX_ISSUES;
-  schedulePersistIssues();
+  const full: IssueRow = { ...row, id };
+  if (full.kind !== 'extracao' && full.kind !== 'regra' && full.kind !== 'erro_api') return;
+  try {
+    insertIssueRow(full as SqlIssueRow);
+  } catch (e) {
+    console.warn('[ledger] Falha ao gravar problema no SQLite:', e instanceof Error ? e.message : e);
+    return;
+  }
+  problemasEventosSessao += 1;
+  issues.unshift(full);
+  appendIssueToJsonlLine(full);
 }
 
 /** Remove um registro específico de Problemas (libera o @ em issueHandleKeysSet se não houver outro erro para o mesmo handle). */
 export function removeIssueById(id: string): boolean {
   const want = String(id ?? '').trim();
   if (!want) return false;
+  const ok = deleteIssueRowById(want);
   const idx = issues.findIndex((x) => x.id === want);
-  if (idx === -1) return false;
-  issues.splice(idx, 1);
-  schedulePersistIssues();
-  return true;
+  if (idx !== -1) issues.splice(idx, 1);
+  return ok || idx !== -1;
 }
 
 /** Handles já coletados ou integrados (evita reprocessar). */
@@ -239,14 +269,18 @@ export function getLastGoogleSerpExtraction(): LastSerpExtraction {
   return { ...lastSerpExtraction };
 }
 
-/** Handles que já constam em Problemas (regra/extração/erro) — não reabrir na grade na mesma coleta. */
+/** Handles que já constam em Problemas (regra/extração/erro) — o conjunto completo no SQLite. */
 export function issueHandleKeysSet(): Set<string> {
-  const s = new Set<string>();
-  for (const row of issues) {
-    const k = norm(row.handleKey || row.handle);
-    if (k) s.add(k);
+  try {
+    return distinctIssueHandleKeys();
+  } catch {
+    const s = new Set<string>();
+    for (const row of issues) {
+      const k = norm(row.handleKey || row.handle);
+      if (k) s.add(k);
+    }
+    return s;
   }
-  return s;
 }
 
 /** Duplicados não aparecem na tabela de problemas (só log no console). */
@@ -378,8 +412,13 @@ export function removeProfile(handle: string): boolean {
 export function clearAll(): void {
   pending.clear();
   integrated.clear();
+  try {
+    deleteAllIssueRows();
+  } catch {
+    /* */
+  }
   issues.length = 0;
   googleQueue.length = 0;
   duplicateLogged.clear();
-  schedulePersistIssues();
+  problemasEventosSessao = 0;
 }

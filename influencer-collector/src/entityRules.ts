@@ -394,7 +394,8 @@ function formatAllowedAccountTypesForMessage(allowed: number[]): string {
  */
 export function explainAccountTypeFilterMismatch(
   entity: Record<string, unknown>,
-  allowed: number[]
+  allowed: number[],
+  options?: { skipEstablishmentCategoryHeuristic?: boolean }
 ): string | null {
   if (!allowed.length) return null;
   const at = getAccountType(entity);
@@ -409,14 +410,16 @@ export function explainAccountTypeFilterMismatch(
     if (rawAt === ACCOUNT_TYPE_BUSINESS) {
       return `Tipo de conta não permitido: account_type=3 (${labelAccountType(3)}); aceitos: ${formatAllowedAccountTypesForMessage(allowed)}.`;
     }
-    const cat = String(
-      getIn(entity, 'data.user.category_name', 'data.user.category', 'category_name', 'category') ?? ''
-    ).trim();
-    if (cat.length > 0) {
-      const isBizFlag =
-        getIn(entity, 'data.user.is_business_account', 'is_business_account', 'is_business') === true;
-      if (isBizFlag && textContainsAny(normalizeCategory(cat), ESTABLISHMENT_KEYWORDS)) {
-        return `Tipo de conta não permitido: account_type=? (heurística empresa; categoria «${cat.slice(0, 80)}»); aceitos: ${formatAllowedAccountTypesForMessage(allowed)}.`;
+    if (!options?.skipEstablishmentCategoryHeuristic) {
+      const cat = String(
+        getIn(entity, 'data.user.category_name', 'data.user.category', 'category_name', 'category') ?? ''
+      ).trim();
+      if (cat.length > 0) {
+        const isBizFlag =
+          getIn(entity, 'data.user.is_business_account', 'is_business_account', 'is_business') === true;
+        if (isBizFlag && textContainsAny(normalizeCategory(cat), ESTABLISHMENT_KEYWORDS)) {
+          return `Tipo de conta não permitido: account_type=? (heurística empresa; categoria «${cat.slice(0, 80)}»); aceitos: ${formatAllowedAccountTypesForMessage(allowed)}.`;
+        }
       }
     }
   }
@@ -458,9 +461,10 @@ export function isPersonOrCreator(entity: Record<string, unknown>): boolean {
 
 export function qualifiesAsInfluencer(
   entity: Record<string, unknown>,
-  minFollowers: number
+  minFollowers: number,
+  options?: { skipEstablishmentKeywordRules?: boolean }
 ): boolean {
-  if (isBusinessFromEntity(entity)) return false;
+  if (!options?.skipEstablishmentKeywordRules && isBusinessFromEntity(entity)) return false;
   const type = getAccountType(entity);
   const followers = getFollowersFromEntity(entity);
   if (minFollowers <= 0) return true;

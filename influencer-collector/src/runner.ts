@@ -16,6 +16,7 @@ import {
 import { issueHandleKeysSet } from './memoryStorage.js';
 import type { DiscoveryMode } from './discovery.js';
 import { coletaLog } from './coletaLog.js';
+import { setListQueueProgress } from './processingStatus.js';
 
 let collecting = false;
 /** true entre “Iniciar” na API e o runCollection de fato começar — evita duplo clique e libera a resposta HTTP antes do Playwright. */
@@ -124,6 +125,7 @@ export async function runCollection(
   collecting = true;
   collectionStartScheduled = false;
   abortRequested = false;
+  setListQueueProgress(null);
   let result = { saved: 0, processed: 0 };
   let page = pageRef.page;
   try {
@@ -182,6 +184,7 @@ export async function runCollection(
         const remaining = maxProfiles - totalSaved;
         if (remaining <= 0) break;
         const tag = tagList[i]!;
+        setListQueueProgress({ kind: 'hashtag', index: i + 1, total: tagList.length });
         coletaLog(`Hashtag ${i + 1}/${tagList.length}: #${tag} — faltam salvar até ${remaining} perfil(is)`);
         statusMessage = `Hashtag ${i + 1}/${tagList.length}: #${tag} — restam ${remaining} perfil(is)`;
         const r = await discoverByHashtag(client, pageRef.page, tag, {
@@ -216,6 +219,7 @@ export async function runCollection(
             const remaining = maxProfiles - totalSaved;
             if (remaining <= 0) break;
             const q = queries[i]!;
+            setListQueueProgress({ kind: 'google_queries', index: i + 1, total: queries.length });
             googleQueriesState.currentIndex = i;
             googleQueriesState.phase = 'discover';
             coletaLog(`Google ${i + 1}/${queries.length}: "${q.slice(0, 60)}${q.length > 60 ? '…' : ''}" — restam ${remaining} perfil(is) a salvar.`);
@@ -260,6 +264,7 @@ export async function runCollection(
     if (!statusMessage.startsWith('Erro:')) {
       statusMessage = `Concluído: ${result.saved} salvos, ${result.processed} processados.`;
     }
+    setListQueueProgress(null);
     if (userParou) {
       coletaLog(`INTERROMPIDO pelo usuário (Parar) → ${result.saved} salvos, ${result.processed} processados`);
     } else if (!statusMessage.startsWith('Erro:')) {

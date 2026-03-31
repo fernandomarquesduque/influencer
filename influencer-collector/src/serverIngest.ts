@@ -125,19 +125,35 @@ async function verifyProfileOnServer(
   return v === 'found' ? 'ok' : v;
 }
 
+export type RemoteDuplicatePrecheckLookup = 'skipped' | VerifyLookupResult;
+
+/**
+ * Uma chamada GET `collector-verify-profile` quando o pré-check de duplicata remota está ativo.
+ * `skipAsDuplicate` só é true com resposta `found`.
+ */
+export async function runRemoteDuplicatePrecheck(
+  handle: string,
+  skipIfAlreadyInRemoteDb: boolean
+): Promise<{ skipAsDuplicate: boolean; lookup: RemoteDuplicatePrecheckLookup }> {
+  if (!skipIfAlreadyInRemoteDb || !isRemoteIngestConfigured()) {
+    return { skipAsDuplicate: false, lookup: 'skipped' };
+  }
+  const base = getCollectorApiBase();
+  const key = process.env.COLLECTOR_INGEST_KEY?.trim();
+  if (!base || !key) return { skipAsDuplicate: false, lookup: 'skipped' };
+  const h = handle.replace(/^@/, '').trim().toLowerCase();
+  if (!h) return { skipAsDuplicate: false, lookup: 'skipped' };
+  const v = await fetchCollectorVerifyProfile(base, key, h);
+  return { skipAsDuplicate: v === 'found', lookup: v };
+}
+
 /**
  * true se o RocksDB (via API) já tem o perfil — para pular extração antes do Instagram.
  * false se não encontrado, API indisponível ou coletor sem COLLECTOR_API_BASE/INGEST_KEY.
  */
 export async function isProfileAlreadyOnRemoteServer(handle: string): Promise<boolean> {
-  if (!isRemoteIngestConfigured()) return false;
-  const base = getCollectorApiBase();
-  const key = process.env.COLLECTOR_INGEST_KEY?.trim();
-  if (!base || !key) return false;
-  const h = handle.replace(/^@/, '').trim().toLowerCase();
-  if (!h) return false;
-  const v = await fetchCollectorVerifyProfile(base, key, h);
-  return v === 'found';
+  const r = await runRemoteDuplicatePrecheck(handle, true);
+  return r.skipAsDuplicate;
 }
 
 function apiTimeoutMs(path: string): number {

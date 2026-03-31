@@ -49,6 +49,7 @@ async function runHttpSmoke(): Promise<void> {
     assert.ok(Number.isFinite(d.maxProfiles as number));
     assert.equal(typeof d.excludeBusinessProfiles, 'boolean');
     assert.equal(typeof d.skipIfAlreadyInRemoteDb, 'boolean');
+    assert.equal(typeof d.remoteIngestConfigured, 'boolean');
 
     r = await fetch(`${base}/api/status`);
     assert.equal(r.ok, true);
@@ -86,6 +87,8 @@ async function runHttpSmoke(): Promise<void> {
       'processing null ou objeto'
     );
     assert.ok(typeof list.counts!.emProcessamento === 'number');
+    assert.ok(typeof list.counts!.problemasEventosSessao === 'number');
+    assert.ok(typeof list.counts!.problemasUi === 'number');
 
     r = await fetch(`${base}/api/stop`, { method: 'POST' });
     assert.equal(r.ok, true);

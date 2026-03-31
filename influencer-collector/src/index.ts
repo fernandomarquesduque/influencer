@@ -9,6 +9,7 @@ import './loadEnv.js';
 import type { Frame, Page } from 'playwright';
 import { InstagramClient } from './instagram.js';
 import { loadConfig } from './config.js';
+import { issuesDbPath } from './issuesSqlite.js';
 import { loadPersistedIssuesSync } from './memoryStorage.js';
 import { startServer } from './server.js';
 import { getCollectorApiBase, isRemoteIngestConfigured } from './serverIngest.js';
@@ -94,6 +95,7 @@ function setupSessionPersistence(
 async function main(): Promise<void> {
   const config = loadConfig();
   loadPersistedIssuesSync();
+  console.log('[ledger] Problemas (SQLite):', issuesDbPath(), '— lista de erros carrega todos os registros na UI');
   console.log('Influencer Collector — iniciando browser no Instagram...');
   console.log('Min seguidores:', config.minFollowersToSave, '| Min curtidas por post:', config.minPostLikesToSave, '| Posts com min curtidas:', config.minPostsWithMinLikesToSave);
   if (isRemoteIngestConfigured()) {
