@@ -1,3 +1,5 @@
+import type { FollowersSizeKey } from '@repo/followersSizeBuckets'
+
 /** Em produção sob subpasta (ex.: /influencer) use VITE_API_BASE=/influencer/api */
 const API_BASE = (import.meta.env.VITE_API_BASE as string) || '/api'
 
@@ -237,7 +239,7 @@ export interface ProfilesSearchQuery {
   pricingDestaque?: number[]
   /** Faixa de preço: low = abaixo da média, medium = normal, high/very_high = acima da média. */
   costTierFilter?: string[]
-  /** Tamanho: nano, micro, medio (ou mid), macro, celebridade. */
+  /** Tamanho: nano, micro, medio (ou mid), macro, elite, celebridade. */
   sizeFilter?: string[]
   /** Filtros sobre classificação LLM (`llm.qualification`); multiselect = OR no mesmo campo. */
   llmProfileType?: string[]
@@ -354,7 +356,7 @@ export interface ProfilePreviewItem {
   firstName: string
   profilePicUrl: string
   llmDescription: string
-  size: 'nano' | 'micro' | 'medio' | 'macro' | 'celebridade'
+  size: FollowersSizeKey
   category: string
   audience: string
   collectedAt: string | null

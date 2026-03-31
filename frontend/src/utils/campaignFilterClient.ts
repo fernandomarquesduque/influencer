@@ -163,10 +163,12 @@ function matchesQuery(searchableText: string, q: string): { match: boolean; rele
   return { match: false, relevance: 0 }
 }
 
-/** Normaliza chaves de filtro da URL/UI (`mid` legado → `medio`, mesma base do crawl). */
+/** Normaliza chaves de filtro da URL/UI (`mid` → `medio`; `subnano` legado → `nano`). */
 function normalizeSizeFilterQueryKey(s: string): string {
   const x = s.toLowerCase().trim()
-  return x === 'mid' ? 'medio' : x
+  if (x === 'mid') return 'medio'
+  if (x === 'subnano') return 'nano'
+  return x
 }
 
 function getSizeFromItem(item: ProfileListItem): string | null {

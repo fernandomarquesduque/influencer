@@ -1060,7 +1060,9 @@ export async function searchProfiles(
   ) as CostTier[];
   const sizeFilterRaw = parseStringArray(query.sizeFilter).map((s) => s.toLowerCase());
   const sizeFilterSet = sizeFilterRaw.length > 0
-    ? new Set(sizeFilterRaw.map((s) => (s === 'mid' ? 'medio' : s)))
+    ? new Set(
+        sizeFilterRaw.map((s) => (s === 'mid' ? 'medio' : s === 'subnano' ? 'nano' : s))
+      )
     : null;
   const includeFacets = query.includeFacets !== false;
 

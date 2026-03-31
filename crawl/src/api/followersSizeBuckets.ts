@@ -6,7 +6,7 @@
  * Para alterar limites ou nomes, edite apenas `FOLLOWERS_SIZE_BUCKETS`.
  */
 
-export type FollowersSizeKey = 'nano' | 'micro' | 'medio' | 'macro' | 'celebridade';
+export type FollowersSizeKey = 'nano' | 'micro' | 'medio' | 'macro' | 'elite' | 'celebridade';
 
 export type FollowersSizeBucketDef = {
   key: FollowersSizeKey;
@@ -16,10 +16,11 @@ export type FollowersSizeBucketDef = {
 };
 
 export const FOLLOWERS_SIZE_BUCKETS: readonly FollowersSizeBucketDef[] = [
-  { key: 'nano', label: 'Nano', min: 0, max: 10_000 },
-  { key: 'micro', label: 'Micro', min: 10_000, max: 50_000 },
-  { key: 'medio', label: 'Médio', min: 50_000, max: 200_000 },
-  { key: 'macro', label: 'Macro', min: 200_000, max: 1_000_000 },
+  { key: 'nano', label: 'Nano', min: 0, max: 30_000 },
+  { key: 'micro', label: 'Micro', min: 30_000, max: 100_000 },
+  { key: 'medio', label: 'Médio', min: 100_000, max: 250_000 },
+  { key: 'macro', label: 'Macro', min: 250_000, max: 500_000 },
+  { key: 'elite', label: 'Elite', min: 500_000, max: 1_000_000 },
   { key: 'celebridade', label: 'Celebridade', min: 1_000_000, max: undefined },
 ] as const;
 

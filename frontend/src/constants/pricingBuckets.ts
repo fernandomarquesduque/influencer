@@ -1,6 +1,6 @@
 /**
  * Faixas de preço para categorização (valores = mínimo da faixa em reais, para filtro no banco).
- * Começam abaixo de R$ 100 para ser acessível a nano/micro influenciadores.
+ * Começam abaixo de R$ 100 para ser acessível a criadores com menos alcance (faixas de porte em `followersSizeBuckets`).
  */
 export const PRICE_BUCKETS = [
   { value: 0, label: 'Até R$ 100' },

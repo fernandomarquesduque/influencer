@@ -1017,7 +1017,18 @@ async function profileExtractionPipelineNewTab(
     sess?.add(handleLower);
     return { saved: 0, processed: 0 };
   }
-  /** Só mostra “Em processamento” na UI depois das pré-checagens (seguidores/regras), para não parecer “coleta completa” em perfil já reprovado. */
+  const hkUi = handle.replace(/^@/, '').trim().toLowerCase();
+  const processingSince = new Date().toISOString();
+  const touchProcessing = (stage: string, patch?: ProfileUiPatch): void => {
+    setProcessingState({
+      handle: hkUi,
+      stage,
+      since: processingSince,
+      ...(patch ?? {}),
+    });
+  };
+  /** Mostra @ e etapa na UI desde a abertura da aba (goto + gate rápido podem levar vários segundos). */
+  touchProcessing('Abrindo perfil no Instagram…');
   const profileUrlFull = InstagramClient.profileUrl(handle);
   const profileTab = await ctx.newPage();
   let saved = 0;
@@ -1035,6 +1046,8 @@ async function profileExtractionPipelineNewTab(
       triedInSession.add(handleLower);
       return { saved: 0, processed: 1 };
     }
+
+    touchProcessing('Página carregada — lendo seguidores e validando regras…');
 
     await profileTab.waitForTimeout(400);
     if (await isInstagramProfileUnavailablePage(profileTab)) {

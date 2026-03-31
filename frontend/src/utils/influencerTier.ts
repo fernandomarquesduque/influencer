@@ -1,6 +1,6 @@
 /**
  * Rótulos e cores de patamar alinhados a `@repo/followersSizeBuckets` (mesmo arquivo que o crawl).
- * Chave de API: nano | micro | medio | macro | celebridade (`mid` é alias legado de `medio`).
+ * Chave de API: nano | micro | medio | macro | elite | celebridade (`mid` é alias legado de `medio`).
  */
 
 import {
@@ -10,7 +10,7 @@ import {
   type FollowersSizeKey,
 } from '@repo/followersSizeBuckets'
 
-export type InfluencerTierLabel = 'Nano' | 'Micro' | 'Mid' | 'Macro' | 'Celebridade' | '—'
+export type InfluencerTierLabel = 'Nano' | 'Micro' | 'Mid' | 'Macro' | 'Elite' | 'Celebridade' | '—'
 
 /** Limiar de seguidores em forma curta (ex.: 10k, 200k, 1M) — chips do wizard e UI densa. */
 export function formatFollowersBoundCompact(n: number): string {
@@ -49,6 +49,7 @@ export function sizeKeyToShortTierLabel(key: FollowersSizeKey): InfluencerTierLa
   if (key === 'micro') return 'Micro'
   if (key === 'medio') return 'Mid'
   if (key === 'macro') return 'Macro'
+  if (key === 'elite') return 'Elite'
   return 'Celebridade'
 }
 
@@ -71,7 +72,7 @@ export function getInfluencerTierTooltip(followers: number | undefined | null): 
 export function getInfluencerTierLongLabel(followers: number | undefined | null): string {
   const short = getInfluencerTierShort(followers)
   if (short === '—') return '—'
-  if (short === 'Celebridade') return 'Celebridade'
+  if (short === 'Celebridade' || short === 'Elite') return short
   return `${short} Influencer`
 }
 
@@ -79,7 +80,8 @@ export function getInfluencerTierLongLabel(followers: number | undefined | null)
 export function sizeBucketKeyToTierLabel(key: string | undefined | null): InfluencerTierLabel {
   const k = String(key ?? '').trim().toLowerCase()
   if (k === 'mid') return 'Mid'
-  if (k === 'nano' || k === 'micro' || k === 'medio' || k === 'macro' || k === 'celebridade') {
+  if (k === 'subnano') return 'Nano'
+  if (k === 'nano' || k === 'micro' || k === 'medio' || k === 'macro' || k === 'elite' || k === 'celebridade') {
     return sizeKeyToShortTierLabel(k as FollowersSizeKey)
   }
   return '—'
@@ -92,6 +94,7 @@ export function getInfluencerTierTooltipFromLabel(tier: InfluencerTierLabel): st
     Micro: 'micro',
     Mid: 'medio',
     Macro: 'macro',
+    Elite: 'elite',
     Celebridade: 'celebridade',
   }
   const b = FOLLOWERS_SIZE_BUCKETS.find((x) => x.key === keyMap[tier])
@@ -104,6 +107,7 @@ const TIER_SOLID_HEX: Record<Exclude<InfluencerTierLabel, '—'>, string> = {
   Micro: '#1890ff',
   Mid: '#13c2c2',
   Macro: '#eb2f96',
+  Elite: '#531dab',
   Celebridade: '#d48806',
 }
 
@@ -126,6 +130,7 @@ export function getInfluencerTierGradientCss(tier: InfluencerTierLabel): string 
   if (tier === 'Micro') return 'linear-gradient(90deg, #1890ff, #40a9ff)'
   if (tier === 'Mid') return 'linear-gradient(90deg, #13c2c2, #36cfc9)'
   if (tier === 'Macro') return 'linear-gradient(90deg, #eb2f96, #f759ab)'
+  if (tier === 'Elite') return 'linear-gradient(90deg, #391085, #b37feb)'
   if (tier === 'Celebridade') return 'linear-gradient(90deg, #ad6800, #ffc53d)'
   return 'rgba(0,0,0,0.25)'
 }

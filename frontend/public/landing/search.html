@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Busca Influencer | Landing Search</title>
+  <meta name="description"
+    content="Landing page de alta conversão para Busca Influencer com MatchIA, Super Influencers, planos e fluxo em 4 passos.">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brandPurple: "#68278f",
+            brandYellow: "#e8ba00",
+            brandDeep: "#4b1e66"
+          },
+          boxShadow: {
+            soft: "0 10px 40px rgba(104,39,143,0.10)"
+          },
+          borderRadius: {
+            "2xl": "1.25rem",
+            "3xl": "1.5rem"
+          }
+        }
+      }
+    };
+  </script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    .bg-grid {
+      background:
+        radial-gradient(circle at 20% 10%, rgba(168, 85, 247, 0.25) 0, rgba(168, 85, 247, 0) 35%),
+        radial-gradient(circle at 80% 90%, rgba(232, 186, 0, 0.20) 0, rgba(232, 186, 0, 0) 35%),
+        #fff;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity .7s ease, transform .7s ease;
+    }
+
+    .reveal.in-view {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .shine {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .shine::after {
+      content: "";
+      position: absolute;
+      inset: -120% -30% auto;
+      height: 220%;
+      transform: rotate(25deg);
+      background: linear-gradient(to right, transparent 35%, rgba(255, 255, 255, 0.35) 50%, transparent 65%);
+      transition: transform .55s ease;
+    }
+
+    .shine:hover::after {
+      transform: rotate(25deg) translateX(45%);
+    }
+
+    .faq-answer {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height .35s ease;
+    }
+  </style>
+</head>
+
+<body class="bg-grid text-slate-900 antialiased">
+  <main class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+    <section class="reveal rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-soft backdrop-blur sm:p-10">
+      <div class="mx-auto max-w-4xl text-center">
+        <h1 class="text-3xl font-bold tracking-tight text-brandPurple sm:text-5xl">O match perfeito entre sua marca e o influenciador ideal.</h1>
+        <p class="mt-5 text-base leading-relaxed text-slate-700 sm:text-lg">Encontre, classifique e conecte-se com influenciadores brasileiros de forma estratégica. Use a inteligência da MatchIA para mapear o mercado ou acesse nossa base de Super Influencers com dados validados e prontos para sua campanha.</p>
+        <a href="/app/create"
+          class="shine mt-8 inline-flex items-center justify-center rounded-2xl bg-brandYellow px-7 py-3 text-sm font-bold text-slate-900 shadow-lg shadow-yellow-300/40 transition hover:-translate-y-0.5 hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-brandPurple focus:ring-offset-2">
+          Começar busca gratuita
+        </a>
+      </div>
+    </section>
+
+    <section class="reveal mt-12 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft sm:p-8">
+      <h2 class="text-2xl font-bold text-brandPurple sm:text-3xl">Decisões baseadas em dados, não em suposições.</h2>
+      <p class="mt-4 max-w-4xl text-slate-700">A gente sabe que a curadoria manual toma um tempo que você não tem. O Busca Influencer foi criado para transformar horas de pesquisa no Instagram em segundos de análise precisa. Entregamos a inteligência que você precisa para minerar os melhores perfis com segurança.</p>
+    </section>
+
+    <section class="reveal mt-12">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="rounded-xl bg-brandPurple/10 p-2 text-brandPurple"><i data-lucide="sparkles" class="h-5 w-5"></i></div>
+        <h2 class="text-2xl font-bold text-brandPurple sm:text-3xl">MatchIA: Inteligência que entende de influência.</h2>
+      </div>
+      <p class="mb-6 text-slate-700">Nossa tecnologia de varredura vai além da superfície para entender quem realmente fala com o seu público.</p>
+
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-6">
+        <article class="group rounded-3xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-1 hover:shadow-xl md:col-span-3">
+          <div class="mb-3 inline-flex rounded-xl bg-brandPurple/10 p-2 text-brandPurple"><i data-lucide="gamepad-2" class="h-5 w-5"></i></div>
+          <h3 class="font-semibold text-slate-900">Mapeamento de 22 Categorias</h3>
+          <p class="mt-2 text-sm text-slate-700">Identificamos o nicho e subnicho real de cada perfil (de Games a Sustentabilidade).</p>
+        </article>
+        <article class="group rounded-3xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-1 hover:shadow-xl md:col-span-3">
+          <div class="mb-3 inline-flex rounded-xl bg-brandPurple/10 p-2 text-brandPurple"><i data-lucide="users-round" class="h-5 w-5"></i></div>
+          <h3 class="font-semibold text-slate-900">Análise Demográfica</h3>
+          <p class="mt-2 text-sm text-slate-700">Saiba a predominância do público (Feminino, Masculino, Infantil ou Jovens) antes de investir.</p>
+        </article>
+        <article class="group rounded-3xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-1 hover:shadow-xl md:col-span-4">
+          <div class="mb-3 inline-flex rounded-xl bg-brandPurple/10 p-2 text-brandPurple"><i data-lucide="sliders-horizontal" class="h-5 w-5"></i></div>
+          <h3 class="font-semibold text-slate-900">Filtro de Alcance</h3>
+          <p class="mt-2 text-sm text-slate-700">Encontre desde o Nano ao perfil de Elite que melhor se ajusta ao seu orçamento.</p>
+        </article>
+        <article class="group rounded-3xl border border-brandYellow/60 bg-gradient-to-br from-yellow-50 to-white p-5 shadow-soft transition hover:-translate-y-1 hover:shadow-xl md:col-span-2">
+          <div class="mb-3 inline-flex rounded-xl bg-brandYellow/30 p-2 text-brandDeep"><i data-lucide="badge-dollar-sign" class="h-5 w-5"></i></div>
+          <h3 class="font-semibold text-slate-900">Badge de Preço</h3>
+          <p class="mt-2 text-sm text-slate-700">Apenas 1 crédito por perfil desbloqueado.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="reveal mt-12">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="rounded-xl bg-brandYellow/30 p-2 text-brandDeep"><i data-lucide="crown" class="h-5 w-5"></i></div>
+        <h2 class="text-2xl font-bold text-brandPurple sm:text-3xl">Super Influencers: Dados verificados e prontos para a ação.</h2>
+      </div>
+      <p class="mb-6 text-slate-700">Para campanhas que exigem precisão absoluta e agilidade logística, acesse nossa base de criadores com cadastro ativo.</p>
+
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-6">
+        <article class="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-1 hover:shadow-xl md:col-span-2">
+          <h3 class="font-semibold">Poder de Compra</h3>
+          <p class="mt-2 text-sm text-slate-700">Filtre pela classe social da audiência (A, B, C e D) para garantir o ROI da sua marca.</p>
+        </article>
+        <article class="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-1 hover:shadow-xl md:col-span-2">
+          <h3 class="font-semibold">Logística Facilitada</h3>
+          <p class="mt-2 text-sm text-slate-700">Endereço para envios verificado. Chega de esperar dias por uma resposta no Direct.</p>
+        </article>
+        <article class="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-1 hover:shadow-xl md:col-span-2">
+          <h3 class="font-semibold">Histórico de Parcerias</h3>
+          <p class="mt-2 text-sm text-slate-700">Veja com quais marcas o influenciador já trabalhou e acesse seu Mídia Kit.</p>
+        </article>
+        <article class="rounded-3xl border border-brandPurple/20 bg-gradient-to-br from-brandPurple to-brandDeep p-5 text-white shadow-soft md:col-span-6">
+          <h3 class="font-semibold">Badge de Preço</h3>
+          <p class="mt-2 text-sm text-white/90">2 créditos por perfil desbloqueado (Dados completos + Logística).</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="reveal mt-12 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft sm:p-8">
+      <h2 class="text-2xl font-bold text-brandPurple sm:text-3xl">Tabela comparativa</h2>
+      <p class="mt-3 text-sm text-slate-600">(Implementar a tabela comparativa fornecida na conversa, destacando as vantagens do Super Influencer com checkmarks verdes).</p>
+      <div class="mt-6 overflow-x-auto">
+        <table class="min-w-full text-left text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 text-slate-600">
+              <th class="px-3 py-3 font-semibold">Recurso</th>
+              <th class="px-3 py-3 font-semibold">MatchIA</th>
+              <th class="px-3 py-3 font-semibold">Super Influencers</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="border-b border-slate-100">
+              <td class="px-3 py-3">Dados verificados</td>
+              <td class="px-3 py-3 text-slate-400">-</td>
+              <td class="px-3 py-3 text-emerald-600"><i data-lucide="check" class="inline h-4 w-4"></i></td>
+            </tr>
+            <tr class="border-b border-slate-100">
+              <td class="px-3 py-3">Logística</td>
+              <td class="px-3 py-3 text-slate-400">-</td>
+              <td class="px-3 py-3 text-emerald-600"><i data-lucide="check" class="inline h-4 w-4"></i></td>
+            </tr>
+            <tr>
+              <td class="px-3 py-3">Histórico de Parcerias</td>
+              <td class="px-3 py-3 text-slate-400">-</td>
+              <td class="px-3 py-3 text-emerald-600"><i data-lucide="check" class="inline h-4 w-4"></i></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="reveal mt-12 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft sm:p-8">
+      <h2 class="text-2xl font-bold text-brandPurple sm:text-3xl">Como funciona a busca (em 4 passos):</h2>
+      <div class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+        <article class="rounded-2xl border border-slate-200 bg-slate-50 p-5 transition hover:-translate-y-1 hover:bg-white">
+          <h3 class="font-semibold text-brandPurple">Categorize</h3>
+          <p class="mt-2 text-sm text-slate-700">Escolha até 3 categorias entre as 22 disponíveis.</p>
+        </article>
+        <article class="rounded-2xl border border-slate-200 bg-slate-50 p-5 transition hover:-translate-y-1 hover:bg-white">
+          <h3 class="font-semibold text-brandPurple">Dimensione</h3>
+          <p class="mt-2 text-sm text-slate-700">Defina a faixa de seguidores ideal (Nano, Micro, Macro...).</p>
+        </article>
+        <article class="rounded-2xl border border-slate-200 bg-slate-50 p-5 transition hover:-translate-y-1 hover:bg-white">
+          <h3 class="font-semibold text-brandPurple">Refine</h3>
+          <p class="mt-2 text-sm text-slate-700">Selecione o gênero do influencer e o perfil do público-alvo.</p>
+        </article>
+        <article class="rounded-2xl border border-slate-200 bg-slate-50 p-5 transition hover:-translate-y-1 hover:bg-white">
+          <h3 class="font-semibold text-brandPurple">Dê o Match</h3>
+          <p class="mt-2 text-sm text-slate-700">Use seus créditos para desbloquear os dados e iniciar sua campanha.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="reveal mt-12 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft sm:p-8">
+      <h2 class="text-2xl font-bold text-brandPurple sm:text-3xl">Invista com inteligência. Pague pelo que usar.</h2>
+      <p class="mt-3 text-slate-700">Sem mensalidades fixas ou contratos de fidelidade. Créditos que não expiram.</p>
+      <div class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <article class="rounded-3xl border border-slate-200 bg-slate-50 p-6 transition hover:-translate-y-1 hover:bg-white hover:shadow-soft">
+          <h3 class="text-lg font-bold text-brandPurple">Pack Discovery</h3>
+        </article>
+        <article class="rounded-3xl border border-brandYellow/70 bg-gradient-to-br from-yellow-50 to-white p-6 transition hover:-translate-y-1 hover:shadow-soft">
+          <h3 class="text-lg font-bold text-brandPurple">Pack Agência</h3>
+        </article>
+        <article class="rounded-3xl border border-slate-200 bg-slate-50 p-6 transition hover:-translate-y-1 hover:bg-white hover:shadow-soft">
+          <h3 class="text-lg font-bold text-brandPurple">Pack Enterprise</h3>
+        </article>
+      </div>
+    </section>
+
+    <section class="reveal mt-12 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft sm:p-8">
+      <h2 class="text-2xl font-bold text-brandPurple sm:text-3xl">FAQ</h2>
+      <p class="mt-3 text-sm text-slate-600">(Implementar as 10 perguntas e respostas da última versão da FAQ exatamente como escritas).</p>
+      <div class="mt-6 space-y-3" id="faq">
+        <article class="rounded-2xl border border-slate-200">
+          <button type="button"
+            class="faq-trigger flex w-full items-center justify-between px-4 py-4 text-left font-semibold text-slate-800">
+            Estrutura pronta para FAQ (substituir pelas 10 perguntas oficiais)
+            <i data-lucide="chevron-down" class="h-4 w-4"></i>
+          </button>
+          <div class="faq-answer px-4 pb-4 text-sm text-slate-700">
+            Estrutura pronta para FAQ (substituir pelas 10 respostas oficiais)
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    (function () {
+      var revealEls = document.querySelectorAll(".reveal");
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("in-view");
+          }
+        });
+      }, { threshold: 0.12 });
+      revealEls.forEach(function (el) { observer.observe(el); });
+    })();
+
+    (function () {
+      var triggers = document.querySelectorAll(".faq-trigger");
+      triggers.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var item = btn.closest("article");
+          var answer = item ? item.querySelector(".faq-answer") : null;
+          if (!answer) return;
+          var isOpen = answer.style.maxHeight && answer.style.maxHeight !== "0px";
+          answer.style.maxHeight = isOpen ? "0px" : answer.scrollHeight + "px";
+        });
+      });
+    })();
+  </script>
+</body>
+
+</html>

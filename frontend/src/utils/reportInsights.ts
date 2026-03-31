@@ -595,13 +595,14 @@ export function getOportunidades(profile: ProfileItem | null, posts: PostItem[])
 
 /**
  * Benchmark por faixa de seguidores — alinhado a `crawl/src/api/followersSizeBuckets.ts`
- * (macro até 1M; celebridade 1M+). Percentil estimado.
+ * (nano até 30k; … elite até 1M; celebridade 1M+). Percentil estimado.
  */
 const BENCHMARKS: { min: number; max: number; label: string; erMin: number; erMid: number; erMax: number }[] = [
-  { min: 0, max: 10_000, label: 'Nano', erMin: 2, erMid: 5, erMax: 10 },
-  { min: 10_000, max: 50_000, label: 'Micro', erMin: 1.5, erMid: 4, erMax: 7 },
-  { min: 50_000, max: 200_000, label: 'Mid', erMin: 1, erMid: 3, erMax: 5 },
-  { min: 200_000, max: 1_000_000, label: 'Macro', erMin: 0.5, erMid: 1.5, erMax: 3 },
+  { min: 0, max: 30_000, label: 'Nano', erMin: 2, erMid: 4.75, erMax: 10 },
+  { min: 30_000, max: 100_000, label: 'Micro', erMin: 1.5, erMid: 4, erMax: 7 },
+  { min: 100_000, max: 250_000, label: 'Mid', erMin: 1, erMid: 3, erMax: 5 },
+  { min: 250_000, max: 500_000, label: 'Macro', erMin: 0.7, erMid: 2, erMax: 4 },
+  { min: 500_000, max: 1_000_000, label: 'Elite', erMin: 0.5, erMid: 1.2, erMax: 3 },
   { min: 1_000_000, max: Infinity, label: 'Celebridade', erMin: 0.2, erMid: 0.8, erMax: 2 },
 ]
 
@@ -738,7 +739,7 @@ export function getCpmCpe(
   const avgInteractions = totalInteractions / n
 
   const rawCpm = avgViews > 0 ? (avgValor / avgViews) * 1000 : null
-  // CPM de influenciador no BR: nano/micro R$15–R$120, macro até ~R$400; acima de 1500 indica base de views pequena/incorreta.
+  // CPM de influenciador no BR: patamares menores costumam ficar em dezenas–centenas de R$; acima de 1500 indica base de views pequena/incorreta.
   const CPM_MAX_PLAUSIBLE = 1500
   const cpmEstimate = rawCpm != null && rawCpm <= CPM_MAX_PLAUSIBLE ? Math.round(rawCpm * 100) / 100 : null
   const cpeEstimate = avgInteractions > 0 ? avgValor / avgInteractions : null

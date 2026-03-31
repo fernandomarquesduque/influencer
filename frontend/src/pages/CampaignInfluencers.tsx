@@ -556,6 +556,7 @@ export default function CampaignInfluencers() {
   const [postCaptionSearch, setPostCaptionSearch] = useState<{ handles: Set<string>; totalPosts: number } | null>(null)
   const [postCaptionSearchLoading, setPostCaptionSearchLoading] = useState(false)
   const [displayedCount, setDisplayedCount] = useState(DISPLAY_PAGE_SIZE)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [campaignMainTab, setCampaignMainTab] = useState<'influencers' | 'origin'>(() =>
     searchParams.get('tab') === 'origin' ? 'origin' : 'influencers'
   )
@@ -832,21 +833,31 @@ export default function CampaignInfluencers() {
   }, [contextItems, applyContextFilters, setSearchParams, pendingPayment, buildCampaignUrlParams])
 
   const loadMore = useCallback(() => {
+    if (loadingMore) return
+    if (displayedCount >= filteredList.length) return
+    setLoadingMore(true)
     setDisplayedCount((prev) => Math.min(prev + DISPLAY_PAGE_SIZE, filteredList.length))
-  }, [filteredList.length])
+  }, [displayedCount, filteredList.length, loadingMore])
+
+  useEffect(() => {
+    if (!loadingMore) return
+    if (data.length >= displayedCount || data.length >= total) {
+      setLoadingMore(false)
+    }
+  }, [loadingMore, data.length, displayedCount, total])
 
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current
     if (!sentinel || data.length >= total || total === 0) return
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) loadMore()
+        if (entries[0]?.isIntersecting && !loadingMore) loadMore()
       },
       { rootMargin: '200px', threshold: 0 }
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [data.length, total, loadMore])
+  }, [data.length, total, loadMore, loadingMore])
 
   useEffect(() => {
     setSearchInput(searchParams.get('q') ?? '')
@@ -950,6 +961,12 @@ export default function CampaignInfluencers() {
     if (contextItems == null) return
     applyContextFilters(query)
   }, [contextItems, query, applyContextFilters])
+
+  useEffect(() => {
+    if (data.length >= total || total === 0) {
+      setLoadingMore(false)
+    }
+  }, [data.length, total])
 
   const maxQuantity = pendingPayment
     ? Math.max(1, total > 0 ? total : (campaignInfo?.handlesCount ?? 1))
@@ -1691,6 +1708,14 @@ export default function CampaignInfluencers() {
                               style={{ minHeight: 1, marginTop: 16 }}
                               aria-hidden
                             />
+                          )}
+                          {loadingMore && data.length < total && (
+                            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 12 }}>
+                              <Spin size="small" />
+                              <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+                                Carregando mais perfis...
+                              </Typography.Text>
+                            </div>
                           )}
                           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
                             {data.length} de {total} perfis

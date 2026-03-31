@@ -87,6 +87,7 @@ export function createCollectorRequestHandler(
         running: runner.isRunning(),
         scheduled: runner.isCollectionStartScheduled(),
         message: runner.getStatusMessage(),
+        processing: getProcessingState(),
       });
       return;
     }
@@ -1073,9 +1074,14 @@ export function createCollectorRequestHandler(
           var active = d.running || d.scheduled;
           var stEl = document.getElementById('status');
           var msg = d.message || '';
+          var procSt = d.processing && d.processing.handle ? d.processing : null;
           if (active) {
             stEl.className = 'status running';
-            stEl.textContent = d.scheduled && !d.running ? 'Iniciando coleta…' : ('Coletando… ' + msg);
+            if (procSt && procSt.handle) {
+              stEl.textContent = 'Coletando… @' + procSt.handle + ' — ' + (procSt.stage || 'em andamento');
+            } else {
+              stEl.textContent = d.scheduled && !d.running ? 'Iniciando coleta…' : ('Coletando… ' + msg);
+            }
             btnStartEl.disabled = true;
             document.getElementById('btnStop').disabled = false;
           } else {

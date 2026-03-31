@@ -224,7 +224,7 @@ export const NO_PERFIL_CATEGORY_KEY = 'no_perfil'
 export interface WizardState {
   q?: string
   categories?: string[]
-  /** Porte(s): chaves de `followers_buckets` (ex.: nano … celebridade); multiselect opcional. */
+  /** Porte(s): chaves de `followers_buckets` (nano … celebridade); multiselect opcional. */
   sizeFilter?: string[]
   /** Legado (URL antiga); convertido para `sizeFilter` ao hidratar. */
   minFollowers?: number
