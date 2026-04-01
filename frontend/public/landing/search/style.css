@@ -114,7 +114,7 @@ body {
 }
 
 .container--plans {
-  max-width: 88rem;
+  max-width: 72rem;
 }
 
 /* Header */
@@ -1450,31 +1450,30 @@ section {
 .pricing-grid {
   display: grid;
   gap: 0.85rem;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
+  width: 100%;
+  max-width: 100%;
 }
 
 @media (min-width: 900px) {
   .pricing-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 .section__intro--plans {
-  max-width: none;
+  max-width: min(42rem, 100%);
   margin-inline: auto;
   text-align: center;
 }
 
 .section__intro--plans h2.display.plans-headline {
-  white-space: nowrap;
   font-size: clamp(1.05rem, 2.6vw, 2.05rem);
   line-height: 1.15;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
   max-width: 100%;
   margin-inline: auto;
+  text-wrap: balance;
 }
 
 .section__intro--plans .plans-subtitle {
@@ -1483,20 +1482,13 @@ section {
   font-size: clamp(0.8rem, 1.45vw, 1.02rem);
   line-height: 1.4;
   max-width: 100%;
-  white-space: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
 }
 
 #planos .price-card h3,
 #planos .price-card .tagline,
 #planos .price-card .price-note {
-  white-space: nowrap;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
+  overflow-wrap: break-word;
 }
 
 #planos .price-card h3 {
@@ -1511,6 +1503,11 @@ section {
   font-size: clamp(0.72rem, 0.45vw + 0.6rem, 0.8rem);
 }
 
+#planos .price-card .btn {
+  white-space: normal;
+  text-align: center;
+}
+
 .price-card {
   background: #fff;
   border-radius: var(--radius-xl);
@@ -1519,6 +1516,8 @@ section {
   box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   transition:
     transform 0.25s var(--ease),
     box-shadow 0.25s var(--ease);
