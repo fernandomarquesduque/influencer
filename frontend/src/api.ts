@@ -1401,7 +1401,7 @@ export async function requestVerificationCode(nickname: string): Promise<Request
   return { ...body, sent: body.sent ?? true, success: true }
 }
 
-/** Valida com o código recebido no Instagram. Sem login: retorna token+user (2FA como login). Assinante que vincula Instagram: mission_completed + credits (50). */
+/** Valida com o código recebido no Instagram. Sem login: retorna token+user (2FA como login). Assinante que vincula Instagram: mission_completed + credits (10). */
 export async function verifyProfile(
   nickname: string,
   code: string
@@ -1924,7 +1924,7 @@ export async function resendVerificationEmail(options?: { signal?: AbortSignal }
   return { email_sent: (data as { email_sent?: boolean }).email_sent }
 }
 
-/** Valida e-mail pelo token (link no e-mail). Backend concede 10 créditos (missão 1). */
+/** Valida e-mail pelo token (link no e-mail). Backend concede 5 créditos (missão 1). */
 export async function verifyEmailByToken(token: string, options?: { signal?: AbortSignal }): Promise<{ success: true; credits: number }> {
   const res = await fetch(`${API_BASE}/auth/verify-email?token=${encodeURIComponent(token)}`, { signal: options?.signal })
   const data = await res.json().catch(() => ({}))
@@ -2073,6 +2073,37 @@ export async function adminPurgeInfluencer(handle: string): Promise<{ ok: boolea
     throw new Error(err?.error || 'Falha ao excluir influenciador')
   }
   return (await res.json().catch(() => ({}))) as { ok: boolean; s3ObjectsRemoved?: number }
+}
+
+/** Corpo para PATCH: campos de `llm.qualification` (admin). */
+export interface AdminInfluencerLlmQualificationPatch {
+  personaSummary: string
+  profileType: string
+  gender: string
+  mainCategory: string
+  language: string
+  subCategories: string[]
+  contentPillars: string[]
+  audienceType: string[]
+  toneOfVoice: string[]
+  brandSafety?: string | Record<string, unknown> | null
+}
+
+/** Admin: atualiza classificação LLM do perfil no RocksDB (`llm.qualification`). */
+export async function patchAdminInfluencerLlmQualification(
+  handle: string,
+  body: AdminInfluencerLlmQualificationPatch
+): Promise<{ ok: boolean; handle: string; llm: unknown }> {
+  const h = handle.replace(/^@+/, '').trim().toLowerCase()
+  const res = await fetch(`${API_BASE}/admin/influencers/${encodeURIComponent(h)}/llm-qualification`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  const data = (await res.json().catch(() => ({}))) as { error?: string; ok?: boolean; handle?: string; llm?: unknown }
+  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão.')
+  if (!res.ok) throw new Error(data.error || 'Falha ao atualizar classificação LLM')
+  return data as { ok: boolean; handle: string; llm: unknown }
 }
 
 const ADMIN_PURGE_BATCH_CHUNK = 100

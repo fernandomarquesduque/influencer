@@ -78,6 +78,10 @@ import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
 import { getAdminStatsSnapshot } from './adminStats.js';
 import { createCollectorController } from './controllers/collectorController.js';
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
+import {
+  pickAdminQualificationPatch,
+  applyQualificationPatchToProfileRecord,
+} from './adminLlmQualificationPatch.js';
 import { followersCountToSizeKey, type FollowersSizeKey } from './followersSizeBuckets.js';
 import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
 import { logS3StartupStatus, wipeInfluencerS3Prefix } from '../s3/influencerProfileStorage.js';
@@ -1766,6 +1770,43 @@ app.delete('/api/admin/influencers/:handle', requireScopes('adm'), async (req: R
   res.json({ ok: true, s3ObjectsRemoved: result.s3ObjectsRemoved });
 });
 
+/** Admin: mescla campos em `llm.qualification` do perfil no RocksDB (classificação exibida na UI). */
+app.patch(
+  '/api/admin/influencers/:handle/llm-qualification',
+  requireScopes('adm'),
+  rateLimitDataApi,
+  async (req: RequestWithAuth, res: Response) => {
+    try {
+      const raw = decodeURIComponent(String(req.params.handle ?? '').trim());
+      const handle = raw.replace(/^@+/, '').toLowerCase().trim();
+      if (!handle) {
+        res.status(400).json({ error: 'Handle inválido' });
+        return;
+      }
+      const parsed = pickAdminQualificationPatch(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error });
+        return;
+      }
+      const existing = await db.loadByHandle(handle);
+      if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+        res.status(404).json({ error: 'Perfil não encontrado' });
+        return;
+      }
+      const merged = applyQualificationPatchToProfileRecord(
+        existing as Record<string, unknown>,
+        handle,
+        parsed.patch
+      );
+      await db.save(merged, { skipSearchInvalidation: true });
+      scheduleSearchCacheRewarm(db);
+      res.json({ ok: true, handle, llm: merged.llm });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+);
+
 const ADMIN_PURGE_BATCH_MAX = 100;
 
 /** Admin: exclusão em lote (mesmo efeito do DELETE por handle). Máx. 100 handles por requisição. */
@@ -2778,9 +2819,9 @@ app.post('/api/auth/register-assinante', async (req: Request, res: Response) => 
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 10 créditos grátis: valide seu e-mail e comece a usar',
+      subject: '✨ 5 créditos grátis: valide seu e-mail e comece a usar',
       verifyUrl,
-      bodyText: 'Confirme seu e-mail agora e ganhe 10 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+      bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
     });
     if (!emailResult.sent && emailResult.error) {
       console.warn('[register-assinante] E-mail não enviado:', emailResult.error);
@@ -2807,10 +2848,10 @@ app.post('/api/auth/register-assinante', async (req: Request, res: Response) => 
   }
 });
 
-const MISSION_EMAIL_CREDITS = 10;
-const MISSION_INSTAGRAM_CREDITS = 50;
+const MISSION_EMAIL_CREDITS = 5;
+const MISSION_INSTAGRAM_CREDITS = 10;
 
-/** Valida e-mail pelo token (link no e-mail). Concede 10 créditos (missão 1) e retorna sucesso para o front exibir confete. */
+/** Valida e-mail pelo token (link no e-mail). Concede 5 créditos (missão 1) e retorna sucesso para o front exibir confete. */
 app.get('/api/auth/verify-email', (req: Request, res: Response) => {
   try {
     const token = (req.query?.token ?? '').toString().trim();
@@ -2879,9 +2920,9 @@ app.post('/api/auth/resend-verification', authOptional, async (req: RequestWithA
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 10 créditos grátis: valide seu e-mail e comece a usar',
+      subject: '✨ 5 créditos grátis: valide seu e-mail e comece a usar',
       verifyUrl,
-      bodyText: 'Confirme seu e-mail agora e ganhe 10 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+      bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
     });
     if (!emailResult.sent && emailResult.error) {
       console.warn('[resend-verification] E-mail não enviado:', emailResult.error);
@@ -2938,9 +2979,9 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 10 créditos grátis: valide seu e-mail e comece a usar',
+      subject: '✨ 5 créditos grátis: valide seu e-mail e comece a usar',
       verifyUrl,
-      bodyText: 'Confirme seu e-mail agora e ganhe 10 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+      bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
     });
     if (!emailResult.sent && emailResult.error) {
       console.warn('[register-and-pay] E-mail não enviado:', emailResult.error);
@@ -3317,9 +3358,9 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
         const verifyUrlGuest = `${frontBaseGuest.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationTokenGuest)}`;
         const emailResultGuest = await sendVerificationEmail({
           to: email,
-          subject: '✨ 10 créditos grátis: valide seu e-mail e comece a usar',
+          subject: '✨ 5 créditos grátis: valide seu e-mail e comece a usar',
           verifyUrl: verifyUrlGuest,
-          bodyText: 'Confirme seu e-mail agora e ganhe 10 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+          bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
         });
         if (!emailResultGuest.sent && emailResultGuest.error) {
           console.warn('[checkout-guest] E-mail não enviado:', emailResultGuest.error);

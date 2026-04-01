@@ -1,5 +1,5 @@
 /**
- * Missão 2: assinante vincula o Instagram da empresa (2FA). Ganha 50 créditos.
+ * Missão 2: assinante vincula o Instagram da empresa (2FA). Ganha 10 créditos.
  * Rota: /app/missions/link-instagram (link no e-mail abre aqui).
  */
 import { useState } from 'react'
@@ -20,7 +20,7 @@ export default function LinkInstagramMission() {
     return (
       <div style={{ maxWidth: 480, margin: '40px auto', padding: 24 }}>
         <Card>
-          <p>Faça login para vincular o Instagram da empresa e ganhar 50 créditos.</p>
+          <p>Faça login para vincular o Instagram da empresa e ganhar 10 créditos.</p>
           <Button type="primary" onClick={() => navigate('/login')}>Entrar</Button>
         </Card>
       </div>
@@ -97,7 +97,7 @@ export default function LinkInstagramMission() {
           }
         >
           <p style={{ color: 'var(--app-text-secondary)', marginBottom: 24 }}>
-            Siga o fluxo abaixo para vincular o perfil do Instagram da empresa à sua conta e ganhar <strong>50 créditos</strong>.
+            Siga o fluxo abaixo para vincular o perfil do Instagram da empresa à sua conta e ganhar <strong>10 créditos</strong>.
           </p>
 
           {step === 'handle' && (
@@ -132,7 +132,7 @@ export default function LinkInstagramMission() {
                 <Input placeholder="Código de 6 dígitos" maxLength={10} />
               </Form.Item>
               <Button type="primary" htmlType="submit" loading={loading} block style={{ marginBottom: 8 }}>
-                Validar e ganhar 50 créditos
+                Validar e ganhar 10 créditos
               </Button>
               <Button block onClick={() => { setStep('handle'); setHandle('') }} disabled={loading}>
                 Trocar perfil

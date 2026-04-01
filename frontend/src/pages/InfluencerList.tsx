@@ -33,6 +33,7 @@ import {
   type ProfilesSearchFacets,
 } from '../api'
 import { expiresAtIsoFromDurationDays, FALLBACK_CAMPAIGN_ACCESS_DAYS } from '../utils/campaignExpires'
+import { withDiscoveryDefaultLlmProfileTypeQuery } from '../utils/discoveryLlmProfileType'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
@@ -228,16 +229,27 @@ export default function InfluencerList() {
 
   const handleWizardFiltersChange = useCallback(
     (query: Partial<ProfilesSearchQuery>) => {
-      const params = queryToUrlParams({ ...query, limit: PAGE_SIZE, offset: 0, sort: 'relevance_desc' })
+      const merged = withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+        ...query,
+        limit: PAGE_SIZE,
+        offset: 0,
+        sort: 'relevance_desc' as ProfilesSort,
+      } as ProfilesSearchQuery)
+      const params = queryToUrlParams(merged)
       setFilterParams(new URLSearchParams(params))
     },
-    [setFilterParams]
+    [setFilterParams, location.pathname]
   )
 
   const estimateAbortRef = useRef<AbortController | null>(null)
   const estimateCacheRef = useRef<{ queryKey: string; result: { total: number; facets: ProfilesSearchFacets | null } } | null>(null)
   const handleWizardEstimate = useCallback(async (query: Partial<ProfilesSearchQuery>, options?: { signal?: AbortSignal }) => {
-    const searchQuery = { ...query, limit: 1, offset: 0, sort: 'relevance_desc' as const }
+    const searchQuery = withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+      ...query,
+      limit: 1,
+      offset: 0,
+      sort: 'relevance_desc' as const,
+    } as ProfilesSearchQuery)
     const queryKey = JSON.stringify(searchQuery, Object.keys(searchQuery).sort())
     if (estimateCacheRef.current?.queryKey === queryKey) {
       return estimateCacheRef.current.result
@@ -250,25 +262,25 @@ export default function InfluencerList() {
     const result = { total: res.total, facets: res.facets ?? null }
     estimateCacheRef.current = { queryKey, result }
     return result
-  }, [])
+  }, [location.pathname])
 
   const handleWizardComplete = useCallback(
     (payload: Partial<ProfilesSearchQuery>) => {
       const categories = payload.categories?.length ? payload.categories : undefined
-      const fullPayload = {
+      const fullPayload = withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
         ...payload,
         q: payload.q?.trim() || undefined,
         categories,
         limit: PAGE_SIZE,
         offset: 0,
         sort: 'relevance_desc' as const,
-      }
+      } as ProfilesSearchQuery)
       const params = queryToUrlParams(fullPayload)
       params[WIZARD_DONE_PARAM] = '1'
       params[LIST_VIEW_PARAM] = 'dashboard'
       setFilterParams(new URLSearchParams(params), { replace: false })
     },
-    [setFilterParams]
+    [setFilterParams, location.pathname]
   )
 
   const handleWizardSearchTermChange = useCallback(
@@ -285,13 +297,13 @@ export default function InfluencerList() {
   const fullQueryFromUrl = useMemo((): ProfilesSearchQuery | null => {
     if (!hasMandatoryFilters) return null
     const { hasMandatory: _hm, ...rest } = parsedUrl
-    return {
+    return withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
       ...rest,
       limit: PAGE_SIZE,
       offset: rest.offset ?? 0,
       sort: (rest.sort as ProfilesSort) ?? 'relevance_desc',
-    }
-  }, [hasMandatoryFilters, parsedUrl])
+    })
+  }, [hasMandatoryFilters, parsedUrl, location.pathname])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [data, setData] = useState<ProfileListItem[]>([])
@@ -341,7 +353,14 @@ export default function InfluencerList() {
       const controller = new AbortController()
       wizardFacetsAbortRef.current = controller
       setWizardPrefetch({ status: 'loading' })
-      fetchProfilesSearch({ limit: 1, offset: 0, sort: 'engagement_desc' }, { signal: controller.signal })
+      fetchProfilesSearch(
+        withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+          limit: 1,
+          offset: 0,
+          sort: 'engagement_desc',
+        }),
+        { signal: controller.signal }
+      )
         .then((res) => {
           if (controller.signal.aborted) return
           setWizardPrefetch({
@@ -359,7 +378,7 @@ export default function InfluencerList() {
       }
     }
     setWizardPrefetch({ status: 'ready', facets: null })
-  }, [hasMandatoryFilters])
+  }, [hasMandatoryFilters, location.pathname])
 
   /** Handles cuja foto falhou e foi enfileirado refresh; atualizamos só esse item na lista quando o perfil voltar com URL nova. */
   const handlesPendingImageRef = useRef<Set<string>>(new Set())
@@ -451,6 +470,7 @@ export default function InfluencerList() {
     if (isLimitedView) {
       q = { ...q, limit: 12, offset: 0 }
     }
+    q = withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, q)
     const isLoadMore = (q.offset ?? 0) > 0
     if (isLoadMore) setLoadingMore(true)
     else setLoading(true)
@@ -501,7 +521,13 @@ export default function InfluencerList() {
       setData([])
       setTotal(0)
       setFacets(null)
-      setQuery({ limit: PAGE_SIZE, offset: 0, sort: 'engagement_desc' as ProfilesSort })
+      setQuery(
+        withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+          limit: PAGE_SIZE,
+          offset: 0,
+          sort: 'engagement_desc' as ProfilesSort,
+        })
+      )
       return
     }
     const fullQuery = fullQueryFromUrl!
@@ -515,7 +541,7 @@ export default function InfluencerList() {
       setData(cached.data)
       setTotal(cached.total)
       setFacets(cached.facets)
-      setQuery(cached.query)
+      setQuery(withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, cached.query))
       setSearchInput(cached.searchInput)
       if (cached.scrollPosition != null) scrollToRestoreRef.current = cached.scrollPosition
       return
@@ -525,7 +551,7 @@ export default function InfluencerList() {
     const controller = new AbortController()
     load(fullQuery, controller.signal)
     return () => controller.abort()
-  }, [hasMandatoryFilters, location.search, location.hash, setFilterParams, fullQueryFromUrl])
+  }, [hasMandatoryFilters, location.search, location.hash, location.pathname, setFilterParams, fullQueryFromUrl])
 
   useEffect(() => {
     const isDashboard = hasMandatoryFilters && listViewFromHash === 'dashboard'
@@ -576,7 +602,7 @@ export default function InfluencerList() {
       setFilterParams({})
       return
     }
-    const newQuery = { ...query, q, offset: 0 }
+    const newQuery = withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, { ...query, q, offset: 0 })
     setQuery(newQuery)
     const params = queryToUrlParams(newQuery)
     params[WIZARD_DONE_PARAM] = '1'
@@ -628,7 +654,7 @@ export default function InfluencerList() {
     query.llmIsAdultContent === false
 
   const updateFilter = (overrides: Partial<ProfilesSearchQuery>) => {
-    const newQuery = { ...query, ...overrides, offset: 0 }
+    const newQuery = withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, { ...query, ...overrides, offset: 0 })
     setQuery(newQuery)
     const params = queryToUrlParams(newQuery)
     params[WIZARD_DONE_PARAM] = '1'
@@ -793,7 +819,12 @@ export default function InfluencerList() {
                 excludePrivate: parsedUrl.excludePrivate,
                 accountTypeFilter: parsedUrl.accountTypeFilter,
                 activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
-                llmProfileType: parsedUrl.llmProfileType?.length ? parsedUrl.llmProfileType : undefined,
+                llmProfileType: withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+                  llmProfileType: parsedUrl.llmProfileType?.length ? parsedUrl.llmProfileType : undefined,
+                  limit: PAGE_SIZE,
+                  offset: 0,
+                  sort: 'relevance_desc' as ProfilesSort,
+                }).llmProfileType,
                 llmMainCategory: parsedUrl.llmMainCategory?.length ? parsedUrl.llmMainCategory : undefined,
                 llmGender: parsedUrl.llmGender?.length ? parsedUrl.llmGender : undefined,
                 llmLanguage: parsedUrl.llmLanguage?.length ? parsedUrl.llmLanguage : undefined,

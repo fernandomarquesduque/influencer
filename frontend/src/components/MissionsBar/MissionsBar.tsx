@@ -69,7 +69,7 @@ export default function MissionsBar() {
               </span>
               {hasPending && (
                 <div style={{ fontSize: 11, color: 'var(--app-text-tertiary)', marginTop: 1 }}>
-                  Até 60 créditos grátis para seus relatórios
+                  Até 15 créditos grátis para seus relatórios
                 </div>
               )}
             </div>
@@ -102,7 +102,7 @@ export default function MissionsBar() {
                 {m1Done ? 'E-mail validado' : 'Valide seu e-mail'}
               </span>
               <span style={{ fontSize: 12, color: m1Done ? 'var(--ant-color-success)' : 'var(--app-primary)', fontWeight: 700, marginLeft: 6 }}>
-                {m1Done ? '· +10 na conta' : '→ 10 créditos'}
+                {m1Done ? '· +5 na conta' : '→ 5 créditos'}
               </span>
             </div>
             {!m1Done && (
@@ -153,7 +153,7 @@ export default function MissionsBar() {
                 {m2Done ? 'Instagram vinculado' : 'Vincule o Instagram da empresa'}
               </span>
               <span style={{ fontSize: 12, color: m2Done ? 'var(--ant-color-success)' : 'var(--app-primary)', fontWeight: 700, marginLeft: 6 }}>
-                {m2Done ? '· +50 na conta' : '→ 50 créditos'}
+                {m2Done ? '· +10 na conta' : '→ 10 créditos'}
               </span>
             </div>
             {user.scope === 'assinante' && !m2Done && (

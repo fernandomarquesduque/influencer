@@ -44,7 +44,7 @@ export default function MissionReward() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const type = searchParams.get('type') || 'email'
-  const credits = Number(searchParams.get('credits')) || (type === 'instagram' ? 50 : 10)
+  const credits = Number(searchParams.get('credits')) || (type === 'instagram' ? 10 : 5)
   const playedRef = useRef(false)
 
   useEffect(() => {

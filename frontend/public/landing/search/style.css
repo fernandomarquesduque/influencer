@@ -628,6 +628,13 @@ h2.display {
   min-height: min(340px, 42vh);
 }
 
+/* Mock decorativo: some em telas estreitas (evita hero longo e tabela espremida) */
+@media (max-width: 767px) {
+  .hero__visual--dash {
+    display: none;
+  }
+}
+
 .dash-mock {
   background: #f1f5f9;
   border-radius: var(--radius-2xl);

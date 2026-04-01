@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Spin,
@@ -30,6 +30,7 @@ import {
   CheckCircleOutlined,
   DeleteOutlined,
   FolderOpenOutlined,
+  RobotOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, adminPurgeInfluencer, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
@@ -62,6 +63,7 @@ import { ReelsAnalysisSection } from '../components/ReelsAnalysisSection'
 import { TaggedAnalysisSection } from '../components/TaggedAnalysisSection'
 import { PrivateProfileMessage } from '../components/PrivateProfileMessage'
 import { ProfileLlmDetailPanel } from '../components/ProfileLlmDetailPanel'
+import AdminProfileLlmEditModal from '../components/AdminProfileLlmEditModal/AdminProfileLlmEditModal'
 
 const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh, typography: typ, layout: lay } = t
@@ -122,6 +124,13 @@ const DETAIL_SUBTLE_ACTION = {
     border: '1px solid #bfdbfe',
     color: '#1d4ed8',
     boxShadow: '0 1px 4px rgba(29, 78, 216, 0.06)',
+  },
+  adminLlm: {
+    ...detailActionBtnShell(),
+    background: 'linear-gradient(180deg, #f5f3ff 0%, #ede9fe 100%)',
+    border: '1px solid #ddd6fe',
+    color: '#5b21b6',
+    boxShadow: '0 1px 4px rgba(91, 33, 182, 0.07)',
   },
   adminPurge: {
     ...detailActionBtnShell(),
@@ -234,6 +243,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const [showActivationCta, setShowActivationCta] = useState(false)
   const [isFavorite, setIsFavorite] = useState(false)
+  const [editLlmOpen, setEditLlmOpen] = useState(false)
   const feedSectionRef = useRef<HTMLDivElement>(null)
   const refreshQueuedRef = useRef(false)
   useEffect(() => {
@@ -295,6 +305,17 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
       })
     return () => { cancelled = true }
   }, [handle, campaignId, authLoading])
+
+  const reloadProfileAfterLlm = useCallback(async () => {
+    if (!handle) return
+    const loader = campaignId ? () => fetchCampaignProfile(campaignId, handle) : () => fetchProfile(handle)
+    const p = await loader().catch(() => null)
+    if (p != null) {
+      const pr = p as Record<string, unknown> | null
+      if (pr?._redacted === true) setDataRedacted(true)
+      setProfile(p)
+    }
+  }, [handle, campaignId])
 
   useEffect(() => {
     if (!handle || authLoading) return
@@ -800,6 +821,19 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                       aria-label="Enviar mensagem"
                     >
                       Mensagem
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="Editar classificação LLM salva na base (tags, texto, público-alvo)">
+                    <Button
+                      type="default"
+                      size="large"
+                      className={DETAIL_ACTION_BTN_CLASS}
+                      icon={<RobotOutlined />}
+                      onClick={() => setEditLlmOpen(true)}
+                      style={DETAIL_SUBTLE_ACTION.adminLlm}
+                      aria-label="Editar LLM"
+                    >
+                      Editar LLM
                     </Button>
                   </Tooltip>
                   <Tooltip title="Apaga perfil, posts, cadastro, fila, favoritos, referências em campanhas, arquivos no S3 e conta de usuário (se houver). Irreversível.">
@@ -1593,6 +1627,15 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
         }
       `}</style>
       </div>
+      {handle ? (
+        <AdminProfileLlmEditModal
+          open={editLlmOpen}
+          handle={handle}
+          profile={profile}
+          onClose={() => setEditLlmOpen(false)}
+          onSaved={reloadProfileAfterLlm}
+        />
+      ) : null}
     </div>
   )
 }

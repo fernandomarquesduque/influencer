@@ -170,7 +170,7 @@ export default function CampaignPaymentCart({
               {canPayWithCredits ? (
                 <div className="campaign-payment-cart__cta">
                   <Popconfirm
-                    title={freeUnlock ? 'Liberar relatório sem custo?' : 'Confirmar pagamento com créditos?'}
+                    title={freeUnlock ? 'Liberar sem custo?' : 'Confirmar pagamento com créditos?'}
                     description={
                       freeUnlock
                         ? 'Todos os perfis desta seleção já estão em outros relatórios seus ou não há valor a cobrar. O relatório será liberado sem debitar créditos.'
@@ -187,7 +187,7 @@ export default function CampaignPaymentCart({
                         {payingWithCredits
                           ? 'Processando...'
                           : freeUnlock
-                            ? 'Liberar relatório (sem custo)'
+                            ? 'Liberar sem custo'
                             : 'Utilizar Créditos'}
                       </Button>
                     </span>
