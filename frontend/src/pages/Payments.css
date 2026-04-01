@@ -1,0 +1,72 @@
+/* Histórico de pagamentos: tabela alinhada e legível */
+.payments-history-card {
+  border-radius: var(--app-card-radius, 10px);
+  box-shadow: var(--app-card-shadow, 0 1px 3px rgba(0, 0, 0, 0.06));
+  border: 1px solid var(--app-border);
+  overflow: hidden;
+}
+
+.payments-history-card .ant-card-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-card-bg-soft, #f9fafb);
+}
+
+.payments-history-card .ant-card-head-title {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--app-text);
+}
+
+.payments-history-card .ant-card-body {
+  padding: 0;
+}
+
+.payments-history-card .payments-history-table .ant-table {
+  font-size: 14px;
+}
+
+.payments-history-card .payments-history-table .ant-table-container {
+  border-radius: 0;
+}
+
+.payments-history-card .payments-history-table .ant-table-thead > tr > th {
+  background: var(--app-card-bg-soft, #f9fafb) !important;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--app-text-secondary);
+  border-bottom: 1px solid var(--app-border);
+  padding: 12px 16px !important;
+}
+
+.payments-history-card .payments-history-table .ant-table-tbody > tr > td {
+  padding: 14px 16px !important;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.payments-history-card .payments-history-table .ant-table-tbody > tr:last-child > td {
+  border-bottom: none;
+}
+
+.payments-history-card .payments-history-table .ant-table-tbody > tr:nth-child(even) > td {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.payments-history-card .payments-history-table .ant-table-tbody > tr:hover > td {
+  background: rgba(104, 39, 143, 0.06) !important;
+}
+
+.payments-history-card .payments-history-table .payments-cell-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+.payments-history-card .payments-history-table .ant-tag {
+  margin: 0;
+  border-radius: 999px;
+  font-weight: 500;
+  padding: 2px 10px;
+}

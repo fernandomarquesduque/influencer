@@ -15,6 +15,7 @@ import {
   type CreatePaymentForCreditsResponse,
 } from '../api'
 import BuyCreditsModal from '../components/BuyCreditsModal/BuyCreditsModal'
+import './Payments.css'
 
 const { Text } = Typography
 
@@ -128,7 +129,7 @@ export default function Payments() {
   }
 
   return (
-    <div className="app-page" style={{ maxWidth: 900, margin: '0 auto', padding: 24 }}>
+    <div className="app-page" style={{ maxWidth: 960, margin: '0 auto', padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>
         <Space wrap size="middle">
           <Text strong style={{ color: 'var(--app-primary)' }}>
@@ -147,59 +148,82 @@ export default function Payments() {
         <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} onClose={() => setError(null)} closable />
       )}
 
-      <Card title="Histórico de pagamentos">
+      <Card title="Histórico de pagamentos" className="payments-history-card">
         {loading ? (
           <div style={{ padding: 48, textAlign: 'center' }}>
             <Spin />
           </div>
         ) : payments.length === 0 ? (
-          <Text type="secondary">Nenhum pagamento ainda. Compre créditos para usar nos relatórios.</Text>
+          <div style={{ padding: '24px 20px' }}>
+            <Text type="secondary">Nenhum pagamento ainda. Compre créditos para usar nos relatórios.</Text>
+          </div>
         ) : (
           <Table
+            className="payments-history-table"
             dataSource={payments}
             rowKey="id"
             pagination={false}
-            size="small"
+            size="middle"
+            bordered
+            tableLayout="fixed"
+            scroll={{ x: 'max-content' }}
             columns={[
               {
                 title: 'Data',
                 dataIndex: 'createdAt',
                 key: 'createdAt',
+                align: 'left',
+                ellipsis: true,
+                width: '26%',
                 render: (v: string) => formatDate(v),
-                width: 140,
               },
               {
                 title: 'Valor',
                 dataIndex: 'amountCents',
                 key: 'amountCents',
-                render: (v: number) => formatBrl(v),
-                width: 100,
+                align: 'right',
+                width: '14%',
+                render: (v: number) => <span className="payments-cell-num">{formatBrl(v)}</span>,
               },
               {
                 title: 'Créditos',
                 dataIndex: 'creditsGranted',
                 key: 'creditsGranted',
-                width: 90,
+                align: 'right',
+                width: '11%',
+                render: (v: number) => <span className="payments-cell-num">{v}</span>,
               },
               {
                 title: 'Forma',
                 dataIndex: 'billingType',
                 key: 'billingType',
+                align: 'center',
+                width: '12%',
                 render: (v: string) => (v === 'PIX' ? 'PIX' : 'Boleto'),
-                width: 80,
               },
               {
                 title: 'Status',
                 dataIndex: 'status',
                 key: 'status',
+                align: 'center',
+                width: '17%',
                 render: (v: string) => <StatusTag status={v} />,
-                width: 110,
               },
               {
                 title: 'Ações',
                 key: 'actions',
+                align: 'right',
+                width: '20%',
                 render: (_: unknown, row: PaymentItem) => (
-                  <Space size="small" wrap>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 4,
+                    }}
+                  >
                     {row.bankSlipUrl && row.status === 'PENDING' && (
                       <Button type="link" size="small" href={row.bankSlipUrl} target="_blank" rel="noopener noreferrer">
                         Ver boleto
@@ -220,12 +244,17 @@ export default function Payments() {
                         disabled={deletingId != null}
                         onConfirm={() => void handleDeletePending(row.id)}
                       >
-                        <Button type="link" size="small" danger icon={<DeleteOutlined />} disabled={deletingId != null}>
-
-                        </Button>
+                        <Button
+                          type="link"
+                          size="small"
+                          danger
+                          icon={<DeleteOutlined />}
+                          disabled={deletingId != null}
+                          aria-label="Remover cobrança pendente"
+                        />
                       </Popconfirm>
                     )}
-                  </Space>
+                  </div>
                 ),
               },
             ]}
