@@ -430,7 +430,7 @@ function correctProfileTypeWhenProductBrand(profile, qualification) {
     qualification.profileType = 'empresa';
     const g = String(qualification.gender ?? '').trim().toLowerCase();
     if (g === 'feminino' || g === 'masculino')
-        qualification.gender = 'unknown';
+        qualification.gender = 'desconhecido';
 }
 function normalizeClassification(raw, profile, model, _maxReasoning) {
     const qualificationRaw = asObject(raw.qualification);
@@ -507,7 +507,7 @@ function buildRepairPrompt(originalPrompt, invalidJson, errors) {
         '- mantenha todos os campos obrigatorios',
         `- qualification.mainCategory deve ser EXATAMENTE uma destas strings literais: ${MAIN_CATEGORY_OPTIONS.join(' | ')}`,
         '- qualification.personaSummary: descricao agregada em terceira pessoa; PROIBIDO @, handle, nome publico, copiar biografia, links, metricas ou texto identico ao JSON; se o prompt original trouxer "amostras_textos_publicacoes", use só como pista (nao copie legendas).',
-        '- textos humanos (personaSummary, categorias etc.) em pt-BR; qualification.language: pt-br/en/es/uk/ru/unknown conforme a bio; nunca pt-br com bio cirilica ou so ingles/ucraniano',
+        '- textos humanos (personaSummary, categorias etc.) em pt-BR; qualification.language pelo texto AUTORAL (bio/nome/amostras), ignorando UI da rede (seguidores, Seguir, mensagem, mil); pt-br/en/es/fr/uk/ru/desconhecido; pt-br só se português DOMINAR linhas do criador; nunca pt-br só por UI em PT ou 1 frase PT curta + resto inglês/francês/cirilico',
         '- nao explique nada',
         '',
         'Prompt original:',
@@ -549,21 +549,21 @@ function buildPrompt(profile, options = {}) {
         'Voce deve retornar no formato da entidade com o objeto raiz "qualification".',
         'Regras obrigatorias: NUNCA deixe arrays vazios.',
         'subCategories, contentPillars e audienceType deve ser UMA palavra unica e macro (sem frases, sem termos compostos).',
-        'language: tag BCP-47 minuscula do idioma em que a bio foi ESCRITA (alfabeto/endereco/horario contam). pt-br SO se houver portugues claro; cirilico ou Ucrania/Lviv/.ua -> uk ou unknown; ingles na bio -> en. Nunca assuma pt-br pelo mercado BR.',
+        'language: BCP-47 minuscula do texto que o CRIADOR escreveu (full_name, biography, amostras). IGNORE palavras de interface (seguidores, seguindo, posts, Seguir, mensagem, mil, rótulos de categoria do app em PT). pt-br só se português for claramente dominante nas linhas autorais; linha curta genérica em PT + bio em inglês/francês/outra → use en/es/fr conforme dominância, ou desconhecido se romano ambíguo; cirilico/Ucrânia→uk/ru/desconhecido. Nunca assuma pt-br pelo app em português ou local BR.',
         'gender, mainCategory e brandSafety sao campos OBRIGATORIOS (string escalar cada); subCategories, contentPillars e audienceType sao arrays com pelo menos 1 item.',
         'brandSafety: "familia" para beleza/maquiagem/cursos/educacao e lifestyle normais; "sensivel" so alcool/tabaco/polemica politica/saude arriscada/violencia ou sexualizacao clara; "adulto" so sexo explicito/jogos adultos/gore — nao use sensivel por maquiagem ou emoji de coracao.',
-        'mainCategory: copie LITERAL UMA opcao; tema central da bio — banco/bancario/humor de trabalho/denuncia nao e Beleza & Maquiagem (Finanças & Investimentos ou Humor & Comédia). Advocacia/advogado/juridico ou handle "adv." sem eixo comida/receitas -> Negócios & Carreira, nao Gastronomia & Culinária. Igual a lista; nao invente.',
+        'mainCategory: copie LITERAL UMA opcao; tema central na bio+handle: futebol/esporte/clube/campeonato/treinador/analise/podcast esportivo -> Fitness & Esportes. Gastronomia & Culinária só com receitas/chef/comida/restaurante dominando — nunca só "criador(a) de conteudo digital" ou perfil generico sem eixo culinario. Banco/humor trabalho/denuncia nao e Beleza & Maquiagem (Finanças & Investimentos ou Humor & Comédia). Advogado/juridico sem comida -> Negócios & Carreira, nao Gastronomia. Igual a lista; nao invente.',
         personaRule,
         'subCategories deve ser ESPECIFICO e orientado a nicho comercial; evite termos amplos/genéricos como "saude e bem-estar", "relacionamento", "lifestyle", "variedades" quando houver contexto mais preciso.',
-        'Incerteza: infira pela bio; evite "geral" e "unknown" salvo ultimo caso.',
+        'Incerteza: infira pela bio; evite "geral" e "desconhecido" salvo ultimo caso.',
         'Estrutura obrigatoria:',
         '{',
         '  "confidence": 0.0-1.0,',
         '  "qualification": {',
         '    "profileType": "criador|pessoal|empresa|noticia|marca|midia",',
         `    "mainCategory": "${MAIN_CATEGORY_OPTIONS.join('|')}",`,
-        '    "gender": "feminino|masculino|homosexual|unknown",',
-        '    "language": "pt-br|en|es|uk|ru|unknown",',
+        '    "gender": "feminino|masculino|desconhecido",',
+        '    "language": "pt-br|en|es|fr|uk|ru|desconhecido",',
         '    "subCategories": ["string"],',
         '    "contentPillars": ["string"],',
         '    "audienceType": ["mulheres","homens","infantil","jovens","idosos","homosexual"],',

@@ -41,6 +41,30 @@ function getErrorMessage(err: AsaasApiError): string {
   return 'Erro na API Asaas';
 }
 
+/** `ASAAS_DEBUG=1` ou ambiente não production — JSON bruto das respostas (URLs / nomes de campo). */
+function shouldLogAsaasResponses(): boolean {
+  return process.env.ASAAS_DEBUG === '1' || process.env.NODE_ENV !== 'production';
+}
+
+function logAsaasJson(context: string, data: unknown): void {
+  if (!shouldLogAsaasResponses()) return;
+  try {
+    const trimmed = JSON.stringify(
+      data,
+      (_k, v) => {
+        if (typeof v === 'string' && v.length > 200 && /^[A-Za-z0-9+/=_-]+$/.test(v.slice(0, 64))) {
+          return `[string ${v.length} chars]`;
+        }
+        return v;
+      },
+      2
+    );
+    console.log(`[asaas] ${context}\n${trimmed}`);
+  } catch {
+    console.log(`[asaas] ${context}`, data);
+  }
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -83,6 +107,7 @@ export interface AsaasPayment {
   bankSlipUrl?: string;
   invoiceNumber?: string;
   deleted?: boolean;
+  externalReference?: string;
   /** PIX: código para copia e cola */
   pixTransaction?: { qrCode?: string; payload?: string };
 }
@@ -109,6 +134,30 @@ export async function findCustomersByExternalReference(externalRef: string): Pro
   return request<{ data?: AsaasCustomer[] }>('GET', `customers?${qs.toString()}`);
 }
 
+/** Alguns ambientes/respostas devolvem lista ({ data: [...] }) em vez de um único cliente. */
+function normalizeCustomerCreateResponse(
+  raw: AsaasCustomer & { data?: AsaasCustomer[]; object?: string },
+  payload: { externalReference?: string; email?: string }
+): AsaasCustomer {
+  const list = raw?.data;
+  if (Array.isArray(list) && list.length > 0) {
+    const ext = payload.externalReference;
+    if (ext) {
+      const byRef = list.find((c) => c.externalReference === ext && c.id);
+      if (byRef) return byRef;
+    }
+    const email = payload.email;
+    if (email) {
+      const byEmail = list.find((c) => c.email === email && c.id);
+      if (byEmail) return byEmail;
+    }
+    const first = list.find((c) => c.id);
+    if (first) return first;
+  }
+  if (raw?.id) return raw;
+  return raw;
+}
+
 /** POST customers - criar cliente */
 export async function createCustomer(payload: {
   name: string;
@@ -123,7 +172,12 @@ export async function createCustomer(payload: {
   state?: string;
   postalCode?: string;
 }): Promise<AsaasCustomer> {
-  return request<AsaasCustomer>('POST', 'customers', payload);
+  const raw = await request<AsaasCustomer & { data?: AsaasCustomer[]; object?: string }>(
+    'POST',
+    'customers',
+    payload
+  );
+  return normalizeCustomerCreateResponse(raw, payload);
 }
 
 /** PUT customers/:id - atualizar (ex.: incluir CPF/CNPJ para boleto) */
@@ -140,6 +194,114 @@ export async function updateCustomer(
   return request<AsaasCustomer>('PUT', `customers/${encodeURIComponent(id)}`, payload);
 }
 
+type PaymentCreateRaw = AsaasPayment & {
+  data?: AsaasPayment[];
+  object?: string;
+  pixTransaction?: { qrCode?: string; payload?: string };
+};
+
+/** GET payments?externalReference= — localizar cobrança quando o POST retorna listagem incorreta. */
+export async function findPaymentsByExternalReference(
+  externalRef: string
+): Promise<{ data?: AsaasPayment[] }> {
+  const qs = new URLSearchParams({ externalReference: externalRef });
+  return request<{ data?: AsaasPayment[] }>('GET', `payments?${qs.toString()}`);
+}
+
+function mergePixFromRaw(
+  p: AsaasPayment,
+  raw: PaymentCreateRaw
+): AsaasPayment & { pixTransaction?: { qrCode?: string; payload?: string } } {
+  return { ...p, pixTransaction: p.pixTransaction ?? raw.pixTransaction };
+}
+
+/**
+ * POST /payments deve retornar um único objeto payment.
+ * Se vier `object: "list"` (bug/proxy/URL), NUNCA usar data[0] — seria outra cobrança (ex. cartão CONFIRMED).
+ */
+function pickPaymentFromCreateRaw(
+  raw: PaymentCreateRaw,
+  payload: { externalReference?: string }
+): AsaasPayment | null {
+  const isList = (raw as { object?: string }).object === 'list';
+  if (raw?.id && !isList) {
+    return raw;
+  }
+  const list = raw?.data;
+  if (Array.isArray(list) && list.length > 0) {
+    const ext = payload.externalReference;
+    if (ext) {
+      const byRef = list.find((p) => p.externalReference === ext && p.id);
+      if (byRef) return byRef;
+    }
+    if (isList) {
+      return null;
+    }
+    const first = list.find((p) => p.id);
+    if (first) return first;
+  }
+  if (raw?.id) return raw;
+  return null;
+}
+
+function assertCreatedPaymentMatchesPayload(
+  p: AsaasPayment,
+  payload: { billingType: 'PIX' | 'BOLETO'; value: number }
+): void {
+  const remoteBt = (p.billingType ?? '').trim().toUpperCase();
+  const wantBt = payload.billingType.toUpperCase();
+  if (remoteBt && wantBt && remoteBt !== wantBt) {
+    throw new Error(
+      `[asaas] Cobrança retornada tem billingType=${remoteBt}, esperado ${wantBt}. O POST pode ter devolvido listagem de outras cobranças — confira ASAAS_BASE_URL.`
+    );
+  }
+  const v = p.value;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    if (Math.abs(v - payload.value) > 0.009) {
+      throw new Error(
+        `[asaas] Valor da cobrança no Asaas (${v}) não confere com o pedido (${payload.value}). Recusado para não gravar ID errado.`
+      );
+    }
+  }
+}
+
+async function resolvePaymentAfterPost(
+  raw: PaymentCreateRaw,
+  payload: { externalReference?: string; billingType: 'PIX' | 'BOLETO'; value: number }
+): Promise<AsaasPayment & { pixTransaction?: { qrCode?: string; payload?: string } }> {
+  let p = pickPaymentFromCreateRaw(raw, payload);
+  const ext = payload.externalReference?.trim();
+  if (ext && !p?.id) {
+    try {
+      const found = await findPaymentsByExternalReference(ext);
+      const rows = found?.data ?? [];
+      const hit = rows.find((row) => row.externalReference === ext && row.id);
+      if (hit) {
+        p = hit;
+      }
+    } catch (e) {
+      console.warn('[asaas] findPaymentsByExternalReference:', e instanceof Error ? e.message : e);
+    }
+  }
+  if (!p?.id) {
+    throw new Error(
+      '[asaas] Não foi possível obter a cobrança criada: POST /payments retornou listagem sem o seu externalReference. Verifique ASAAS_BASE_URL (deve ser .../v3) e a chave da conta.'
+    );
+  }
+  let out = mergePixFromRaw(p, raw);
+  assertCreatedPaymentMatchesPayload(out, payload);
+  return out;
+}
+
+function paymentHasPayHints(p: AsaasPayment): boolean {
+  return Boolean(
+    p.invoiceUrl ||
+    p.bankSlipUrl ||
+    p.pixTransaction?.payload ||
+    p.pixTransaction?.qrCode
+  );
+}
+
 /** POST payments - criar cobrança (PIX ou BOLETO) */
 export async function createPayment(payload: {
   customer: string;
@@ -149,11 +311,26 @@ export async function createPayment(payload: {
   description?: string;
   externalReference?: string;
 }): Promise<AsaasPayment & { pixTransaction?: { qrCode?: string; payload?: string } }> {
-  return request<AsaasPayment & { pixTransaction?: { qrCode?: string; payload?: string } }>(
-    'POST',
-    'payments',
-    payload
-  );
+  const raw = await request<PaymentCreateRaw>('POST', 'payments', payload);
+  logAsaasJson('POST /payments — corpo bruto (checar invoiceUrl, bankSlipUrl, pixTransaction, snake_case, lista)', raw);
+  let p = await resolvePaymentAfterPost(raw, payload);
+  logAsaasJson('POST /payments — após resolvePaymentAfterPost', p);
+  const id = p.id;
+  if (id && !paymentHasPayHints(p)) {
+    try {
+      const fresh = await getPayment(id);
+      logAsaasJson(`GET /payments/${id} — enriquecimento após POST sem links`, fresh);
+      p = {
+        ...p,
+        ...fresh,
+        pixTransaction: fresh.pixTransaction ?? p.pixTransaction,
+      };
+    } catch (e) {
+      console.warn('[asaas] getPayment after create:', e instanceof Error ? e.message : e);
+    }
+  }
+  logAsaasJson('createPayment — objeto final usado pelo servidor', p);
+  return p;
 }
 
 /** GET payments/:id - detalhe do pagamento */
@@ -189,6 +366,7 @@ export async function resolvePixCopyPasteAfterCreate(
   if (billingType === 'PIX' && asaasPaymentId && !pix) {
     try {
       const qr = await getPaymentPixQrCode(asaasPaymentId);
+      logAsaasJson(`GET /payments/${asaasPaymentId}/pixQrCode — chaves do payload PIX`, qr);
       pix = qr?.payload ?? null;
     } catch (e) {
       console.warn('[asaas] getPaymentPixQrCode:', e instanceof Error ? e.message : e);

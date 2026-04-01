@@ -221,7 +221,7 @@ export default function Payments() {
                         onConfirm={() => void handleDeletePending(row.id)}
                       >
                         <Button type="link" size="small" danger icon={<DeleteOutlined />} disabled={deletingId != null}>
-                          Excluir
+
                         </Button>
                       </Popconfirm>
                     )}

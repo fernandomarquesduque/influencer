@@ -102,7 +102,7 @@ export default function Profile() {
     try {
       await deleteAccount()
       logout()
-      navigate('/', { replace: true })
+      window.location.href = '/'
       message.info('Sua conta foi excluída.')
     } catch (e) {
       message.error(e instanceof Error ? e.message : 'Não foi possível excluir a conta')

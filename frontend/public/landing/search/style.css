@@ -1,4 +1,4 @@
-/* Busca Influencer — Landing Search (agências & marcas) */
+/* Busca Influencer, Landing Search (agências & marcas) */
 :root {
   --purple-deep: #4a1d6b;
   --purple: #68278f;
@@ -354,7 +354,7 @@ h2.display {
   margin-bottom: 1.5rem;
 }
 
-/* Hero — conversão */
+/* Hero, conversão */
 .hero__sub {
   max-width: 40rem;
   line-height: 1.55;
@@ -571,7 +571,7 @@ h2.display {
   min-height: 0;
   box-sizing: border-box;
   background: linear-gradient(180deg, #fffefb 0%, #fff 100%);
-  border: 1px solid rgba(180, 83, 9, 0.15);
+  border: 1px solid rgba(104, 39, 143, 0.15);
   border-radius: var(--radius-xl);
   padding: 1.2rem 1.15rem 1.25rem;
   box-shadow: var(--shadow-sm);
@@ -582,7 +582,7 @@ h2.display {
 
 .pain-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 16px 40px rgba(180, 83, 9, 0.1);
+  box-shadow: 0 16px 40px rgba(104, 39, 143, 0.12);
 }
 
 .pain-card__icon {
@@ -593,8 +593,8 @@ h2.display {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, rgba(180, 83, 9, 0.12), rgba(104, 39, 143, 0.1));
-  color: #b45309;
+  background: linear-gradient(135deg, rgba(104, 39, 143, 0.14), rgba(104, 39, 143, 0.08));
+  color: var(--purple);
   margin-bottom: 0.75rem;
 }
 
@@ -1034,7 +1034,7 @@ section {
   border-block: 1px solid var(--border);
 }
 
-/* Conceito — fundo roxo escuro, conteúdo centralizado */
+/* Conceito, fundo roxo escuro, conteúdo centralizado */
 .section--concept {
   width: 100%;
   background: linear-gradient(180deg, #2d1450 0%, #1f0d32 45%, #1a0a28 100%);
@@ -1108,7 +1108,7 @@ section {
 }
 
 .section--vip .lead {
-  max-width: 42rem;
+  max-width: 100%;
 }
 
 .support-text {
@@ -1124,7 +1124,7 @@ section {
   border-left-color: var(--yellow);
 }
 
-/* Bento — grid 4 colunas (desktop) */
+/* Bento, grid 4 colunas (desktop) */
 .bento {
   display: grid;
   gap: 0.75rem;

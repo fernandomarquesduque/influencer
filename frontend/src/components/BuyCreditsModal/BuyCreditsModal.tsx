@@ -5,7 +5,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import QRCode from 'qrcode'
 import { Modal, Button, Typography, Alert, Space, InputNumber, message, Input, Popconfirm } from 'antd'
-import { DollarOutlined, CopyOutlined, BankOutlined, ThunderboltOutlined, CheckCircleOutlined, IdcardOutlined, DeleteOutlined } from '@ant-design/icons'
+import {
+  DollarOutlined,
+  CopyOutlined,
+  BankOutlined,
+  ThunderboltOutlined,
+  CheckCircleOutlined,
+  IdcardOutlined,
+  DeleteOutlined,
+  UserOutlined,
+} from '@ant-design/icons'
 import { useAuth } from '../../contexts/AuthContext'
 import { useCredits } from '../../contexts/CreditsContext'
 import { useRegisterPendingPaymentWatch } from '../../contexts/PendingPaymentCelebrationContext'
@@ -38,6 +47,13 @@ function errorSuggestsDocument(msg: string): boolean {
 
 function buyCreditsDbg(...args: unknown[]) {
   if (import.meta.env.DEV) console.debug('[BuyCredits]', ...args)
+}
+
+function defaultTitularName(user: { username?: string; profile_handle?: string | null } | null | undefined): string {
+  if (!user) return ''
+  const h = user.profile_handle?.trim()
+  if (h) return `@${h.replace(/^@/, '')}`
+  return (user.username ?? '').trim()
 }
 
 function paymentBrlAmount(p: CreatePaymentForCreditsResponse): number {
@@ -117,6 +133,7 @@ export default function BuyCreditsModal({
   const [error, setError] = useState<string | null>(null)
   const [cpfModalOpen, setCpfModalOpen] = useState(false)
   const [cpfCnpjInput, setCpfCnpjInput] = useState('')
+  const [billingTitularNameInput, setBillingTitularNameInput] = useState('')
   const [deletingInvoice, setDeletingInvoice] = useState(false)
   /** Só reinicia o formulário na abertura do modal — não quando `suggestedCredits` muda (ex.: refresh da campanha após pagamento). */
   const buyModalWasOpenRef = useRef(false)
@@ -152,6 +169,7 @@ export default function BuyCreditsModal({
       setError(null)
       setCpfModalOpen(false)
       setCpfCnpjInput('')
+      setBillingTitularNameInput('')
       buyCreditsDbg('session start (resume pending payment)', { paymentId: p.paymentId })
       if (suggestedCredits != null && Number.isFinite(suggestedCredits) && suggestedCredits > 0) {
         setBuyCredits(clampBuyCredits(suggestedCredits))
@@ -167,6 +185,7 @@ export default function BuyCreditsModal({
     setError(null)
     setCpfModalOpen(false)
     setCpfCnpjInput('')
+    setBillingTitularNameInput('')
     buyCreditsDbg('session start (form opened)', { suggestedCredits })
     if (suggestedCredits != null && Number.isFinite(suggestedCredits) && suggestedCredits > 0) {
       setBuyCredits(clampBuyCredits(suggestedCredits))
@@ -193,7 +212,7 @@ export default function BuyCreditsModal({
   }, [createdPayment?.pixCopyPaste])
 
   const runCreatePayment = useCallback(
-    async (explicitCpf?: string) => {
+    async (explicitCpf?: string, opts?: { fromDocumentModal?: boolean; customerName?: string }) => {
       setCreating(true)
       setError(null)
       try {
@@ -205,10 +224,16 @@ export default function BuyCreditsModal({
             : fromSaved.length === 11 || fromSaved.length === 14
               ? fromSaved
               : ''
+        const titularTrim = (opts?.customerName ?? '').trim()
+        const apiOpts: { cpfCnpj?: string; customerName?: string } = {}
+        if (digits) apiOpts.cpfCnpj = digits
+        if (opts?.fromDocumentModal && titularTrim.length >= 2) {
+          apiOpts.customerName = titularTrim.slice(0, 200)
+        }
         const res = await createPaymentForCredits(
           buyCredits,
           buyBillingType,
-          digits ? { cpfCnpj: digits } : undefined
+          Object.keys(apiOpts).length > 0 ? apiOpts : undefined
         )
         createdPaymentRef.current = res
         setCreatedPayment(res)
@@ -242,19 +267,24 @@ export default function BuyCreditsModal({
         const msg = (e as Error).message
         if (buyBillingType === 'PIX' && errorSuggestsDocument(msg)) {
           setCpfCnpjInput(savedBillingDocument)
+          setBillingTitularNameInput(defaultTitularName(user))
           setCpfModalOpen(true)
         }
         setError(msg)
+        if (opts?.fromDocumentModal) {
+          message.error(msg)
+        }
       } finally {
         setCreating(false)
       }
     },
-    [buyCredits, buyBillingType, refreshCredits, refreshUser, savedBillingDocument]
+    [buyCredits, buyBillingType, refreshCredits, refreshUser, savedBillingDocument, user]
   )
 
   const handleGerarPagamentoClick = () => {
     if (buyBillingType === 'BOLETO') {
       setCpfCnpjInput(savedBillingDocument)
+      setBillingTitularNameInput(defaultTitularName(user))
       setCpfModalOpen(true)
       return
     }
@@ -262,12 +292,17 @@ export default function BuyCreditsModal({
   }
 
   const handleConfirmCpf = () => {
+    const titular = billingTitularNameInput.trim()
+    if (titular.length < 2) {
+      message.warning('Informe o nome do titular como no documento (mínimo 2 caracteres).')
+      return
+    }
     const digits = cpfCnpjInput.replace(/\D/g, '')
     if (digits.length !== 11 && digits.length !== 14) {
       message.warning('Informe CPF (11 dígitos) ou CNPJ (14 dígitos).')
       return
     }
-    void runCreatePayment(cpfCnpjInput)
+    void runCreatePayment(cpfCnpjInput, { fromDocumentModal: true, customerName: titular })
   }
 
   const handleAdminApprove = async () => {
@@ -582,9 +617,14 @@ export default function BuyCreditsModal({
       </Modal>
 
       <Modal
-        title="CPF ou CNPJ do titular"
+        title="Nome e CPF/CNPJ do titular"
         open={cpfModalOpen}
-        onCancel={() => { setCpfModalOpen(false); setCpfCnpjInput('') }}
+        onCancel={() => {
+          setCpfModalOpen(false)
+          setCpfCnpjInput('')
+          setBillingTitularNameInput('')
+          setError(null)
+        }}
         footer={null}
         destroyOnHidden
         width={420}
@@ -592,12 +632,33 @@ export default function BuyCreditsModal({
       >
         <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
           {buyBillingType === 'BOLETO'
-            ? 'O boleto exige CPF ou CNPJ cadastrado no gateway de pagamento.'
-            : 'Informe o documento para concluir a cobrança.'}
+            ? 'O boleto exige nome e CPF ou CNPJ do titular no gateway de pagamento.'
+            : 'Informe nome e documento para concluir a cobrança.'}
           {savedBillingDocument ? (
-            <span style={{ display: 'block', marginTop: 8 }}>Usamos o último documento que você informou; altere se precisar.</span>
-          ) : null}
+            <span style={{ display: 'block', marginTop: 8 }}>Usamos o último documento que você informou; altere nome ou documento se precisar.</span>
+          ) : (
+            <span style={{ display: 'block', marginTop: 8 }}>O nome deve coincidir com o titular do CPF/CNPJ.</span>
+          )}
         </Text>
+        {error ? (
+          <Alert
+            type="error"
+            message={error}
+            showIcon
+            closable
+            onClose={() => setError(null)}
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
+        <Input
+          placeholder="Nome completo ou razão social do titular"
+          value={billingTitularNameInput}
+          onChange={(e) => setBillingTitularNameInput(e.target.value)}
+          size="large"
+          maxLength={200}
+          prefix={<UserOutlined style={{ color: 'var(--app-text-tertiary)' }} />}
+          style={{ marginBottom: 16 }}
+        />
         <Input
           placeholder="Apenas números (11 ou 14 dígitos)"
           value={cpfCnpjInput}
@@ -609,7 +670,16 @@ export default function BuyCreditsModal({
           style={{ marginBottom: 16 }}
         />
         <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-          <Button onClick={() => { setCpfModalOpen(false); setCpfCnpjInput('') }}>Voltar</Button>
+          <Button
+            onClick={() => {
+              setCpfModalOpen(false)
+              setCpfCnpjInput('')
+              setBillingTitularNameInput('')
+              setError(null)
+            }}
+          >
+            Voltar
+          </Button>
           <Button type="primary" loading={creating} onClick={handleConfirmCpf} icon={<DollarOutlined />}>
             Gerar pagamento
           </Button>

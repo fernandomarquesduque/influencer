@@ -2587,7 +2587,113 @@ function paymentRowToCreditsChargePayload(row: PaymentRow) {
   };
 }
 
-/** Status no Asaas que equivale a pago (inclui "Recebida" = RECEIVED). */
+type ResolveAsaasCustomerParams = {
+  externalRef: string;
+  name: string;
+  email: string;
+  cpfCnpj?: string;
+  /** Fluxo /me/payments: após create sem id, tenta buscar de novo pelo externalRef. */
+  retryFindAfterCreate?: boolean;
+};
+
+type ResolveAsaasCustomerOk = { ok: true; asaasCustomerId: string };
+type ResolveAsaasCustomerErr = {
+  ok: false;
+  message: string;
+  /** Diagnóstico bruto (URLs, payloads, erros Asaas) — útil em suporte. */
+  gatewayDetails: Record<string, unknown>;
+};
+type ResolveAsaasCustomerResult = ResolveAsaasCustomerOk | ResolveAsaasCustomerErr;
+
+/**
+ * Busca ou cria cliente Asaas e devolve motivo + corpo de resposta quando falha (para API retornar 502 explicativo).
+ */
+async function resolveAsaasCustomerId(params: ResolveAsaasCustomerParams): Promise<ResolveAsaasCustomerResult> {
+  const { externalRef, name, email, cpfCnpj, retryFindAfterCreate } = params;
+  const createPayload: {
+    name: string;
+    email: string;
+    externalReference: string;
+    cpfCnpj?: string;
+  } = {
+    name,
+    email,
+    externalReference: externalRef,
+    ...(cpfCnpj && (cpfCnpj.length === 11 || cpfCnpj.length === 14) ? { cpfCnpj } : {}),
+  };
+  let findInitial: unknown;
+  try {
+    const existing = await asaas.findCustomersByExternalReference(externalRef);
+    findInitial = existing;
+    const first = existing?.data?.[0];
+    if (first?.id) return { ok: true, asaasCustomerId: first.id };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      message: `Falha ao buscar cliente no Asaas: ${msg}`,
+      gatewayDetails: {
+        step: 'findCustomersByExternalReference',
+        externalRef,
+        error: msg,
+        stack: e instanceof Error ? e.stack : undefined,
+      },
+    };
+  }
+  let createResult: unknown;
+  let findAfter: unknown;
+  try {
+    const created = await asaas.createCustomer(createPayload);
+    createResult = created;
+    if (created?.id) return { ok: true, asaasCustomerId: created.id };
+    if (retryFindAfterCreate) {
+      const again = await asaas.findCustomersByExternalReference(externalRef);
+      findAfter = again;
+      const a = again?.data?.[0];
+      if (a?.id) return { ok: true, asaasCustomerId: a.id };
+    }
+    return {
+      ok: false,
+      message:
+        'Asaas não devolveu id de cliente após criar (resposta sem id ou listagem inesperada). Confira ASAAS_BASE_URL e a chave da API.',
+      gatewayDetails: {
+        step: 'createCustomer',
+        externalRef,
+        findInitial,
+        createPayload,
+        createResult,
+        findAfter: findAfter ?? null,
+      },
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      message: `Falha ao criar cliente no Asaas: ${msg}`,
+      gatewayDetails: {
+        step: 'createCustomer',
+        externalRef,
+        findInitial,
+        createPayload,
+        createResult: createResult ?? null,
+        error: msg,
+        stack: e instanceof Error ? e.stack : undefined,
+      },
+    };
+  }
+}
+
+function jsonAsaasCustomerGatewayError(r: ResolveAsaasCustomerErr): { error: string; gatewayDetails: Record<string, unknown> } {
+  return { error: r.message, gatewayDetails: r.gatewayDetails };
+}
+
+/**
+ * Status Asaas equivalente a “pago” para liberar crédito/acesso (alinha webhooks PAYMENT_CONFIRMED e PAYMENT_RECEIVED).
+ * - Cartão: CONFIRMED = aprovado e capturado; RECEIVED se aparecer.
+ * - PIX: RECEIVED (quase sempre); CONFIRMED em alguns fluxos.
+ * - Boleto: RECEIVED ou CONFIRMED (ex. compensação D+1).
+ * Não liberar: PENDING, AUTHORIZED (cartão ainda não capturado), REFUSED, OVERDUE, etc.
+ */
 function asaasRemoteStatusIsPaid(status: string | undefined): boolean {
   const u = (status ?? '').trim().toUpperCase();
   return (
@@ -2596,6 +2702,32 @@ function asaasRemoteStatusIsPaid(status: string | undefined): boolean {
     u === 'DONE' ||
     u === 'RECEIVED_IN_CASH'
   );
+}
+
+/** Evita liberar crédito se `asaas_payment_id` apontar para outra cobrança (ex. listagem errada no POST). */
+function asaasRemotePaymentMatchesPendingRow(
+  remote: { billingType?: string; value?: number },
+  row: PaymentRow
+): boolean {
+  const rBt = (remote.billingType ?? '').trim().toUpperCase();
+  const localBt = (row.billing_type ?? '').trim().toUpperCase();
+  if (rBt && localBt && rBt !== localBt) {
+    console.warn(
+      `[payments] Ignorando confirmação: Asaas billingType=${rBt} ≠ registro local ${localBt} (asaas_id=${row.asaas_payment_id})`
+    );
+    return false;
+  }
+  const v = remote.value;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const wantBrl = row.amount_cents / 100;
+    if (Math.abs(v - wantBrl) > 0.009) {
+      console.warn(
+        `[payments] Ignorando confirmação: Asaas value=${v} ≠ registro R$ ${wantBrl} (asaas_id=${row.asaas_payment_id})`
+      );
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -2647,7 +2779,10 @@ async function syncPendingPaymentFromAsaasIfConfigured(row: PaymentRow): Promise
   if (!asaasId || !asaas.isAsaasConfigured()) return;
   try {
     const remote = await asaas.getPayment(asaasId);
-    if (asaasRemoteStatusIsPaid(remote?.status)) {
+    if (
+      asaasRemotePaymentMatchesPendingRow(remote, row) &&
+      asaasRemoteStatusIsPaid(remote?.status)
+    ) {
       await finalizePendingPaymentRow(row);
     }
   } catch (e) {
@@ -2992,22 +3127,16 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
     const displayName = name || email;
     const externalRef = `user_${userId}`;
 
-    let asaasCustomerId: string | null = null;
-    const existingCustomer = await asaas.findCustomersByExternalReference(externalRef);
-    if (existingCustomer?.data && existingCustomer.data.length > 0 && existingCustomer.data[0].id) {
-      asaasCustomerId = existingCustomer.data[0].id;
-    } else {
-      const created = await asaas.createCustomer({
-        name: displayName,
-        email,
-        externalReference: externalRef,
-      });
-      asaasCustomerId = created?.id ?? null;
-    }
-    if (!asaasCustomerId) {
-      res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+    const customerRes = await resolveAsaasCustomerId({
+      externalRef,
+      name: displayName,
+      email,
+    });
+    if (!customerRes.ok) {
+      res.status(502).json(jsonAsaasCustomerGatewayError(customerRes));
       return;
     }
+    const asaasCustomerId = customerRes.asaasCustomerId;
 
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + (billingType === 'BOLETO' ? 3 : 1));
@@ -3289,23 +3418,17 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
         }
         const displayNameGuest = name;
         const tempExternalRef = `guest_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-        let asaasCustomerId: string | null = null;
-        const existingTemp = await asaas.findCustomersByExternalReference(tempExternalRef);
-        if (existingTemp?.data && existingTemp.data.length > 0 && existingTemp.data[0].id) {
-          asaasCustomerId = existingTemp.data[0].id;
-        } else {
-          const created = await asaas.createCustomer({
-            name: displayNameGuest,
-            email,
-            cpfCnpj,
-            externalReference: tempExternalRef,
-          });
-          asaasCustomerId = created?.id ?? null;
-        }
-        if (!asaasCustomerId) {
-          res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+        const guestCustomerRes = await resolveAsaasCustomerId({
+          externalRef: tempExternalRef,
+          name: displayNameGuest,
+          email,
+          cpfCnpj,
+        });
+        if (!guestCustomerRes.ok) {
+          res.status(502).json(jsonAsaasCustomerGatewayError(guestCustomerRes));
           return;
         }
+        const asaasCustomerId = guestCustomerRes.asaasCustomerId;
         const { handles: reportHandles, amountCents: amountCentsGuest } = await getReportHandlesAndPrice(query, desiredCount);
         if (reportHandles.length === 0) {
           res.status(400).json({ error: 'Nenhum perfil encontrado para o relatório. Ajuste os filtros.' });
@@ -3433,24 +3556,18 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
     const email = authUser.username.includes('@') ? authUser.username : `user${userId}@payments.influencer.local`;
     const externalRef = `user_${userId}`;
 
-    let asaasCustomerId: string | null = null;
-    const existingCustomer = await asaas.findCustomersByExternalReference(externalRef);
-    if (existingCustomer?.data && existingCustomer.data.length > 0 && existingCustomer.data[0].id) {
-      asaasCustomerId = existingCustomer.data[0].id;
-    } else {
-      const cpfCnpjOpt = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
-      const created = await asaas.createCustomer({
-        name: displayName,
-        email,
-        externalReference: externalRef,
-        ...(cpfCnpjOpt.length === 11 || cpfCnpjOpt.length === 14 ? { cpfCnpj: cpfCnpjOpt } : {}),
-      });
-      asaasCustomerId = created?.id ?? null;
-    }
-    if (!asaasCustomerId) {
-      res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+    const cpfCnpjOpt = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
+    const reportCustomerRes = await resolveAsaasCustomerId({
+      externalRef,
+      name: displayName,
+      email,
+      cpfCnpj: cpfCnpjOpt.length === 11 || cpfCnpjOpt.length === 14 ? cpfCnpjOpt : undefined,
+    });
+    if (!reportCustomerRes.ok) {
+      res.status(502).json(jsonAsaasCustomerGatewayError(reportCustomerRes));
       return;
     }
+    const asaasCustomerId = reportCustomerRes.asaasCustomerId;
 
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + (billingType === 'BOLETO' ? 3 : 1));
@@ -3526,7 +3643,7 @@ app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
       return;
     }
     const userId = Number(req.user.sub);
-    const body = req.body as { credits?: number; billingType?: string; cpfCnpj?: string };
+    const body = req.body as { credits?: number; billingType?: string; cpfCnpj?: string; customerName?: string };
     const credits = Number(body?.credits);
     if (!Number.isFinite(credits) || credits < 1 || credits > 10000) {
       res.status(400).json({ error: 'Envie credits (1 a 10000)' });
@@ -3557,33 +3674,33 @@ app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
       return;
     }
 
-    const name = authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username;
+    const rawTitularName = (body?.customerName ?? '').toString().trim();
+    const fallbackName = authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username;
+    const nameForAsaas =
+      rawTitularName.length >= 2 ? rawTitularName.slice(0, 200) : fallbackName;
     const email = authUser.username.includes('@') ? authUser.username : `user${userId}@payments.influencer.local`;
     const externalRef = `user_${userId}`;
 
-    let asaasCustomerId: string | null = null;
-    const existing = await asaas.findCustomersByExternalReference(externalRef);
-    if (existing?.data && existing.data.length > 0 && existing.data[0].id) {
-      asaasCustomerId = existing.data[0].id;
-    } else {
-      const created = await asaas.createCustomer({
-        name,
-        email,
-        externalReference: externalRef,
-        ...(cpfDigits.length === 11 || cpfDigits.length === 14 ? { cpfCnpj: cpfDigits } : {}),
-      });
-      asaasCustomerId = created?.id ?? null;
-    }
-    if (!asaasCustomerId) {
-      res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+    const mePayCustomerRes = await resolveAsaasCustomerId({
+      externalRef,
+      name: nameForAsaas,
+      email,
+      cpfCnpj: cpfDigits.length === 11 || cpfDigits.length === 14 ? cpfDigits : undefined,
+      retryFindAfterCreate: true,
+    });
+    if (!mePayCustomerRes.ok) {
+      res.status(502).json(jsonAsaasCustomerGatewayError(mePayCustomerRes));
       return;
     }
-    if (cpfDigits.length === 11 || cpfDigits.length === 14) {
-      try {
-        await asaas.updateCustomer(asaasCustomerId, { cpfCnpj: cpfDigits });
-      } catch (updateErr) {
-        console.warn('[me/payments] Asaas updateCustomer cpfCnpj:', updateErr);
+    const asaasCustomerId = mePayCustomerRes.asaasCustomerId;
+    try {
+      const patch: { name: string; cpfCnpj?: string } = { name: nameForAsaas };
+      if (cpfDigits.length === 11 || cpfDigits.length === 14) {
+        patch.cpfCnpj = cpfDigits;
       }
+      await asaas.updateCustomer(asaasCustomerId, patch);
+    } catch (updateErr) {
+      console.warn('[me/payments] Asaas updateCustomer:', updateErr);
     }
 
     const dueDate = new Date();
@@ -3668,7 +3785,19 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
     }
     const confirmedStatus = payment?.status;
     if (asaasRemoteStatusIsPaid(confirmedStatus) && row.status === 'PENDING') {
-      await finalizePendingPaymentRow(row);
+      let allowFinalize = true;
+      if (asaas.isAsaasConfigured()) {
+        try {
+          const remote = await asaas.getPayment(asaasId);
+          allowFinalize = asaasRemotePaymentMatchesPendingRow(remote, row);
+        } catch (e) {
+          console.warn('[payments/webhook] getPayment validação:', e instanceof Error ? e.message : e);
+          allowFinalize = false;
+        }
+      }
+      if (allowFinalize) {
+        await finalizePendingPaymentRow(row);
+      }
     }
     res.status(200).json({ received: true });
   } catch (e) {
@@ -4425,24 +4554,18 @@ app.post('/api/campaigns/:id/create-payment', async (req: RequestWithAuth, res: 
     const displayName = authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username;
     const email = authUser.username.includes('@') ? authUser.username : `user${userId}@payments.influencer.local`;
     const externalRef = `user_${userId}`;
-    let asaasCustomerId: string | null = null;
-    const existingCustomer = await asaas.findCustomersByExternalReference(externalRef);
-    if (existingCustomer?.data && existingCustomer.data.length > 0 && existingCustomer.data[0].id) {
-      asaasCustomerId = existingCustomer.data[0].id;
-    } else {
-      const cpfCnpjOpt = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
-      const created = await asaas.createCustomer({
-        name: displayName,
-        email,
-        externalReference: externalRef,
-        ...(cpfCnpjOpt.length === 11 || cpfCnpjOpt.length === 14 ? { cpfCnpj: cpfCnpjOpt } : {}),
-      });
-      asaasCustomerId = created?.id ?? null;
-    }
-    if (!asaasCustomerId) {
-      res.status(502).json({ error: 'Não foi possível criar cliente no gateway' });
+    const cpfCnpjCamp = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
+    const campCustomerRes = await resolveAsaasCustomerId({
+      externalRef,
+      name: displayName,
+      email,
+      cpfCnpj: cpfCnpjCamp.length === 11 || cpfCnpjCamp.length === 14 ? cpfCnpjCamp : undefined,
+    });
+    if (!campCustomerRes.ok) {
+      res.status(502).json(jsonAsaasCustomerGatewayError(campCustomerRes));
       return;
     }
+    const asaasCustomerId = campCustomerRes.asaasCustomerId;
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + (billingType === 'BOLETO' ? 3 : 1));
     const dueStr = dueDate.toISOString().slice(0, 10);

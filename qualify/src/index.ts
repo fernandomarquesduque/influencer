@@ -3,7 +3,7 @@ import process from 'node:process';
 import http from 'node:http';
 import { Ollama } from 'ollama';
 
-type JsonRecord = Record<string, desconhecido>;
+type JsonRecord = Record<string, unknown>;
 
 interface LlmClassification {
   qualifiedAt: string;
@@ -62,7 +62,7 @@ function summarizeValidationErrorsForLog(errors: string[]): string {
   return `${head} — ${snippets.join(' · ')}${tail}`;
 }
 
-function toHandle(value: desconhecido): string {
+function toHandle(value: unknown): string {
   return String(value ?? '')
     .trim()
     .toLowerCase()
@@ -242,7 +242,7 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
-function asStringArray(value: desconhecido, maxLen = 8): string[] {
+function asStringArray(value: unknown, maxLen = 8): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
   for (const item of value) {
@@ -254,7 +254,7 @@ function asStringArray(value: desconhecido, maxLen = 8): string[] {
   return out;
 }
 
-function asObject(value: desconhecido): JsonRecord {
+function asObject(value: unknown): JsonRecord {
   if (value == null || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as JsonRecord;
 }
@@ -263,7 +263,7 @@ function tryParseJsonObject(content: string): JsonRecord | null {
   const trimmed = content.trim();
   if (!trimmed) return null;
   try {
-    const parsed = JSON.parse(trimmed) as desconhecido;
+    const parsed = JSON.parse(trimmed) as unknown;
     return parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as JsonRecord)
       : null;
@@ -274,7 +274,7 @@ function tryParseJsonObject(content: string): JsonRecord | null {
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fenceMatch?.[1]) {
     try {
-      const parsed = JSON.parse(fenceMatch[1]) as desconhecido;
+      const parsed = JSON.parse(fenceMatch[1]) as unknown;
       if (parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as JsonRecord;
     } catch {
       // segue para extração por chave
@@ -286,7 +286,7 @@ function tryParseJsonObject(content: string): JsonRecord | null {
   if (start >= 0 && end > start) {
     const candidate = trimmed.slice(start, end + 1);
     try {
-      const parsed = JSON.parse(candidate) as desconhecido;
+      const parsed = JSON.parse(candidate) as unknown;
       return parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)
         ? (parsed as JsonRecord)
         : null;
@@ -346,7 +346,7 @@ function stripInvisibleFromString(s: string): string {
 }
 
 /** Aceita apenas string identica a uma opcao canonica (apos trim e invisiveis); NFC para estabilidade Unicode. */
-export function parseMainCategory(raw: desconhecido): MainCategory | null {
+export function parseMainCategory(raw: unknown): MainCategory | null {
   const s = stripInvisibleFromString(String(raw ?? '')).trim();
   if (!s) return null;
   if (MAIN_CATEGORY_SET.has(s)) return s as MainCategory;
@@ -363,7 +363,7 @@ export function parseMainCategory(raw: desconhecido): MainCategory | null {
  * Converte brandSafety do LLM para um dos tres valores canonicos.
  * Aceita string (com acento/ingles) ou objeto simples { level } / riskLevel (compat crawl).
  */
-function normalizeBrandSafety(raw: desconhecido): BrandSafetyLevel | null {
+function normalizeBrandSafety(raw: unknown): BrandSafetyLevel | null {
   if (raw == null) return null;
   if (typeof raw === 'string') {
     const n = stripCombiningMarks(stripInvisibleFromString(raw).trim().toLowerCase());
@@ -380,7 +380,7 @@ function normalizeBrandSafety(raw: desconhecido): BrandSafetyLevel | null {
     return null;
   }
   if (typeof raw === 'object') {
-    const o = raw as Record<string, desconhecido>;
+    const o = raw as Record<string, unknown>;
     const nested = normalizeBrandSafety(o.level ?? o.value ?? o.brandSafety);
     if (nested) return nested;
     const risk = stripInvisibleFromString(String(o.riskLevel ?? ''))
@@ -397,7 +397,7 @@ function normalizeBrandSafety(raw: desconhecido): BrandSafetyLevel | null {
 }
 
 function pickBrandSafetyFromQualification(q: JsonRecord): BrandSafetyLevel | null {
-  const rec = q as Record<string, desconhecido>;
+  const rec = q as Record<string, unknown>;
   return (
     normalizeBrandSafety(q.brandSafety) ??
     normalizeBrandSafety(rec.brand_safety) ??
@@ -573,7 +573,7 @@ function buildPrompt(
     'language: BCP-47 minuscula do texto que o CRIADOR escreveu (full_name, biography, amostras). IGNORE palavras de interface (seguidores, seguindo, posts, Seguir, mensagem, mil, rótulos de categoria do app em PT). pt-br só se português for claramente dominante nas linhas autorais; linha curta genérica em PT + bio em inglês/francês/outra → use en/es/fr conforme dominância, ou desconhecido se romano ambíguo; cirilico/Ucrânia→uk/ru/desconhecido. Nunca assuma pt-br pelo app em português ou local BR.',
     'gender, mainCategory e brandSafety sao campos OBRIGATORIOS (string escalar cada); subCategories, contentPillars e audienceType sao arrays com pelo menos 1 item.',
     'brandSafety: "familia" para beleza/maquiagem/cursos/educacao e lifestyle normais; "sensivel" so alcool/tabaco/polemica politica/saude arriscada/violencia ou sexualizacao clara; "adulto" so sexo explicito/jogos adultos/gore — nao use sensivel por maquiagem ou emoji de coracao.',
-    'mainCategory: copie LITERAL UMA opcao; tema central da bio — banco/bancario/humor de trabalho/denuncia nao e Beleza & Maquiagem (Finanças & Investimentos ou Humor & Comédia). Advocacia/advogado/juridico ou handle "adv." sem eixo comida/receitas -> Negócios & Carreira, nao Gastronomia & Culinária. Igual a lista; nao invente.',
+    'mainCategory: copie LITERAL UMA opcao; tema central na bio+handle: futebol/esporte/clube/campeonato/treinador/analise/podcast esportivo -> Fitness & Esportes. Gastronomia & Culinária só com receitas/chef/comida/restaurante dominando — nunca só "criador(a) de conteudo digital" ou perfil generico sem eixo culinario. Banco/humor trabalho/denuncia nao e Beleza & Maquiagem (Finanças & Investimentos ou Humor & Comédia). Advogado/juridico sem comida -> Negócios & Carreira, nao Gastronomia. Igual a lista; nao invente.',
     personaRule,
     'subCategories deve ser ESPECIFICO e orientado a nicho comercial; evite termos amplos/genéricos como "saude e bem-estar", "relacionamento", "lifestyle", "variedades" quando houver contexto mais preciso.',
     'Incerteza: infira pela bio; evite "geral" e "desconhecido" salvo ultimo caso.',

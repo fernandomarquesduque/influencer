@@ -163,7 +163,7 @@ export default function MissionsBar() {
                 style={{ fontSize: 12, height: 28, fontWeight: 600 }}
                 onClick={() => navigate('/app/missions/link-instagram')}
               >
-                Desbloquear 50
+                Desbloquear
               </Button>
             )}
           </div>

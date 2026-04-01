@@ -43,7 +43,7 @@ export default function VerifyEmail() {
     return (
       <div style={{ maxWidth: 400, margin: '60px auto', padding: 24 }}>
         <Alert type="error" message="Não foi possível validar" description={<><div>{errorMsg}</div><div style={{ marginTop: 8, fontSize: 13, color: 'var(--app-text-secondary)' }}>Se não recebeu o e-mail, verifique a pasta de spam. Dentro do app você pode usar &quot;Reenviar link&quot; na barra de recompensas.</div></>} showIcon style={{ marginBottom: 16 }} />
-        <Button type="primary" block onClick={() => navigate('/')}>Ir para o início</Button>
+        <Button type="primary" block onClick={() => window.location.href = '/'}>Ir para o início</Button>
       </div>
     )
   }

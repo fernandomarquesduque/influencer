@@ -694,12 +694,16 @@ export async function payForReport(
 export async function createPaymentForCredits(
   credits: number,
   billingType: 'PIX' | 'BOLETO' = 'PIX',
-  options?: { signal?: AbortSignal; cpfCnpj?: string }
+  options?: { signal?: AbortSignal; cpfCnpj?: string; customerName?: string }
 ): Promise<CreatePaymentForCreditsResponse> {
   const body: Record<string, unknown> = { credits, billingType }
   const cpfDigits = (options?.cpfCnpj ?? '').replace(/\D/g, '')
   if (cpfDigits.length === 11 || cpfDigits.length === 14) {
     body.cpfCnpj = cpfDigits
+  }
+  const titular = (options?.customerName ?? '').trim()
+  if (titular.length >= 2) {
+    body.customerName = titular.slice(0, 200)
   }
   const res = await fetch(`${API_BASE}/me/payments`, {
     method: 'POST',

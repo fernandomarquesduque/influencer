@@ -7,7 +7,6 @@ import { Outlet } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import { useCreditsOptional } from './contexts/CreditsContext'
 import { usePendingInvoiceBadge } from './contexts/PendingPaymentCelebrationContext'
-import { useTheme, THEME_OPTIONS } from './contexts/ThemeContext'
 import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import Logo from './components/Logo'
 import ProfileAvatar from './components/ProfileAvatar'
@@ -53,7 +52,6 @@ export default function Layout() {
   const { user, logout, isAdm } = useAuth()
   const creditsState = useCreditsOptional()
   const hasPendingInvoice = usePendingInvoiceBadge()
-  const { theme, setTheme } = useTheme()
   const screens = useBreakpoint()
   const isMobile = !screens.md
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -106,18 +104,18 @@ export default function Layout() {
 
     const influencerChildren: NonNullable<MenuProps['items']> = []
     if (isAdm) influencerChildren.push({ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') })
-    influencerChildren.push(
-      { key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') },
-      { key: 'payments', label: 'Meus pagamentos', onClick: () => navigate('/app/payments') },
-    )
-    items.push({ type: 'group', label: 'Influenciador', children: influencerChildren })
 
     const assinanteChildren: NonNullable<MenuProps['items']> = []
-    if (isAssinante) assinanteChildren.push({ key: 'campaigns/create', label: 'Buscar Influencer', onClick: () => navigate('/app/campaigns/create') })
+    if (isAssinante) influencerChildren.push({ key: 'campaigns/create', label: 'Buscar Influencer', onClick: () => navigate('/app/campaigns/create') })
     if (isAdm) assinanteChildren.push({ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') })
     if (assinanteChildren.length > 0) {
       items.push({ type: 'group', label: 'Assinante', children: assinanteChildren })
     }
+    influencerChildren.push(
+      { key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') },
+      { key: 'payments', label: 'Comprar Créditos', onClick: () => navigate('/app/payments') },
+    )
+    items.push({ type: 'group', label: 'Funcionalidades', children: influencerChildren })
 
     if (isAdm) {
       items.push({
@@ -429,30 +427,6 @@ export default function Layout() {
               styles={{ body: { paddingTop: 8 } }}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Tema</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {THEME_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => { setTheme(opt.value); setMobileMenuOpen(false) }}
-                        style={{
-                          padding: '8px 12px',
-                          borderRadius: 8,
-                          border: theme === opt.value ? '2px solid var(--app-primary)' : '1px solid var(--app-border)',
-                          background: theme === opt.value ? 'var(--app-primary-muted)' : 'var(--app-card-bg)',
-                          color: 'var(--app-text)',
-                          fontSize: 13,
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
                 {user && (
                   <>
                     {(user.scope === 'influencer' || isAdm) && (
@@ -461,8 +435,8 @@ export default function Layout() {
                       </Link>
                     )}
                     {(isAdm || isAssinante) && (
-                      <Link to="/app" style={{ ...drawerLinkStyle, ...(isActive('/app') && location.pathname === '/app' ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
-                        Início
+                      <Link to="/app/campaigns/create" style={{ ...drawerLinkStyle, ...(isActive('/app/campaigns/create') && location.pathname === '/app/campaigns/create' ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                        Busca Influencer
                       </Link>
                     )}
                     {user && (
@@ -472,7 +446,7 @@ export default function Layout() {
                         onClick={() => setMobileMenuOpen(false)}
                       >
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                          Meus pagamentos
+                          Comprar Créditos
                           {hasPendingInvoice && (
                             <span className="layout-drawer-pending-badge" title="Fatura PIX/boleto pendente">
                               Pendente
