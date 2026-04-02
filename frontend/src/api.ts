@@ -1459,6 +1459,45 @@ export async function setMyPassword(password: string): Promise<void> {
   if (!res.ok) throw new Error('Falha ao definir senha')
 }
 
+/** Solicita código de 6 dígitos por e-mail (conta assinante / agência). Resposta sempre genérica por segurança. */
+export async function requestAgencyPasswordReset(email: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/forgot-password/request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao solicitar código')
+}
+
+/** Valida código e retorna token para a etapa de nova senha. */
+export async function verifyAgencyPasswordResetCode(
+  email: string,
+  code: string,
+): Promise<{ resetToken: string }> {
+  const res = await fetch(`${API_BASE}/auth/forgot-password/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.trim() }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Código inválido')
+  const resetToken = (data as { resetToken?: string }).resetToken
+  if (!resetToken) throw new Error('Resposta inválida do servidor')
+  return { resetToken }
+}
+
+/** Define nova senha após verifyAgencyPasswordResetCode. */
+export async function completeAgencyPasswordReset(resetToken: string, password: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/forgot-password/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resetToken, password }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Falha ao alterar senha')
+}
+
 /** Envia mensagem Direct do Instagram para um influenciador. Requer login com scope adm ou assinante. imageBase64 opcional (data URL ou base64). */
 export async function sendDirectMessageToInfluencer(handle: string, message: string, imageBase64?: string): Promise<{ ok: boolean }> {
   const body: { handle: string; message: string; imageBase64?: string } = {

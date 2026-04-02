@@ -121,6 +121,85 @@ body {
   }
 }
 
+/* Login influenciador: painel direito mais enxuto (menos scroll em mobile / viewports baixos) */
+.influencer-login-page.login-page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.influencer-login-page .login-two-columns {
+  flex: 1;
+  min-height: 0;
+}
+
+.influencer-login-page .login-right-panel {
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .influencer-login-page.login-page {
+    height: auto;
+    min-height: 100dvh;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .influencer-login-page .login-right-panel {
+    padding: 12px 14px !important;
+    padding-left: max(14px, env(safe-area-inset-left)) !important;
+    padding-right: max(14px, env(safe-area-inset-right)) !important;
+    padding-top: max(8px, env(safe-area-inset-top)) !important;
+    padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .influencer-login-page .login-header {
+    margin-bottom: 8px !important;
+  }
+
+  .influencer-login-page .login-right-panel .ant-divider {
+    margin: 0 0 8px !important;
+  }
+
+  .influencer-login-page .login-tabs {
+    margin-bottom: 10px !important;
+  }
+
+  .influencer-login-page .login-right-panel .ant-form-item {
+    margin-bottom: 8px !important;
+  }
+
+  .influencer-login-page .login-right-panel .ant-form-item-label {
+    padding-bottom: 0 !important;
+  }
+
+  .influencer-login-page .login-right-panel .ant-typography-title {
+    font-size: 17px !important;
+  }
+
+  .influencer-login-page .login-tab {
+    padding: 9px 10px !important;
+    font-size: 12px !important;
+  }
+}
+
+@media (max-width: 576px) {
+  .influencer-login-page .login-right-panel {
+    padding: 10px 12px !important;
+    padding-left: max(12px, env(safe-area-inset-left)) !important;
+    padding-right: max(12px, env(safe-area-inset-right)) !important;
+    padding-top: max(6px, env(safe-area-inset-top)) !important;
+    padding-bottom: max(6px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .influencer-login-page .login-header .login-logo {
+    transform: scale(0.95);
+    transform-origin: center top;
+  }
+}
+
 /* Alternância entrar/cadastro: oculto no desktop (controles ficam na coluna esquerda) */
 .agency-login-mobile-mode {
   display: none;

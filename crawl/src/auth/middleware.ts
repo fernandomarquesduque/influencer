@@ -16,7 +16,13 @@ export function authOptional(req: RequestWithAuth, _res: Response, next: NextFun
     if (token) {
       try {
         const secret = getJwtSecret();
-        req.user = verifyJwt(token, secret);
+        const payload = verifyJwt(token, secret);
+        // Tokens de redefinição de senha não autenticam rotas da API.
+        if (payload.pwd_reset === true) {
+          req.user = undefined;
+        } else {
+          req.user = payload;
+        }
       } catch {
         // token inválido ou expirado; segue como não autenticado
       }

@@ -14,6 +14,8 @@ export interface JwtPayload {
   username: string;
   scope: AuthScope;
   profile_handle?: string;
+  /** JWT só para POST /api/auth/forgot-password/complete — não usar como sessão normal. */
+  pwd_reset?: boolean;
   iat?: number;
   exp?: number;
 }

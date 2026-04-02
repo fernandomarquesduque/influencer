@@ -407,6 +407,15 @@ export default function AgencyLogin() {
                       style={{ borderRadius: 8 }}
                     />
                   </Form.Item>
+                  <div style={{ textAlign: 'right', marginTop: -4, marginBottom: 8 }}>
+                    <Text
+                      type="secondary"
+                      style={{ fontSize: 12, cursor: 'pointer' }}
+                      onClick={() => navigate('/agencia/esqueci-senha')}
+                    >
+                      Esqueci minha senha
+                    </Text>
+                  </div>
                   <Form.Item style={{ marginBottom: 0 }}>
                     <Button
                       type="primary"

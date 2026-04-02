@@ -106,6 +106,14 @@ export class AuthDb {
     addColIfMissing('mission_instagram_claimed', 'ALTER TABLE auth_user ADD COLUMN mission_instagram_claimed INTEGER NOT NULL DEFAULT 0');
     addColIfMissing('display_name', 'ALTER TABLE auth_user ADD COLUMN display_name TEXT');
     addColIfMissing('billing_cpf_cnpj', 'ALTER TABLE auth_user ADD COLUMN billing_cpf_cnpj TEXT');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS auth_password_reset (
+        email TEXT NOT NULL PRIMARY KEY,
+        code TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
   }
 
   private authUserSelect =
@@ -244,6 +252,41 @@ export class AuthDb {
   /** LGPD: remove códigos de verificação associados ao user_id antes de excluir auth_user. */
   clearProfileVerificationByUserId(userId: number): void {
     this.db.prepare('DELETE FROM auth_profile_verification WHERE user_id = ?').run(userId);
+  }
+
+  /** Grava ou substitui código de redefinição de senha (e-mail normalizado). */
+  savePasswordResetCode(email: string, code: string, expiresAt: string): void {
+    const e = email.trim().toLowerCase();
+    if (!e || !e.includes('@')) throw new Error('E-mail inválido');
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO auth_password_reset (email, code, expires_at, created_at) VALUES (?, ?, ?, datetime('now'))`,
+      )
+      .run(e, code, expiresAt);
+  }
+
+  /** True se houve pedido de código nos últimos `seconds` segundos (anti-spam). */
+  isPasswordResetRecentlyRequested(email: string, seconds: number): boolean {
+    const e = email.trim().toLowerCase();
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS x FROM auth_password_reset WHERE email = ? AND created_at > datetime('now', ?)`,
+      )
+      .get(e, `-${seconds} seconds`) as { x: number } | undefined;
+    return row != null;
+  }
+
+  /** Se código e expiração batem, apaga a linha e retorna true. */
+  tryConsumePasswordResetCode(email: string, code: string): boolean {
+    const e = email.trim().toLowerCase();
+    const c = code.trim();
+    if (!e || !c) return false;
+    const row = this.db
+      .prepare(`SELECT code, expires_at FROM auth_password_reset WHERE email = ? AND expires_at > datetime('now')`)
+      .get(e) as { code: string; expires_at: string } | undefined;
+    if (!row || row.code !== c) return false;
+    this.db.prepare('DELETE FROM auth_password_reset WHERE email = ?').run(e);
+    return true;
   }
 
   close(): void {

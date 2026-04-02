@@ -71,7 +71,7 @@ import { isFollowingViewerFromEntity } from '../utils/entityAccess.js';
 import { AuthDb } from '../auth/authDb.js';
 import { authOptional, requireScopes, requireScopesOrPublic, canEditProfile, type RequestWithAuth } from '../auth/middleware.js';
 import { checkApiRateLimit, getRetryAfterSeconds } from '../utils/apiRateLimit.js';
-import { signJwt, getJwtSecret } from '../auth/jwt.js';
+import { signJwt, verifyJwt, getJwtSecret } from '../auth/jwt.js';
 import { verifyPassword, hashPassword } from '../auth/password.js';
 import type { AuthScope } from '../auth/types.js';
 import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
@@ -84,6 +84,7 @@ import {
 } from './adminLlmQualificationPatch.js';
 import { followersCountToSizeKey, type FollowersSizeKey } from './followersSizeBuckets.js';
 import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
+import { sendPasswordResetCode } from '../email/sendPasswordResetCode.js';
 import { logS3StartupStatus, wipeInfluencerS3Prefix } from '../s3/influencerProfileStorage.js';
 import { campaignAccessDurationDays, defaultCampaignExpiresAtIso } from '../config/campaignAccess.js';
 
@@ -2978,6 +2979,121 @@ app.post('/api/auth/register-assinante', async (req: Request, res: Response) => 
       },
       email_sent: emailResult.sent,
     });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+const FORGOT_PW_CODE_TTL_MIN = 15;
+const FORGOT_PW_JWT_SEC = 15 * 60;
+const FORGOT_PW_THROTTLE_SEC = 60;
+
+/** Pedido de código por e-mail (contas assinante). Resposta genérica se o e-mail não existir. */
+app.post('/api/auth/forgot-password/request', async (req: Request, res: Response) => {
+  try {
+    const email = (req.body?.email ?? '').toString().trim().toLowerCase();
+    const generic = { ok: true as const };
+    if (!email || !email.includes('@')) {
+      res.status(200).json(generic);
+      return;
+    }
+    const user = authDb.getByUsername(email);
+    if (!user || user.scope !== 'assinante') {
+      res.status(200).json(generic);
+      return;
+    }
+    if (authDb.isPasswordResetRecentlyRequested(email, FORGOT_PW_THROTTLE_SEC)) {
+      res.status(200).json(generic);
+      return;
+    }
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + FORGOT_PW_CODE_TTL_MIN * 60 * 1000)
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' ');
+    authDb.savePasswordResetCode(email, code, expiresAt);
+    const emailResult = await sendPasswordResetCode({ to: email, code });
+    if (!emailResult.sent && emailResult.error) {
+      console.warn('[forgot-password] E-mail não enviado:', emailResult.error);
+    }
+    res.status(200).json(generic);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Valida o código de 6 dígitos e devolve JWT de uso único para definir a nova senha. */
+app.post('/api/auth/forgot-password/verify', async (req: Request, res: Response) => {
+  try {
+    const email = (req.body?.email ?? '').toString().trim().toLowerCase();
+    const code = (req.body?.code ?? '').toString().trim();
+    if (!email || !email.includes('@') || !/^\d{6}$/.test(code)) {
+      res.status(400).json({ error: 'Informe o e-mail e o código de 6 dígitos.' });
+      return;
+    }
+    if (!authDb.tryConsumePasswordResetCode(email, code)) {
+      res.status(400).json({ error: 'Código inválido ou expirado. Solicite um novo código.' });
+      return;
+    }
+    const user = authDb.getByUsername(email);
+    if (!user || user.scope !== 'assinante') {
+      res.status(400).json({ error: 'Não foi possível concluir a redefinição.' });
+      return;
+    }
+    const secret = getJwtSecret();
+    const resetToken = signJwt(
+      {
+        sub: String(user.id),
+        username: user.username,
+        scope: 'assinante' as AuthScope,
+        profile_handle: user.profile_handle ?? undefined,
+        pwd_reset: true,
+      },
+      secret,
+      FORGOT_PW_JWT_SEC,
+    );
+    res.status(200).json({ resetToken });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Define nova senha com o JWT retornado por /forgot-password/verify. */
+app.post('/api/auth/forgot-password/complete', async (req: Request, res: Response) => {
+  try {
+    const resetToken = (req.body?.resetToken ?? '').toString().trim();
+    const password = (req.body?.password ?? '').toString();
+    if (!resetToken) {
+      res.status(400).json({ error: 'Sessão inválida. Confirme o código novamente.' });
+      return;
+    }
+    if (!password || password.length < 6) {
+      res.status(400).json({ error: 'A senha deve ter no mínimo 6 caracteres.' });
+      return;
+    }
+    let payload;
+    try {
+      payload = verifyJwt(resetToken, getJwtSecret());
+    } catch {
+      res.status(400).json({ error: 'Sessão expirada. Solicite um novo código por e-mail.' });
+      return;
+    }
+    if (payload.pwd_reset !== true || payload.scope !== 'assinante') {
+      res.status(400).json({ error: 'Token inválido para redefinição de senha.' });
+      return;
+    }
+    const userId = Number(payload.sub);
+    if (!Number.isFinite(userId) || userId < 1) {
+      res.status(400).json({ error: 'Token inválido.' });
+      return;
+    }
+    const user = authDb.getById(userId);
+    if (!user || user.scope !== 'assinante') {
+      res.status(400).json({ error: 'Usuário não encontrado.' });
+      return;
+    }
+    authDb.updateUser(userId, { password_hash: hashPassword(password) });
+    res.status(200).json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
