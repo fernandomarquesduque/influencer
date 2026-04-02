@@ -552,7 +552,7 @@ function buildPrompt(
   }
 
   const profileTypeSignals =
-    '"criador" só com pessoa central (nome de influencer, "criador(a) de conteudo digital", etc.). "empresa" para instituicao/marca B2C sem rosto unico: produto empacotado (água mineral, bebida, alimento), nome comercial no titulo, bio de produto/prêmios/site oficial — nao use criador. Também loja, clinica, B2B, agencia em "nos". Bio só com link da marca + discurso institucional indica empresa; URL de pessoa (criador) é outro caso.';
+    'pessoal: individuo sem voz de marca nem operacao comercial na bio. empresa: nome tipo linha de produto (ex. X Style); atacado/varejo; email comercial/vendas; fones regionais/Whats; bio de pedidos+link (linktr/site); OU bio de campanha/colecao, CTA institucional (conheca a colecao, maior X do pais), terceira pessoa da marca (a [marca] preparou), hashtag oficial #Marca — tudo isso e empresa, nao pessoal. Rotulos em discovered_* (ex. empreendedor) nao definem profileType se o texto for claramente de marca. criador: pessoa/influencer no centro. produto empacotado, loja, clinica, B2B, agencia → empresa.';
   const profileTypeRule = includePostSamples
     ? `profileType: inferir a partir de handle, full_name, biography e amostras_textos_publicacoes (legendas/hashtags). ${profileTypeSignals}`
     : `profileType: inferir a partir de handle, full_name e biography (texto publico do perfil). ${profileTypeSignals}`;

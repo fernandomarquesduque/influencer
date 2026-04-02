@@ -87,7 +87,7 @@ export interface CampaignPaymentCartProps {
     originalValueBrl: number
     billableProfileCount: number
   }
-  /** Valor em centavos após desconto (para liberar grátis quando 0). */
+  /** Valor em centavos após desconto (para liberar quando 0). */
   amountCentsAfterDiscount?: number
   /** Lista filtrada para preview no checkout (pagamento pendente). */
   previewItems?: ProfileListItem[]

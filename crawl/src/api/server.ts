@@ -2954,7 +2954,7 @@ app.post('/api/auth/register-assinante', async (req: Request, res: Response) => 
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 5 créditos grátis: valide seu e-mail e comece a usar',
+      subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
       verifyUrl,
       bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
     });
@@ -3055,7 +3055,7 @@ app.post('/api/auth/resend-verification', authOptional, async (req: RequestWithA
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 5 créditos grátis: valide seu e-mail e comece a usar',
+      subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
       verifyUrl,
       bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
     });
@@ -3114,7 +3114,7 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 5 créditos grátis: valide seu e-mail e comece a usar',
+      subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
       verifyUrl,
       bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
     });
@@ -3481,7 +3481,7 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
         const verifyUrlGuest = `${frontBaseGuest.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationTokenGuest)}`;
         const emailResultGuest = await sendVerificationEmail({
           to: email,
-          subject: '✨ 5 créditos grátis: valide seu e-mail e comece a usar',
+          subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
           verifyUrl: verifyUrlGuest,
           bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
         });

@@ -7,13 +7,13 @@
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://buscainfluencer.com.br/landing/</loc>
+    <loc>https://buscainfluencer.com.br/landing/index.html</loc>
     <lastmod>2026-03-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.95</priority>
   </url>
   <url>
-    <loc>https://buscainfluencer.com.br/landing/search/</loc>
+    <loc>https://buscainfluencer.com.br/landing/search/index.html</loc>
     <lastmod>2026-03-31</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.95</priority>

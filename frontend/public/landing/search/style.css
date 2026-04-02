@@ -100,6 +100,8 @@ body {
 .landing {
   position: relative;
   z-index: 1;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .container {
@@ -1034,42 +1036,166 @@ section {
   border-block: 1px solid var(--border);
 }
 
-/* Conceito, fundo roxo escuro, conteúdo centralizado */
-.section--concept {
+/* Âncora para creators — faixa baixa e larga */
+.section--creator-anchor {
   width: 100%;
-  background: linear-gradient(180deg, #2d1450 0%, #1f0d32 45%, #1a0a28 100%);
+  background:
+    radial-gradient(ellipse 90% 80% at 50% 0%, rgba(232, 186, 0, 0.12), transparent 50%),
+    linear-gradient(180deg, #2a1248 0%, #1a0a28 100%);
   border: none;
-  padding-block: clamp(3.75rem, 11vw, 7.5rem);
+  padding-block: clamp(0.85rem, 2.2vw, 1.35rem);
+  position: relative;
+  overflow: hidden;
 }
 
-.section--concept__container {
-  text-align: center;
+.section--creator-anchor::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 90% 50%, rgba(168, 85, 247, 0.1), transparent 42%);
+  pointer-events: none;
 }
 
-.section--concept .concept__body {
+.section--creator-anchor__container {
+  position: relative;
+  z-index: 1;
   max-width: 46rem;
-  margin-inline: auto;
-  text-align: center;
 }
 
-.section--concept h2.display.concept__headline {
+.creator-anchor__layout {
+  display: grid;
+  gap: 0.75rem 1.25rem;
+  align-items: center;
+  justify-items: start;
+  width: 100%;
+  max-width: 100%;
+  margin-inline: 0;
+}
+
+@media (min-width: 720px) {
+  .creator-anchor__layout {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    justify-items: stretch;
+    gap: 1rem 1.5rem;
+  }
+
+  .creator-anchor__layout .creator-anchor__figure {
+    justify-self: start;
+  }
+
+  .creator-anchor__layout .creator-anchor__body {
+    text-align: left;
+    justify-self: stretch;
+  }
+
+  .creator-anchor__layout .creator-anchor__headline {
+    text-align: left;
+    margin-bottom: 0.2rem;
+  }
+
+  .creator-anchor__layout .creator-anchor__text {
+    text-align: left;
+    margin: 0;
+  }
+
+  .creator-anchor__layout .creator-anchor__cta-wrap {
+    justify-self: end;
+    align-self: center;
+  }
+}
+
+.creator-anchor__figure {
+  margin: 0;
+  line-height: 0;
+}
+
+.creator-anchor__img {
+  display: block;
+  width: auto;
+  max-width: min(200px, 28vw);
+  max-height: clamp(4.5rem, 12vw, 5.75rem);
+  height: auto;
+  object-fit: contain;
+  margin-inline: 0;
+  border-radius: 0.5rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.creator-anchor__body {
+  margin: 0;
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+}
+
+.section--creator-anchor h2.display.creator-anchor__headline {
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: clamp(1.65rem, 3.6vw, 2.85rem);
-  line-height: 1.12;
-  letter-spacing: -0.03em;
+  font-size: clamp(1.05rem, 2.2vw, 1.35rem);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
   color: var(--yellow-bright);
-  text-align: center;
-  margin: 0 auto clamp(1.35rem, 3.5vw, 2rem);
+  text-align: left;
+  margin: 0 0 0.25rem;
 }
 
-.section--concept .concept__text {
+.creator-anchor__text {
   margin: 0;
-  color: #f8fafc;
-  font-size: clamp(1.02rem, 2.1vw, 1.2rem);
-  line-height: 1.7;
-  text-align: center;
+  color: #e2e8f0;
+  font-size: clamp(0.8125rem, 1.5vw, 0.9375rem);
+  line-height: 1.45;
+  text-align: left;
   font-weight: 400;
+  max-width: 100%;
+  margin-inline: 0;
+}
+
+.creator-anchor__text strong {
+  font-style: normal;
+  color: #fde68a;
+  font-weight: 600;
+}
+
+.creator-anchor__cta-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+@media (min-width: 720px) {
+  .creator-anchor__cta-wrap {
+    align-items: flex-end;
+  }
+}
+
+.creator-anchor__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.55rem 1rem;
+  font-size: 0.875rem;
+  box-shadow:
+    0 0 0 1px rgba(232, 186, 0, 0.35),
+    0 4px 16px rgba(232, 186, 0, 0.18);
+}
+
+.creator-anchor__cta:hover {
+  box-shadow:
+    0 0 0 1px rgba(232, 186, 0, 0.5),
+    0 6px 20px rgba(232, 186, 0, 0.24);
+}
+
+.creator-anchor__cta i {
+  font-size: 0.85em;
+  transition: transform 0.2s ease;
+}
+
+.creator-anchor__cta:hover i {
+  transform: translateX(3px);
 }
 
 .section--vip {

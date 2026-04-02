@@ -37,6 +37,7 @@ function FocusScrollHandler() {
 }
 import Home from './pages/Home'
 import Login from './pages/Login'
+import AgencyLogin from './pages/AgencyLogin'
 import Premium from './pages/Premium'
 import AdminUsers from './pages/AdminUsers'
 import AdminDashboard from './pages/AdminDashboard'
@@ -71,6 +72,7 @@ export default function App() {
           <FocusScrollHandler />
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/agencia/login" element={<AgencyLogin />} />
             <Route path="/premium" element={<Premium />} />
             <Route
               path="search"

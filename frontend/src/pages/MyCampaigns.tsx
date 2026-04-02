@@ -153,7 +153,7 @@ export default function MyCampaigns() {
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description="Você ainda não tem campanhas. Faça uma busca e compre um relatório para ver a lista aqui."
         >
-          <Button type="primary" onClick={() => navigate('/app')}>
+          <Button type="primary" onClick={() => navigate('/search')}>
             Fazer uma busca
           </Button>
         </Empty>

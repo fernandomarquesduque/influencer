@@ -36,7 +36,7 @@ function buildVerificationEmailHtml(verifyUrl: string, bodyText: string): string
           <tr>
             <td style="padding: 32px 32px 24px;">
               <h1 style="margin:0 0 12px; font-size: 22px; font-weight: 700; color: #1f2937; line-height: 1.3;">
-                Seus 5 créditos grátis estão esperando
+                Seus 5 créditos estão esperando
               </h1>
               <p style="margin:0 0 20px; font-size: 16px; color: #4b5563; line-height: 1.6;">
                 ${bodyText.replace(/</g, '&lt;').replace(/\n/g, '<br>')}

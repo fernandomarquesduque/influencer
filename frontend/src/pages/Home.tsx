@@ -115,7 +115,7 @@ export default function Home() {
             Ver vitrine
           </Link>
           <Link
-            to="/login"
+            to="/agencia/login"
             style={{
               color: 'var(--lp-text)',
               fontSize: 14,
@@ -126,7 +126,7 @@ export default function Home() {
             Entrar
           </Link>
           <Link
-            to="/login"
+            to="/agencia/login"
             style={{
               background: 'var(--lp-primary)',
               color: '#fff',
@@ -215,7 +215,7 @@ export default function Home() {
               Ver vitrine
             </Link>
             <Link
-              to="/login"
+              to="/agencia/login"
               style={{
                 display: 'inline-block',
                 background: 'transparent',
@@ -549,7 +549,7 @@ export default function Home() {
                 Ver vitrine
               </Link>
               <Link
-                to="/login"
+                to="/agencia/login"
                 style={{
                   display: 'inline-block',
                   background: 'transparent',
@@ -590,8 +590,8 @@ export default function Home() {
               marginBottom: 20,
             }}
           >
-            <Link
-              to="/#termos"
+            <a
+              href="/landing/documents/termos.html"
               style={{
                 fontSize: 13,
                 color: 'var(--lp-text)',
@@ -601,9 +601,9 @@ export default function Home() {
               }}
             >
               Termos
-            </Link>
-            <Link
-              to="/#privacidade"
+            </a>
+            <a
+              href="/document/privacidade.html"
               style={{
                 fontSize: 13,
                 color: 'var(--lp-text)',
@@ -613,7 +613,7 @@ export default function Home() {
               }}
             >
               Privacidade
-            </Link>
+            </a>
             <Link
               to="/#contato"
               style={{

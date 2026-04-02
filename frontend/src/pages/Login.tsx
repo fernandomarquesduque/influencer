@@ -379,7 +379,7 @@ function Login() {
               <Text
                 type="secondary"
                 style={{ fontSize: 12, cursor: 'pointer' }}
-                onClick={() => window.location.href = '/'}
+                onClick={() => window.location.href = '/landing/index.html'}
               >
                 Voltar ao site
               </Text>

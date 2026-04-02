@@ -16,12 +16,12 @@ export default function Premium() {
             Vira assinante
           </Title>
           <Paragraph style={{ fontSize: 16, color: 'var(--app-text-secondary)', textAlign: 'center', marginBottom: 24 }}>
-          No grátis você vê só a primeira página e até 10 buscas por dia. Como assinante: mais páginas, filtros e métricas completas.
-        </Paragraph>
-        <Paragraph style={{ textAlign: 'center', marginBottom: 32 }}>
-          Compre créditos com PIX ou Boleto e use nos relatórios de influenciadores.
-        </Paragraph>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
+            No você vê só a primeira página e até 10 buscas por dia. Como assinante: mais páginas, filtros e métricas completas.
+          </Paragraph>
+          <Paragraph style={{ textAlign: 'center', marginBottom: 32 }}>
+            Compre créditos com PIX ou Boleto e use nos relatórios de influenciadores.
+          </Paragraph>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
             <Link to="/checkout">
               <Button type="primary" icon={<DollarOutlined />}>Comprar créditos</Button>
             </Link>

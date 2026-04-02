@@ -95,6 +95,7 @@ export default function Layout() {
   }, [user, location.pathname, navigate])
 
   const isAssinante = user?.scope === 'assinante'
+  const showCampaignsAndCredits = isAssinante || isAdm
 
   const userMenuItems = useMemo((): MenuProps['items'] => {
     if (!user) return []
@@ -111,11 +112,15 @@ export default function Layout() {
     if (assinanteChildren.length > 0) {
       items.push({ type: 'group', label: 'Assinante', children: assinanteChildren })
     }
-    influencerChildren.push(
-      { key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') },
-      { key: 'payments', label: 'Comprar Créditos', onClick: () => navigate('/app/payments') },
-    )
-    items.push({ type: 'group', label: 'Funcionalidades', children: influencerChildren })
+    if (showCampaignsAndCredits) {
+      influencerChildren.push(
+        { key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') },
+        { key: 'payments', label: 'Comprar Créditos', onClick: () => navigate('/app/payments') },
+      )
+    }
+    if (influencerChildren.length > 0) {
+      items.push({ type: 'group', label: 'Funcionalidades', children: influencerChildren })
+    }
 
     if (isAdm) {
       items.push({
@@ -141,7 +146,7 @@ export default function Layout() {
 
     items.push({ type: 'divider' }, { key: 'logout', label: 'Sair', onClick: () => logout() })
     return items
-  }, [user, isAdm, isAssinante, navigate, logout])
+  }, [user, isAdm, isAssinante, showCampaignsAndCredits, navigate, logout])
   /** Barra de missões/recompensas só na lista Minhas campanhas (não em create, detalhe de campanha, etc.). */
   const missionsBarPath = location.pathname.replace(/\/$/, '') || '/'
   const showMissionsBar =
@@ -439,7 +444,7 @@ export default function Layout() {
                         Busca Influencer
                       </Link>
                     )}
-                    {user && (
+                    {showCampaignsAndCredits && (
                       <Link
                         to="/app/payments"
                         style={{ ...drawerLinkStyle, ...(isActive('/app/payments') ? drawerLinkActiveStyle : {}) }}
@@ -455,7 +460,7 @@ export default function Layout() {
                         </span>
                       </Link>
                     )}
-                    {user && (
+                    {showCampaignsAndCredits && (
                       <Link to="/app/campaigns" style={{ ...drawerLinkStyle, ...(isActive('/app/campaigns') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
                         Minhas campanhas
                       </Link>

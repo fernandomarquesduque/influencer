@@ -69,7 +69,7 @@ export default function MissionsBar() {
               </span>
               {hasPending && (
                 <div style={{ fontSize: 11, color: 'var(--app-text-tertiary)', marginTop: 1 }}>
-                  Até 15 créditos grátis para seus relatórios
+                  Até 15 créditos para seus relatórios
                 </div>
               )}
             </div>

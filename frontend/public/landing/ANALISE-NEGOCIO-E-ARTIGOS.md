@@ -7,7 +7,7 @@
 1. **Lado influenciador (criador)**  
    - Entra pelo site (landing ou artigos do blog).  
    - **Cadastra** o Instagram em `/app/create`: informa o @, recebe um código via DM do Instagram (precisa seguir o perfil do programa), perfil é extraído e analisado.  
-   - Passa a ver um **relatório grátis** com: nota do perfil (score 0–100), taxa de engajamento (ER), valor estimado (post, reels, stories, destaque), tier (Nano/Micro/Mid/Macro), selos (Comunidade Forte, Alta Consistência, etc.), métricas (posts/semana, conversação), melhores horários.  
+   - Passa a ver um **relatório** com: nota do perfil (score 0–100), taxa de engajamento (ER), valor estimado (post, reels, stories, destaque), tier (Nano/Micro/Mid/Macro), selos (Comunidade Forte, Alta Consistência, etc.), métricas (posts/semana, conversação), melhores horários.  
    - Pode **gerar Media Kit em PDF** (métricas + melhores posts) na página do perfil.  
    - Pode **ativar o cadastro** na página `/activate/:handle`: preenche cidade, estado, contato, tipo de conteúdo, faixas de preço. **Só com ativação completa (ex.: cidade preenchida) o perfil entra na vitrine** para buscas por localização e outros filtros.
 
@@ -35,7 +35,7 @@ Nos artigos, vale deixar isso claro para não criar expectativa de “só cadast
 
 | Recurso | Onde está | Como descrever nos artigos |
 |--------|-----------|----------------------------|
-| Relatório grátis | Após cadastro em /app/create | Score (nota 0–100), ER, valor estimado (post, reels, stories, destaque), selos, métricas, melhores horários. |
+| Relatório | Após cadastro em /app/create | Score (nota 0–100), ER, valor estimado (post, reels, stories, destaque), selos, métricas, melhores horários. |
 | Media Kit PDF | /app/influencer/:handle/media-kit (após login) | PDF com métricas e melhores posts; pronto para enviar a marcas. |
 | Vitrine para marcas | /app (lista com filtros) | Marcas filtram por cidade, estado, bairro, nicho, tipo de conteúdo, faixa de preço, engajamento. |
 | “Ativar cadastro” | /activate/:handle | Preencher cidade, contato, preços e tipo de conteúdo para entrar na vitrine e aparecer nas buscas por região. |

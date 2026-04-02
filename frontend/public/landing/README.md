@@ -8,7 +8,7 @@ Esta pasta contém as landings em **HTML estático** para indexação por buscad
 ## Funil de aquisição
 
 ```
-Google → artigos educativos → relatório grátis → cadastro → ativação → vitrine
+Google → artigos educativos → relatório → cadastro → ativação → vitrine
 ```
 
 ## Arquivos

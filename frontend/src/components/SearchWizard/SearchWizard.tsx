@@ -6,7 +6,6 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElemen
 import { Button, Typography, Progress, Spin, Modal, message } from 'antd'
 import {
   TeamOutlined,
-  UserOutlined,
   RocketOutlined,
   ApartmentOutlined,
   CrownOutlined,
@@ -47,6 +46,41 @@ export interface EstimateResult {
 /** Máximo de categorias principais no passo 1 (filtro na busca). */
 const LLM_MAIN_CATEGORY_MAX = 3
 
+/** Acima deste total de facetas (contagem > 0), a etapa Assuntos recolhe o excesso atrás de "Ver mais". */
+const LLM_CHIP_LONG_LIST_OVER = 20
+/** Mínimo de chips visíveis antes de "Ver mais" quando a lista é longa. */
+const LLM_CHIP_MIN_VISIBLE = 20
+
+function buildWizardCollapsedChipList(
+  listAll: { name: string; count: number }[],
+  isSelected: (name: string) => boolean,
+  minVisible: number
+): { visible: { name: string; count: number }[]; hiddenCount: number } {
+  const keyOf = (r: { name: string }) => r.name.trim().toLowerCase()
+  const seen = new Set<string>()
+  const visible: { name: string; count: number }[] = []
+
+  for (const r of listAll) {
+    if ((r.count ?? 0) >= 2 || isSelected(r.name)) {
+      visible.push(r)
+      seen.add(keyOf(r))
+    }
+  }
+
+  if (visible.length < minVisible) {
+    for (const r of listAll) {
+      if (visible.length >= minVisible) break
+      const k = keyOf(r)
+      if (!seen.has(k)) {
+        visible.push(r)
+        seen.add(k)
+      }
+    }
+  }
+
+  return { visible, hiddenCount: listAll.length - visible.length }
+}
+
 const STEPS = [
   {
     key: 'llmMainCategory',
@@ -55,14 +89,14 @@ const STEPS = [
     subtitle: `Selecione de 1 a ${LLM_MAIN_CATEGORY_MAX} itens para buscar o influencer ideal para sua campanha`,
   },
   { key: 'porte', icon: TeamOutlined, title: 'Qual o tamanho do influencer?', subtitle: 'Escolha uma ou mais faixas de seguidores' },
-  { key: 'llmGender', icon: UserOutlined, title: 'Gênero do Influenciador', subtitle: 'Opcional' },
+  { key: 'llmSubCategories', icon: AppstoreOutlined, title: 'Assuntos', subtitle: 'Escolha assuntos relevantes para sua campanha' },
   { key: 'llmAudience', icon: TeamOutlined, title: 'Qual o público-alvo que você busca?', subtitle: 'Opcional' },
 ] as const
 
 const STEP_LLM_FIRST = 0
 const STEP_LLM_MAIN_CATEGORY = 0
 const STEP_PORTE = 1
-const STEP_LLM_GENDER = 2
+const STEP_LLM_SUBCATEGORIES = 2
 const STEP_LLM_AUDIENCE = 3
 const STEP_LLM_LAST = 3
 
@@ -186,9 +220,41 @@ function LlmChipSection(props: {
   items: { name: string; count: number }[]
   selected: string[] | undefined
   onToggle: (normalizedKey: string) => void
+  /**
+   * Com mais de `LLM_CHIP_LONG_LIST_OVER` facetas: mostra no mínimo `LLM_CHIP_MIN_VISIBLE` chips
+   * (prioriza contagem ≥ 2 e selecionados; completa pelos demais na ordem por volume). O restante vai em "Ver mais".
+   * Listas curtas mostram tudo.
+   */
+  collapseLowCount?: boolean
+  lowCountExpanded?: boolean
+  onLowCountExpandToggle?: () => void
 }) {
-  const list = props.items.filter((x) => x.count > 0)
-  if (!list.length) return null
+  const listAll = props.items
+    .filter((x) => x.count > 0)
+    .sort((a, b) => b.count - a.count)
+  if (!listAll.length) return null
+
+  const selectedNorm = new Set((props.selected ?? []).map((x) => String(x).trim().toLowerCase()))
+  const isSelected = (name: string) => selectedNorm.has(name.trim().toLowerCase())
+
+  const longList = listAll.length > LLM_CHIP_LONG_LIST_OVER
+
+  let list = listAll
+  let hiddenCount = 0
+  let showVerMais = false
+
+  if (props.collapseLowCount && longList) {
+    if (props.lowCountExpanded) {
+      list = listAll
+      showVerMais = true
+    } else {
+      const built = buildWizardCollapsedChipList(listAll, isSelected, LLM_CHIP_MIN_VISIBLE)
+      list = built.visible
+      hiddenCount = built.hiddenCount
+      showVerMais = hiddenCount > 0
+    }
+  }
+
   return (
     <div style={{ marginBottom: props.title ? 20 : 0, width: '100%' }}>
       {props.title ? (
@@ -214,6 +280,13 @@ function LlmChipSection(props: {
           )
         })}
       </div>
+      {showVerMais ? (
+        <div style={{ textAlign: 'center', marginTop: list.length ? 10 : 4 }}>
+          <Button type="link" size="small" onClick={props.onLowCountExpandToggle}>
+            {props.lowCountExpanded ? 'Ver menos' : `Ver mais (${hiddenCount})`}
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -330,7 +403,9 @@ function boundsToSizeKeyFromBuckets(
 function maxLlmStepFromFilters(f: Partial<WizardState>): number {
   let max = -1
   if ((f.llmMainCategory?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_MAIN_CATEGORY)
-  if ((f.llmGender?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_GENDER)
+  if ((f.llmSubCategories?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_SUBCATEGORIES)
+  /** Links antigos com filtro de gênero: considera etapa 2 concluída para retomar o fluxo. */
+  if ((f.llmGender?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_SUBCATEGORIES)
   if ((f.llmAudienceType?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if ((f.llmToneOfVoice?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if ((f.llmRiskLevel?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
@@ -353,8 +428,8 @@ function filterPatchForWizardStep(stepIndex: number): Partial<WizardState> {
       return { sizeFilter: undefined, minFollowers: undefined, maxFollowers: undefined }
     case STEP_LLM_MAIN_CATEGORY:
       return { llmMainCategory: undefined }
-    case STEP_LLM_GENDER:
-      return { llmGender: undefined }
+    case STEP_LLM_SUBCATEGORIES:
+      return { llmSubCategories: undefined }
     case STEP_LLM_AUDIENCE:
       return { llmAudienceType: undefined, llmRiskLevel: undefined, llmToneOfVoice: undefined, llmIsFamilySafe: undefined, llmIsAdultContent: undefined }
     default:
@@ -443,6 +518,8 @@ export default function SearchWizard({
   const fixedSearchTerm = initialSearchTerm.trim()
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
   const [nextStepLoading, setNextStepLoading] = useState(false)
+  /** Etapa Assuntos: facetas com contagem menor que 2 só após "Ver mais". */
+  const [llmLowCountChipsExpanded, setLlmLowCountChipsExpanded] = useState(false)
   const mainCategoryItems = useMemo(
     () => mainCategoryFacetItemsForWizard(facets, initialFacets),
     [facets, initialFacets]
@@ -460,6 +537,10 @@ export default function SearchWizard({
     if (Object.keys(patch).length === 0) return
     setState((prev) => ({ ...prev, ...patch }))
   }, [step])
+
+  useEffect(() => {
+    setLlmLowCountChipsExpanded(false)
+  }, [step, facets])
 
   /** Sincroniza seleções com a URL conforme os filtros do wizard. */
   useEffect(() => {
@@ -834,7 +915,7 @@ export default function SearchWizard({
                     const chipOrHint = (items: { name: string; count: number }[], el: ReactElement) =>
                       (items ?? []).some((i) => i.count > 0) ? el : emptyHint
                     switch (step) {
-                    case STEP_LLM_MAIN_CATEGORY: {
+                      case STEP_LLM_MAIN_CATEGORY: {
                         if (!mainCategoryItems.some((i) => i.count > 0)) return emptyHint
                         return (
                           <div className="search-wizard-category-pane">
@@ -847,12 +928,15 @@ export default function SearchWizard({
                           </div>
                         )
                       }
-                      case STEP_LLM_GENDER:
-                        return chipOrHint(llm.gender ?? [], (
+                      case STEP_LLM_SUBCATEGORIES:
+                        return chipOrHint(llm.subCategories ?? [], (
                           <LlmChipSection
-                            items={llm.gender ?? []}
-                            selected={state.llmGender}
-                            onToggle={(k) => toggleArray('llmGender', k)}
+                            items={llm.subCategories ?? []}
+                            selected={state.llmSubCategories}
+                            onToggle={(k) => toggleArray('llmSubCategories', k)}
+                            collapseLowCount
+                            lowCountExpanded={llmLowCountChipsExpanded}
+                            onLowCountExpandToggle={() => setLlmLowCountChipsExpanded((e) => !e)}
                           />
                         ))
                       case STEP_LLM_AUDIENCE:
