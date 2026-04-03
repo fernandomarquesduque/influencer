@@ -14,7 +14,7 @@ import {
   incrementFollowersBucketCount,
 } from './followersSizeBuckets.js';
 
-/** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: substituído ao concluir warmSearchCache ou scheduleSearchCacheRewarm (swap atômico; durante reload segue servindo o snapshot anterior). */
+/** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: substituído ao concluir warmSearchCache ou scheduleSearchCacheRewarm. Antes de cada recarga full, o snapshot anterior é liberado para evitar dois arrays gigantes no heap (OOM perto do limite do V8). Durante a leitura do disco, buscas caem no fallback (lê do DB na requisição). */
 let searchDataCache: {
   profilesRaw: { key: string; value: Record<string, unknown> }[];
   postsRaw: { key: string; value: Record<string, unknown> }[];
@@ -54,6 +54,7 @@ let searchCacheRewarmPending = false;
 function runSearchCacheRewarmPass(db: CompositeStorage): void {
   searchCacheRewarmInFlight = true;
   const gen = ++searchCacheGeneration;
+  searchDataCache = null;
   void loadSearchCacheData(db)
     .then((data) => applySearchCacheIfCurrent(gen, data))
     .catch((err) => console.warn('[search-cache] rewarm falhou:', err))
@@ -67,9 +68,9 @@ function runSearchCacheRewarmPass(db: CompositeStorage): void {
 }
 
 /**
- * Agenda reaquecimento do cache em background (stale-while-revalidate).
+ * Agenda reaquecimento do cache em background.
  * Chamadas em rajada (ex.: refresh — 1× save + 1× savePosts + 3× saveMedia) viram no máximo 2 passadas sequenciais,
- * nunca várias Promise.all(profile+post) simultâneas.
+ * nunca várias Promise.all(profile+post) simultâneas. O snapshot antigo é descartado antes da nova leitura (menos pico de heap).
  */
 export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
   if (searchCacheRewarmInFlight) {
@@ -88,6 +89,7 @@ export function clearSearchCache(): void {
 /** Aquece o cache carregando perfis e posts do storage. Chamar na subida da API para a 1ª busca já ser rápida. */
 export async function warmSearchCache(db: CompositeStorage): Promise<void> {
   const gen = ++searchCacheGeneration;
+  searchDataCache = null;
   logMemorySnapshot('search-cache: antes de ler profile+post do disco');
   const data = await loadSearchCacheData(db);
   applySearchCacheIfCurrent(gen, data);

@@ -17,6 +17,11 @@ interface ProfileAvatarProps {
   queueOnError?: boolean
   onRefreshQueued?: (handle: string) => void
   onImageError?: () => void
+  /**
+   * Quando true e ainda não há `src` nem `stableBackgroundUrl`, exibe loader em vez do placeholder de usuário
+   * (ex.: perfil no header enquanto a API ainda não devolveu a URL da foto).
+   */
+  pending?: boolean
 }
 
 export default function ProfileAvatar({
@@ -32,16 +37,37 @@ export default function ProfileAvatar({
   queueOnError = true,
   onRefreshQueued,
   onImageError,
+  pending = false,
 }: ProfileAvatarProps) {
-  const [imageLoading, setImageLoading] = useState(!!src)
+  const hasSrc = Boolean(src)
+  const hasStableBg = Boolean(stableBackgroundUrl)
+
+  const [imageLoading, setImageLoading] = useState(hasSrc)
   const [imageError, setImageError] = useState(false)
+  const [stableBgReady, setStableBgReady] = useState(!hasStableBg)
   const queuedForCurrentSrcRef = useRef(false)
 
   useEffect(() => {
-    setImageLoading(!!src)
+    setImageLoading(hasSrc)
     setImageError(false)
     queuedForCurrentSrcRef.current = false
   }, [src])
+
+  useEffect(() => {
+    if (!hasSrc && hasStableBg && stableBackgroundUrl) {
+      setStableBgReady(false)
+      const img = new Image()
+      const done = () => setStableBgReady(true)
+      img.onload = done
+      img.onerror = done
+      img.src = stableBackgroundUrl
+      return () => {
+        img.onload = null
+        img.onerror = null
+      }
+    }
+    setStableBgReady(true)
+  }, [hasSrc, hasStableBg, stableBackgroundUrl])
 
   const normalizedHandle = String(handle ?? '').replace(/^@/, '').trim()
 
@@ -55,6 +81,28 @@ export default function ProfileAvatar({
           backgroundPosition: 'center center',
         }
       : undefined
+
+  const stableBgLoading = !hasSrc && hasStableBg && !stableBgReady
+  const showPendingOnly = !hasSrc && !hasStableBg && pending
+
+  const loaderOverlay = (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        background: stableBackgroundUrl ? 'rgba(0,0,0,0.2)' : background,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2,
+      }}
+    >
+      <Spin size={size >= 56 ? 'default' : 'small'} />
+    </div>
+  )
 
   if (!src) {
     if (stableBackgroundUrl) {
@@ -74,6 +122,28 @@ export default function ProfileAvatar({
           title={alt || undefined}
         >
           <div aria-hidden style={stableBgStyle} />
+          {stableBgLoading ? loaderOverlay : null}
+        </div>
+      )
+    }
+    if (showPendingOnly) {
+      return (
+        <div
+          style={{
+            position: 'relative',
+            flexShrink: 0,
+            width: size,
+            height: size,
+            borderRadius: '50%',
+            overflow: 'hidden',
+            border,
+            boxShadow: shadow,
+            background,
+          }}
+          title={alt || undefined}
+          aria-busy="true"
+        >
+          {loaderOverlay}
         </div>
       )
     }
@@ -125,24 +195,7 @@ export default function ProfileAvatar({
           onRefreshQueued?.(normalizedHandle)
         }}
       />
-      {imageLoading && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: size,
-            height: size,
-            borderRadius: '50%',
-            background: stableBackgroundUrl ? 'rgba(0,0,0,0.2)' : background,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 2,
-          }}
-        >
-          <Spin size="default" />
-        </div>
-      )}
+      {imageLoading ? loaderOverlay : null}
       {imageError && !stableBackgroundUrl && (
         <Avatar
           size={size}

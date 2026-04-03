@@ -3,6 +3,7 @@
  * Afunila o resultado: a cada escolha o usuário vê a quantidade de perfis que os filtros retornam.
  */
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ComponentType } from 'react'
+import { flushSync } from 'react-dom'
 import { Button, Typography, Progress, Spin, Modal, message } from 'antd'
 import {
   TeamOutlined,
@@ -104,6 +105,33 @@ const STEP_LLM_LAST = 3
  * Alinha `sizeFilter` aos buckets com count > 0 (igual aos chips renderizados).
  * Retorna `changed` se a lista mudou; `next` undefined quando nada sobra.
  */
+/** Troca de etapa com slide horizontal (View Transitions quando o browser suporta). */
+function runSearchWizardSlideTransition(direction: 'forward' | 'back', update: () => void): void {
+  if (typeof document === 'undefined') {
+    update()
+    return
+  }
+  const root = document.documentElement
+  root.setAttribute('data-search-wizard-slide', direction)
+  const finishCleanup = () => {
+    root.removeAttribute('data-search-wizard-slide')
+  }
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void> } }
+  if (typeof doc.startViewTransition === 'function') {
+    try {
+      doc.startViewTransition(() => {
+        flushSync(update)
+      }).finished.finally(finishCleanup)
+    } catch {
+      flushSync(update)
+      finishCleanup()
+    }
+  } else {
+    flushSync(update)
+    window.setTimeout(finishCleanup, 700)
+  }
+}
+
 function prunePorteSizeFilter(
   sizeFilter: string[] | undefined,
   facetsData: ProfilesSearchFacets | null | undefined
@@ -621,7 +649,7 @@ export default function SearchWizard({
           setFacets(nextFacets ?? null)
           {
             const nextIdx = step + 1
-            setStep(nextIdx)
+            runSearchWizardSlideTransition('forward', () => setStep(nextIdx))
           }
         } catch (e) {
           Modal.error({
@@ -635,7 +663,7 @@ export default function SearchWizard({
         }
       } else {
         const nextIdx = step + 1
-        setStep(nextIdx)
+        runSearchWizardSlideTransition('forward', () => setStep(nextIdx))
       }
     } else finish()
   }
@@ -644,9 +672,11 @@ export default function SearchWizard({
     if (step === STEP_PORTE) {
       const patch = filterPatchesBackToFirstStep()
       const cleaned = { ...state, ...patch }
-      update(patch)
-      setStep(STEP_LLM_MAIN_CATEGORY)
-      syncUrl(cleaned, STEP_LLM_MAIN_CATEGORY)
+      runSearchWizardSlideTransition('back', () => {
+        update(patch)
+        setStep(STEP_LLM_MAIN_CATEGORY)
+        syncUrl(cleaned, STEP_LLM_MAIN_CATEGORY)
+      })
       if (onEstimate) {
         setNextStepLoading(true)
         try {
@@ -672,9 +702,11 @@ export default function SearchWizard({
 
     const applyPrevStateAndUrl = (finalPatch: Partial<WizardState>, finalTarget: number) => {
       const cleaned = { ...state, ...finalPatch }
-      update(finalPatch)
-      syncUrl(cleaned, finalTarget)
-      setStep(finalTarget)
+      runSearchWizardSlideTransition('back', () => {
+        update(finalPatch)
+        syncUrl(cleaned, finalTarget)
+        setStep(finalTarget)
+      })
     }
 
     if (onEstimate) {
@@ -761,7 +793,7 @@ export default function SearchWizard({
 
       ; (async () => {
         if (!onEstimate) {
-          setStep(STEP_LLM_FIRST)
+          runSearchWizardSlideTransition('back', () => setStep(STEP_LLM_FIRST))
           return
         }
         setNextStepLoading(true)
@@ -769,7 +801,7 @@ export default function SearchWizard({
           const query = stateToQuery(cleaned)
           const { facets: nextFacets } = await onEstimate(query)
           setFacets(nextFacets ?? null)
-          setStep(STEP_LLM_FIRST)
+          runSearchWizardSlideTransition('back', () => setStep(STEP_LLM_FIRST))
         } catch (e) {
           Modal.error({
             title: 'Não foi possível atualizar',
@@ -854,7 +886,18 @@ export default function SearchWizard({
           style={{ width: '100%', display: 'flex', flexDirection: 'column', overflow: 'visible', position: 'relative', alignItems: 'center' }}
           className="search-wizard-step"
         >
-          <div key={step} className="search-wizard-stage" style={{ display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', textAlign: 'center' }}>
+          <div
+            key={step}
+            className="search-wizard-stage"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              width: '100%',
+              alignItems: 'center',
+              textAlign: 'center',
+              viewTransitionName: 'search-wizard-stage',
+            }}
+          >
             <Typography.Title level={2} style={{ marginBottom: 4, fontSize: 22, fontWeight: 600, flexShrink: 0 }}>
               {currentStep.title}
             </Typography.Title>

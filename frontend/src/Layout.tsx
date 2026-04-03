@@ -56,6 +56,7 @@ export default function Layout() {
   const isMobile = !screens.md
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [headerProfilePic, setHeaderProfilePic] = useState<string | null>(null)
+  const [headerProfilePicFetching, setHeaderProfilePicFetching] = useState(false)
   const [headerProfileName, setHeaderProfileName] = useState<string | null>(null)
   const myHandle = user?.profile_handle?.replace(/^@/, '')
   const myProfilePath = myHandle ? `/app/influencer/${encodeURIComponent(myHandle)}` : ''
@@ -157,12 +158,18 @@ export default function Layout() {
   useEffect(() => {
     if (!user) {
       setHeaderProfilePic(null)
+      setHeaderProfilePicFetching(false)
       setHeaderProfileName(null)
       return
     }
     setHeaderProfileName(user.profile_handle ? `@${user.profile_handle.replace(/^@/, '')}` : user.username)
-    if (!myHandle) return
+    if (!myHandle) {
+      setHeaderProfilePicFetching(false)
+      return
+    }
     let cancelled = false
+    setHeaderProfilePic(null)
+    setHeaderProfilePicFetching(true)
     fetchProfile(myHandle)
       .then((profile) => {
         if (cancelled) return
@@ -174,6 +181,9 @@ export default function Layout() {
       })
       .catch(() => {
         if (!cancelled) setHeaderProfilePic(null)
+      })
+      .finally(() => {
+        if (!cancelled) setHeaderProfilePicFetching(false)
       })
     return () => { cancelled = true }
   }, [myHandle, user?.id, user?.username, user?.profile_handle])
@@ -356,6 +366,7 @@ export default function Layout() {
                                 handle={myHandle}
                                 size={36}
                                 fallbackIconSize={18}
+                                pending={headerProfilePicFetching}
                                 onImageError={() => setHeaderProfilePic(null)}
                               />
                             </span>

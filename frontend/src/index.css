@@ -1175,23 +1175,125 @@ select,
 }
 
 .search-wizard-step {
-  /* container das etapas */
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .search-wizard-stage {
-  animation: searchWizardStageIn 0.35s ease-out;
   width: 100%;
+  backface-visibility: hidden;
 }
 
-@keyframes searchWizardStageIn {
+/* Slide horizontal entre etapas — curvas assimétricas + opacidade (mais fluido). */
+@keyframes searchWizardVtOutLeft {
   from {
-    opacity: 0;
-    transform: translateY(12px);
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0.2;
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes searchWizardVtInFromRight {
+  from {
+    opacity: 0.35;
+    transform: translateX(100%);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0);
+  }
+}
+
+@keyframes searchWizardVtOutRight {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0.2;
+    transform: translateX(100%);
+  }
+}
+
+@keyframes searchWizardVtInFromLeft {
+  from {
+    opacity: 0.35;
+    transform: translateX(-100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Saída um pouco mais rápida; entrada desacelera suave no fim (expo ease-out). */
+html[data-search-wizard-slide='forward']::view-transition-old(search-wizard-stage) {
+  animation: 420ms cubic-bezier(0.45, 0, 0.55, 1) both searchWizardVtOutLeft;
+}
+
+html[data-search-wizard-slide='forward']::view-transition-new(search-wizard-stage) {
+  animation: 560ms cubic-bezier(0.16, 1, 0.3, 1) both searchWizardVtInFromRight;
+}
+
+html[data-search-wizard-slide='back']::view-transition-old(search-wizard-stage) {
+  animation: 420ms cubic-bezier(0.45, 0, 0.55, 1) both searchWizardVtOutRight;
+}
+
+html[data-search-wizard-slide='back']::view-transition-new(search-wizard-stage) {
+  animation: 560ms cubic-bezier(0.16, 1, 0.3, 1) both searchWizardVtInFromLeft;
+}
+
+/* Browsers sem View Transitions: entrada com o mesmo “landing” suave. */
+@supports not (view-transition-name: none) {
+  @keyframes searchWizardSlideEnterFromRight {
+    from {
+      transform: translateX(100%);
+      opacity: 0.35;
+    }
+
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes searchWizardSlideEnterFromLeft {
+    from {
+      transform: translateX(-100%);
+      opacity: 0.35;
+    }
+
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  html[data-search-wizard-slide='forward'] .search-wizard-step .search-wizard-stage {
+    animation: 560ms cubic-bezier(0.16, 1, 0.3, 1) both searchWizardSlideEnterFromRight;
+  }
+
+  html[data-search-wizard-slide='back'] .search-wizard-step .search-wizard-stage {
+    animation: 560ms cubic-bezier(0.16, 1, 0.3, 1) both searchWizardSlideEnterFromLeft;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  html[data-search-wizard-slide]::view-transition-old(search-wizard-stage),
+  html[data-search-wizard-slide]::view-transition-new(search-wizard-stage) {
+    animation-duration: 0.01ms !important;
+  }
+
+  html[data-search-wizard-slide] .search-wizard-step .search-wizard-stage {
+    animation: none !important;
   }
 }
 
