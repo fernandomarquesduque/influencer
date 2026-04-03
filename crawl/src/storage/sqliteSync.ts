@@ -1,6 +1,6 @@
 /**
- * SQLite (data/influencer.db): apenas profile_activation (cadastro do influenciador).
- * Perfis e posts ficam somente no RocksDB; não há mais tabelas profiles/post aqui.
+ * SQLite (data/influencer.db): profile_activation, projetos, fila, favoritos e índice de busca (FTS5 + aux por handle).
+ * Perfis e posts continuam no RocksDB; o índice espelha texto/métricas para busca sem carregar todos os posts no Node.
  */
 
 import Database from 'better-sqlite3';
@@ -176,6 +176,99 @@ export class SqliteSync {
     this.migrateMessageTemplatesSendDelay();
     this.migrateDirectQueueColumns();
     this.migrateUserFavoriteCampaignId();
+    this.ensureProfileSearchIndexTables();
+  }
+
+  /** FTS5 + metadados para busca textual sem carregar todos os posts no heap do Node. */
+  private ensureProfileSearchIndexTables(): void {
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS profile_search_fts USING fts5(
+        handle UNINDEXED,
+        content,
+        tokenize = 'unicode61 remove_diacritics 2'
+      );
+      CREATE TABLE IF NOT EXISTS profile_search_aux (
+        handle TEXT PRIMARY KEY,
+        engagement_json TEXT NOT NULL,
+        hashtags_json TEXT NOT NULL,
+        search_blob TEXT NOT NULL
+      );
+    `);
+  }
+
+  /** Substitui documento FTS + linha auxiliar (transação). */
+  upsertProfileSearchIndex(
+    handle: string,
+    ftsContent: string,
+    engagementJson: string,
+    hashtagsJson: string,
+    searchBlob: string
+  ): void {
+    const h = handle.toLowerCase().replace(/^@/, '');
+    const delFts = this.db.prepare('DELETE FROM profile_search_fts WHERE handle = ?');
+    const insFts = this.db.prepare('INSERT INTO profile_search_fts (handle, content) VALUES (?, ?)');
+    const upsertAux = this.db.prepare(`
+      INSERT INTO profile_search_aux (handle, engagement_json, hashtags_json, search_blob)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(handle) DO UPDATE SET
+        engagement_json = excluded.engagement_json,
+        hashtags_json = excluded.hashtags_json,
+        search_blob = excluded.search_blob
+    `);
+    const trx = this.db.transaction(() => {
+      delFts.run(h);
+      insFts.run(h, ftsContent);
+      upsertAux.run(h, engagementJson, hashtagsJson, searchBlob);
+    });
+    trx();
+  }
+
+  deleteProfileSearchIndex(handle: string): void {
+    const h = handle.toLowerCase().replace(/^@/, '');
+    this.db.prepare('DELETE FROM profile_search_fts WHERE handle = ?').run(h);
+    this.db.prepare('DELETE FROM profile_search_aux WHERE handle = ?').run(h);
+  }
+
+  /**
+   * Busca por FTS na coluna `content`. bm25 menor = mais relevante.
+   * MATCH inválido retorna lista vazia (não propaga erro).
+   */
+  searchProfileHandlesFts(matchExpr: string, limit: number): { handle: string; bm25: number }[] {
+    const lim = Math.min(Math.max(1, Math.floor(limit)), 100000);
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT handle, bm25(profile_search_fts) AS b
+           FROM profile_search_fts
+           WHERE profile_search_fts MATCH ?
+           ORDER BY b ASC
+           LIMIT ?`
+        )
+        .all(matchExpr, lim) as { handle: string; b: number }[];
+      return rows.map((r) => ({ handle: String(r.handle ?? '').toLowerCase().replace(/^@/, ''), bm25: r.b }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Todas as linhas auxiliares (para listagem / facets sem ler o bucket post inteiro). */
+  getAllProfileSearchAuxRows(): { handle: string; engagement_json: string; hashtags_json: string; search_blob: string }[] {
+    const rows = this.db
+      .prepare(
+        'SELECT handle, engagement_json, hashtags_json, search_blob FROM profile_search_aux'
+      )
+      .all() as { handle: string; engagement_json: string; hashtags_json: string; search_blob: string }[];
+    return rows.map((r) => ({
+      handle: String(r.handle ?? '').toLowerCase().replace(/^@/, ''),
+      engagement_json: r.engagement_json ?? '{}',
+      hashtags_json: r.hashtags_json ?? '[]',
+      search_blob: r.search_blob ?? '',
+    }));
+  }
+
+  countProfileSearchAuxRows(): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS c FROM profile_search_aux').get() as { c: number } | undefined;
+    return row?.c ?? 0;
   }
 
   private migrateUserFavoriteCampaignId(): void {
@@ -470,6 +563,16 @@ export class SqliteSync {
     this.db.exec('DELETE FROM profile_activation;');
     this.db.exec('DELETE FROM project_application;');
     this.db.exec('DELETE FROM project;');
+    try {
+      this.db.exec('DELETE FROM profile_search_fts;');
+    } catch {
+      // FTS pode não existir em DB legado
+    }
+    try {
+      this.db.exec('DELETE FROM profile_search_aux;');
+    } catch {
+      // tabela pode não existir
+    }
   }
 
   /** Projetos para influenciadores (estilo Workana). */

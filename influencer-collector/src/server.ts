@@ -48,6 +48,9 @@ const JSON_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate',
 } as const;
 
+/** Máximo de linhas de Problemas na API/UI — evita HTML/JSON enorme (lista completa continua no SQLite). */
+const PROBLEMAS_API_LIMIT = 50;
+
 function sendJson(res: ServerResponse, status: number, data: object): void {
   res.writeHead(status, JSON_HEADERS);
   res.end(JSON.stringify(data));
@@ -299,7 +302,7 @@ export function createCollectorRequestHandler(
         apiHost: p.apiHost ?? '',
         rocksDbVerified: p.rocksDbVerified ?? '',
       }));
-      const problemas = L.problemas.map((x) => ({
+      const problemas = L.problemas.slice(0, PROBLEMAS_API_LIMIT).map((x) => ({
         id: x.id,
         handle: x.handle,
         handleKey: x.handleKey,
@@ -527,7 +530,7 @@ export function createCollectorRequestHandler(
   </div>
   <h2 class="section">3 — Erro (após processamento)</h2>
   <p id="problemasTotalizer" class="problemas-totalizer" style="margin:0.25rem 0 0.65rem;padding:0.55rem 0.75rem;border-radius:6px;background:linear-gradient(90deg,#2c1518 0%,#1f1a24 100%);border:1px solid #7f1d1d;font-size:1rem;line-height:1.45;">
-    <span style="color:#fecaca">Total de registros de erro (SQLite; todos na tabela abaixo, mais recentes primeiro):</span>
+    <span style="color:#fecaca">Total de registros de erro no SQLite (abaixo: até ${PROBLEMAS_API_LIMIT} mais recentes):</span>
     <strong id="problemasTotalCount" style="color:#fca5a5;font-size:1.15rem;margin:0 0.25rem">0</strong>
   </p>
   <p class="hint" style="margin-top:0">Problemas ficam no <strong>SQLite</strong> (<code>data/collector-issues.sqlite</code> ou <code>COLLECTOR_ISSUES_DB_PATH</code>). Migração automática do JSON antigo na primeira subida. Opcional: append <code>collector-issues-append.jsonl</code> (<code>COLLECTOR_ISSUES_APPEND=off</code> desliga). <strong>Remover</strong> uma linha tira o @ da lista de bloqueio — na próxima coleta o perfil pode ser processado de novo.</p>
@@ -801,15 +804,16 @@ export function createCollectorRequestHandler(
           var c = d.counts || {};
           document.getElementById('countC').textContent = c.coletados != null ? c.coletados : 0;
           var probDb = c.problemas != null ? c.problemas : 0;
-          var probUi = c.problemasUi != null ? c.problemasUi : probDb;
           document.getElementById('countP').textContent = probDb;
           var ptot = document.getElementById('problemasTotalCount');
           if (ptot) ptot.textContent = probDb;
+          var coletados = Array.isArray(d.coletados) ? d.coletados : [];
+          var problemas = Array.isArray(d.problemas) ? d.problemas : [];
           var evHint = document.getElementById('countPEvents');
           if (evHint) {
             var evN = c.problemasEventosSessao != null ? c.problemasEventosSessao : 0;
-            if (probDb > probUi) {
-              evHint.textContent = ' · tabela: ' + probUi + ' linha(s) carregadas; total SQLite: ' + probDb;
+            if (probDb > problemas.length) {
+              evHint.textContent = ' · tabela: ' + problemas.length + ' mais recente(s); total SQLite: ' + probDb;
             } else if (evN > probDb) {
               evHint.textContent = ' · ' + evN + ' eventos nesta execução';
             } else {
@@ -819,8 +823,6 @@ export function createCollectorRequestHandler(
           document.getElementById('countI').textContent = c.integrados != null ? c.integrados : 0;
           var countGEl = document.getElementById('countG');
           if (countGEl) countGEl.textContent = c.googleQueue != null ? c.googleQueue : 0;
-          var coletados = Array.isArray(d.coletados) ? d.coletados : [];
-          var problemas = Array.isArray(d.problemas) ? d.problemas : [];
           var integrados = Array.isArray(d.integrados) ? d.integrados : [];
           var googleQueue = Array.isArray(d.googleQueue) ? d.googleQueue : [];
           var procFull = d.processing;

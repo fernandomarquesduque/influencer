@@ -857,7 +857,7 @@ export default function CampaignInfluencers() {
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [data.length, total, loadMore, loadingMore])
+  }, [pendingPayment, data.length, total, loadMore, loadingMore])
 
   useEffect(() => {
     setSearchInput(searchParams.get('q') ?? '')

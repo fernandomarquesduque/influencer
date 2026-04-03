@@ -17,6 +17,7 @@
     "create-admin": "tsx src/scripts/create-admin.ts",
     "create-admin:server": "node dist/scripts/create-admin.js",
     "seed-projects": "tsx scripts/seed-projects.ts",
+    "rebuild-search-index": "tsx src/scripts/rebuild-search-index.ts",
     "router-port-forward": "tsx src/scripts/router-port-forward.ts",
     "test:request-code": "tsx scripts/test-request-code-with-extract.ts",
     "test:email": "tsx src/scripts/test-email.ts"

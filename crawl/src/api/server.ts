@@ -46,7 +46,9 @@ import {
   collectMentionHandlesFromPostItem,
   type ProfilesSearchQuery,
   type ProfileListItem,
+  type ProfilesSearchFacets,
 } from './profilesSearch.js';
+import { rebuildAllProfileSearchIndexes, syncProfileSearchIndexForHandle } from './profileSearchIndexSync.js';
 import { CreditsCampaignsDb, isCampaignIdGuid } from '../storage/creditsCampaignsDb.js';
 import { PaymentsDb, type PaymentRow } from '../storage/paymentsDb.js';
 import * as asaas from '../asaas/client.js';
@@ -151,7 +153,14 @@ process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) =>
 
 const rocks = new RocksDBStorage({ dbPath: rocksPath });
 const sqlite = new SqliteSync(sqlitePath);
-const db = new CompositeStorage(rocks, sqlite, (storage) => scheduleSearchCacheRewarm(storage));
+const db = new CompositeStorage(
+  rocks,
+  sqlite,
+  (storage) => scheduleSearchCacheRewarm(storage),
+  (storage, handle) => {
+    void syncProfileSearchIndexForHandle(storage, handle);
+  }
+);
 const collectorController = createCollectorController(db);
 app.use('/api/crawl', createCollectorCrawlRouter(collectorController));
 const authDb = new AuthDb(sqlitePath);
@@ -2517,7 +2526,12 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
         restrictToHandles = handles;
       }
     }
-    const result = await searchProfiles(db, queryForSearch, restrictToHandles?.length ? { restrictToHandles } : undefined);
+    const result = await searchProfiles(db, queryForSearch, {
+      ...(restrictToHandles?.length ? { restrictToHandles } : {}),
+      /** Só total + facets na resposta: ordenação e BI da fatia são custo puro O(n log n) / I/O. */
+      skipSort: true,
+      skipInstagramBi: true,
+    });
     // Segurança: nunca retorne `items` (lista de perfis) neste endpoint.
     // Este endpoint serve apenas agregações (`total` + `facets`) para qualquer usuário.
     res.json(publicSearchPayload(result as unknown as { total: number; facets: Record<string, unknown> }));
@@ -4054,7 +4068,12 @@ async function getCampaignStats(campaignId: string, userId: number): Promise<Cam
   const handles = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
   if (!handles || handles.length === 0) return null;
   const limit = Math.min(handles.length, 2000);
-  const result = await searchProfiles(db, { limit, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
+  /** Sem facetas nem BI: só agregados + preview (evita milhares de leituras Rocks / CPU). */
+  const result = await searchProfiles(
+    db,
+    { limit, offset: 0, sort: 'engagement_desc', includeFacets: false },
+    { restrictToHandles: handles, skipInstagramBi: true },
+  );
   let totalLikes = 0;
   let totalComments = 0;
   let totalViews = 0;
@@ -4808,7 +4827,10 @@ app.post('/api/campaigns/:id/pay-with-credits', async (req: RequestWithAuth, res
 });
 
 /** Parseia query params para ProfilesSearchQuery (mesma lógica da busca principal, sem q/categories). */
-function buildCampaignProfilesQuery(req: { query: Record<string, unknown> }): ProfilesSearchQuery {
+function buildCampaignProfilesQuery(
+  req: { query: Record<string, unknown> },
+  opts?: { maxLimit?: number }
+): ProfilesSearchQuery {
   const parseNumList = (v: unknown): number[] | undefined => {
     if (v == null) return undefined;
     if (Array.isArray(v)) return v.map(Number).filter(Number.isFinite);
@@ -4857,7 +4879,8 @@ function buildCampaignProfilesQuery(req: { query: Record<string, unknown> }): Pr
   const accountTypeFilter = req.query.accountTypeFilter;
   const sizeFilter = req.query.sizeFilter;
   const sort = (req.query.sort as string) || 'engagement_desc';
-  const limit = Math.min(Math.max(0, Number(req.query.limit) || 50), 200);
+  const maxLimit = opts?.maxLimit ?? 200;
+  const limit = Math.min(Math.max(0, Number(req.query.limit) || 50), maxLimit);
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const q = (req.query.q as string)?.trim() || undefined;
   const sizeFilterArr = Array.isArray(sizeFilter) ? sizeFilter.map(String).filter(Boolean) : typeof sizeFilter === 'string' ? sizeFilter.split(',').map((x) => x.trim()).filter(Boolean) : undefined;
@@ -4936,17 +4959,24 @@ app.get('/api/admin/influencers', requireScopes('adm'), rateLimitDataApi, async 
 const CAMPAIGN_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
 const campaignContextCache = new Map<
   string,
-  { items: ProfileListItem[]; ts: number }
+  { items: ProfileListItem[]; baseFacets: ProfilesSearchFacets; ts: number }
 >();
 
-function getCachedCampaignContext(campaignId: string): ProfileListItem[] | null {
+function getCachedCampaignContext(campaignId: string): {
+  items: ProfileListItem[];
+  baseFacets: ProfilesSearchFacets;
+} | null {
   const entry = campaignContextCache.get(campaignId);
   if (!entry || Date.now() - entry.ts > CAMPAIGN_CONTEXT_CACHE_TTL_MS) return null;
-  return entry.items;
+  return { items: entry.items, baseFacets: entry.baseFacets };
 }
 
-function setCachedCampaignContext(campaignId: string, items: ProfileListItem[]): void {
-  campaignContextCache.set(campaignId, { items, ts: Date.now() });
+function setCachedCampaignContext(
+  campaignId: string,
+  items: ProfileListItem[],
+  baseFacets: ProfilesSearchFacets
+): void {
+  campaignContextCache.set(campaignId, { items, baseFacets, ts: Date.now() });
 }
 
 /** Invalida listagens agregadas de campanha (ex.: após purge admin ou mudança em handles_json). */
@@ -5113,14 +5143,27 @@ app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWith
       return;
     }
     const cacheKey = `all:${userId}`;
-    const query = buildCampaignProfilesQuery(req);
-    let contextItems: ProfileListItem[] | null = getCachedCampaignContext(cacheKey);
-    if (contextItems == null) {
-      const fullResult = await searchProfiles(db, { limit: 10000, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
+    const query = buildCampaignProfilesQuery(req, { maxLimit: 10000 });
+    const ctxAll = getCachedCampaignContext(cacheKey);
+    let contextItems: ProfileListItem[];
+    let campaignBaseFacets: ProfilesSearchFacets | undefined;
+    if (ctxAll == null) {
+      const fullResult = await searchProfiles(
+        db,
+        { limit: 10000, offset: 0, sort: 'engagement_desc' },
+        { restrictToHandles: handles, skipInstagramBi: true },
+      );
       contextItems = fullResult.items;
-      if (contextItems.length > 0) setCachedCampaignContext(cacheKey, contextItems);
+      campaignBaseFacets = fullResult.facets;
+      if (contextItems.length > 0) setCachedCampaignContext(cacheKey, contextItems, fullResult.facets);
+    } else {
+      contextItems = ctxAll.items;
+      campaignBaseFacets = ctxAll.baseFacets;
     }
-    const result = await searchProfiles(db, query, { initialItems: contextItems });
+    const result = await searchProfiles(db, query, {
+      initialItems: contextItems,
+      ...(campaignBaseFacets != null ? { campaignBaseFacets } : {}),
+    });
     res.json({ total: result.total, items: result.items, facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -5153,15 +5196,29 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
     const payment = paymentsDb.getByCampaignId(campaignId, userId);
     const pendingPayment = campaign.payment_status === 'pending';
 
-    const query = buildCampaignProfilesQuery(req);
-    let contextItems: ProfileListItem[] | null = getCachedCampaignContext(campaignId);
-    if (contextItems == null) {
-      const fullResult = await searchProfiles(db, { limit: 10000, offset: 0, sort: 'engagement_desc' }, { restrictToHandles: handles });
+    const query = buildCampaignProfilesQuery(req, { maxLimit: 10000 });
+    const ctxCamp = getCachedCampaignContext(campaignId);
+    let contextItems: ProfileListItem[];
+    let campaignBaseFacets: ProfilesSearchFacets | undefined;
+    if (ctxCamp == null) {
+      const fullResult = await searchProfiles(
+        db,
+        { limit: 10000, offset: 0, sort: 'engagement_desc' },
+        { restrictToHandles: handles, skipInstagramBi: true },
+      );
       contextItems = fullResult.items;
-      if (!pendingPayment && contextItems.length > 0) setCachedCampaignContext(campaignId, contextItems);
+      campaignBaseFacets = fullResult.facets;
+      if (contextItems.length > 0) setCachedCampaignContext(campaignId, contextItems, fullResult.facets);
+    } else {
+      contextItems = ctxCamp.items;
+      campaignBaseFacets = ctxCamp.baseFacets;
     }
     const queryForResult = pendingPayment ? { ...query, limit: 10000, offset: 0 } : query;
-    const result = await searchProfiles(db, queryForResult, { initialItems: contextItems });
+    const result = await searchProfiles(db, queryForResult, {
+      initialItems: contextItems,
+      ...(campaignBaseFacets != null ? { campaignBaseFacets } : {}),
+      ...(pendingPayment ? { skipInstagramBi: true } : {}),
+    });
 
     if (pendingPayment) {
       let activatedCount = 0;
@@ -6364,9 +6421,19 @@ app.get('/api-docs', (_req: Request, res: Response) => {
   const t0 = Date.now();
   try {
     if (warmSearch) {
-      console.log('Aquecendo cache de busca (perfis + posts)...');
+      console.log('Aquecendo cache de busca (só perfis; posts indexados no SQLite FTS)...');
       await warmSearchCache(db);
       console.log(`Cache de busca aquecido em ${((Date.now() - t0) / 1000).toFixed(1)}s.`);
+      const auxN = db.countProfileSearchAuxRows();
+      const handleN = (await db.listHandles()).size;
+      if (handleN > 50 && auxN < Math.floor(handleN * 0.85)) {
+        console.warn(
+          `[profile-search-index] índice desatualizado (${auxN} linhas aux / ${handleN} perfis). Reconstruindo em background…`,
+        );
+        void rebuildAllProfileSearchIndexes(db).catch((e) =>
+          console.warn('[profile-search-index] rebuild falhou:', e instanceof Error ? e.message : e),
+        );
+      }
     } else {
       console.log(
         'Cache de busca: aquecimento na subida desligado (API_WARM_SEARCH_CACHE=false). Menor pico de RAM; a 1ª busca pode ler o disco.',

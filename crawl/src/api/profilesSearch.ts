@@ -14,10 +14,12 @@ import {
   incrementFollowersBucketCount,
 } from './followersSizeBuckets.js';
 
-/** Cache em memória dos dados do RocksDB (perfis + posts). Não expira por tempo: substituído ao concluir warmSearchCache ou scheduleSearchCacheRewarm. Antes de cada recarga full, o snapshot anterior é liberado para evitar dois arrays gigantes no heap (OOM perto do limite do V8). Durante a leitura do disco, buscas caem no fallback (lê do DB na requisição). */
+/**
+ * Cache em memória só dos perfis (RocksDB). Posts não entram no heap: engajamento/hashtags vêm do SQLite
+ * (`profile_search_aux`) e texto de busca do FTS; BI da página carrega posts só dos handles retornados.
+ */
 let searchDataCache: {
   profilesRaw: { key: string; value: Record<string, unknown> }[];
-  postsRaw: { key: string; value: Record<string, unknown> }[];
 } | null = null;
 
 /**
@@ -26,21 +28,17 @@ let searchDataCache: {
  */
 let searchCacheGeneration = 0;
 
-/** Carrega perfis e posts do storage (para reaquecimento em background). */
+/** Carrega só perfis do storage (reaquecimento em background). */
 async function loadSearchCacheData(db: CompositeStorage): Promise<{
   profilesRaw: { key: string; value: Record<string, unknown> }[];
-  postsRaw: { key: string; value: Record<string, unknown> }[];
 }> {
-  const [profilesRaw, postsRaw] = await Promise.all([
-    db.getByBucket<Record<string, unknown>>('profile'),
-    db.getByBucket<Record<string, unknown>>('post'),
-  ]);
-  return { profilesRaw, postsRaw };
+  const profilesRaw = await db.getByBucket<Record<string, unknown>>('profile');
+  return { profilesRaw };
 }
 
 function applySearchCacheIfCurrent(
   gen: number,
-  data: { profilesRaw: { key: string; value: Record<string, unknown> }[]; postsRaw: { key: string; value: Record<string, unknown> }[] }
+  data: { profilesRaw: { key: string; value: Record<string, unknown> }[] }
 ): void {
   if (gen === searchCacheGeneration) {
     searchDataCache = data;
@@ -93,9 +91,8 @@ export async function warmSearchCache(db: CompositeStorage): Promise<void> {
   logMemorySnapshot('search-cache: antes de ler profile+post do disco');
   const data = await loadSearchCacheData(db);
   applySearchCacheIfCurrent(gen, data);
-  logMemorySnapshot('search-cache: snapshot em RAM aplicado', {
+  logMemorySnapshot('search-cache: snapshot em RAM aplicado (só perfis)', {
     profiles_n: data.profilesRaw.length,
-    posts_n: data.postsRaw.length,
   });
 }
 
@@ -988,6 +985,51 @@ function computeEngagement(posts: Record<string, unknown>[], followersCount: num
   };
 }
 
+/** Payload gravado no SQLite (FTS + aux) a cada sync de perfil/posts. */
+export interface ProfileSearchIndexPayload {
+  ftsText: string;
+  engagementJson: string;
+  hashtagsJson: string;
+  searchBlob: string;
+}
+
+export function buildProfileSearchIndexPayload(
+  profile: Record<string, unknown>,
+  key: string,
+  posts: Record<string, unknown>[]
+): ProfileSearchIndexPayload {
+  const fullName = getFullName(profile);
+  const baseCategories = getCategories(profile);
+  const postHashtags = getAllHashtagsFromPosts(posts);
+  const categoriesSet = new Set(
+    [...baseCategories.map((c) => c.trim().toLowerCase()), ...postHashtags].filter(Boolean)
+  );
+  const categories = [...categoriesSet].sort();
+  const ftsText = getSearchableText(profile, key, fullName, categories, posts);
+  const engagement = computeEngagement(posts, getFollowers(profile));
+  const hashtags = getAllHashtagsFromPosts(posts);
+  return {
+    ftsText,
+    engagementJson: JSON.stringify(engagement),
+    hashtagsJson: JSON.stringify(hashtags),
+    searchBlob: ftsText,
+  };
+}
+
+/** Constrói expressão FTS5 (coluna `content`): tokens com AND e prefixo `*`. */
+export function userQueryToFtsMatchExpression(q: string): string | null {
+  const t = q.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!t) return null;
+  const words = t.split(' ').map((w) => w.trim()).filter((w) => w.length >= 2);
+  if (words.length === 0) return null;
+  const parts = words.map((w) => {
+    if (/^[a-z0-9_]+$/i.test(w)) return `content:${w}*`;
+    const esc = w.replace(/"/g, '""');
+    return `content:"${esc}"*`;
+  });
+  return parts.join(' AND ');
+}
+
 /** Normaliza URL da foto do perfil. */
 function getProfilePicUrl(profile: Record<string, unknown>): string | undefined {
   const top = profile.profile_pic_url ?? profile.hd_profile_pic_url;
@@ -1007,6 +1049,21 @@ export interface SearchProfilesOptions {
   initialItems?: ProfileListItem[];
   /** Permite limit até 10000 numa única chamada (ex.: criação de campanha). Evita loop de paginação. */
   allowLargeLimit?: boolean;
+  /**
+   * Quando true, não calcula `bi` (InstagramBi): evita milhares de leituras Rocks em série
+   * (ex.: aquecimento de cache de campanha com limit 10k). Listagens paginadas normais mantêm BI.
+   */
+  skipInstagramBi?: boolean;
+  /**
+   * Facetas da lista completa (cache após primeira carga). Com `initialItems` e sem filtros na query,
+   * evita revarrer milhares de itens para recomputar facetas.
+   */
+  campaignBaseFacets?: ProfilesSearchFacets;
+  /**
+   * Quando true, não ordena itens antes de facetas/total. Ordem não afeta contagens;
+   * use no GET /api/profiles/search (só expõe total + facets, sem lista).
+   */
+  skipSort?: boolean;
 }
 
 /** Filtra e ordena perfis; retorna lista com engajamento e facets para sumarização. */
@@ -1070,39 +1127,164 @@ export async function searchProfiles(
 
   const useInitialItems = options?.initialItems != null && options.initialItems.length > 0;
 
+  const hasAnyLlmFilterInQuery =
+    parseStringArray(query.llmProfileType).length > 0 ||
+    parseStringArray(query.llmMainCategory).length > 0 ||
+    parseStringArray(query.llmGender).length > 0 ||
+    parseStringArray(query.llmLanguage).length > 0 ||
+    parseStringArray(query.llmSubCategories).length > 0 ||
+    parseStringArray(query.llmContentPillars).length > 0 ||
+    parseStringArray(query.llmAudienceType).length > 0 ||
+    parseStringArray(query.llmToneOfVoice).length > 0 ||
+    parseStringArray(query.llmRiskLevel).length > 0 ||
+    query.llmIsFamilySafe === true ||
+    query.llmIsFamilySafe === false ||
+    query.llmIsAdultContent === true ||
+    query.llmIsAdultContent === false;
+
+  const pricingFiltersActive = pricingActivationKeys.some((k) => (pricingFilters[k]?.length ?? 0) > 0);
+
+  /** Lista de campanha em cache + mesma query sem filtros: permite reutilizar facetas e pular re-sort. */
+  const campaignNoFilters =
+    !q &&
+    accountTypeFilter.length === 0 &&
+    minFollowers == null &&
+    maxFollowers == null &&
+    !excludePrivate &&
+    engagementRateBucketsFilter.length === 0 &&
+    minEngagementRate == null &&
+    avgLikesBucketsFilter.length === 0 &&
+    minAvgLikes == null &&
+    postsCountBucketsFilter.length === 0 &&
+    minPostsCount == null &&
+    activationFilter.length === 0 &&
+    citiesFilter.length === 0 &&
+    statesFilter.length === 0 &&
+    neighborhoodsFilter.length === 0 &&
+    socialNetworksFilter.length === 0 &&
+    contentTypesFilter.length === 0 &&
+    !pricingFiltersActive &&
+    costTierFilter.length === 0 &&
+    sizeFilterSet == null &&
+    !hasAnyLlmFilterInQuery &&
+    categoriesFilter.length === 0;
+
   let profilesRaw: { key: string; value: Record<string, unknown> }[];
-  let postsRaw: { key: string; value: Record<string, unknown> }[];
   if (!useInitialItems) {
     if (searchDataCache) {
       profilesRaw = searchDataCache.profilesRaw;
-      postsRaw = searchDataCache.postsRaw;
     } else {
-      logMemorySnapshot('search: cache vazio — lendo profile+post do disco nesta requisição');
-      [profilesRaw, postsRaw] = await Promise.all([
-        db.getByBucket<Record<string, unknown>>('profile'),
-        db.getByBucket<Record<string, unknown>>('post'),
-      ]);
-      searchDataCache = { profilesRaw, postsRaw };
-      logMemorySnapshot('search: cache preenchido a partir do disco', {
+      logMemorySnapshot('search: cache vazio — lendo só perfis do disco nesta requisição');
+      profilesRaw = await db.getByBucket<Record<string, unknown>>('profile');
+      searchDataCache = { profilesRaw };
+      logMemorySnapshot('search: cache de perfis preenchido a partir do disco', {
         profiles_n: profilesRaw.length,
-        posts_n: postsRaw.length,
       });
     }
   } else {
     profilesRaw = [];
-    postsRaw = [];
   }
 
-  const postsByHandle = new Map<string, Record<string, unknown>[]>();
-  for (const { key, value } of postsRaw) {
-    const v = value as Record<string, unknown>;
-    const handleRaw = (v.profile_handle ?? (key.includes(':') ? key.split(':')[0]! : key)) as string;
-    const handle = String(handleRaw ?? '').toLowerCase().replace(/^@/, '');
-    if (!handle) continue;
-    const list = postsByHandle.get(handle) ?? [];
-    list.push(v);
-    postsByHandle.set(handle, list);
+  const auxRows = !useInitialItems ? db.getAllProfileSearchAuxRows() : [];
+  const auxByHandle = new Map<
+    string,
+    { engagement_json: string; hashtags_json: string; search_blob: string }
+  >();
+  for (const r of auxRows) {
+    auxByHandle.set(r.handle, {
+      engagement_json: r.engagement_json,
+      hashtags_json: r.hashtags_json,
+      search_blob: r.search_blob,
+    });
   }
+
+  /** Campanha: muitos handles sem linha aux — preenche em paralelo (evita N× await sequencial no loop). */
+  if (!useInitialItems && restrictToHandles != null && restrictToHandles.size > 0) {
+    const missingAux = [...restrictToHandles].filter((h) => !auxByHandle.has(h));
+    const AUX_BATCH = 20;
+    for (let ai = 0; ai < missingAux.length; ai += AUX_BATCH) {
+      const batch = missingAux.slice(ai, ai + AUX_BATCH);
+      await Promise.all(
+        batch.map(async (handle) => {
+          const profile = await db.get<Record<string, unknown>>('profile', handle);
+          if (!profile) return;
+          const key = handle;
+          const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
+          const postsOne = postsRawOne.map(({ value: pv }) => pv);
+          const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
+          db.upsertProfileSearchIndexFromPayload(handle, payload);
+          auxByHandle.set(handle, {
+            engagement_json: payload.engagementJson,
+            hashtags_json: payload.hashtagsJson,
+            search_blob: payload.searchBlob,
+          });
+        })
+      );
+    }
+  } else if (
+    !useInitialItems &&
+    profilesRaw.length > 0 &&
+    (restrictToHandles == null || restrictToHandles.size === 0)
+  ) {
+    /** Busca global: perfis com LLM sem linha aux — mesmo padrão em lote que campanha. */
+    const rowsNeedingAux: { key: string; value: Record<string, unknown> }[] = [];
+    const seenNeed = new Set<string>();
+    for (const row of profilesRaw) {
+      const v = row.value as Record<string, unknown>;
+      if (!hasCompletedLlmProfile(v)) continue;
+      const h = getHandle(v, row.key).toLowerCase().replace(/^@/, '');
+      if (auxByHandle.has(h) || seenNeed.has(h)) continue;
+      seenNeed.add(h);
+      rowsNeedingAux.push(row);
+    }
+    const AUX_BATCH = 20;
+    for (let ai = 0; ai < rowsNeedingAux.length; ai += AUX_BATCH) {
+      const batch = rowsNeedingAux.slice(ai, ai + AUX_BATCH);
+      await Promise.all(
+        batch.map(async (row) => {
+          const profile = row.value as Record<string, unknown>;
+          const key = row.key;
+          const handle = getHandle(profile, key).toLowerCase().replace(/^@/, '');
+          const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
+          const postsOne = postsRawOne.map(({ value: pv }) => pv);
+          const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
+          db.upsertProfileSearchIndexFromPayload(handle, payload);
+          auxByHandle.set(handle, {
+            engagement_json: payload.engagementJson,
+            hashtags_json: payload.hashtagsJson,
+            search_blob: payload.searchBlob,
+          });
+        })
+      );
+    }
+  }
+
+  let ftsNarrowSet: Set<string> | null = null;
+  let ftsRankByHandle: Map<string, number> | null = null;
+  if (!useInitialItems && q && !restrictToHandles) {
+    const expr = userQueryToFtsMatchExpression(q);
+    if (expr) {
+      const ftsRows = db.searchProfileHandlesFts(expr, 50_000);
+      if (ftsRows.length > 0) {
+        ftsNarrowSet = new Set(ftsRows.map((r) => r.handle));
+        ftsRankByHandle = new Map();
+        for (let fi = 0; fi < ftsRows.length; fi++) {
+          ftsRankByHandle.set(ftsRows[fi]!.handle, ftsRows.length - fi);
+        }
+      }
+    }
+  }
+
+  const emptyEngagement: EngagementStats = {
+    posts_count: 0,
+    total_likes: 0,
+    total_comments: 0,
+    total_views: 0,
+    avg_likes: 0,
+    avg_comments: 0,
+    avg_views: 0,
+    engagement_rate: 0,
+  };
 
   let items: ProfileListItem[] = [];
   if (useInitialItems) {
@@ -1110,18 +1292,73 @@ export async function searchProfiles(
     // (o cartão usa handlesCount), não só quem já tem LLM concluída.
     items = options!.initialItems!;
   } else {
-    for (const { key, value } of profilesRaw) {
+    const restrictSparse =
+      restrictToHandles != null &&
+      restrictToHandles.size > 0 &&
+      restrictToHandles.size * 2 < profilesRaw.length;
+
+    let profileRowsForSearch: { key: string; value: Record<string, unknown> }[];
+    if (restrictSparse) {
+      const byHandle = new Map<string, { key: string; value: Record<string, unknown> }>();
+      for (const row of profilesRaw) {
+        const v = row.value as Record<string, unknown>;
+        const h = getHandle(v, row.key).toLowerCase().replace(/^@/, '');
+        if (!byHandle.has(h)) byHandle.set(h, row);
+      }
+      profileRowsForSearch = [];
+      for (const h of restrictToHandles!) {
+        const row = byHandle.get(h);
+        if (row) profileRowsForSearch.push(row);
+      }
+    } else {
+      profileRowsForSearch = profilesRaw;
+    }
+
+    for (const { key, value } of profileRowsForSearch) {
       const profile = value as Record<string, unknown>;
       const handle = getHandle(profile, key).toLowerCase().replace(/^@/, '');
-      if (restrictToHandles && !restrictToHandles.has(handle)) continue;
+      if (!restrictSparse && restrictToHandles && !restrictToHandles.has(handle)) continue;
       // Busca geral: só perfis com qualificação LLM pronta. Campanha: todos os handles presentes no DB.
       if (!restrictToHandles && !hasCompletedLlmProfile(profile)) continue;
+
+      if (q && ftsNarrowSet !== null && !ftsNarrowSet.has(handle)) continue;
+
+      let aux = auxByHandle.get(handle);
+      if (!aux) {
+        const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
+        const postsOne = postsRawOne.map(({ value: pv }) => pv);
+        const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
+        db.upsertProfileSearchIndexFromPayload(handle, payload);
+        aux = {
+          engagement_json: payload.engagementJson,
+          hashtags_json: payload.hashtagsJson,
+          search_blob: payload.searchBlob,
+        };
+        auxByHandle.set(handle, aux);
+      }
+
+      let engagement: EngagementStats;
+      try {
+        engagement = JSON.parse(aux.engagement_json) as EngagementStats;
+        if (typeof engagement?.posts_count !== 'number') throw new Error('invalid');
+      } catch {
+        engagement = emptyEngagement;
+      }
+
+      let postHashtags: string[] = [];
+      try {
+        const parsed = JSON.parse(aux.hashtags_json) as unknown;
+        if (Array.isArray(parsed)) postHashtags = parsed.filter((x): x is string => typeof x === 'string');
+      } catch {
+        postHashtags = [];
+      }
+
       const followersCount = getFollowers(profile);
       const fullName = getFullName(profile);
       const baseCategories = getCategories(profile);
-      const posts = postsByHandle.get(handle) ?? [];
-      const postHashtags = getAllHashtagsFromPosts(posts);
-      const categoriesSet = new Set<string>([...baseCategories.map((c) => c.trim().toLowerCase()), ...postHashtags].filter(Boolean));
+      const categoriesSet = new Set<string>(
+        [...baseCategories.map((c) => c.trim().toLowerCase()), ...postHashtags].filter(Boolean)
+      );
       const categories = [...categoriesSet].sort();
 
       if (minFollowers != null && followersCount < minFollowers) continue;
@@ -1131,8 +1368,6 @@ export async function searchProfiles(
         const at = getAccountType(profile);
         if (at == null || !accountTypeFilter.includes(at)) continue;
       }
-
-      const engagement = computeEngagement(posts, followersCount);
 
       if (engagementRateBucketsFilter.length > 0) {
         if (!matchesEngagementRateBuckets(engagement.engagement_rate, engagementRateBucketsFilter)) continue;
@@ -1145,17 +1380,10 @@ export async function searchProfiles(
       } else if (minPostsCount != null && engagement.posts_count < minPostsCount) continue;
 
       let searchRelevance: number | undefined;
-      if (!restrictToHandles && q) {
-        const textProfileOnly = getSearchableTextProfileOnly(profile, key, fullName, categories);
-        const { match: matchProfile, relevance: relProfile } = matchesQuery(textProfileOnly, q);
-        if (matchProfile) {
-          searchRelevance = relProfile;
-        } else {
-          const searchableText = getSearchableText(profile, key, fullName, categories, posts);
-          const { match, relevance } = matchesQuery(searchableText, q);
-          if (!match) continue;
-          searchRelevance = relevance;
-        }
+      if (q) {
+        const mq = matchesQuery(aux.search_blob, q);
+        if (!mq.match) continue;
+        searchRelevance = ftsRankByHandle?.get(handle) ?? mq.relevance;
       }
 
       if (!restrictToHandles && categoriesFilter.length > 0) {
@@ -1189,7 +1417,7 @@ export async function searchProfiles(
       Object.assign(item, profile);
       item.categories = categories;
       if (q) {
-        (item as Record<string, unknown>)._searchable_text = getSearchableText(profile, key, fullName, categories, posts);
+        (item as Record<string, unknown>)._searchable_text = aux.search_blob;
       }
       items.push(item);
     }
@@ -1242,6 +1470,7 @@ export async function searchProfiles(
 
   /** Filtros por ativação, cidade, estado, bairro e redes (multiselect). Aplicados também quando useInitialItems (ex.: campanha com pagamento pendente). */
   let filteredItems = items;
+  if (!(useInitialItems && campaignNoFilters)) {
   if (accountTypeFilter.length > 0) {
     filteredItems = filteredItems.filter((i) => {
       const at = (i as ProfileListItem & { account_type?: number }).account_type;
@@ -1354,28 +1583,13 @@ export async function searchProfiles(
     });
   }
 
-  const hasAnyLlmFilterInQuery =
-    parseStringArray(query.llmProfileType).length > 0 ||
-    parseStringArray(query.llmMainCategory).length > 0 ||
-    parseStringArray(query.llmGender).length > 0 ||
-    parseStringArray(query.llmLanguage).length > 0 ||
-    parseStringArray(query.llmSubCategories).length > 0 ||
-    parseStringArray(query.llmContentPillars).length > 0 ||
-    parseStringArray(query.llmAudienceType).length > 0 ||
-    parseStringArray(query.llmToneOfVoice).length > 0 ||
-    parseStringArray(query.llmRiskLevel).length > 0 ||
-    query.llmIsFamilySafe === true ||
-    query.llmIsFamilySafe === false ||
-    query.llmIsAdultContent === true ||
-    query.llmIsAdultContent === false;
-
   if (hasAnyLlmFilterInQuery) {
     filteredItems = filteredItems.filter((i) =>
       matchesLlmQualificationFilters(i as unknown as Record<string, unknown>, query)
     );
   }
 
-  if (q) {
+  if (q && useInitialItems) {
     filteredItems = filteredItems.filter((i) => {
       const text = getSearchableTextFromItem(i);
       const { match, relevance } = matchesQuery(text, q);
@@ -1386,27 +1600,40 @@ export async function searchProfiles(
       return false;
     });
   }
+  }
 
   items = filteredItems;
 
-  if (order === 'relevance_desc') {
-    items.sort(sortByOrder);
-  } else if (q) {
-    items.sort((a, b) => {
-      const relA = a.search_relevance ?? 0;
-      const relB = b.search_relevance ?? 0;
-      if (relB !== relA) return relB - relA;
-      return sortByOrder(a, b);
-    });
-  } else {
-    items.sort(sortByOrder);
+  const skipResortEngagement =
+    useInitialItems && campaignNoFilters && order === 'engagement_desc';
+
+  if (!options?.skipSort) {
+    if (order === 'relevance_desc') {
+      items.sort(sortByOrder);
+    } else if (q) {
+      items.sort((a, b) => {
+        const relA = a.search_relevance ?? 0;
+        const relB = b.search_relevance ?? 0;
+        if (relB !== relA) return relB - relA;
+        return sortByOrder(a, b);
+      });
+    } else if (!skipResortEngagement) {
+      items.sort(sortByOrder);
+    }
   }
 
   const total = items.length;
 
   /** Facets calculados sobre o conjunto completo filtrado (para sumarização na UI). Omitidos quando includeFacets=false (ex.: paginação). */
   let facets: ProfilesSearchFacets;
-  if (includeFacets) {
+  if (
+    includeFacets &&
+    useInitialItems &&
+    campaignNoFilters &&
+    options?.campaignBaseFacets != null
+  ) {
+    facets = options.campaignBaseFacets;
+  } else if (includeFacets) {
     let activatedCount = 0;
     const categoryCount = new Map<string, number>();
     const contentTypeCount = new Map<string, number>();
@@ -1591,16 +1818,29 @@ export async function searchProfiles(
   }
 
   const slice = items.slice(offset, offset + limit);
-  /** BI pesado só para os itens da página retornada (otimização); posts vêm do map para não guardar em cada item. */
-  for (const item of slice) {
-    const postsForBi = postsByHandle.get(item.handle) as PostForBi[] | undefined;
-    const followersForBi = item.followers_count;
-    if (postsForBi && postsForBi.length >= 2 && followersForBi != null) {
-      try {
-        item.bi = computeInstagramBi(followersForBi, postsForBi);
-      } catch {
-        // ignora falha no BI (dados incompletos)
-      }
+  /**
+   * BI: lê posts só dos handles do slice (não o corpus inteiro).
+   * Em lotes paralelos para não serializar centenas/milhares de round-trips ao Level/Rocks.
+   */
+  const skipBiLargeSlice = slice.length > 400;
+  if (!options?.skipInstagramBi && !skipBiLargeSlice && slice.length > 0) {
+    const BI_PARALLEL = 32;
+    for (let i = 0; i < slice.length; i += BI_PARALLEL) {
+      const chunk = slice.slice(i, i + BI_PARALLEL);
+      await Promise.all(
+        chunk.map(async (item) => {
+          const postsRows = await db.getByBucket<Record<string, unknown>>('post', `${item.handle}:`);
+          const postsForBi = postsRows.map((r) => r.value) as PostForBi[];
+          const followersForBi = item.followers_count;
+          if (postsForBi.length >= 2 && followersForBi != null) {
+            try {
+              item.bi = computeInstagramBi(followersForBi, postsForBi);
+            } catch {
+              // ignora falha no BI (dados incompletos)
+            }
+          }
+        })
+      );
     }
   }
   return { total, items: slice, facets };

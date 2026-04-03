@@ -1,5 +1,5 @@
 /**
- * Storage: perfis e posts só no RocksDB; SQLite só para profile_activation (cadastro do influenciador).
+ * Storage: perfis e posts só no RocksDB; SQLite para profile_activation e índice de busca (FTS5 + métricas por handle).
  * Contrato: apenas dados slim/normalizados (SlimProfile + NormalizedPost). Não persistir JSON completo do response.
  */
 
@@ -8,12 +8,16 @@ import type { MediaKind } from '../types/index.js';
 import type { RocksDBStorage } from './rocksdb.js';
 import type { SqliteSync, ProfileActivationData } from './sqliteSync.js';
 
+export type ProfileSearchIndexSyncFn = (db: CompositeStorage, handle: string) => void | Promise<void>;
+
 export class CompositeStorage {
   constructor(
     private readonly rocks: RocksDBStorage,
     private readonly sqlite: SqliteSync,
     /** Chamado após save/savePosts com this (storage) para reaquecer cache em background sem zerar (ex.: scheduleSearchCacheRewarm). */
-    private readonly onInvalidateSearch?: (db: CompositeStorage) => void
+    private readonly onInvalidateSearch?: (db: CompositeStorage) => void,
+    /** Atualiza índice FTS + auxiliar de busca (SQLite) para um handle após gravar perfil/posts. */
+    private readonly onProfileSearchIndexSync?: ProfileSearchIndexSyncFn
   ) { }
 
   async save(
@@ -22,6 +26,10 @@ export class CompositeStorage {
   ): Promise<{ path: string; bytes: number }> {
     const result = await this.rocks.save(entity);
     if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
+    const h = (entity.handle || '').toLowerCase().replace(/^@/, '');
+    if (h) void Promise.resolve(this.onProfileSearchIndexSync?.(this, h)).catch((e) =>
+      console.warn('[profile-search-index] sync após save:', h, e instanceof Error ? e.message : e)
+    );
     return result;
   }
 
@@ -38,6 +46,7 @@ export class CompositeStorage {
     await this.rocks.deletePostsByHandle(handle);
     this.sqlite.deleteActivation(handle);
     this.sqlite.deleteProjectApplicationsByHandle(handle);
+    this.sqlite.deleteProfileSearchIndex(handle);
     this.onInvalidateSearch?.(this);
   }
 
@@ -49,6 +58,10 @@ export class CompositeStorage {
   ): Promise<number> {
     const n = await this.rocks.savePosts(profileHandle, posts, collectedAt);
     if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
+    const h = profileHandle.toLowerCase().replace(/^@/, '');
+    if (h) void Promise.resolve(this.onProfileSearchIndexSync?.(this, h)).catch((e) =>
+      console.warn('[profile-search-index] sync após savePosts:', h, e instanceof Error ? e.message : e)
+    );
     return n;
   }
 
@@ -61,6 +74,10 @@ export class CompositeStorage {
   ): Promise<number> {
     const n = await this.rocks.saveMedia(profileHandle, mediaKind, items, collectedAt);
     if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
+    const h = profileHandle.toLowerCase().replace(/^@/, '');
+    if (h) void Promise.resolve(this.onProfileSearchIndexSync?.(this, h)).catch((e) =>
+      console.warn('[profile-search-index] sync após saveMedia:', h, e instanceof Error ? e.message : e)
+    );
     return n;
   }
 
@@ -100,6 +117,40 @@ export class CompositeStorage {
   /** Várias ativações em uma query (uso em listagem/busca para ganho de performance). */
   getActivationsBatch(handles: string[]): Map<string, ProfileActivationData> {
     return this.sqlite.getActivationsBatch(handles);
+  }
+
+  upsertProfileSearchIndexFromPayload(
+    handle: string,
+    payload: { ftsText: string; engagementJson: string; hashtagsJson: string; searchBlob: string }
+  ): void {
+    this.sqlite.upsertProfileSearchIndex(
+      handle,
+      payload.ftsText,
+      payload.engagementJson,
+      payload.hashtagsJson,
+      payload.searchBlob
+    );
+  }
+
+  searchProfileHandlesFts(matchExpr: string, limit: number): { handle: string; bm25: number }[] {
+    return this.sqlite.searchProfileHandlesFts(matchExpr, limit);
+  }
+
+  getAllProfileSearchAuxRows(): {
+    handle: string;
+    engagement_json: string;
+    hashtags_json: string;
+    search_blob: string;
+  }[] {
+    return this.sqlite.getAllProfileSearchAuxRows();
+  }
+
+  countProfileSearchAuxRows(): number {
+    return this.sqlite.countProfileSearchAuxRows();
+  }
+
+  deleteProfileSearchIndex(handle: string): void {
+    this.sqlite.deleteProfileSearchIndex(handle);
   }
 
   async clearAll(): Promise<void> {
