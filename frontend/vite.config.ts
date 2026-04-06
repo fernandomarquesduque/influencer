@@ -15,6 +15,7 @@ export default defineConfig({
     alias: {
       /** Patamares nano→celebridade: mesma fonte que o crawl (`followersSizeBuckets.ts`). */
       '@repo/followersSizeBuckets': path.resolve(__dirname, '../crawl/src/api/followersSizeBuckets.ts'),
+      '@repo/llmMainCategoryTaxonomy': path.resolve(__dirname, '../crawl/src/lib/mainCategoryTaxonomy.ts'),
     },
   },
   server: {

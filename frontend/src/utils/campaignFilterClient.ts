@@ -8,6 +8,7 @@ import { FOLLOWERS_SIZE_BUCKETS, followersCountToSizeKey } from '@repo/followers
 import { getCostTier } from './pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
+import { snapMainCategoryToTaxonomy } from '@repo/llmMainCategoryTaxonomy'
 
 type CostTier = 'low' | 'medium' | 'high' | 'very_high'
 
@@ -26,6 +27,12 @@ function bumpFacetString(map: Map<string, number>, raw: string): void {
   const k = raw.trim().toLowerCase()
   if (!k) return
   map.set(k, (map.get(k) ?? 0) + 1)
+}
+
+function bumpFacetMainCategory(map: Map<string, number>, raw: string): void {
+  const c = snapMainCategoryToTaxonomy(String(raw ?? '').trim())
+  if (!c) return
+  map.set(c, (map.get(c) ?? 0) + 1)
 }
 
 function bumpFacetStringArray(map: Map<string, number>, arr: unknown): void {
@@ -66,7 +73,7 @@ function accumulateLlmFacetsFromItem(item: ProfileListItem, maps: LlmFacetMaps):
   const q = getLlmQualification(item as unknown as Record<string, unknown>)
   if (!q) return
   bumpFacetString(maps.profileType, String(q.profileType ?? ''))
-  bumpFacetString(maps.mainCategory, String(q.mainCategory ?? ''))
+  bumpFacetMainCategory(maps.mainCategory, String(q.mainCategory ?? ''))
   bumpFacetString(maps.gender, String(q.gender ?? ''))
   bumpFacetStringArray(maps.subCategories, q.subCategories)
   bumpFacetStringArray(maps.contentPillars, q.contentPillars)
@@ -115,7 +122,16 @@ function matchesLlmQualificationFilters(record: Record<string, unknown>, query: 
   }
 
   if (!orScalar('profileType', parseStringArrayForLlm(query.llmProfileType))) return false
-  if (!orScalar('mainCategory', parseStringArrayForLlm(query.llmMainCategory))) return false
+  const mainCatSel = parseStringArrayForLlm(query.llmMainCategory)
+  if (mainCatSel.length > 0) {
+    const set = new Set(
+      mainCatSel
+        .map((s) => snapMainCategoryToTaxonomy(s.trim())?.toLowerCase())
+        .filter((x): x is string => Boolean(x))
+    )
+    const stored = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim())?.toLowerCase()
+    if (!stored || !set.has(stored)) return false
+  }
   if (!orScalar('gender', parseStringArrayForLlm(query.llmGender))) return false
 
   if (!qualificationArrayMatchesOr(qual, 'subCategories', parseStringArrayForLlm(query.llmSubCategories))) return false

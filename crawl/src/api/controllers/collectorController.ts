@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import {
+  getLlmQualification,
   hasCompletedLlmProfile,
   scheduleSearchCacheRewarm,
   warmSearchCache,
@@ -10,6 +11,7 @@ import { resyncInfluencerS3AfterDbMediaReset } from '../../storage/s3InfluencerI
 import { buildNormalizedPost } from '../../utils/slimPost.js';
 import type { SlimProfile } from '../../utils/slimProfile.js';
 import { mergeProfilePreservingLlm } from '../../utils/preserveLlmOnProfileMerge.js';
+import { snapMainCategoryToTaxonomy } from '../../lib/mainCategoryTaxonomy.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -463,6 +465,43 @@ export function createCollectorController(storage: CompositeStorage) {
         res.status(500).json({
           error: e instanceof Error ? e.message : String(e),
           code: 'COLLECTOR_LLM_PENDING_ERROR',
+        });
+      }
+    },
+
+    /**
+     * Agrega `qualification.mainCategory` já persistidos (LLM concluído), por frequência,
+     * após normalização para a taxonomia canônica (evita belleza vs beleza & maquiagem como facetas distintas).
+     */
+    async listLlmMainCategoryLabels(req: Request, res: Response): Promise<void> {
+      try {
+        const limitRaw = Number(req.query.limit ?? 200);
+        const limit = Math.max(1, Math.min(500, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 200));
+        const profiles = await storage.getByBucket<Record<string, unknown>>('profile');
+        /** rótulo canônico -> contagem */
+        const acc = new Map<string, number>();
+        for (const { value } of profiles) {
+          const q = getLlmQualification(value);
+          if (!q) continue;
+          const raw = String(q.mainCategory ?? '').trim();
+          if (!raw) continue;
+          const canon = snapMainCategoryToTaxonomy(raw);
+          if (!canon) continue;
+          acc.set(canon, (acc.get(canon) ?? 0) + 1);
+        }
+        const sorted = [...acc.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'));
+        const labels = sorted.slice(0, limit).map(([label]) => label);
+        res.status(200).json({
+          ok: true,
+          labels,
+          totalDistinct: acc.size,
+          returned: labels.length,
+        });
+      } catch (e) {
+        console.error('[collectorController.listLlmMainCategoryLabels]', e instanceof Error ? e.stack : e);
+        res.status(500).json({
+          error: e instanceof Error ? e.message : String(e),
+          code: 'COLLECTOR_LLM_MAIN_CATEGORIES_ERROR',
         });
       }
     },

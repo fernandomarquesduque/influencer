@@ -35,6 +35,12 @@ export function createCollectorCrawlRouter(controller: CollectorController): Rou
     asyncHandler((req, res) => controller.listLlmPending(req, res))
   );
 
+  router.get(
+    '/collector-llm-main-categories',
+    requireCollectorIngestSecret,
+    asyncHandler((req, res) => controller.listLlmMainCategoryLabels(req, res))
+  );
+
   router.post(
     '/collector-ingest-llm',
     requireCollectorIngestSecret,

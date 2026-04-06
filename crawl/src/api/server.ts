@@ -80,6 +80,7 @@ import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
 import { getAdminStatsSnapshot } from './adminStats.js';
 import { createCollectorController } from './controllers/collectorController.js';
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
+import { requireCollectorIngestSecret } from './middleware/collectorIngestAuth.js';
 import {
   pickAdminQualificationPatch,
   applyQualificationPatchToProfileRecord,
@@ -1778,6 +1779,34 @@ app.delete('/api/admin/influencers/:handle', requireScopes('adm'), async (req: R
   }
   clearCampaignContextCache();
   res.json({ ok: true, s3ObjectsRemoved: result.s3ObjectsRemoved });
+});
+
+/**
+ * Qualify / automações: purge completo com X-Collector-Key (mesmo efeito do DELETE admin).
+ * Corpo: { "handle": "usuario" }.
+ */
+app.post('/api/crawl/collector-delete-profile', requireCollectorIngestSecret, async (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as { handle?: unknown };
+    const raw = String(body.handle ?? '').trim();
+    const result = await purgeInfluencerAsAdminCore(raw);
+    if (!result.ok) {
+      res.status(result.statusCode).json({
+        ok: false,
+        error: result.error,
+        code: 'COLLECTOR_DELETE_FAILED',
+      });
+      return;
+    }
+    clearCampaignContextCache();
+    res.json({ ok: true, handle: result.handle, s3ObjectsRemoved: result.s3ObjectsRemoved });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      code: 'COLLECTOR_DELETE_ERROR',
+    });
+  }
 });
 
 /** Admin: mescla campos em `llm.qualification` do perfil no RocksDB (classificação exibida na UI). */

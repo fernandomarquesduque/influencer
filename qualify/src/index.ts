@@ -2,6 +2,14 @@ import 'dotenv/config';
 import process from 'node:process';
 import http from 'node:http';
 import { Ollama } from 'ollama';
+import {
+  foldMainCategoryKey,
+  formatMainCategoryTaxonomyForPrompt,
+  MAIN_CATEGORY_CANONICAL_LABELS,
+  isCanonicalMainCategoryLabel,
+  resolveMainCategoryWithEvidence,
+  snapMainCategoryToTaxonomy,
+} from './mainCategoryTaxonomy.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -55,9 +63,11 @@ function summarizeValidationErrorsForLog(errors: string[]): string {
   }
   const head = [...kinds].sort().join(',');
   const maxSnippets = 2;
-  const snippets = errors.slice(0, maxSnippets).map((e) =>
-    truncateLogLine(e.replace(/^personaSummary /i, 'ps '), 88)
-  );
+  const snippets = errors.slice(0, maxSnippets).map((e) => {
+    const line = e.replace(/^personaSummary /i, 'ps ');
+    const maxLen = line.toLowerCase().includes('maincategory') ? 260 : 88;
+    return truncateLogLine(line, maxLen);
+  });
   const tail = errors.length > maxSnippets ? ` +${errors.length - maxSnippets} mais` : '';
   return `${head} — ${snippets.join(' · ')}${tail}`;
 }
@@ -299,41 +309,18 @@ function tryParseJsonObject(content: string): JsonRecord | null {
 
 type BrandSafetyLevel = 'adulto' | 'sensivel' | 'familia';
 
-/**
- * Valores literais permitidos para qualification.mainCategory (ordem fixa para prompts e validacao).
- * O LLM deve retornar EXATAMENTE uma destas strings — sem sinonimos, abreviacoes ou ingles.
- */
-export const MAIN_CATEGORY_OPTIONS = [
-  'Gastronomia & Culinária',
-  'Moda & Estilo',
-  'Beleza & Maquiagem',
-  'Decoração & Home Office',
-  'Viagens & Turismo',
-  'Lifestyle & Vlogs',
-  'Maternidade & Paternidade',
-  'Pets & Animais',
-  'Saúde & Bem-estar',
-  'Fitness & Esportes',
-  'Finanças & Investimentos',
-  'Negócios & Carreira',
-  'Tecnologia & Inovação',
-  'Educação & Idiomas',
-  'Desenvolvimento Pessoal',
-  'Games & E-sports',
-  'Humor & Comédia',
-  'Cultura Pop & Cinema',
-  'Música & Dança',
-  'Arte & Design',
-  'Automobilismo & Motores',
-  'Sustentabilidade & Ecologia',
-] as const;
+/** mainCategory: rótulo de vitrine em pt-BR (LLM elabora; não é colagem das subCategories). */
+const MAIN_CATEGORY_MIN_LEN = 2;
+const MAIN_CATEGORY_MAX_LEN = 200;
+/** Máximo de palavras no nome da categoria (segmentos separados por espaço ou "&"). */
+const MAIN_CATEGORY_MAX_WORDS = 1;
+/** Quantas subCategories considerar ao detectar "colagem literal" indevida. */
+const MAIN_CATEGORY_SUB_MIRROR_MAX = 4;
 
-export type MainCategory = (typeof MAIN_CATEGORY_OPTIONS)[number];
+export type MainCategory = string;
 
-const MAIN_CATEGORY_SET: ReadonlySet<string> = new Set(MAIN_CATEGORY_OPTIONS);
-
-export function isMainCategoryValue(value: string): value is MainCategory {
-  return MAIN_CATEGORY_SET.has(value);
+export function isMainCategoryValue(value: string): boolean {
+  return parseMainCategory(value) !== null;
 }
 
 function stripCombiningMarks(s: string): string {
@@ -345,18 +332,75 @@ function stripInvisibleFromString(s: string): string {
   return s.replace(/[\u200B-\u200D\uFEFF]/g, '');
 }
 
-/** Aceita apenas string identica a uma opcao canonica (apos trim e invisiveis); NFC para estabilidade Unicode. */
+/**
+ * Normaliza mainCategory: rótulo em pt-BR (comprimento limitado), Unicode NFC.
+ * O texto vem do LLM; o servidor encaixa depois na taxonomia fechada (`snapMainCategoryToTaxonomy`).
+ */
 export function parseMainCategory(raw: unknown): MainCategory | null {
   const s = stripInvisibleFromString(String(raw ?? '')).trim();
   if (!s) return null;
-  if (MAIN_CATEGORY_SET.has(s)) return s as MainCategory;
+  if (/[\r\n]/.test(s)) return null;
+  let nfc: string;
   try {
-    const nfc = s.normalize('NFC');
-    if (MAIN_CATEGORY_SET.has(nfc)) return nfc as MainCategory;
+    nfc = s.normalize('NFC');
   } catch {
-    /* ignore */
+    nfc = s;
   }
-  return null;
+  if (nfc.length < MAIN_CATEGORY_MIN_LEN || nfc.length > MAIN_CATEGORY_MAX_LEN) return null;
+  if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(nfc)) return null;
+  return nfc;
+}
+
+export {
+  formatMainCategoryTaxonomyForPrompt,
+  MAIN_CATEGORY_CANONICAL_LABELS,
+  resolveMainCategoryWithEvidence,
+  scoreMainCategoriesFromEvidence,
+  snapMainCategoryToTaxonomy,
+} from './mainCategoryTaxonomy.js';
+
+function capitalizeSubcategoryToken(word: string): string {
+  const w = stripInvisibleFromString(word).trim();
+  if (!w) return '';
+  return w.charAt(0).toLocaleUpperCase('pt-BR') + w.slice(1).toLowerCase();
+}
+
+/** Conta palavras do título (segmentos separados por & ou espaço). */
+function countMainCategoryWords(label: string): number {
+  const t = stripInvisibleFromString(label).trim();
+  if (!t) return 0;
+  return t
+    .split(/\s*[&]\s*|\s+/u)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0).length;
+}
+
+function mainCategoryWithinWordBudget(label: string): boolean {
+  const n = countMainCategoryWords(label);
+  return n >= 1 && n <= MAIN_CATEGORY_MAX_WORDS;
+}
+
+/** Igual à colagem mecânica das primeiras subCategories (proibido se não for rótulo canônico da taxonomia). */
+function mainCategoryIsLiteralSubcategoryPaste(main: string, subs: string[]): boolean {
+  const clean = subs
+    .map((s) => stripInvisibleFromString(String(s ?? '').trim()))
+    .filter((s) => s.length > 0)
+    .slice(0, MAIN_CATEGORY_SUB_MIRROR_MAX);
+  if (clean.length === 0) return false;
+  const caps = clean.map(capitalizeSubcategoryToken).filter((p) => p.length > 0);
+  if (caps.length === 0) return false;
+  const variants = [caps.join(' & '), caps.join(' '), caps.slice(0, 2).join(' & '), caps.slice(0, 2).join(' ')];
+  const m = foldMainCategoryKey(main);
+  for (const v of variants) {
+    if (foldMainCategoryKey(v) === m) return true;
+  }
+  return false;
+}
+
+function mainCategoryMatchesPoolLabel(main: string, pool: string[] | undefined): boolean {
+  if (!pool || pool.length === 0) return false;
+  const m = foldMainCategoryKey(main);
+  return pool.some((p) => foldMainCategoryKey(p) === m);
 }
 
 /**
@@ -438,6 +482,13 @@ function correctProfileTypeWhenProductBrand(profile: JsonRecord, qualification: 
   if (g === 'feminino' || g === 'masculino') qualification.gender = 'desconhecido';
 }
 
+function buildProfileContextForMainCategoryEvidence(profile: JsonRecord): string {
+  return [profile.full_name, profile.biography, profile._discovered_value]
+    .map((x) => String(x ?? '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 function normalizeClassification(
   raw: JsonRecord,
   profile: JsonRecord,
@@ -448,9 +499,18 @@ function normalizeClassification(
   const qualification = Object.keys(qualificationRaw).length > 0 ? qualificationRaw : asObject(raw);
   const bs = pickBrandSafetyFromQualification(qualification);
   if (bs) qualification.brandSafety = bs;
-  const mc = parseMainCategory(qualification.mainCategory);
-  if (mc) qualification.mainCategory = mc;
   correctProfileTypeWhenProductBrand(profile, qualification);
+  let mc0 = parseMainCategory(qualification.mainCategory);
+  if (mc0) {
+    let snapped = snapMainCategoryToTaxonomy(mc0);
+    if (snapped) {
+      const subsArr = asStringArray(qualification.subCategories, 100);
+      const ctx = buildProfileContextForMainCategoryEvidence(profile);
+      snapped = resolveMainCategoryWithEvidence(snapped, subsArr, ctx);
+      mc0 = parseMainCategory(snapped) ?? snapped;
+    }
+    qualification.mainCategory = mc0;
+  }
   const ps0 = String(qualification.personaSummary ?? '').trim();
   if (ps0 && profile && Object.keys(profile).length > 0) {
     qualification.personaSummary = sanitizePersonaSummaryForProfile(ps0, profile);
@@ -462,7 +522,7 @@ function normalizeClassification(
   return {
     qualifiedAt: new Date().toISOString(),
     model,
-    version: 3,
+    version: 7,
     status,
     confidence,
     qualification,
@@ -502,10 +562,36 @@ function validateLlmClassification(llm: LlmClassification, profile?: JsonRecord)
     errors.push('brandSafety ausente ou invalido (obrigatorio: adulto|sensivel|familia)');
   }
 
-  if (!parseMainCategory(q.mainCategory)) {
+  const mcOk = parseMainCategory(q.mainCategory);
+  if (!mcOk) {
+    const rawMc = String(q.mainCategory ?? '').trim();
+    const iaValor = rawMc === '' ? '(vazio ou ausente)' : JSON.stringify(rawMc);
     errors.push(
-      `mainCategory deve ser exatamente uma destas strings (copie literal, sem alterar): ${MAIN_CATEGORY_OPTIONS.join(' | ')}`
+      `mainCategory obrigatorio e invalido (${iaValor}) — pt-BR, ${MAIN_CATEGORY_MIN_LEN}-${MAIN_CATEGORY_MAX_LEN} caracteres; nome de CATEGORIA elaborado pelo modelo (nao omita).`
     );
+  } else {
+    const nWords = countMainCategoryWords(mcOk);
+    if (nWords !== MAIN_CATEGORY_MAX_WORDS) {
+      errors.push(
+        `mainCategory: exatamente ${MAIN_CATEGORY_MAX_WORDS} palavra (sem espacos nem "&" entre termos; compostos com hifen contam como uma palavra, ex. Bem-estar).`
+      );
+    }
+    const subsArr = asStringArray(q.subCategories, 100);
+    const canonicalPool = [...MAIN_CATEGORY_CANONICAL_LABELS];
+    if (
+      subsArr.length > 0 &&
+      mainCategoryIsLiteralSubcategoryPaste(mcOk, subsArr) &&
+      !mainCategoryMatchesPoolLabel(mcOk, canonicalPool)
+    ) {
+      errors.push(
+        `mainCategory nao pode ser só a juncao literal das subCategories; escolha UM rotulo LITERAL da lista fechada do prompt (${formatMainCategoryTaxonomyForPrompt()}).`
+      );
+    }
+    if (!isCanonicalMainCategoryLabel(mcOk)) {
+      errors.push(
+        `mainCategory deve ser EXATAMENTE um destes (copiar texto): ${formatMainCategoryTaxonomyForPrompt()}`
+      );
+    }
   }
 
   return errors;
@@ -519,7 +605,8 @@ function buildRepairPrompt(originalPrompt: string, invalidJson: JsonRecord, erro
     'Regras:',
     '- retorne apenas JSON valido',
     '- mantenha todos os campos obrigatorios',
-    `- qualification.mainCategory deve ser EXATAMENTE uma destas strings literais: ${MAIN_CATEGORY_OPTIONS.join(' | ')}`,
+    `- qualification.subCategories: pelo menos 1 item (nicho macro, uma palavra).`,
+    `- qualification.mainCategory OBRIGATORIO: copie LITERAL um unico rotulo da LISTA FECHADA do prompt (uma palavra, sem " & "); nao invente sinonimos nem traducoes.`,
     '- qualification.personaSummary: descricao agregada em terceira pessoa; PROIBIDO @, handle, nome publico, copiar biografia, links, metricas ou texto identico ao JSON; se o prompt original trouxer "amostras_textos_publicacoes", use só como pista (nao copie legendas).',
     '- textos humanos (personaSummary, categorias etc.) em pt-BR; qualification.language pelo texto AUTORAL (bio/nome/amostras), ignorando UI da rede (seguidores, Seguir, mensagem, mil); pt-br/en/es/fr/uk/ru/desconhecido; pt-br só se português DOMINAR linhas do criador; nunca pt-br só por UI em PT ou 1 frase PT curta + resto inglês/francês/cirilico',
     '- nao explique nada',
@@ -532,10 +619,7 @@ function buildRepairPrompt(originalPrompt: string, invalidJson: JsonRecord, erro
   ].join('\n');
 }
 
-function buildPrompt(
-  profile: JsonRecord,
-  options: { includePostSamples?: boolean } = {}
-): string {
+function buildPrompt(profile: JsonRecord, options: { includePostSamples?: boolean } = {}): string {
   const includePostSamples = options.includePostSamples === true;
   // Nao enviar account_type/category do Instagram: o modelo copiava 1:1 para profileType.
   const postSamples = includePostSamples ? buildPostTextSamplesForPrompt(profile) : [];
@@ -560,10 +644,19 @@ function buildPrompt(
     ? 'personaSummary: somente uma descricao editorial sobre o perfil (conteudo, tom, nicho, publico). PROIBIDO: arroba @, handle, nome completo do criador, copiar/colar biografia ou legendas dos posts literalmente, citar numeros de seguidores, URLs ou trechos longos identicos ao JSON. Use amostras_textos_publicacoes só como pista para inferir temas e reescrever em linguagem propria.'
     : 'personaSummary: somente uma descricao editorial sobre o perfil (conteudo, tom, nicho, publico). PROIBIDO: arroba @, handle, nome completo do criador, copiar/colar biografia, citar seguidores, URLs ou trechos longos identicos ao JSON. Se a bio for insuficiente, infira com cautela a partir do handle e do nome, sem inventar fatos especificos.';
 
+  const postsLeadWhenBioWeak =
+    postSamples.length > 0
+      ? 'Com amostras_textos_publicacoes: se biography for curta, vaga, só slogan ou nao definir o nicho, defina profileType, subCategories (ordem: tema dominante primeiro), contentPillars e mainCategory (UMA palavra, nome de vitrine) pelo TEMA DOMINANTE nas amostras; bio e handle apenas apoiam.'
+      : null;
+
+  const mainCategoryTaxonomyRule = `LISTA FECHADA mainCategory — escolha EXATAMENTE UMA destas palavras e copie o texto LITERAL (acentos inclusos; uma unica palavra por rotulo): ${formatMainCategoryTaxonomyForPrompt()}`;
+
   return [
     'Voce e um classificador de perfis para marketing de influencia (perfis podem ser de qualquer pais).',
     'Nao invente informacoes sem base minima nos dados recebidos.',
     profileTypeRule,
+    ...(postsLeadWhenBioWeak ? [postsLeadWhenBioWeak] : []),
+    mainCategoryTaxonomyRule,
     'Nao use metadados omitidos aqui (ex.: account_type, categoria oficial do Instagram).',
     'Responda APENAS JSON valido, sem markdown e sem texto extra.',
     'Textos para o usuario (personaSummary, mainCategory, subCategories, gender, contentPillars, audienceType como rotulos) em portugues do Brasil (pt-BR), sem ingles ou espanhol NESSAS strings.',
@@ -571,18 +664,24 @@ function buildPrompt(
     'Regras obrigatorias: NUNCA deixe arrays vazios.',
     'subCategories, contentPillars e audienceType deve ser UMA palavra unica e macro (sem frases, sem termos compostos).',
     'language: BCP-47 minuscula do texto que o CRIADOR escreveu (full_name, biography, amostras). IGNORE palavras de interface (seguidores, seguindo, posts, Seguir, mensagem, mil, rótulos de categoria do app em PT). pt-br só se português for claramente dominante nas linhas autorais; linha curta genérica em PT + bio em inglês/francês/outra → use en/es/fr conforme dominância, ou desconhecido se romano ambíguo; cirilico/Ucrânia→uk/ru/desconhecido. Nunca assuma pt-br pelo app em português ou local BR.',
-    'gender, mainCategory e brandSafety sao campos OBRIGATORIOS (string escalar cada); subCategories, contentPillars e audienceType sao arrays com pelo menos 1 item.',
+    'subCategories e a FONTE do nicho (termos especificos): defina primeiro (ordem importa: mais especifico ou dominante primeiro). Cada item UMA palavra macro em pt-BR (sem frases).',
+    'mainCategory e OBRIGATORIO: deve ser EXATAMENTE um dos rotulos da lista fechada acima (uma palavra, copiar igual). PROIBIDO espacos, " & " e frases compostas. Use as subCategories para decidir QUAL rotulo da lista melhor representa o nicho (ex.: subs maquiagem, skincare -> "Beleza"; subs receitas, vegano -> "Alimentacao"; subs viagem, hotel -> "Viagens").',
+    'PROIBIDO inventar rotulos fora da lista fechada. Se o nicho for ambiguo, escolha o rotulo macro mais comercial da lista.',
+    'O servidor reavalia mainCategory contra subCategories + bio/nome/descoberta: se o rotulo nao bater com os sinais, corrige para a categoria sustentada pelas evidencias (nao confie em chute incoerente).',
+    'O servidor normaliza grafias/aliases comuns e texto legado para essa lista; ainda assim copie sempre um rotulo literal da lista alinhado as subs.',
+    'mainCategory, gender e brandSafety sao campos OBRIGATORIOS (string escalar cada); subCategories, contentPillars e audienceType sao arrays com pelo menos 1 item.',
     'brandSafety: "familia" para beleza/maquiagem/cursos/educacao e lifestyle normais; "sensivel" so alcool/tabaco/polemica politica/saude arriscada/violencia ou sexualizacao clara; "adulto" so sexo explicito/jogos adultos/gore — nao use sensivel por maquiagem ou emoji de coracao.',
-    'mainCategory: copie LITERAL UMA opcao; tema central na bio+handle: futebol/esporte/clube/campeonato/treinador/analise/podcast esportivo -> Fitness & Esportes. Gastronomia & Culinária só com receitas/chef/comida/restaurante dominando — nunca só "criador(a) de conteudo digital" ou perfil generico sem eixo culinario. Banco/humor trabalho/denuncia nao e Beleza & Maquiagem (Finanças & Investimentos ou Humor & Comédia). Advogado/juridico sem comida -> Negócios & Carreira, nao Gastronomia. Igual a lista; nao invente.',
     personaRule,
-    'subCategories deve ser ESPECIFICO e orientado a nicho comercial; evite termos amplos/genéricos como "saude e bem-estar", "relacionamento", "lifestyle", "variedades" quando houver contexto mais preciso.',
-    'Incerteza: infira pela bio; evite "geral" e "desconhecido" salvo ultimo caso.',
+    'subCategories deve ser ESPECIFICO e orientado a nicho comercial; evite termos amplos/genéricos como "variedades", "geral", "conteudo" quando houver contexto mais preciso (ex.: pilates, receitas, skincare, investimentos).',
+    includePostSamples
+      ? 'Incerteza: infira pela bio e pelas amostras recentes; evite "geral" e "desconhecido" salvo ultimo caso.'
+      : 'Incerteza: infira pela bio; evite "geral" e "desconhecido" salvo ultimo caso.',
     'Estrutura obrigatoria:',
     '{',
     '  "confidence": 0.0-1.0,',
     '  "qualification": {',
     '    "profileType": "criador|pessoal|empresa|noticia|marca|midia",',
-    `    "mainCategory": "${MAIN_CATEGORY_OPTIONS.join('|')}",`,
+    `    "mainCategory": "<obrigatorio: copiar LITERAL um rotulo da lista fechada>",`,
     '    "gender": "feminino|masculino|desconhecido",',
     '    "language": "pt-br|en|es|fr|uk|ru|desconhecido",',
     '    "subCategories": ["string"],',
@@ -666,6 +765,12 @@ function getLlmMediaContextLimit(): number {
   return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(60, Math.floor(n))) : 24;
 }
 
+/** Quantidade de midias mais recentes (post/reel/tagged) na fila inicial; padrao 4. */
+function getQualifyInitialMediaLimit(): number {
+  const n = Number(process.env.QUALIFY_INITIAL_MEDIA_LIMIT ?? 4);
+  return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(10, Math.floor(n))) : 4;
+}
+
 async function fetchPendingFromApi(
   apiBase: string,
   ingestKey: string,
@@ -674,7 +779,8 @@ async function fetchPendingFromApi(
   refreshAll = true
 ): Promise<{ totalPending: number; items: Array<{ handle: string; profile: JsonRecord }> }> {
   const refreshAllQuery = refreshAll ? '1' : '0';
-  const url = `${apiBase}/crawl/collector-llm-pending?limit=${limit}&offset=${offset}&refreshAll=${refreshAllQuery}&includeContent=0`;
+  const mediaLimit = getQualifyInitialMediaLimit();
+  const url = `${apiBase}/crawl/collector-llm-pending?limit=${limit}&offset=${offset}&refreshAll=${refreshAllQuery}&includeContent=1&mediaLimit=${mediaLimit}`;
   const data = await fetchJson(
     url,
     {
@@ -803,6 +909,59 @@ async function pushLlmToApi(
   );
 }
 
+/** Regra de negócio: manter só criadores/pessoas físicas em conteúdo pt-BR; demais tipos em pt-br saem da base. */
+function shouldExcludePtBrNonPersonalCreator(qualification: JsonRecord): boolean {
+  const pt = String(qualification.profileType ?? '').trim().toLowerCase();
+  const lang = String(qualification.language ?? '').trim().toLowerCase();
+  if (pt === 'pessoal' || pt === 'criador') return false;
+  return lang === 'pt-br';
+}
+
+/** JWT adm opcional; sem ele usa POST /crawl/collector-delete-profile com a mesma chave do ingest. */
+function getOptionalAdminBearerForPurge(): string | null {
+  const t =
+    process.env.QUALIFY_ADMIN_BEARER_TOKEN?.trim() ||
+    process.env.QUALIFY_ADMIN_DELETE_JWT?.trim();
+  return t || null;
+}
+
+async function deleteProfileAfterAutoExclusion(
+  apiBase: string,
+  ingestKey: string,
+  handle: string
+): Promise<void> {
+  const h = toHandle(handle);
+  if (!h) throw new Error('Handle invalido para exclusao.');
+  const bearer = getOptionalAdminBearerForPurge();
+  if (bearer) {
+    const url = `${apiBase}/admin/influencers/${encodeURIComponent(h)}`;
+    await fetchJson(
+      url,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+        },
+      },
+      getIngestPushTimeoutMs()
+    );
+    return;
+  }
+  const url = `${apiBase}/crawl/collector-delete-profile`;
+  await fetchJson(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Collector-Key': ingestKey,
+      },
+      body: JSON.stringify({ handle: h }),
+    },
+    getIngestPushTimeoutMs()
+  );
+}
+
 interface ClassifyLlmPostContext {
   apiBase: string;
   ingestKey: string;
@@ -825,7 +984,12 @@ async function classifyProfile(
     onLog?.(handleTag ? `@${handleTag} | ${msg}` : msg);
 
   let workingProfile: JsonRecord = { ...profile };
-  let prompt = promptOverride ?? buildPrompt(workingProfile, { includePostSamples: false });
+  const hasPostSamples = profileHasPostTextSamples(workingProfile);
+  let prompt =
+    promptOverride ??
+    buildPrompt(workingProfile, {
+      includePostSamples: hasPostSamples,
+    });
   const runInitialGeneration = async (): Promise<JsonRecord> => {
     logStep('>> Ollama: geracao inicial (1a resposta)...');
     const response = await ollamaClient.chat({
@@ -911,13 +1075,12 @@ async function classifyProfile(
       }
     }
 
-    const usePostsInPrompt =
-      promptOverride == null &&
-      validationErrorsRelateToPersonaSummary(validationErrors) &&
-      profileHasPostTextSamples(workingProfile);
+    const usePostsInPrompt = promptOverride == null && profileHasPostTextSamples(workingProfile);
 
     if (promptOverride == null) {
-      prompt = buildPrompt(workingProfile, { includePostSamples: usePostsInPrompt });
+      prompt = buildPrompt(workingProfile, {
+        includePostSamples: usePostsInPrompt,
+      });
     }
 
     logStep(
@@ -958,7 +1121,10 @@ interface BatchProgress {
   total: number;
   processed: number;
   done: number;
+  /** Falhas reais (validacao LLM, ingest, purge, rede). */
   failed: number;
+  /** Regra pt-br/pessoal|criador: purge na API concluido (sucesso operacional, fora de Falhas). */
+  excluded: number;
   currentHandle: string | null;
   runStartedAt: string;
   elapsedMs: number;
@@ -968,7 +1134,7 @@ interface BatchProgress {
 
 interface ExtractedResultRow {
   handle: string;
-  result: 'ok' | 'erro';
+  result: 'ok' | 'erro' | 'excluido';
   llmStatus: string;
   confidence: number | null;
   mainCategory: string;
@@ -983,6 +1149,7 @@ interface BatchSummary {
   total: number;
   done: number;
   failed: number;
+  excluded: number;
   stopped: boolean;
 }
 
@@ -1025,12 +1192,16 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
   emitLog(
     `Perfis alvo via API: ${targetTotal} (modo=${onlyWithLlm ? 'com_llm' : 'sem_llm'}, paralelo=${concurrency})`
   );
+  emitLog(
+    `mainCategory: taxonomia fechada com ${MAIN_CATEGORY_CANONICAL_LABELS.length} rotulos canonicos (+ normalizacao de aliases no servidor)`
+  );
   const runStartedAtMs = Date.now();
   const progress: BatchProgress = {
     total: targetTotal,
     processed: 0,
     done: 0,
     failed: 0,
+    excluded: 0,
     currentHandle: null,
     runStartedAt: new Date(runStartedAtMs).toISOString(),
     elapsedMs: 0,
@@ -1039,7 +1210,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
   };
   options.onProgress?.(progress);
   if (targetTotal === 0 || firstBatch.items.length === 0) {
-    return { total: 0, done: 0, failed: 0, stopped: false };
+    return { total: 0, done: 0, failed: 0, excluded: 0, stopped: false };
   }
 
   let currentBatch = firstBatch.items;
@@ -1053,7 +1224,13 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     for (let sliceStart = 0; sliceStart < todo.length; sliceStart += concurrency) {
       if (options.shouldStop?.()) {
         emitLog('Interrompido por solicitacao do usuario.');
-        return { total: progress.total, done: progress.done, failed: progress.failed, stopped: true };
+        return {
+          total: progress.total,
+          done: progress.done,
+          failed: progress.failed,
+          excluded: progress.excluded,
+          stopped: true,
+        };
       }
       const slice = todo.slice(sliceStart, sliceStart + concurrency);
       const activeHandles = slice
@@ -1073,10 +1250,16 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
           processedHandles.add(handle);
           progress.total = Math.max(targetTotal, processedHandles.size);
           try {
-            const promptPhase1 = buildPrompt(item.profile, { includePostSamples: false });
+            const promptPhase1 = buildPrompt(item.profile, {
+              includePostSamples: profileHasPostTextSamples(item.profile),
+            });
             const promptChars = promptPhase1.length;
             const promptTokensApprox = Math.ceil(promptChars / 4);
-            emitLog(`@${handle} | >> prompt fase1 pronto (~${promptTokensApprox} tok, ${promptChars} chars)`);
+            const nPostSamples = buildPostTextSamplesForPrompt(item.profile).length;
+            emitLog(
+              `@${handle} | >> prompt fase1 pronto (~${promptTokensApprox} tok, ${promptChars} chars)${nPostSamples > 0 ? ` | ${nPostSamples} amostra(s) post/reel recente(s)` : ''
+              }`
+            );
             if (isQualifyVerboseLog()) {
               emitLog(`@${handle} | prompt completo:\n${promptPhase1}`);
             }
@@ -1087,27 +1270,56 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
               refreshAll,
               logHandle: handle,
             });
-            emitLog(`@${handle} | >> API collector: ingest LLM (POST)...`);
-            const ingestT0 = Date.now();
-            await pushLlmToApi(apiBase, ingestKey, handle, llm, refreshAll);
-            const ingestMs = Date.now() - ingestT0;
-            const totalMs = Date.now() - startedAt;
-            emitLog(
-              `@${handle} | ok | ${Math.round(llm.confidence * 100)}% | ingest ${ingestMs}ms | total ${totalMs}ms`
-            );
-            progress.done++;
             const qualOk = asObject(llm.qualification);
-            options.onResult?.({
-              handle,
-              result: 'ok',
-              llmStatus: llm.status,
-              confidence: llm.confidence,
-              mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
-              brandSafety: pickBrandSafetyFromQualification(qualOk),
-              qualification: qualOk,
-              processedAt: new Date().toISOString(),
-              error: null,
-            });
+            if (shouldExcludePtBrNonPersonalCreator(qualOk)) {
+              const pt = String(qualOk.profileType ?? '').trim();
+              const lang = String(qualOk.language ?? '').trim();
+              const reason = `Exclusao automatica: language=pt-br exige profileType pessoal ou criador (atual: profileType=${pt}, language=${lang})`;
+              emitLog(`@${handle} | EXCLUINDO | ${reason}`);
+              const via =
+                getOptionalAdminBearerForPurge() != null
+                  ? 'DELETE admin/influencers (JWT)'
+                  : 'POST crawl/collector-delete-profile (X-Collector-Key)';
+              emitLog(`@${handle} | >> API crawl: ${via}...`);
+              const delT0 = Date.now();
+              await deleteProfileAfterAutoExclusion(apiBase, ingestKey, handle);
+              const delMs = Date.now() - delT0;
+              const totalMs = Date.now() - startedAt;
+              emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms | total ${totalMs}ms`);
+              progress.excluded++;
+              options.onResult?.({
+                handle,
+                result: 'excluido',
+                llmStatus: llm.status,
+                confidence: llm.confidence,
+                mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
+                brandSafety: pickBrandSafetyFromQualification(qualOk),
+                qualification: qualOk,
+                processedAt: new Date().toISOString(),
+                error: reason,
+              });
+            } else {
+              emitLog(`@${handle} | >> API collector: ingest LLM (POST)...`);
+              const ingestT0 = Date.now();
+              await pushLlmToApi(apiBase, ingestKey, handle, llm, refreshAll);
+              const ingestMs = Date.now() - ingestT0;
+              const totalMs = Date.now() - startedAt;
+              emitLog(
+                `@${handle} | ok | ${Math.round(llm.confidence * 100)}% | ingest ${ingestMs}ms | total ${totalMs}ms`
+              );
+              progress.done++;
+              options.onResult?.({
+                handle,
+                result: 'ok',
+                llmStatus: llm.status,
+                confidence: llm.confidence,
+                mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
+                brandSafety: pickBrandSafetyFromQualification(qualOk),
+                qualification: qualOk,
+                processedAt: new Date().toISOString(),
+                error: null,
+              });
+            }
           } catch (error) {
             progress.failed++;
             const message = error instanceof Error ? error.message : String(error);
@@ -1146,7 +1358,13 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     currentBatch = nextBatch.items;
   }
 
-  return { total: progress.total, done: progress.done, failed: progress.failed, stopped: false };
+  return {
+    total: progress.total,
+    done: progress.done,
+    failed: progress.failed,
+    excluded: progress.excluded,
+    stopped: false,
+  };
 }
 
 let cachedOllamaClient: Ollama | null = null;
@@ -1198,7 +1416,8 @@ function renderUiHtml(): string {
     td.td-brand-safety,th.td-brand-safety{min-width:92px;max-width:140px;font-weight:600;color:#f8fafc}
     a.ig-link{color:#93c5fd;text-decoration:underline}
     a.ig-link:hover{color:#bfdbfe}
-    .ok{color:#22c55e}.erro{color:#ef4444}
+    .ok{color:#22c55e}.erro{color:#ef4444}.excluido{color:#f59e0b}
+    tr.row-excluido{outline:1px solid rgba(245,158,11,0.35)}
   </style>
 </head>
 <body>
@@ -1216,6 +1435,7 @@ function renderUiHtml(): string {
       <div class="kpi">Pendentes no lote<b id="total">0</b></div>
       <div class="kpi">Processados<b id="processed">0</b></div>
       <div class="kpi">OK<b id="done">0</b></div>
+      <div class="kpi">Excl. regra<b id="excluded">0</b></div>
       <div class="kpi">Falhas<b id="failed">0</b></div>
       <div class="kpi">Handle atual<b id="current">-</b></div>
       <div class="kpi">Paralelo<b id="parallel">1</b></div>
@@ -1243,7 +1463,7 @@ function renderUiHtml(): string {
             <th>audienceType</th>
             <th class="td-brand-safety">brandSafety</th>
             <th>personaSummary</th>
-            <th>Confiança</th>
+            <th>Conf. / status</th>
           </tr>
         </thead>
         <tbody id="resultsBody">
@@ -1321,6 +1541,7 @@ function renderUiHtml(): string {
         const r = list[j];
         const q = r.qualification && typeof r.qualification === 'object' ? r.qualification : {};
         const tr = document.createElement('tr');
+        if(r.result === 'excluido') tr.className = 'row-excluido';
         const tdHandle = document.createElement('td');
         const slug = String(r.handle ?? '').trim().replace(/^@/, '').split(/[/?#]/)[0];
         if(slug){
@@ -1361,7 +1582,17 @@ function renderUiHtml(): string {
         tdPs.textContent = rawValue(q.personaSummary);
         tr.appendChild(tdPs);
         const tdConf = document.createElement('td');
-        tdConf.textContent = formatConf(r.confidence);
+        if(r.result === 'excluido'){
+          tdConf.className = 'excluido';
+          tdConf.textContent = 'excluido';
+          tdConf.title = String(r.error || 'Removido pela regra pt-br / pessoal|criador');
+        }else if(r.result === 'erro'){
+          tdConf.className = 'erro';
+          tdConf.textContent = 'erro';
+          tdConf.title = String(r.error || '');
+        }else{
+          tdConf.textContent = formatConf(r.confidence);
+        }
         tr.appendChild(tdConf);
         body.appendChild(tr);
       }
@@ -1380,6 +1611,8 @@ function renderUiHtml(): string {
         document.getElementById('total').textContent = s.total;
         document.getElementById('processed').textContent = s.processed;
         document.getElementById('done').textContent = s.done;
+        const exEl = document.getElementById('excluded');
+        if(exEl) exEl.textContent = (s.excluded != null ? s.excluded : 0);
         document.getElementById('failed').textContent = s.failed;
         (function(){
           const el = document.getElementById('current');
@@ -1488,6 +1721,7 @@ async function startUiServer(): Promise<void> {
     total: 0,
     processed: 0,
     done: 0,
+    excluded: 0,
     failed: 0,
     currentHandle: null as string | null,
     estimatedRemainingMs: null as number | null,
@@ -1534,6 +1768,7 @@ async function startUiServer(): Promise<void> {
     state.total = 0;
     state.processed = 0;
     state.done = 0;
+    state.excluded = 0;
     state.failed = 0;
     state.currentHandle = null;
     state.estimatedRemainingMs = null;
@@ -1552,6 +1787,7 @@ async function startUiServer(): Promise<void> {
           state.total = p.total;
           state.processed = p.processed;
           state.done = p.done;
+          state.excluded = p.excluded;
           state.failed = p.failed;
           state.currentHandle = p.currentHandle;
           state.estimatedRemainingMs = p.estimatedRemainingMs;
@@ -1560,14 +1796,20 @@ async function startUiServer(): Promise<void> {
         onResult: (row) => {
           state.results.unshift(row);
           if (state.results.length > 250) state.results.length = 250;
-          pushLog(
-            row.result === 'ok'
-              ? `@${row.handle} | OK | ${row.mainCategory} | ${row.brandSafety ?? '-'} | ${row.confidence != null ? `${Math.round(row.confidence * 100)}%` : '-'}`
-              : `@${row.handle} | ERRO | ${truncateLogLine(row.error ?? '', 200)}`
-          );
+          if (row.result === 'ok') {
+            pushLog(
+              `@${row.handle} | OK | ${row.mainCategory} | ${row.brandSafety ?? '-'} | ${row.confidence != null ? `${Math.round(row.confidence * 100)}%` : '-'}`
+            );
+          } else if (row.result === 'excluido') {
+            /* Linhas EXCLUINDO / API / EXCLUIDO OK ja foram enviadas por emitLog no runBatch. */
+          } else {
+            pushLog(`@${row.handle} | ERRO | ${truncateLogLine(row.error ?? '', 200)}`);
+          }
         },
       });
-      pushLog(`Execucao finalizada. done=${summary.done} failed=${summary.failed} stopped=${summary.stopped}`);
+      pushLog(
+        `Execucao finalizada. done=${summary.done} excluded=${summary.excluded} failed=${summary.failed} stopped=${summary.stopped}`
+      );
       await refreshCoverageStats();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1650,7 +1892,9 @@ async function main(): Promise<void> {
     return;
   }
   const summary = await runBatch();
-  console.log(`[qualify] Finalizado. done=${summary.done} failed=${summary.failed} stopped=${summary.stopped}`);
+  console.log(
+    `[qualify] Finalizado. done=${summary.done} excluded=${summary.excluded} failed=${summary.failed} stopped=${summary.stopped}`
+  );
 }
 
 main().catch((error) => {

@@ -13,6 +13,7 @@ import {
   createEmptyFollowersBucketsForFacets,
   incrementFollowersBucketCount,
 } from './followersSizeBuckets.js';
+import { snapMainCategoryToTaxonomy } from '../lib/mainCategoryTaxonomy.js';
 
 /**
  * Cache em memória só dos perfis (RocksDB). Posts não entram no heap: engajamento/hashtags vêm do SQLite
@@ -280,6 +281,13 @@ function bumpFacetString(map: Map<string, number>, raw: string): void {
   map.set(k, (map.get(k) ?? 0) + 1);
 }
 
+/** Agrega mainCategory por rótulo canônico (mesma faceta para belleza, maquiagem legada → Beleza). */
+function bumpFacetMainCategory(map: Map<string, number>, raw: string): void {
+  const c = snapMainCategoryToTaxonomy(String(raw ?? '').trim());
+  if (!c) return;
+  map.set(c, (map.get(c) ?? 0) + 1);
+}
+
 function bumpFacetStringArray(map: Map<string, number>, arr: unknown): void {
   if (!Array.isArray(arr)) return;
   for (const x of arr) {
@@ -341,7 +349,7 @@ function accumulateLlmFacetsFromItem(item: ProfileListItem, maps: LlmFacetMaps):
   const q = getLlmQualification(item as unknown as Record<string, unknown>);
   if (!q) return;
   bumpFacetString(maps.profileType, String(q.profileType ?? ''));
-  bumpFacetString(maps.mainCategory, String(q.mainCategory ?? ''));
+  bumpFacetMainCategory(maps.mainCategory, String(q.mainCategory ?? ''));
   bumpFacetString(maps.gender, String(q.gender ?? ''));
   bumpFacetString(maps.language, String(q.language ?? ''));
   bumpFacetStringArray(maps.subCategories, q.subCategories);
@@ -851,7 +859,16 @@ export function matchesLlmQualificationFilters(record: Record<string, unknown>, 
   };
 
   if (!orScalar('profileType', parseStringArray(query.llmProfileType))) return false;
-  if (!orScalar('mainCategory', parseStringArray(query.llmMainCategory))) return false;
+  const mainCatSel = parseStringArray(query.llmMainCategory);
+  if (mainCatSel.length > 0) {
+    const set = new Set(
+      mainCatSel
+        .map((s) => snapMainCategoryToTaxonomy(s.trim())?.toLowerCase())
+        .filter((x): x is string => Boolean(x))
+    );
+    const stored = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim())?.toLowerCase();
+    if (!stored || !set.has(stored)) return false;
+  }
   if (!orScalar('gender', parseStringArray(query.llmGender))) return false;
   if (!orScalar('language', parseStringArray(query.llmLanguage))) return false;
 
