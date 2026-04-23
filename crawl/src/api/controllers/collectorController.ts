@@ -11,7 +11,21 @@ import { resyncInfluencerS3AfterDbMediaReset } from '../../storage/s3InfluencerI
 import { buildNormalizedPost } from '../../utils/slimPost.js';
 import type { SlimProfile } from '../../utils/slimProfile.js';
 import { mergeProfilePreservingLlm } from '../../utils/preserveLlmOnProfileMerge.js';
-import { snapMainCategoryToTaxonomy } from '../../lib/mainCategoryTaxonomy.js';
+import { foldMainCategoryKey, snapMainCategoryToTaxonomy } from '../../lib/mainCategoryTaxonomy.js';
+
+/** Mesma regra que em `bumpFacetMainCategory` (busca): canônico ou texto bruto se o snap falhar. */
+function llmMainCategoryBucket(raw: string): string | null {
+  const t = String(raw ?? '').trim();
+  if (!t) return null;
+  return snapMainCategoryToTaxonomy(t) ?? t;
+}
+
+function llmMainCategoryBucketsMatch(rawProfileMc: string, filterRaw: string): boolean {
+  const a = llmMainCategoryBucket(rawProfileMc);
+  const b = llmMainCategoryBucket(filterRaw);
+  if (!a || !b) return false;
+  return foldMainCategoryKey(a) === foldMainCategoryKey(b);
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -38,11 +52,30 @@ interface LlmQueueCandidate extends CollectorLlmPendingItem {
   qualifiedAtMs: number;
 }
 
+/** Nó já chegou normalizado pelo coletor (evita segundo parse de GraphQL gigante no servidor). */
+function isPreNormalizedMediaNode(item: unknown): boolean {
+  if (item == null || typeof item !== 'object' || Array.isArray(item)) return false;
+  const o = item as Record<string, unknown>;
+  const post = o.post;
+  const influencer = o.influencer;
+  if (post == null || typeof post !== 'object' || influencer == null || typeof influencer !== 'object') return false;
+  const sc = String((post as Record<string, unknown>).shortcode ?? '').trim();
+  return sc.length > 0;
+}
+
 function normalizeRawMediaNodes(nodes: unknown[], collectedAt: string): Entity[] {
   const out: Entity[] = [];
   const seen = new Set<string>();
   for (const item of nodes) {
     if (item == null || typeof item !== 'object') continue;
+    if (isPreNormalizedMediaNode(item)) {
+      const o = item as Record<string, unknown>;
+      const sc = String((o.post as Record<string, unknown>).shortcode ?? '').trim();
+      if (!sc || seen.has(sc)) continue;
+      seen.add(sc);
+      out.push(item as Entity);
+      continue;
+    }
     const node = item as Record<string, unknown>;
     const code = node.shortcode ?? node.code;
     if (code == null) continue;
@@ -434,7 +467,18 @@ export function createCollectorController(storage: CompositeStorage) {
           return a.handle.localeCompare(b.handle, 'pt-BR');
         });
 
-        const filtered = handleFilter ? pending.filter((p) => p.handle === handleFilter) : pending;
+        const mainCategoryRaw = String(req.query.mainCategory ?? '').trim();
+        let afterMainCategory = pending;
+        if (mainCategoryRaw) {
+          afterMainCategory = pending.filter((item) => {
+            const q = getLlmQualification(item.profile);
+            if (!q) return false;
+            const rawMc = String(q.mainCategory ?? '').trim();
+            return llmMainCategoryBucketsMatch(rawMc, mainCategoryRaw);
+          });
+        }
+
+        const filtered = handleFilter ? afterMainCategory.filter((p) => p.handle === handleFilter) : afterMainCategory;
         const totalPending = filtered.length;
         const page = filtered.slice(offset, offset + limit);
         const items: CollectorLlmPendingItem[] = [];
@@ -470,32 +514,41 @@ export function createCollectorController(storage: CompositeStorage) {
     },
 
     /**
-     * Agrega `qualification.mainCategory` já persistidos (LLM concluído), por frequência,
-     * após normalização para a taxonomia canônica (evita belleza vs beleza & maquiagem como facetas distintas).
+     * Agrega `qualification.mainCategory` (LLM concluído): varre todo o bucket `profile` no RocksDB.
+     * Chave = taxonomia canônica ou texto bruto se o snap não encaixar (alinhado à busca / filtro da fila).
+     * Sem `limit` na query: devolve todas as facetas + contagens. `limit` positivo corta a lista ordenada (máx. 100k).
      */
     async listLlmMainCategoryLabels(req: Request, res: Response): Promise<void> {
       try {
-        const limitRaw = Number(req.query.limit ?? 200);
-        const limit = Math.max(1, Math.min(500, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 200));
+        const limitStr = req.query.limit;
+        const limitParsed =
+          limitStr != null && String(limitStr).trim() !== '' ? Number(limitStr) : Number.NaN;
+        const hasCap = Number.isFinite(limitParsed) && limitParsed > 0;
+        const cap = hasCap ? Math.max(1, Math.min(100_000, Math.floor(limitParsed))) : null;
         const profiles = await storage.getByBucket<Record<string, unknown>>('profile');
-        /** rótulo canônico -> contagem */
         const acc = new Map<string, number>();
         for (const { value } of profiles) {
           const q = getLlmQualification(value);
           if (!q) continue;
           const raw = String(q.mainCategory ?? '').trim();
-          if (!raw) continue;
-          const canon = snapMainCategoryToTaxonomy(raw);
-          if (!canon) continue;
-          acc.set(canon, (acc.get(canon) ?? 0) + 1);
+          const bucket = llmMainCategoryBucket(raw);
+          if (!bucket) continue;
+          acc.set(bucket, (acc.get(bucket) ?? 0) + 1);
         }
         const sorted = [...acc.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'));
-        const labels = sorted.slice(0, limit).map(([label]) => label);
+        let totalInfluencersLlm = 0;
+        for (const [, c] of sorted) totalInfluencersLlm += c;
+        const rowsAll = sorted.map(([label, count]) => ({ label, count }));
+        const rows = cap != null ? rowsAll.slice(0, cap) : rowsAll;
+        const labels = rows.map((r) => r.label);
         res.status(200).json({
           ok: true,
+          items: rows,
           labels,
           totalDistinct: acc.size,
-          returned: labels.length,
+          returned: rows.length,
+          totalInfluencersLlm,
+          listTruncated: cap != null && sorted.length > rows.length,
         });
       } catch (e) {
         console.error('[collectorController.listLlmMainCategoryLabels]', e instanceof Error ? e.stack : e);

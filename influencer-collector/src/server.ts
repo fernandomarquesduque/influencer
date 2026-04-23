@@ -15,13 +15,14 @@ import {
   removeProfile,
   removeIssueById,
 } from './memoryStorage.js';
-import { getProcessingState } from './processingStatus.js';
+import { getProcessingState, getHandlesCompletedSessionSnapshot } from './processingStatus.js';
 import * as runner from './runner.js';
 import { loadConfig } from './config.js';
 import type { InstagramClient } from './instagram.js';
 import type { Page } from 'playwright';
 import { freePortForUi } from './freeUiPort.js';
 import { isRemoteIngestConfigured } from './serverIngest.js';
+import { countIntegrationOkRows } from './issuesSqlite.js';
 
 const PORT = Number(process.env.COLLECTOR_UI_PORT) || 3967;
 
@@ -50,6 +51,9 @@ const JSON_HEADERS = {
 
 /** Máximo de linhas de Problemas na API/UI — evita HTML/JSON enorme (lista completa continua no SQLite). */
 const PROBLEMAS_API_LIMIT = 50;
+
+/** Máximo de integrados na resposta /api/list e na tabela da UI (ordenados do mais recente ao mais antigo). */
+const INTEGRADOS_UI_LIMIT = 50;
 
 function sendJson(res: ServerResponse, status: number, data: object): void {
   res.writeHead(status, JSON_HEADERS);
@@ -84,6 +88,7 @@ export function createCollectorRequestHandler(
         requireBioBrazilianPortuguese: !!c.requireBioBrazilianPortuguese,
         skipIfAlreadyInRemoteDb: !!c.skipIfAlreadyInRemoteDb,
         allowedAccountTypes: Array.isArray(c.allowedAccountTypes) ? c.allowedAccountTypes : [],
+        parallelProfileTabs: Math.max(1, Math.min(16, Math.floor(c.parallelProfileTabs) || 1)),
         /** Sem isso, «Pular @ se já estiver no banco» não consulta a API (fica sem efeito). */
         remoteIngestConfigured: isRemoteIngestConfigured(),
       });
@@ -96,6 +101,7 @@ export function createCollectorRequestHandler(
         scheduled: runner.isCollectionStartScheduled(),
         message: runner.getStatusMessage(),
         processing: getProcessingState(),
+        handlesCompletedSession: getHandlesCompletedSessionSnapshot(),
       });
       return;
     }
@@ -160,6 +166,7 @@ export function createCollectorRequestHandler(
               .map((x) => (typeof x === 'number' ? x : parseInt(String(x), 10)))
               .filter((n): n is number => n === 1 || n === 2 || n === 3)
           : baseCfg.allowedAccountTypes;
+        const parallelProfileTabs = Math.max(1, Math.min(16, num(body.parallelProfileTabs, baseCfg.parallelProfileTabs)));
         const googleQuery =
           typeof body.googleQuery === 'string' ? String(body.googleQuery).trim() : undefined;
         const googleQdrRaw = typeof body.googleQdr === 'string' ? String(body.googleQdr).trim().toLowerCase() : undefined;
@@ -189,6 +196,7 @@ export function createCollectorRequestHandler(
           requireBioBrazilianPortuguese,
           skipIfAlreadyInRemoteDb,
           allowedAccountTypes,
+          parallelProfileTabs,
         };
         if (!runner.tryScheduleCollection()) {
           sendJson(res, 200, { started: false, error: 'Não foi possível iniciar (tente de novo).' });
@@ -296,12 +304,14 @@ export function createCollectorRequestHandler(
           return '';
         }
       };
-      const integrados = L.integrados.map((p) => ({
-        ...row(p),
-        integratedAt: p.integratedAt,
-        apiHost: p.apiHost ?? '',
-        rocksDbVerified: p.rocksDbVerified ?? '',
-      }));
+      const integrados = L.integrados
+        .slice(0, INTEGRADOS_UI_LIMIT)
+        .map((p) => ({
+          ...row(p),
+          integratedAt: p.integratedAt,
+          apiHost: p.apiHost ?? '',
+          rocksDbVerified: p.rocksDbVerified ?? '',
+        }));
       const problemas = L.problemas.slice(0, PROBLEMAS_API_LIMIT).map((x) => ({
         id: x.id,
         handle: x.handle,
@@ -331,7 +341,7 @@ export function createCollectorRequestHandler(
               problemas: getProblemasDbCount(),
               problemasUi: L.problemas.length,
               problemasEventosSessao: getProblemasEventosSessao(),
-              integrados: L.integrados.length,
+              integrados: countIntegrationOkRows(),
               googleQueue: googleQueue.length,
               emProcessamento: processing ? 1 : 0,
             },
@@ -348,6 +358,7 @@ export function createCollectorRequestHandler(
             integrados,
             googleQueue: googleQueue.map((x) => ({ handle: x.handle, addedAt: x.addedAt, snippet: x.snippet })),
             influencers: [...L.coletados.map(row), ...L.integrados.map(row)],
+            handlesCompletedSession: getHandlesCompletedSessionSnapshot(),
           },
           null,
           2
@@ -379,8 +390,8 @@ export function createCollectorRequestHandler(
     .btn-stop:hover:not(:disabled) { background: #e53e3e; }
     .row-clickable { cursor: pointer; }
     .row-clickable:hover { background: rgba(255,255,255,0.04); }
-    .btn-remove-queue, .btn-remove-issue { padding: 0.3rem 0.6rem; font-size: 0.8rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
-    .btn-remove-queue:hover, .btn-remove-issue:hover { background: #450a0a; color: #fca5a5; }
+    .btn-remove-queue, .btn-remove-issue, .btn-remove-integrated { padding: 0.3rem 0.6rem; font-size: 0.8rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
+    .btn-remove-queue:hover, .btn-remove-issue:hover, .btn-remove-integrated:hover { background: #450a0a; color: #fca5a5; }
     .btn-clear-queue { margin-left: 0.5rem; padding: 0.35rem 0.75rem; font-size: 0.85rem; background: transparent; color: #f87171; border: 1px solid #7f1d1d; border-radius: 4px; cursor: pointer; }
     .btn-clear-queue:hover { background: #450a0a; color: #fca5a5; }
     #udmOptionsWrap { margin-top: 0.5rem; }
@@ -408,6 +419,8 @@ export function createCollectorRequestHandler(
     .count .n-err { color: #f87171; }
     .count .n-ok { color: #4ade80; }
     .count .n-queue { color: #38bdf8; }
+    #estimatesLine { display: none; margin: -0.25rem 0 1rem; padding: 0.55rem 0.75rem; border-radius: 6px; background: linear-gradient(90deg, #1a2332 0%, #1a1f24 100%); border: 1px solid #334155; font-size: 0.88rem; line-height: 1.5; color: #cbd5e1; white-space: pre-line; }
+    #estimatesLine strong { color: #7dd3fc; font-weight: 600; }
     h2.section { font-size: 1.05rem; margin: 1.25rem 0 0.5rem; color: #a3a3a3; border-bottom: 1px solid #333; padding-bottom: 0.35rem; }
     .kind-erro { color: #f87171; }
     .kind-regra { color: #fb923c; }
@@ -449,6 +462,7 @@ export function createCollectorRequestHandler(
       <label>Qtd. posts com essa curtida <input type="number" id="minPostsWithMinLikes" min="1" max="50" step="1" value="4"></label>
       <label>Máx. posts na hashtag <input type="number" id="maxPostsPerTag" min="1" max="200" step="1" value="30"></label>
       <label>Limite de perfis nesta rodada <input type="number" id="limit" min="1" max="100000" step="1" value="10"></label>
+      <label>Abas paralelas (extração) <input type="number" id="parallelProfileTabs" min="1" max="16" step="1" value="1" title="Instagram: quantas abas extraem ao mesmo tempo (modo Arrobas e fila Google). Valores altos podem aumentar risco de bloqueio."></label>
     </div>
     <div class="account-types-block" style="margin-top:0.75rem;">
       <div style="font-size:0.9rem;margin-bottom:0.35rem;">Tipos de conta Instagram aceitos <span style="color:#888">(account_type — nenhum marcado = aceitar todos)</span>:</div>
@@ -469,7 +483,8 @@ export function createCollectorRequestHandler(
     <label id="googleLabel" style="display:none;">Consulta(s) Google — uma por linha (ex.: <code>site:instagram.com mae mario</code>); após terminar uma, vai para a próxima:
     <textarea id="googleQuery" rows="3" placeholder="site:instagram.com mae mario&#10;site:instagram.com pai nintendo"></textarea></label>
     <label id="handlesLabel" style="display:none;">Lista de arrobas — uma por linha (com ou sem @):
-    <textarea id="handlesInput" rows="4" placeholder="@perfil1&#10;perfil2&#10;@perfil_3"></textarea></label>
+    <textarea id="handlesInput" rows="4" placeholder="@perfil1&#10;perfil2&#10;@perfil_3"></textarea>
+    <span class="hint" style="display:block;margin-top:0.35rem">Enquanto a coleta roda, cada @ já tratado (extraído, ignorado ou duplicado) é removido desta lista.</span></label>
     <label id="qdrLabel" style="display:none;">Filtro de tempo (qdr):
       <select id="qdr">
         <option value="h">Última hora</option>
@@ -493,8 +508,9 @@ export function createCollectorRequestHandler(
     <strong id="countC" class="n-pend">0</strong> coletados (aguardando API ou sem API)
     · <strong id="countI" class="n-ok">0</strong> integrados
     · <strong id="countP" class="n-err">0</strong> erros<span id="countPEvents" style="color:#94a3b8;font-weight:500"></span>
-    · <strong id="countG" class="n-queue">0</strong> na fila Google — atualiza a cada 5s
+    · <strong id="countG" class="n-queue">0</strong> na fila Google — atualiza a cada 2s
   </div>
+  <p id="estimatesLine" aria-live="polite"></p>
   <p id="listProgressLine" style="display:none;margin:-0.35rem 0 1rem;font-size:0.95rem;color:#a5b4fc;"></p>
   <h2 class="section">Linhas da busca (progresso)</h2>
   <p class="hint" style="margin-top:0">Qual consulta está em execução e as próximas — atualiza durante a coleta no modo Google.</p>
@@ -505,7 +521,7 @@ export function createCollectorRequestHandler(
   </table>
   </div>
   <h2 class="section">Fila Google (aguardando processamento no Instagram)</h2>
-  <p class="hint" style="margin-top:0">Handles descobertos na busca Google; o processamento no Instagram ocorre em seguida, <strong>1 perfil por vez</strong>. <button type="button" id="btnClearGoogleQueue" class="btn-clear-queue">Apagar tudo</button></p>
+  <p class="hint" style="margin-top:0">Handles descobertos na busca Google; o processamento no Instagram usa a quantidade de <strong>Abas paralelas</strong> acima (1 = um por vez). <button type="button" id="btnClearGoogleQueue" class="btn-clear-queue">Apagar tudo</button></p>
   <div class="table-scroll">
   <table>
     <thead><tr><th>#</th><th>Handle</th><th>Descrição Google (trecho / palavra-chave)</th><th>Adicionado em</th><th></th></tr></thead>
@@ -521,10 +537,10 @@ export function createCollectorRequestHandler(
   </table>
   </div>
   <h2 class="section">2 — Integrados com sucesso (API / RocksDB)</h2>
-  <p class="hint" style="margin-top:0"><strong>Confirmação no RocksDB</strong> = resposta do GET <code>collector-verify-profile</code> feito logo após o ingest (se a API tiver essa rota).</p>
+  <p class="hint" style="margin-top:0">Lista também é <strong>gravada no SQLite</strong> (tabela <code>integration_ok</code> no mesmo arquivo de Problemas) — ao reabrir o collector os integrados voltam aqui. Só entram perfis cujo <strong>POST de ingest na API retornou OK</strong> (erros de extração/regra ficam na seção 3). <strong>Confirmação no RocksDB</strong> = GET <code>collector-verify-profile</code> logo após o ingest (estado gravado aqui; não reconsulta o servidor ao só abrir a página). Se você apagar o perfil <strong>só no servidor</strong>, o collector ainda considera o @ como já integrado até você clicar em <strong>Remover</strong> — isso apaga a linha no SQLite e libera reprocessamento. <strong>Tabela abaixo:</strong> até ${INTEGRADOS_UI_LIMIT} integrados <strong>mais recentes</strong> (contador «integrados» acima mostra o total completo).</p>
   <div class="table-scroll">
   <table>
-    <thead><tr><th>#</th><th>Handle</th><th>Nome</th><th>Seguidores</th><th>Tipo perfil</th><th>Host (API)</th><th>Confirmação (consulta pós-ingest)</th><th>Integrado em</th></tr></thead>
+    <thead><tr><th>#</th><th>Handle</th><th>Nome</th><th>Seguidores</th><th>Tipo perfil</th><th>Host (API)</th><th>Confirmação (consulta pós-ingest)</th><th>Integrado em</th><th></th></tr></thead>
     <tbody id="rowsIntegrados"></tbody>
   </table>
   </div>
@@ -612,12 +628,64 @@ export function createCollectorRequestHandler(
           handlesInput: (document.getElementById('handlesInput') && document.getElementById('handlesInput').value) || '',
           googleQdr: (document.getElementById('qdr') && document.getElementById('qdr').value) || 'w',
           maxSerpPages: document.getElementById('maxSerpPages') && document.getElementById('maxSerpPages').value,
+          parallelProfileTabs: document.getElementById('parallelProfileTabs') && document.getElementById('parallelProfileTabs').value,
           udm39: !!(document.getElementById('udm39') && document.getElementById('udm39').checked),
           udm7: !!(document.getElementById('udm7') && document.getElementById('udm7').checked),
           udmNone: !!(document.getElementById('udmNone') && document.getElementById('udmNone').checked),
           allowedAccountTypes: collectAllowedAccountTypes()
         }));
       } catch (e) { /* private mode / quota */ }
+    }
+    function splitTextareaLines(raw) {
+      var s = String(raw || '');
+      var out = [];
+      var cur = '';
+      for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if (c === 10) {
+          out.push(cur);
+          cur = '';
+        } else if (c === 13) {
+          out.push(cur);
+          cur = '';
+          if (i + 1 < s.length && s.charCodeAt(i + 1) === 10) i++;
+        } else {
+          cur += s.charAt(i);
+        }
+      }
+      out.push(cur);
+      return out;
+    }
+    function parseHandlesFromTextarea(raw) {
+      return String(raw || '')
+        .split(/[\\n,;]+/)
+        .map(function(h) { return h.replace(/^@+/, '').trim().toLowerCase(); })
+        .filter(function(h) { return /^[a-z0-9._]{2,30}$/.test(h); });
+    }
+    function applyHandlesCompletedToTextarea(sessionHandles) {
+      if (modeEl.value !== 'handles') return;
+      var hi = document.getElementById('handlesInput');
+      if (!hi || !sessionHandles || sessionHandles.length === 0) return;
+      var done = {};
+      for (var i = 0; i < sessionHandles.length; i++) {
+        var k = String(sessionHandles[i] || '').trim().toLowerCase().replace(/^@+/, '');
+        if (k) done[k] = true;
+      }
+      var parsed = parseHandlesFromTextarea(hi.value || '');
+      if (parsed.length === 0) return;
+      var out = [];
+      var removed = false;
+      for (var j = 0; j < parsed.length; j++) {
+        var nk = parsed[j];
+        if (done[nk]) {
+          removed = true;
+          continue;
+        }
+        out.push(nk);
+      }
+      if (!removed) return;
+      hi.value = out.join(String.fromCharCode(10));
+      saveUiFilters();
     }
     function loadUiFilters() {
       try {
@@ -643,6 +711,7 @@ export function createCollectorRequestHandler(
       setNum('maxPostsPerTag', s.maxPostsPerTag);
       setNum('limit', s.limit);
       setNum('maxSerpPages', s.maxSerpPages);
+      setNum('parallelProfileTabs', s.parallelProfileTabs);
       if (typeof s.excludeBusiness === 'boolean') {
         var ex = document.getElementById('excludeBusiness');
         if (ex) ex.checked = s.excludeBusiness;
@@ -686,7 +755,7 @@ export function createCollectorRequestHandler(
       if (Array.isArray(s.allowedAccountTypes)) applyAccountTypeCheckboxes(s.allowedAccountTypes);
     }
     function bindFilterPersistence() {
-      ['minFollowers', 'maxFollowers', 'minPostLikes', 'minPostsWithMinLikes', 'maxPostsPerTag', 'limit', 'maxSerpPages'].forEach(function(id) {
+      ['minFollowers', 'maxFollowers', 'minPostLikes', 'minPostsWithMinLikes', 'maxPostsPerTag', 'limit', 'maxSerpPages', 'parallelProfileTabs'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) {
           el.addEventListener('input', saveUiFilters);
@@ -767,6 +836,7 @@ export function createCollectorRequestHandler(
         setNum('maxPostsPerTag', d.maxPostsPerTag, 30);
         setNum('limit', d.maxProfiles, 19999);
         setNum('maxSerpPages', d.maxSerpPages, 20);
+        setNum('parallelProfileTabs', d.parallelProfileTabs, 1);
         var ex = document.getElementById('excludeBusiness');
         if (ex) ex.checked = d.excludeBusinessProfiles !== false;
         var rb = document.getElementById('requireBioPtBr');
@@ -788,6 +858,85 @@ export function createCollectorRequestHandler(
     function escapeAttr(s) {
       return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
     }
+    var listIndexSamples = [];
+    var listProgressSignature = '';
+    var LIST_INDEX_SAMPLES_MAX = 50;
+    function formatDurationMs(ms) {
+      if (!Number.isFinite(ms) || ms <= 0) return '';
+      var s = Math.ceil(ms / 1000);
+      var d = Math.floor(s / 86400);
+      s -= d * 86400;
+      var h = Math.floor(s / 3600);
+      s -= h * 3600;
+      var m = Math.floor(s / 60);
+      if (d > 0) return '≈ ' + d + ' d ' + h + ' h';
+      if (h > 0) return '≈ ' + h + ' h ' + m + ' min';
+      if (m > 0) return '≈ ' + m + ' min';
+      return '≈ ' + s + ' s';
+    }
+    function updateListEstimates(procFull, integradosCount) {
+      var el = document.getElementById('estimatesLine');
+      if (!el) return;
+      if (!procFull || procFull.listTotal == null || procFull.listIndex == null || !(procFull.listTotal > 0) || !(procFull.listIndex > 0)) {
+        el.style.display = 'none';
+        el.textContent = '';
+        listIndexSamples = [];
+        listProgressSignature = '';
+        return;
+      }
+      var lk = procFull.listKind || '';
+      var li = procFull.listIndex;
+      var lt = procFull.listTotal;
+      var rem = procFull.listRemaining != null ? procFull.listRemaining : Math.max(0, lt - li + 1);
+      var sig = lk + ':' + lt;
+      if (sig !== listProgressSignature) {
+        listProgressSignature = sig;
+        listIndexSamples = [];
+      }
+      var now = Date.now();
+      listIndexSamples.push({ t: now, idx: li });
+      if (listIndexSamples.length > LIST_INDEX_SAMPLES_MAX) listIndexSamples.shift();
+      var winMs = 120000;
+      var samples = listIndexSamples.filter(function(s) { return now - s.t <= winMs; });
+      var vPerSec = null;
+      if (samples.length >= 2) {
+        var a = samples[0];
+        var b = samples[samples.length - 1];
+        var dtSec = (b.t - a.t) / 1000;
+        var dIdx = b.idx - a.idx;
+        if (dtSec >= 5 && dIdx > 0) vPerSec = dIdx / dtSec;
+      }
+      var etaHuman = '';
+      if (vPerSec != null && vPerSec > 0 && rem > 0) {
+        etaHuman = formatDurationMs((rem / vPerSec) * 1000);
+      } else if (samples.length >= 2) {
+        var a0 = samples[0];
+        var b0 = samples[samples.length - 1];
+        if (b0.idx <= a0.idx) etaHuman = 'indeterminado (índice da lista parado nos últimos 2 min)';
+        else etaHuman = 'calculando…';
+      } else {
+        etaHuman = 'calculando…';
+      }
+      var listLabel = lk === 'handles' ? 'arrobas' : lk === 'hashtag' ? 'hashtags' : lk === 'google_queries' ? 'consultas Google' : 'itens';
+      var lines = [];
+      lines.push('Estimativas (aproximações):');
+      lines.push('• Tempo até o fim da lista de ' + listLabel + ' (' + rem.toLocaleString('pt-BR') + ' faltante(s) no contador): ' + etaHuman + ' — média da velocidade do índice nos últimos 2 min.');
+      if (lk === 'handles' && li >= 10) {
+        var inte = Number(integradosCount);
+        if (!isNaN(inte) && inte >= 0) {
+          var proj = Math.round(inte * lt / li);
+          proj = Math.max(inte, Math.min(lt, proj));
+          var pct = li > 0 ? (inte / li) * 100 : 0;
+          lines.push('• Integrados prováveis ao terminar a lista de arrobas: ' + proj.toLocaleString('pt-BR') + ' (extrapolação: ' + inte.toLocaleString('pt-BR') + ' ÷ posição ' + li + ' × ' + lt.toLocaleString('pt-BR') + '; taxa ~' + (Math.round(pct * 10) / 10) + '% por posição). Contadores de integrados/erros podem incluir outras execuções ou vários eventos por @.');
+        }
+      } else if (lk === 'handles') {
+        lines.push('• Integrados prováveis: aguarde a lista avançar (posição ≥ 10) para extrapolar.');
+      } else {
+        lines.push('• Projeção de quantos perfis vão integrar: só no modo Arrobas (cada item da lista é um @). Em hashtag/Google, cada item da lista não equivale a um perfil.');
+      }
+      el.style.display = 'block';
+      el.textContent = lines.join(String.fromCharCode(10));
+    }
     function listProgressHuman(p) {
       if (!p || p.listTotal == null || p.listIndex == null || !(p.listTotal > 0)) return '';
       var rem = p.listRemaining != null ? p.listRemaining : (p.listTotal - p.listIndex + 1);
@@ -801,6 +950,7 @@ export function createCollectorRequestHandler(
           return r.json();
         })
         .then(function(d) {
+          applyHandlesCompletedToTextarea(Array.isArray(d.handlesCompletedSession) ? d.handlesCompletedSession : []);
           var c = d.counts || {};
           document.getElementById('countC').textContent = c.coletados != null ? c.coletados : 0;
           var probDb = c.problemas != null ? c.problemas : 0;
@@ -833,6 +983,7 @@ export function createCollectorRequestHandler(
             if (lhRow) { lpLine.style.display = 'block'; lpLine.textContent = lhRow; }
             else { lpLine.style.display = 'none'; lpLine.textContent = ''; }
           }
+          updateListEstimates(procFull, c.integrados != null ? c.integrados : 0);
           var gqState = d.googleQueriesState && Array.isArray(d.googleQueriesState.queries) ? d.googleQueriesState : null;
           var searchLinesEl = document.getElementById('rowsSearchLines');
           var searchLinesWrap = document.getElementById('searchLinesWrap');
@@ -931,7 +1082,8 @@ export function createCollectorRequestHandler(
             } else if (v === 'skipped') {
               conf = '<span class="verify-skip">Não executada</span> — <code>COLLECTOR_SKIP_VERIFY</code> ou fluxo sem verificação.';
             }
-            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + escapeAttr(typeCell) + '</td><td>' + host + '</td><td class="verify-cell">' + conf + '</td><td>' + escapeAttr(x.integratedAt || '') + '</td></tr>';
+            var rmInt = '<button type="button" class="btn-remove-integrated" data-handle="' + escapeAttr(hk) + '">Remover</button>';
+            return '<tr class="row-clickable" data-handle="' + escapeAttr(hk) + '"><td>' + (i + 1) + '</td><td>@' + escapeAttr(x.handle) + '</td><td>' + escapeAttr(x.full_name || '') + '</td><td>' + (x.followers_count != null ? Number(x.followers_count).toLocaleString('pt-BR') : '') + '</td><td>' + escapeAttr(typeCell) + '</td><td>' + host + '</td><td class="verify-cell">' + conf + '</td><td>' + escapeAttr(x.integratedAt || '') + '</td><td>' + rmInt + '</td></tr>';
           }
           function rowGoogleQueue(x, i) {
             var h = (x.handle || '').toLowerCase();
@@ -948,7 +1100,7 @@ export function createCollectorRequestHandler(
           var gqEl = document.getElementById('rowsGoogleQueue');
           if (gqEl) gqEl.innerHTML = googleQueue.length ? googleQueue.map(rowGoogleQueue).join('') : '<tr><td colspan="5" style="color:#666">Nenhum. Use o modo Google para preencher a fila.</td></tr>';
           document.getElementById('rowsProblemas').innerHTML = problemas.length ? problemas.map(rowProb).join('') : '<tr><td colspan="8" style="color:#666">Nenhum.</td></tr>';
-          document.getElementById('rowsIntegrados').innerHTML = integrados.length ? integrados.map(rowInt).join('') : '<tr><td colspan="8" style="color:#666">Nenhum ainda.</td></tr>';
+          document.getElementById('rowsIntegrados').innerHTML = integrados.length ? integrados.map(rowInt).join('') : '<tr><td colspan="9" style="color:#666">Nenhum ainda.</td></tr>';
         })
         .catch(function() {
           document.getElementById('countC').textContent = '?';
@@ -960,6 +1112,10 @@ export function createCollectorRequestHandler(
           document.getElementById('countI').textContent = '?';
           var countGEl = document.getElementById('countG');
           if (countGEl) countGEl.textContent = '?';
+          var estErr = document.getElementById('estimatesLine');
+          if (estErr) { estErr.style.display = 'none'; estErr.textContent = ''; }
+          listIndexSamples = [];
+          listProgressSignature = '';
           showApiErr('Lista não atualizou — confira se o collector está ativo nesta mesma porta (' + window.location.port + ').');
         });
     }
@@ -1006,10 +1162,28 @@ export function createCollectorRequestHandler(
       }
       onRowClick(e);
     }
+    function onIntegradosTableClick(e) {
+      var btn = e.target.closest('.btn-remove-integrated');
+      if (btn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var h = btn.getAttribute('data-handle');
+        if (!h) return;
+        fetch(apiUrl('/api/remove'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: h }) })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.removed) refreshList();
+            else if (d.error) alert(d.error);
+          })
+          .catch(function() { alert('Não foi possível remover o integrado.'); });
+        return;
+      }
+      onRowClick(e);
+    }
     document.getElementById('rowsColetados').addEventListener('click', onRowClick);
     document.getElementById('rowsGoogleQueue').addEventListener('click', onGoogleQueueClick);
     document.getElementById('rowsProblemas').addEventListener('click', onProblemasTableClick);
-    document.getElementById('rowsIntegrados').addEventListener('click', onRowClick);
+    document.getElementById('rowsIntegrados').addEventListener('click', onIntegradosTableClick);
     var btnClearGq = document.getElementById('btnClearGoogleQueue');
     if (btnClearGq) {
       btnClearGq.addEventListener('click', function() {
@@ -1085,7 +1259,8 @@ export function createCollectorRequestHandler(
           excludeBusinessProfiles: !!(document.getElementById('excludeBusiness') && document.getElementById('excludeBusiness').checked),
           requireBioBrazilianPortuguese: !!(document.getElementById('requireBioPtBr') && document.getElementById('requireBioPtBr').checked),
           skipIfAlreadyInRemoteDb: !!(document.getElementById('skipIfAlreadyInRemoteDb') && document.getElementById('skipIfAlreadyInRemoteDb').checked),
-          allowedAccountTypes: collectAllowedAccountTypes()
+          allowedAccountTypes: collectAllowedAccountTypes(),
+          parallelProfileTabs: numFromInput('parallelProfileTabs', 1)
         };
         var ctrl = new AbortController();
         var to = setTimeout(function() { ctrl.abort(); }, 120000);
@@ -1145,6 +1320,7 @@ export function createCollectorRequestHandler(
       fetch(apiUrl('/api/status'), { cache: 'no-store' })
         .then(function(r) { return r.json(); })
         .then(function(d) {
+          applyHandlesCompletedToTextarea(Array.isArray(d.handlesCompletedSession) ? d.handlesCompletedSession : []);
           var active = d.running || d.scheduled;
           var stEl = document.getElementById('status');
           var msg = d.message || '';

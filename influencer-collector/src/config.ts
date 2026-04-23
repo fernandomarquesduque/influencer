@@ -31,6 +31,11 @@ export interface CollectorConfig {
    * .env: COLLECTOR_ALLOWED_ACCOUNT_TYPES=1,2,3 (vazio ou ausente = todos).
    */
   allowedAccountTypes: number[];
+  /**
+   * Abas do Instagram extraindo em paralelo (Arrobas e fila Google). 1 = um por vez; máx. 16.
+   * .env: COLLECTOR_PARALLEL_PROFILE_TABS
+   */
+  parallelProfileTabs: number;
 }
 
 const DEFAULT_MIN_FOLLOWERS = 5000;
@@ -83,6 +88,10 @@ export function loadConfig(): CollectorConfig {
       ? true
       : String(skipDbRaw).toLowerCase() !== 'false';
   const allowedAccountTypes = parseAllowedAccountTypesFromEnv();
+  const parallelRaw = process.env.COLLECTOR_PARALLEL_PROFILE_TABS?.trim();
+  const parallelProfileTabs = parallelRaw
+    ? Math.max(1, Math.min(16, parseInt(parallelRaw, 10) || 1))
+    : 1;
 
   return {
     minFollowersToSave,
@@ -98,6 +107,7 @@ export function loadConfig(): CollectorConfig {
     requireBioBrazilianPortuguese,
     skipIfAlreadyInRemoteDb,
     allowedAccountTypes,
+    parallelProfileTabs,
   };
 }
 

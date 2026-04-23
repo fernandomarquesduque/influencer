@@ -281,10 +281,11 @@ function bumpFacetString(map: Map<string, number>, raw: string): void {
   map.set(k, (map.get(k) ?? 0) + 1);
 }
 
-/** Agrega mainCategory por rótulo canônico (mesma faceta para belleza, maquiagem legada → Beleza). */
+/** Agrega mainCategory por rótulo canônico ou texto bruto quando o snap não encaixa (igual ao endpoint collector). */
 function bumpFacetMainCategory(map: Map<string, number>, raw: string): void {
-  const c = snapMainCategoryToTaxonomy(String(raw ?? '').trim());
-  if (!c) return;
+  const t = String(raw ?? '').trim();
+  if (!t) return;
+  const c = snapMainCategoryToTaxonomy(t) ?? t;
   map.set(c, (map.get(c) ?? 0) + 1);
 }
 
@@ -1137,8 +1138,8 @@ export async function searchProfiles(
   const sizeFilterRaw = parseStringArray(query.sizeFilter).map((s) => s.toLowerCase());
   const sizeFilterSet = sizeFilterRaw.length > 0
     ? new Set(
-        sizeFilterRaw.map((s) => (s === 'mid' ? 'medio' : s === 'subnano' ? 'nano' : s))
-      )
+      sizeFilterRaw.map((s) => (s === 'mid' ? 'medio' : s === 'subnano' ? 'nano' : s))
+    )
     : null;
   const includeFacets = query.includeFacets !== false;
 
@@ -1488,135 +1489,135 @@ export async function searchProfiles(
   /** Filtros por ativação, cidade, estado, bairro e redes (multiselect). Aplicados também quando useInitialItems (ex.: campanha com pagamento pendente). */
   let filteredItems = items;
   if (!(useInitialItems && campaignNoFilters)) {
-  if (accountTypeFilter.length > 0) {
-    filteredItems = filteredItems.filter((i) => {
-      const at = (i as ProfileListItem & { account_type?: number }).account_type;
-      return at != null && accountTypeFilter.includes(at);
-    });
-  }
-  if (minFollowers != null) {
-    filteredItems = filteredItems.filter((i) => (i.followers_count ?? 0) >= minFollowers);
-  }
-  if (maxFollowers != null) {
-    filteredItems = filteredItems.filter((i) => (i.followers_count ?? 0) <= maxFollowers);
-  }
-  if (excludePrivate) {
-    filteredItems = filteredItems.filter((i) => !(i as ProfileListItem & { is_private?: boolean }).is_private);
-  }
-  if (engagementRateBucketsFilter.length > 0) {
-    filteredItems = filteredItems.filter((i) =>
-      matchesEngagementRateBuckets(i.engagement?.engagement_rate ?? 0, engagementRateBucketsFilter)
-    );
-  } else if (minEngagementRate != null) {
-    filteredItems = filteredItems.filter((i) => (i.engagement?.engagement_rate ?? 0) >= minEngagementRate);
-  }
-  if (avgLikesBucketsFilter.length > 0) {
-    filteredItems = filteredItems.filter((i) =>
-      matchesAvgLikesBuckets(i.engagement?.avg_likes ?? 0, avgLikesBucketsFilter)
-    );
-  } else if (minAvgLikes != null) {
-    filteredItems = filteredItems.filter((i) => (i.engagement?.avg_likes ?? 0) >= minAvgLikes);
-  }
-  if (postsCountBucketsFilter.length > 0) {
-    filteredItems = filteredItems.filter((i) =>
-      matchesPostsCountBuckets(i.engagement?.posts_count ?? 0, postsCountBucketsFilter)
-    );
-  } else if (minPostsCount != null) {
-    filteredItems = filteredItems.filter((i) => (i.engagement?.posts_count ?? 0) >= minPostsCount);
-  }
-  if (activationFilter.length === 1) {
-    const wantActivated = activationFilter[0]!.toLowerCase() === 'activated';
-    filteredItems = filteredItems.filter((i) => (wantActivated ? !!i.activation : !i.activation));
-  }
-  if (citiesFilter.length > 0) {
-    filteredItems = filteredItems.filter(
-      (i) => i.activation?.city?.trim() && citiesFilter.includes(i.activation.city!.trim().toLowerCase())
-    );
-  }
-  if (statesFilter.length > 0) {
-    filteredItems = filteredItems.filter(
-      (i) => i.activation?.state?.trim() && statesFilter.includes(i.activation.state!.trim().toLowerCase())
-    );
-  }
-  if (neighborhoodsFilter.length > 0) {
-    filteredItems = filteredItems.filter((i) => {
-      const raw = i.activation?.neighborhood?.trim();
-      if (!raw) return false;
-      const parts = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-      return parts.some((p) => neighborhoodsFilter.includes(p));
-    });
-  }
-  if (socialNetworksFilter.length > 0) {
-    const hasNetwork = (act: ProfileActivationData, net: string): boolean => {
-      const n = net.toLowerCase();
-      if (n === 'whatsapp') return !!(act.whatsapp?.trim());
-      if (n === 'tiktok') return !!(act.tiktok?.trim());
-      if (n === 'facebook') return !!(act.facebook?.trim());
-      if (n === 'linkedin') return !!(act.linkedin?.trim());
-      if (n === 'twitter') return !!(act.twitter?.trim());
-      return false;
-    };
-    filteredItems = filteredItems.filter(
-      (i) => i.activation && socialNetworksFilter.some((net) => hasNetwork(i.activation!, net))
-    );
-  }
-  if (contentTypesFilter.length > 0) {
-    filteredItems = filteredItems.filter((i) => {
-      const ct = i.activation?.content_type;
-      if (!ct || !Array.isArray(ct)) return false;
-      const ctLower = ct.map((c) => String(c).trim().toLowerCase()).filter(Boolean);
-      return contentTypesFilter.some((fc) => ctLower.includes(fc));
-    });
-  }
-  for (const [actKey, allowedBuckets] of Object.entries(pricingFilters)) {
-    if (allowedBuckets.length === 0) continue;
-    filteredItems = filteredItems.filter((i) => {
-      const pricing = i.activation?.pricing as Record<string, unknown> | undefined;
-      if (!pricing) return false;
-      const raw = pricing[actKey];
-      if (raw === undefined || raw === null || raw === '') return false;
-      const num = typeof raw === 'number' ? raw : Number(raw);
-      if (!Number.isFinite(num)) return false;
-      return allowedBuckets.includes(num);
-    });
-  }
+    if (accountTypeFilter.length > 0) {
+      filteredItems = filteredItems.filter((i) => {
+        const at = (i as ProfileListItem & { account_type?: number }).account_type;
+        return at != null && accountTypeFilter.includes(at);
+      });
+    }
+    if (minFollowers != null) {
+      filteredItems = filteredItems.filter((i) => (i.followers_count ?? 0) >= minFollowers);
+    }
+    if (maxFollowers != null) {
+      filteredItems = filteredItems.filter((i) => (i.followers_count ?? 0) <= maxFollowers);
+    }
+    if (excludePrivate) {
+      filteredItems = filteredItems.filter((i) => !(i as ProfileListItem & { is_private?: boolean }).is_private);
+    }
+    if (engagementRateBucketsFilter.length > 0) {
+      filteredItems = filteredItems.filter((i) =>
+        matchesEngagementRateBuckets(i.engagement?.engagement_rate ?? 0, engagementRateBucketsFilter)
+      );
+    } else if (minEngagementRate != null) {
+      filteredItems = filteredItems.filter((i) => (i.engagement?.engagement_rate ?? 0) >= minEngagementRate);
+    }
+    if (avgLikesBucketsFilter.length > 0) {
+      filteredItems = filteredItems.filter((i) =>
+        matchesAvgLikesBuckets(i.engagement?.avg_likes ?? 0, avgLikesBucketsFilter)
+      );
+    } else if (minAvgLikes != null) {
+      filteredItems = filteredItems.filter((i) => (i.engagement?.avg_likes ?? 0) >= minAvgLikes);
+    }
+    if (postsCountBucketsFilter.length > 0) {
+      filteredItems = filteredItems.filter((i) =>
+        matchesPostsCountBuckets(i.engagement?.posts_count ?? 0, postsCountBucketsFilter)
+      );
+    } else if (minPostsCount != null) {
+      filteredItems = filteredItems.filter((i) => (i.engagement?.posts_count ?? 0) >= minPostsCount);
+    }
+    if (activationFilter.length === 1) {
+      const wantActivated = activationFilter[0]!.toLowerCase() === 'activated';
+      filteredItems = filteredItems.filter((i) => (wantActivated ? !!i.activation : !i.activation));
+    }
+    if (citiesFilter.length > 0) {
+      filteredItems = filteredItems.filter(
+        (i) => i.activation?.city?.trim() && citiesFilter.includes(i.activation.city!.trim().toLowerCase())
+      );
+    }
+    if (statesFilter.length > 0) {
+      filteredItems = filteredItems.filter(
+        (i) => i.activation?.state?.trim() && statesFilter.includes(i.activation.state!.trim().toLowerCase())
+      );
+    }
+    if (neighborhoodsFilter.length > 0) {
+      filteredItems = filteredItems.filter((i) => {
+        const raw = i.activation?.neighborhood?.trim();
+        if (!raw) return false;
+        const parts = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+        return parts.some((p) => neighborhoodsFilter.includes(p));
+      });
+    }
+    if (socialNetworksFilter.length > 0) {
+      const hasNetwork = (act: ProfileActivationData, net: string): boolean => {
+        const n = net.toLowerCase();
+        if (n === 'whatsapp') return !!(act.whatsapp?.trim());
+        if (n === 'tiktok') return !!(act.tiktok?.trim());
+        if (n === 'facebook') return !!(act.facebook?.trim());
+        if (n === 'linkedin') return !!(act.linkedin?.trim());
+        if (n === 'twitter') return !!(act.twitter?.trim());
+        return false;
+      };
+      filteredItems = filteredItems.filter(
+        (i) => i.activation && socialNetworksFilter.some((net) => hasNetwork(i.activation!, net))
+      );
+    }
+    if (contentTypesFilter.length > 0) {
+      filteredItems = filteredItems.filter((i) => {
+        const ct = i.activation?.content_type;
+        if (!ct || !Array.isArray(ct)) return false;
+        const ctLower = ct.map((c) => String(c).trim().toLowerCase()).filter(Boolean);
+        return contentTypesFilter.some((fc) => ctLower.includes(fc));
+      });
+    }
+    for (const [actKey, allowedBuckets] of Object.entries(pricingFilters)) {
+      if (allowedBuckets.length === 0) continue;
+      filteredItems = filteredItems.filter((i) => {
+        const pricing = i.activation?.pricing as Record<string, unknown> | undefined;
+        if (!pricing) return false;
+        const raw = pricing[actKey];
+        if (raw === undefined || raw === null || raw === '') return false;
+        const num = typeof raw === 'number' ? raw : Number(raw);
+        if (!Number.isFinite(num)) return false;
+        return allowedBuckets.includes(num);
+      });
+    }
 
-  if (costTierFilter.length > 0) {
-    const tierSet = new Set(costTierFilter);
-    filteredItems = filteredItems.filter((i) => {
-      let tier = getCostTierFromPricing(i.activation?.pricing as Record<string, unknown> | undefined);
-      if (!tier && Number.isFinite(i.followers_count)) {
-        const suggested = getSuggestedPricingFromFollowers(i.followers_count ?? 0);
-        tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
-      }
-      return tier != null && tierSet.has(tier);
-    });
-  }
+    if (costTierFilter.length > 0) {
+      const tierSet = new Set(costTierFilter);
+      filteredItems = filteredItems.filter((i) => {
+        let tier = getCostTierFromPricing(i.activation?.pricing as Record<string, unknown> | undefined);
+        if (!tier && Number.isFinite(i.followers_count)) {
+          const suggested = getSuggestedPricingFromFollowers(i.followers_count ?? 0);
+          tier = getCostTierFromPricing(suggested as unknown as Record<string, unknown>);
+        }
+        return tier != null && tierSet.has(tier);
+      });
+    }
 
-  if (sizeFilterSet != null && sizeFilterSet.size > 0) {
-    filteredItems = filteredItems.filter((i) => {
-      const fc = i.followers_count ?? 0;
-      return sizeFilterSet.has(followersCountToSizeKey(fc));
-    });
-  }
+    if (sizeFilterSet != null && sizeFilterSet.size > 0) {
+      filteredItems = filteredItems.filter((i) => {
+        const fc = i.followers_count ?? 0;
+        return sizeFilterSet.has(followersCountToSizeKey(fc));
+      });
+    }
 
-  if (hasAnyLlmFilterInQuery) {
-    filteredItems = filteredItems.filter((i) =>
-      matchesLlmQualificationFilters(i as unknown as Record<string, unknown>, query)
-    );
-  }
+    if (hasAnyLlmFilterInQuery) {
+      filteredItems = filteredItems.filter((i) =>
+        matchesLlmQualificationFilters(i as unknown as Record<string, unknown>, query)
+      );
+    }
 
-  if (q && useInitialItems) {
-    filteredItems = filteredItems.filter((i) => {
-      const text = getSearchableTextFromItem(i);
-      const { match, relevance } = matchesQuery(text, q);
-      if (match) {
-        (i as ProfileListItem & { search_relevance?: number }).search_relevance = relevance;
-        return true;
-      }
-      return false;
-    });
-  }
+    if (q && useInitialItems) {
+      filteredItems = filteredItems.filter((i) => {
+        const text = getSearchableTextFromItem(i);
+        const { match, relevance } = matchesQuery(text, q);
+        if (match) {
+          (i as ProfileListItem & { search_relevance?: number }).search_relevance = relevance;
+          return true;
+        }
+        return false;
+      });
+    }
   }
 
   items = filteredItems;

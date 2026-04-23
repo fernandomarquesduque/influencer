@@ -45,6 +45,32 @@ let current: ProcessingState | null = null;
 
 let listQueue: ListQueueProgress | null = null;
 
+/** Modo Arrobas: @ já concluídos nesta execução (para a UI remover linhas da textarea). Cumulativo até o próximo reset. */
+const handlesCompletedThisSession = new Set<string>();
+
+function normalizeHandleForSession(handle: string): string | null {
+  const hk = String(handle ?? '')
+    .trim()
+    .replace(/^@+/, '')
+    .toLowerCase();
+  if (!hk || !/^[a-z0-9._]{2,30}$/.test(hk)) return null;
+  return hk;
+}
+
+export function resetHandlesCompletedSession(): void {
+  handlesCompletedThisSession.clear();
+}
+
+export function markHandleCompletedSession(handle: string): void {
+  const hk = normalizeHandleForSession(handle);
+  if (hk) handlesCompletedThisSession.add(hk);
+}
+
+/** Lista estável para JSON (GET /api/status e /api/list). */
+export function getHandlesCompletedSessionSnapshot(): string[] {
+  return Array.from(handlesCompletedThisSession).sort();
+}
+
 export function setListQueueProgress(progress: ListQueueProgress | null): void {
   listQueue = progress;
 }

@@ -9,6 +9,17 @@ export type MainCategoryCanonical = (typeof MAIN_CATEGORY_CANONICAL_LABELS)[numb
 export declare function foldMainCategoryKey(s: string): string;
 /** Normaliza token de subCategory para lookup no mapa fechado (underscore → espaço, depois fold). */
 export declare function normalizeSubcategoryToken(s: string): string;
+/**
+ * Quebra rótulos em linguagem natural ("direito trabalhista", "advogado_familia") em tokens
+ * que existem no mapa (cada palavra pontua separadamente).
+ */
+export declare function expandSubcategoryTokensForLookup(raw: string): string[];
+/** True se algum token da subCategory (frase ou snake_case) existe no mapa fechado sub → main. */
+export declare function isSubcategoryMappedToMain(raw: string): boolean;
+/**
+ * Amostra compacta por vitrine (main) para o prompt: o LLM deve preferir termos reconheciveis pelo mapa.
+ */
+export declare function formatSubcategoryTaxonomyHintsForPrompt(): string;
 /** Pontuação só a partir do mapa fechado sub → main (V2). */
 export declare function scoreSubCategoriesToMainCategories(subCategories: string[]): Map<MainCategoryCanonical, number>;
 /**

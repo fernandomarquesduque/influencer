@@ -79,8 +79,8 @@ export function applyQualificationPatchToProfileRecord(
       : {};
   const prevQ =
     prevLlm.qualification != null &&
-    typeof prevLlm.qualification === 'object' &&
-    !Array.isArray(prevLlm.qualification)
+      typeof prevLlm.qualification === 'object' &&
+      !Array.isArray(prevLlm.qualification)
       ? { ...(prevLlm.qualification as Record<string, unknown>) }
       : {};
 

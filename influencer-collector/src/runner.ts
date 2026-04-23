@@ -13,11 +13,9 @@ import {
   discoverByHandles,
   processGoogleQueue,
 } from './discovery.js';
-import { issueHandleKeysSet } from './memoryStorage.js';
 import type { DiscoveryMode } from './discovery.js';
 import { coletaLog } from './coletaLog.js';
-import { setListQueueProgress } from './processingStatus.js';
-
+import { resetHandlesCompletedSession, setListQueueProgress } from './processingStatus.js';
 let collecting = false;
 /** true entre “Iniciar” na API e o runCollection de fato começar — evita duplo clique e libera a resposta HTTP antes do Playwright. */
 let collectionStartScheduled = false;
@@ -31,6 +29,15 @@ export interface GoogleQueriesState {
   phase: 'discover' | 'process';
 }
 let googleQueriesState: GoogleQueriesState | null = null;
+
+function clampParallelTabsForRun(requested: number | undefined, fallback: number): number {
+  const base = Number.isFinite(requested as number) ? (requested as number) : fallback;
+  const raw = Math.floor(base) || 1;
+  const envCapRaw = Number.parseInt(process.env.COLLECTOR_MAX_PARALLEL_PROFILE_TABS ?? '', 10);
+  const envCap =
+    Number.isFinite(envCapRaw) && envCapRaw > 0 ? Math.min(16, Math.max(1, envCapRaw)) : 16;
+  return Math.max(1, Math.min(envCap, raw));
+}
 
 export function getGoogleQueriesState(): GoogleQueriesState | null {
   return googleQueriesState;
@@ -111,6 +118,8 @@ export interface StartOptions {
   skipIfAlreadyInRemoteDb?: boolean;
   /** 1=pessoal, 2=criador, 3=empresa; vazio = aceitar todos. */
   allowedAccountTypes?: number[];
+  /** Abas do Instagram em paralelo na extração (Arrobas e fila Google). 1–16. */
+  parallelProfileTabs?: number;
 }
 
 export async function runCollection(
@@ -126,6 +135,7 @@ export async function runCollection(
   collectionStartScheduled = false;
   abortRequested = false;
   setListQueueProgress(null);
+  resetHandlesCompletedSession();
   let result = { saved: 0, processed: 0 };
   let page = pageRef.page;
   try {
@@ -155,7 +165,11 @@ export async function runCollection(
       `INÍCIO modo=${options.mode} limite_salvar=${maxProfiles} minSeguidores=${config.minFollowersToSave} minCurtidasPost=${config.minPostLikesToSave}`
     );
 
-    const sessionTriedHandles = new Set<string>(issueHandleKeysSet());
+    const sessionTriedHandles = new Set<string>();
+    const parallelProfileTabs = clampParallelTabsForRun(
+      options.parallelProfileTabs,
+      base.parallelProfileTabs
+    );
     const discoveryOptions = {
       mode: options.mode,
       tag: options.tag,
@@ -169,6 +183,7 @@ export async function runCollection(
       config,
       shouldAbort,
       sessionTriedHandles,
+      parallelProfileTabs,
       onCollected(handle: string, followers: number) {
         statusMessage = `@${handle} (${followers.toLocaleString('pt-BR')} seguidores)`;
         console.log(`[coleta] ${statusMessage}`);
@@ -226,7 +241,10 @@ export async function runCollection(
             statusMessage = `Google ${i + 1}/${queries.length} — preenchendo fila…`;
             await discoverByGoogle(client, pageRef.page, { ...discoveryOptions, googleQuery: q, maxProfiles: remaining });
             googleQueriesState.phase = 'process';
-            statusMessage = `Google ${i + 1}/${queries.length} — processando fila (1 perfil por vez)…`;
+            statusMessage =
+              parallelProfileTabs <= 1
+                ? `Google ${i + 1}/${queries.length} — processando fila (1 perfil por vez)…`
+                : `Google ${i + 1}/${queries.length} — processando fila (${parallelProfileTabs} perfis em paralelo)…`;
             const r = await processGoogleQueue(client, pageRef.page, { ...discoveryOptions, googleQuery: q, maxProfiles: remaining });
             totalSaved += r.saved;
             totalProcessed += r.processed;
@@ -243,8 +261,10 @@ export async function runCollection(
         coletaLog('Modo Arrobas: defina ao menos um @ (uma por linha).');
         result = { saved: 0, processed: 0 };
       } else {
-        coletaLog(`Modo ARROBAS — ${handlesRaw.length} perfil(is) na lista | limite ${maxProfiles}`);
-        statusMessage = `Arrobas — ${handlesRaw.length} perfil(is) na lista`;
+        coletaLog(
+          `Modo ARROBAS — ${handlesRaw.length} perfil(is) na lista | limite ${maxProfiles} | ${parallelProfileTabs} aba(s) paralela(s)`
+        );
+        statusMessage = `Arrobas — ${handlesRaw.length} perfil(is) · ${parallelProfileTabs} aba(s) paralela(s)`;
         result = await discoverByHandles(client, pageRef.page, discoveryOptions);
       }
     } else {

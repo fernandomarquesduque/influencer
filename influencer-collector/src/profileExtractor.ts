@@ -4,10 +4,28 @@
 
 import type { Page } from 'playwright';
 import { coletaLog } from './coletaLog.js';
-import { collectBioRawText, getFollowersFromEntity } from './entityRules.js';
+import { collectBioRawText, getFollowersFromEntity, isPrivateFromEntity } from './entityRules.js';
 
 const PROFILE_RESPONSE_URL = /graphql\/query/i;
 const TIMEOUT_MS = 25_000;
+
+/** Respostas GraphQL são grandes; acúmulo ilimitado + várias abas → heap de vários GB. */
+const MAX_CAPTURED_GRAPHQL_BODIES = 72;
+const MAX_MINIMAL_USER_BODIES = 22;
+
+function pushCapturedGraphqlBody(captured: Record<string, unknown>[], body: Record<string, unknown>): void {
+  if (captured.length >= MAX_CAPTURED_GRAPHQL_BODIES) {
+    captured.splice(0, captured.length - MAX_CAPTURED_GRAPHQL_BODIES + 1);
+  }
+  captured.push(body);
+}
+
+function pushMinimalUserBody(capturedBodies: Record<string, unknown>[], body: Record<string, unknown>): void {
+  if (capturedBodies.length >= MAX_MINIMAL_USER_BODIES) {
+    capturedBodies.splice(0, capturedBodies.length - MAX_MINIMAL_USER_BODIES + 1);
+  }
+  capturedBodies.push(body);
+}
 
 function getIn(obj: unknown, path: string): unknown {
   if (obj == null || typeof obj !== 'object') return undefined;
@@ -26,6 +44,70 @@ function hasDataUser(b: Record<string, unknown>): boolean {
     typeof b.data === 'object' &&
     (b.data as Record<string, unknown>)?.user != null
   );
+}
+
+/** Detalhe gravado em Problemas (seção “Erro (após processamento)”) quando o IG não mostra o perfil. */
+export const INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL =
+  'Perfil não existe no Instagram ou está indisponível no momento da abertura.';
+
+/** Mesmo texto usado em `runCollectorProfileRules` (regra) ao detectar privado na entidade. */
+export const INSTAGRAM_PROFILE_PRIVATE_DETAIL =
+  'Perfil privado — não dá para validar posts/seguidores para o filtro do coletor.';
+
+/**
+ * Página de perfil privado para visitante que não segue (sem posts na grade; costuma travar timeouts).
+ */
+export async function isInstagramPrivateProfilePage(page: Page): Promise<boolean> {
+  try {
+    const hit = await page.evaluate(() => {
+      const raw = document.body?.innerText ?? '';
+      const n = raw
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '')
+        .replace(/\s+/g, ' ');
+      if (n.includes('este perfil e privado')) return true;
+      if (n.includes('esta conta e privada')) return true;
+      if (n.includes('perfil e privado')) return true;
+      if (n.includes('conta e privada')) return true;
+      if (n.includes('this account is private')) return true;
+      const l = raw.toLowerCase();
+      if (l.includes('este perfil') && l.includes('privado')) return true;
+      if (l.includes('this account') && l.includes('private')) return true;
+      return false;
+    });
+    if (hit) return true;
+    return await page
+      .getByText(/este perfil.{0,24}privado/i)
+      .first()
+      .isVisible({ timeout: 1500 })
+      .catch(() => false);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detecta a página “Esta página não está disponível” / “This page isn’t available” após abrir instagram.com/handle/.
+ */
+export async function isInstagramProfileUnavailablePage(page: Page): Promise<boolean> {
+  try {
+    return await page.evaluate(() => {
+      const raw = document.body?.innerText ?? '';
+      const n = raw
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '')
+        .replace(/\s+/g, ' ');
+      if (n.includes('esta pagina nao esta disponivel')) return true;
+      if (n.includes("this page isn't available") || n.includes('this page is not available'))
+        return true;
+      if (n.includes('sorry, this page') || n.includes('sorry this page')) return true;
+      return false;
+    });
+  } catch {
+    return false;
+  }
 }
 
 function applyMultiplier(num: number, rest: string): number {
@@ -69,6 +151,7 @@ function parsePlainTitle(title: string | null): number | null {
  * O cabeçalho do perfil pode estar em <section> fora de <main>.
  */
 export async function readFollowersFromDOM(page: Page): Promise<number | null> {
+  if (await isInstagramPrivateProfilePage(page)) return null;
   await page.waitForTimeout(1500);
   const main = page.locator('main').first();
   await main.waitFor({ state: 'visible', timeout: 8000 }).catch(() => null);
@@ -181,7 +264,7 @@ export async function getFollowersAndMinimalProfile(
     if (!ct.includes('application/json')) return;
     try {
       const body = (await response.json()) as Record<string, unknown>;
-      if (body != null && hasDataUser(body)) capturedBodies.push(body);
+      if (body != null && hasDataUser(body)) pushMinimalUserBody(capturedBodies, body);
     } catch {
       // ignore
     }
@@ -194,8 +277,12 @@ export async function getFollowersAndMinimalProfile(
     }> => {
       const minimalProfile = pickGraphqlBodyWithRichestBio(capturedBodies);
       const fromApi = maxFollowersFromBodies(capturedBodies);
-      const followers =
-        fromApi > 0 ? fromApi : await readFollowersFromDOM(page);
+      /** Em perfil privado o GraphQL costuma vir com 0 seguidores no payload; ler o DOM dispara esperas longas (main visível etc.). */
+      const privateDom = await isInstagramPrivateProfilePage(page);
+      let followers: number | null = fromApi > 0 ? fromApi : null;
+      if (followers == null && !privateDom) {
+        followers = await readFollowersFromDOM(page);
+      }
       return {
         followers: followers != null && followers > 0 ? followers : null,
         minimalProfile,
@@ -204,9 +291,12 @@ export async function getFollowersAndMinimalProfile(
 
     if (options?.skipGoto) {
       if (options.quickGate) {
-        await page.waitForTimeout(260);
+        await page.waitForTimeout(450);
+        if (await isInstagramPrivateProfilePage(page)) return finalize();
         return finalize();
       }
+      await page.waitForTimeout(400);
+      if (await isInstagramPrivateProfilePage(page)) return finalize();
       await page.waitForTimeout(450);
       await page.mouse.wheel(0, 300).catch(() => {});
       await page.waitForTimeout(1100);
@@ -229,9 +319,12 @@ export async function getFollowersAndMinimalProfile(
     }
     if (options?.quickGate) {
       await page.waitForTimeout(700);
+      if (await isInstagramPrivateProfilePage(page)) return finalize();
       return finalize();
     }
-    await page.waitForTimeout(1800);
+    await page.waitForTimeout(500);
+    if (await isInstagramPrivateProfilePage(page)) return finalize();
+    await page.waitForTimeout(1300);
     await page.mouse.wheel(0, 450).catch(() => {});
     await page.waitForTimeout(1400);
     await page.mouse.wheel(0, 400).catch(() => {});
@@ -239,34 +332,6 @@ export async function getFollowersAndMinimalProfile(
     return finalize();
   } finally {
     page.off('response', onResponse);
-  }
-}
-
-/** Detalhe gravado em Problemas (seção “Erro (após processamento)”) quando o IG não mostra o perfil. */
-export const INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL =
-  'Perfil não existe no Instagram ou está indisponível no momento da abertura.';
-
-/**
- * Detecta a página “Esta página não está disponível” / “This page isn’t available” após abrir instagram.com/handle/.
- * Espera curta opcional: o React do IG costuma pintar o erro em poucos ms após domcontentloaded.
- */
-export async function isInstagramProfileUnavailablePage(page: Page): Promise<boolean> {
-  try {
-    return await page.evaluate(() => {
-      const raw = document.body?.innerText ?? '';
-      const n = raw
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/\p{M}/gu, '')
-        .replace(/\s+/g, ' ');
-      if (n.includes('esta pagina nao esta disponivel')) return true;
-      if (n.includes("this page isn't available") || n.includes('this page is not available'))
-        return true;
-      if (n.includes('sorry, this page') || n.includes('sorry this page')) return true;
-      return false;
-    });
-  } catch {
-    return false;
   }
 }
 
@@ -347,7 +412,7 @@ export async function extractProfile(
     try {
       const body = (await response.json()) as Record<string, unknown>;
       if (body != null && (hasDataUser(body) || getEdgesFromRaw(body).length > 0)) {
-        captured.push(body);
+        pushCapturedGraphqlBody(captured, body);
       }
     } catch {
       // ignore
@@ -360,7 +425,22 @@ export async function extractProfile(
     } else {
       await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
     }
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(600);
+    if (await isInstagramProfileUnavailablePage(page)) {
+      coletaLog(`@${handle}: página indisponível — extração rápida abortada.`);
+      return null;
+    }
+    if (await isInstagramPrivateProfilePage(page)) {
+      coletaLog(`@${handle}: perfil privado (página) — extração rápida abortada.`);
+      return null;
+    }
+    for (const body of captured) {
+      if (hasDataUser(body) && isPrivateFromEntity(body as Record<string, unknown>)) {
+        coletaLog(`@${handle}: perfil privado (GraphQL) — extração rápida abortada.`);
+        return null;
+      }
+    }
+    await page.waitForTimeout(2400);
     let profileRaw: Record<string, unknown> | null = null;
     const allPosts: Record<string, unknown>[] = [];
     const seenShortcode = new Set<string>();
@@ -462,7 +542,7 @@ export type ExtractProfileFullOptions = {
 
 export type ExtractProfileFullResult =
   | { ok: true; data: ExtractedProfileFull }
-  | { ok: false; reason: 'validation' | 'technical' };
+  | { ok: false; reason: 'validation' | 'technical' | 'private' | 'unavailable' };
 
 function mergeMissingShallow(target: Record<string, unknown>, source: Record<string, unknown>): void {
   for (const k of Object.keys(source)) {
@@ -499,10 +579,11 @@ function mergeProfileRawFromCaptured(captured: Record<string, unknown>[]): Recor
     }
     return null;
   }
-  const merged = JSON.parse(JSON.stringify(userBodies[0])) as Record<string, unknown>;
-  const u0 = getIn(merged, 'data.user');
-  if (u0 != null && typeof u0 === 'object' && userBodies.length > 1) {
-    const tu = u0 as Record<string, unknown>;
+  const firstUser = getIn(userBodies[0], 'data.user');
+  if (firstUser == null || typeof firstUser !== 'object') return null;
+  const tu = structuredClone(firstUser) as Record<string, unknown>;
+  const merged = { data: { user: tu } } as Record<string, unknown>;
+  if (userBodies.length > 1) {
     for (let i = 1; i < userBodies.length; i++) {
       const ui = getIn(userBodies[i], 'data.user');
       if (ui != null && typeof ui === 'object') mergeMissingShallow(tu, ui as Record<string, unknown>);
@@ -564,7 +645,7 @@ export async function extractProfileFull(
     try {
       const body = (await response.json()) as Record<string, unknown>;
       if (body != null && bodyWorthCapturing(body)) {
-        captured.push(body);
+        pushCapturedGraphqlBody(captured, body);
       }
     } catch {
       // ignore
@@ -616,7 +697,21 @@ export async function extractProfileFull(
     } else {
       await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
     }
-    await page.waitForTimeout(2800);
+    await page.waitForTimeout(650);
+    if (await isInstagramProfileUnavailablePage(page)) {
+      coletaLog(`@${keyHandle} [full] página indisponível — abortando (sem scroll).`);
+      return { ok: false, reason: 'unavailable' };
+    }
+    if (await isInstagramPrivateProfilePage(page)) {
+      coletaLog(`@${keyHandle} [full] perfil privado (página) — abortando (sem scroll/Reels).`);
+      return { ok: false, reason: 'private' };
+    }
+    const mergedPrivacyCheck = mergeProfileRawFromCaptured(captured);
+    if (mergedPrivacyCheck && isPrivateFromEntity(mergedPrivacyCheck as Record<string, unknown>)) {
+      coletaLog(`@${keyHandle} [full] perfil privado (GraphQL is_private) — abortando (sem scroll longo).`);
+      return { ok: false, reason: 'private' };
+    }
+    await page.waitForTimeout(2150);
 
     if (options?.afterInitialLoad) {
       await page.waitForTimeout(1200);
@@ -792,6 +887,7 @@ export async function extractProfileFull(
       },
     };
   } finally {
+    captured.length = 0;
     page.off('response', onResponse);
   }
 }

@@ -9,6 +9,7 @@ import type {
   RocksDbVerifyStatus,
 } from './memoryStorage.js';
 import { coletaLog } from './coletaLog.js';
+import { buildNormalizedPost } from './normalizeIngestMedia.js';
 
 function normalizeBaseUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, '');
@@ -361,15 +362,73 @@ export async function pushProfileToServerRocksDb(
   return postCollector('collector-ingest-profile', entity);
 }
 
+/**
+ * Troca nós GraphQL brutos por posts já normalizados (mesmo formato que a API usa após `buildNormalizedPost`).
+ * Reduz drasticamente heap e pico de `JSON.stringify` no ingest-full.
+ */
+function replaceMediaWithNormalizedInPlace(
+  media: CollectorMediaPayload,
+  collectedAt: string,
+  handleForLog: string
+): void {
+  const skip =
+    process.env.COLLECTOR_DISABLE_NORMALIZE_BEFORE_FULL_INGEST === '1' ||
+    process.env.COLLECTOR_DISABLE_NORMALIZE_BEFORE_FULL_INGEST?.toLowerCase() === 'true';
+  if (skip) return;
+
+  const transformBucket = (arr: Record<string, unknown>[], label: string): void => {
+    const next: Record<string, unknown>[] = [];
+    let skipped = 0;
+    for (const node of arr) {
+      if (node == null || typeof node !== 'object') {
+        skipped++;
+        continue;
+      }
+      try {
+        next.push(buildNormalizedPost(node as Record<string, unknown>, collectedAt) as unknown as Record<string, unknown>);
+      } catch {
+        skipped++;
+      }
+    }
+    arr.length = 0;
+    for (const x of next) arr.push(x);
+    if (skipped > 0) {
+      coletaLog(`@${handleForLog}: ingest-full — ${label}: ${skipped} nó(s) ignorado(s) na normalização pré-POST.`);
+    }
+  };
+
+  transformBucket(media.feed, 'feed');
+  transformBucket(media.reel, 'reel');
+  transformBucket(media.tagged, 'tagged');
+}
+
 /** Perfil slim + nós GraphQL (feed, reels, marcados) para métricas no site. */
 export async function pushProfileFullToServer(
   slim: Entity & { handle: string },
   media: CollectorMediaPayload
 ): Promise<IntegrationPushResult> {
-  return postCollector('collector-ingest-full', {
+  const hk = String(slim.handle ?? '')
+    .replace(/^@/, '')
+    .trim()
+    .toLowerCase();
+  const collectedAt = String(
+    (slim as Record<string, unknown>)._collected_at ?? new Date().toISOString()
+  );
+  replaceMediaWithNormalizedInPlace(media, collectedAt, hk || '—');
+
+  const result = await postCollector('collector-ingest-full', {
     profile: slim,
     feedMedia: media.feed,
     reelMedia: media.reel,
     taggedMedia: media.tagged,
   });
+
+  if (result.ok && typeof global.gc === 'function') {
+    try {
+      global.gc();
+    } catch {
+      /* opcional: só com --expose-gc */
+    }
+  }
+  return result;
 }

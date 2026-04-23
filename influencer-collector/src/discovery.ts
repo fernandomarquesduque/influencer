@@ -8,7 +8,9 @@ import {
   getFollowersAndMinimalProfile,
   extractProfile,
   extractProfileFull,
+  INSTAGRAM_PROFILE_PRIVATE_DETAIL,
   INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL,
+  isInstagramPrivateProfilePage,
   isInstagramProfileUnavailablePage,
   readFollowersFromDOM,
 } from './profileExtractor.js';
@@ -34,6 +36,8 @@ import {
 import { explainBioNotBrazilianPortuguese } from './bioLanguageBr.js';
 import {
   addToGoogleQueue,
+  hasIntegratedHandle,
+  hasOpenIssueForHandle,
   listHandles,
   recordDuplicate,
   recordIssue,
@@ -55,10 +59,17 @@ import type { CollectorConfig } from './config.js';
 import { coletaLog } from './coletaLog.js';
 import {
   formatListProgressLogSuffix,
+  markHandleCompletedSession,
   setListQueueProgress,
   setProcessingState,
   type RemotePrecheckUi,
 } from './processingStatus.js';
+
+const MAX_MEDIA_ITEMS_PER_BUCKET = (() => {
+  const raw = Number.parseInt(process.env.COLLECTOR_MAX_MEDIA_ITEMS_PER_BUCKET ?? '', 10);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(2000, Math.max(10, raw));
+  return 60;
+})();
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -79,6 +90,12 @@ async function checkRemoteDuplicateAndMaybeSkip(
   logSuffix?: string
 ): Promise<{ skipped: boolean; remotePrecheck: RemotePrecheckUi }> {
   const hk = handle.replace(/^@/, '').trim().toLowerCase();
+  if (hasOpenIssueForHandle(hk) || hasIntegratedHandle(hk)) {
+    recordDuplicate(handle);
+    existingHandles.add(hk);
+    if (handleLower !== hk) existingHandles.add(handleLower);
+    return { skipped: true, remotePrecheck: 'off' };
+  }
   const r = await runRemoteDuplicatePrecheck(hk, config.skipIfAlreadyInRemoteDb);
   const remotePrecheck = remotePrecheckUiFromLookup(r.lookup);
   if (!r.skipAsDuplicate) {
@@ -226,11 +243,7 @@ function runCollectorProfileRules(
     }
   }
   if (isPrivateFromEntity(raw)) {
-    recordIssue(
-      handle,
-      'regra',
-      'Perfil privado — não dá para validar posts/seguidores para o filtro do coletor.'
-    );
+    recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);
     return false;
   }
   if (!skipEstablishmentKeywordRules && hasRejectedProfileKeyword(raw)) {
@@ -289,6 +302,7 @@ async function resolveFollowersForEarlyGate(
   let f = followersFromSnap(snap);
   if (f != null) return f;
   if (config.minFollowersToSave <= 0 && config.maxFollowersToSave <= 0) return null;
+  if (await isInstagramPrivateProfilePage(page)) return null;
   const fromDom = await readFollowersFromDOM(page);
   return fromDom != null && fromDom > 0 ? fromDom : null;
 }
@@ -417,6 +431,42 @@ export interface DiscoveryOptions {
   sessionTriedHandles?: Set<string>;
   /** Caminho para salvar/carregar cookies do Google (evita captcha na próxima vez). */
   googleSessionPath?: string;
+  /** Abas do Instagram extraindo ao mesmo tempo (modo Arrobas e fila Google). 1–16; omitido = 1. */
+  parallelProfileTabs?: number;
+}
+
+function clampParallelProfileTabs(n: number | undefined): number {
+  if (n == null || !Number.isFinite(n)) return 1;
+  const f = Math.floor(Number(n));
+  const envCapRaw = Number.parseInt(process.env.COLLECTOR_MAX_PARALLEL_PROFILE_TABS ?? '', 10);
+  const envCap =
+    Number.isFinite(envCapRaw) && envCapRaw > 0 ? Math.min(16, Math.max(1, envCapRaw)) : 16;
+  return Math.max(1, Math.min(envCap, f < 1 ? 1 : f));
+}
+
+function capMediaItems(
+  items: Record<string, unknown>[],
+  label: 'feed' | 'reel' | 'tagged',
+  handle: string
+): Record<string, unknown>[] {
+  if (items.length <= MAX_MEDIA_ITEMS_PER_BUCKET) return items;
+  const trimmed = items.slice(0, MAX_MEDIA_ITEMS_PER_BUCKET);
+  coletaLog(
+    `@${handle}: ${label} truncado para ${MAX_MEDIA_ITEMS_PER_BUCKET} item(ns) (original ${items.length}) para proteger memória/heap.`
+  );
+  return trimmed;
+}
+
+async function recordIssueWhenExtractProfileFailed(page: Page, handle: string): Promise<void> {
+  if (await isInstagramPrivateProfilePage(page)) {
+    recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);
+    return;
+  }
+  if (await isInstagramProfileUnavailablePage(page)) {
+    recordIssue(handle, 'extracao', INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL);
+    return;
+  }
+  recordIssue(handle, 'extracao', 'Não foi possível extrair dados do perfil');
 }
 
 async function processOneProfile(
@@ -514,6 +564,16 @@ async function processOneProfile(
     if (!gateSnap.minimalProfile && pageAlready) {
       await randomDelay(1200, 2200);
       gateSnap = await getFollowersAndMinimalProfile(page, profileUrl, { skipGoto: true });
+    }
+    if (gateSnap.minimalProfile && isPrivateFromEntity(gateSnap.minimalProfile as Record<string, unknown>)) {
+      recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);
+      coletaLog(`@${handle}: perfil privado (Instagram) — ignorado; próximo.`);
+      return false;
+    }
+    if (await isInstagramPrivateProfilePage(page)) {
+      recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);
+      coletaLog(`@${handle}: perfil privado (página) — ignorado; próximo.`);
+      return false;
     }
     const gateFollowers = await resolveFollowersForEarlyGate(page, gateSnap, config);
     if (gateSnap.minimalProfile) {
@@ -687,15 +747,27 @@ async function processOneProfile(
         rawProfile = full.profile;
         posts = full.postsForRules as Entity[];
         mediaBundle = {
-          feed: full.feedMedia,
-          reel: full.reelMedia,
-          tagged: full.taggedMedia,
+          feed: capMediaItems(full.feedMedia, 'feed', handle),
+          reel: capMediaItems(full.reelMedia, 'reel', handle),
+          tagged: capMediaItems(full.taggedMedia, 'tagged', handle),
         };
         coletaLog(
           `@${handle}: captura OK → feed=${full.feedMedia.length} reels=${full.reelMedia.length} marcados=${full.taggedMedia.length} itens GraphQL`
         );
       } else if (fullResult.reason === 'validation') {
         coletaLog(`@${handle}: extração completa interrompida antes de Reels/Marcados (regras).`);
+        return false;
+      } else if (fullResult.reason === 'private' || fullResult.reason === 'unavailable') {
+        recordIssue(
+          handle,
+          fullResult.reason === 'unavailable' ? 'extracao' : 'regra',
+          fullResult.reason === 'unavailable'
+            ? INSTAGRAM_PROFILE_UNAVAILABLE_DETAIL
+            : INSTAGRAM_PROFILE_PRIVATE_DETAIL
+        );
+        coletaLog(
+          `@${handle}: ${fullResult.reason === 'unavailable' ? 'indisponível' : 'privado'} — sem extração rápida; próximo.`
+        );
         return false;
       } else {
         coletaLog(`@${handle}: extração completa falhou → tentando extração rápida…`);
@@ -704,7 +776,7 @@ async function processOneProfile(
           pageAlreadyOnProfile: pageAlready,
         });
         if (!extracted) {
-          recordIssue(handle, 'extracao', 'Não foi possível extrair dados do perfil');
+          await recordIssueWhenExtractProfileFailed(page, handle);
           coletaLog(`@${handle}: falha na extração rápida também.`);
           return false;
         }
@@ -718,7 +790,7 @@ async function processOneProfile(
         pageAlreadyOnProfile: pageAlready,
       });
       if (!extracted) {
-        recordIssue(handle, 'extracao', 'Não foi possível extrair dados do perfil');
+        await recordIssueWhenExtractProfileFailed(page, handle);
         return false;
       }
       rawProfile = extracted.profile;
@@ -787,6 +859,9 @@ async function processOneProfile(
     onCollected?.(handle, followers);
     return true;
   } finally {
+    mediaBundle?.feed.splice(0, mediaBundle.feed.length);
+    mediaBundle?.reel.splice(0, mediaBundle.reel.length);
+    mediaBundle?.tagged.splice(0, mediaBundle.tagged.length);
     setProcessingState(null);
   }
 }
@@ -1129,6 +1204,13 @@ async function profileExtractionPipelineNewTab(
 
     await randomDelay(800, 1500);
 
+    if (await isInstagramPrivateProfilePage(profileTab)) {
+      coletaLog(`${logCtx}: @${handle}: perfil privado (página) — ignorado; próximo.`);
+      recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);
+      triedInSession.add(handleLower);
+      return { saved: 0, processed: 1 };
+    }
+
     let snapH = await getFollowersAndMinimalProfile(profileTab, profileUrlFull, {
       skipGoto: true,
       quickGate: true,
@@ -1139,6 +1221,18 @@ async function profileExtractionPipelineNewTab(
         skipGoto: true,
         quickGate: true,
       });
+    }
+    if (snapH.minimalProfile && isPrivateFromEntity(snapH.minimalProfile as Record<string, unknown>)) {
+      coletaLog(`${logCtx}: @${handle}: perfil privado (Instagram) — ignorado; próximo.`);
+      recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);
+      triedInSession.add(handleLower);
+      return { saved: 0, processed: 1 };
+    }
+    if (await isInstagramPrivateProfilePage(profileTab)) {
+      coletaLog(`${logCtx}: @${handle}: perfil privado (página, após GraphQL) — ignorado; próximo.`);
+      recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);
+      triedInSession.add(handleLower);
+      return { saved: 0, processed: 1 };
     }
     if (!snapH.minimalProfile && (await isInstagramProfileUnavailablePage(profileTab))) {
       coletaLog(
@@ -1530,7 +1624,10 @@ export async function discoverByGoogle(
         coletaLog(`Google: udm=${udmLabel} — limite por fluxo (${options.maxProfiles}) atingido; avançando para o próximo tipo de SERP.`);
       }
     }
-    coletaLog(`Google: ${addedToQueue} handle(s) adicionado(s) à fila. O processamento no Instagram ocorre em seguida, 1 perfil por vez.`);
+    const pq = clampParallelProfileTabs(options.parallelProfileTabs);
+    coletaLog(
+      `Google: ${addedToQueue} handle(s) adicionado(s) à fila. Processamento no Instagram em seguida (${pq} aba(s) em paralelo).`
+    );
   } finally {
     if (googleTab) {
       await googleTab.close().catch(() => { });
@@ -1576,47 +1673,54 @@ export async function processGoogleQueue(
   const { config, shouldAbort, onCollected, sessionTriedHandles: sess } = options;
   const ctx = page.context();
   const triedInSession = new Set<string>();
+  const existingHandles = listHandles();
   let saved = 0;
   let processed = 0;
   const query = (options.googleQuery ?? '').trim().slice(0, 500);
+  const parallel = clampParallelProfileTabs(options.parallelProfileTabs);
 
-  while (!shouldAbort() && saved < options.maxProfiles) {
-    const item = takeNextFromGoogleQueue();
-    if (!item) break;
-    const existingHandles = listHandles();
-    let r: { saved: number; processed: number };
-    try {
-      r = await profileExtractionPipelineNewTab(
-        ctx,
-        item.handle,
-        config,
-        existingHandles,
-        triedInSession,
-        sess,
-        'google',
-        query,
-        onCollected,
-        'Google (fila)'
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
-      if (isClosed) {
-        coletaLog(`Google (fila): @${item.handle} — janela/aba fechada, indo para o próximo.`);
-      } else {
-        coletaLog(`Google (fila): @${item.handle} — erro: ${msg}`);
+  const runWorker = async (): Promise<void> => {
+    for (;;) {
+      if (shouldAbort()) return;
+      if (saved >= options.maxProfiles) return;
+      const item = takeNextFromGoogleQueue();
+      if (!item) return;
+      let r: { saved: number; processed: number };
+      try {
+        r = await profileExtractionPipelineNewTab(
+          ctx,
+          item.handle,
+          config,
+          existingHandles,
+          triedInSession,
+          sess,
+          'google',
+          query,
+          onCollected,
+          'Google (fila)'
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
+        if (isClosed) {
+          coletaLog(`Google (fila): @${item.handle} — janela/aba fechada, indo para o próximo.`);
+        } else {
+          coletaLog(`Google (fila): @${item.handle} — erro: ${msg}`);
+        }
+        recordIssue(item.handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
+        r = { saved: 0, processed: 1 };
       }
-      recordIssue(item.handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
-      r = { saved: 0, processed: 1 };
+      saved += r.saved;
+      processed += r.processed;
+      if (r.saved) {
+        coletaLog(`Google (fila): @${item.handle} salvo (${saved}/${options.maxProfiles}).`);
+      }
+      if (parallel <= 1) await randomDelay(600, 1200);
+      else await randomDelay(80, 220);
     }
-    saved += r.saved;
-    processed += r.processed;
-    if (r.saved) {
-      coletaLog(`Google (fila): @${item.handle} salvo (${saved}/${options.maxProfiles}).`);
-    }
-    await randomDelay(600, 1200);
-  }
+  };
 
+  await Promise.all(Array.from({ length: parallel }, () => runWorker()));
   return { saved, processed };
 }
 
@@ -2480,69 +2584,104 @@ export async function discoverByHandles(
   let processed = 0;
 
   const rawHandles = Array.isArray(options.handles) ? options.handles : [];
-  const handles = rawHandles
+  const normalized = rawHandles
     .map((h) => String(h ?? '').trim().replace(/^@+/, '').toLowerCase())
     .filter((h) => /^[a-z0-9._]{2,30}$/.test(h));
+  const seen = new Set<string>();
+  const handles: string[] = [];
+  for (const h of normalized) {
+    if (seen.has(h)) continue;
+    seen.add(h);
+    handles.push(h);
+  }
 
   if (handles.length === 0) {
     coletaLog('Modo Arrobas: informe ao menos um @ válido (uma por linha).');
     return { saved: 0, processed: 0 };
   }
 
+  const parallel = clampParallelProfileTabs(options.parallelProfileTabs);
+  coletaLog(`Modo Arrobas: ${handles.length} @ na lista — paralelismo ${parallel} aba(s).`);
+
   try {
-    for (let i = 0; i < handles.length && !shouldAbort() && saved < options.maxProfiles; i++) {
-      setListQueueProgress({ kind: 'handles', index: i + 1, total: handles.length });
-      const handle = handles[i]!;
-      const handleLower = handle.toLowerCase();
+    let nextIndex = 0;
 
-      if (existingHandles.has(handleLower)) {
-        recordDuplicate(handle);
-        continue;
-      }
-      if (triedInSession.has(handleLower) || sess?.has(handleLower)) {
-        continue;
-      }
-      if (isBlocklistedHandle(handle)) {
-        triedInSession.add(handleLower);
-        sess?.add(handleLower);
-        continue;
-      }
+    const runWorker = async (): Promise<void> => {
+      for (;;) {
+        if (shouldAbort()) return;
+        if (saved >= options.maxProfiles) return;
 
-      const remaining = options.maxProfiles - saved;
-      if (remaining <= 0) break;
-      coletaLog(`Arrobas ${i + 1}/${handles.length}: @${handle} — restam ${remaining} perfil(is) para salvar.`);
+        let handle: string | null = null;
+        let displayIndex = 0;
+        while (nextIndex < handles.length) {
+          const i = nextIndex++;
+          const h = handles[i]!;
+          const handleLower = h.toLowerCase();
 
-      let rPipe: { saved: number; processed: number };
-      try {
-        rPipe = await profileExtractionPipelineNewTab(
-          ctx,
-          handle,
-          config,
-          existingHandles,
-          triedInSession,
-          sess,
-          'handles',
-          'manual-list',
-          onCollected,
-          'Arrobas'
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
-        if (isClosed) {
-          coletaLog(`Arrobas: @${handle} — janela/aba fechada durante extração, indo para o próximo.`);
-        } else {
-          coletaLog(`Arrobas: @${handle} — erro na extração, indo para o próximo: ${msg}`);
+          if (existingHandles.has(handleLower)) {
+            recordDuplicate(h);
+            markHandleCompletedSession(h);
+            continue;
+          }
+          if (triedInSession.has(handleLower) || sess?.has(handleLower)) {
+            markHandleCompletedSession(h);
+            continue;
+          }
+          if (isBlocklistedHandle(h)) {
+            triedInSession.add(handleLower);
+            sess?.add(handleLower);
+            markHandleCompletedSession(h);
+            continue;
+          }
+
+          handle = h;
+          displayIndex = i + 1;
+          break;
         }
-        recordIssue(handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
-        rPipe = { saved: 0, processed: 1 };
+
+        if (handle === null) return;
+
+        setListQueueProgress({ kind: 'handles', index: displayIndex, total: handles.length });
+        const remaining = options.maxProfiles - saved;
+        coletaLog(
+          `Arrobas ${displayIndex}/${handles.length}: @${handle} — restam ${remaining} perfil(is) para salvar · ${parallel} aba(s) paralela(s).`
+        );
+
+        let rPipe: { saved: number; processed: number };
+        try {
+          rPipe = await profileExtractionPipelineNewTab(
+            ctx,
+            handle,
+            config,
+            existingHandles,
+            triedInSession,
+            sess,
+            'handles',
+            'manual-list',
+            onCollected,
+            'Arrobas'
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const isClosed = /closed|Target page|context or browser has been closed/i.test(msg);
+          if (isClosed) {
+            coletaLog(`Arrobas: @${handle} — janela/aba fechada durante extração, indo para o próximo.`);
+          } else {
+            coletaLog(`Arrobas: @${handle} — erro na extração, indo para o próximo: ${msg}`);
+          }
+          recordIssue(handle, 'extracao', isClosed ? 'Janela ou aba fechada durante a extração.' : msg);
+          rPipe = { saved: 0, processed: 1 };
+        }
+
+        saved += rPipe.saved;
+        processed += rPipe.processed;
+        markHandleCompletedSession(handle);
+        if (parallel <= 1) await randomDelay(80, 180);
+        else await randomDelay(40, 120);
       }
+    };
 
-      saved += rPipe.saved;
-      processed += rPipe.processed;
-      await randomDelay(80, 180);
-    }
-
+    await Promise.all(Array.from({ length: parallel }, () => runWorker()));
     return { saved, processed };
   } finally {
     setListQueueProgress(null);

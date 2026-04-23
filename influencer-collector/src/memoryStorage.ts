@@ -8,14 +8,20 @@ import { dirname, join } from 'path';
 import type { Entity } from './entityRules.js';
 import {
   countIssueRows,
+  deleteAllIntegrationOkRows,
   deleteAllIssueRows,
+  deleteIntegrationOkByHandleKey,
   deleteIssueRowById,
   distinctIssueHandleKeys,
   insertIssueRow,
   hasIssueRowForHandleKey,
   migrateLegacyJsonIfNeeded,
   openIssuesDb,
-  selectAllIssuesOrderByAtDesc,
+  hasIntegrationOkByHandleKey,
+  selectIssuesOrderByAtDescLimit,
+  selectRecentIntegrationOkOrderByIntegratedAtDesc,
+  upsertIntegrationOkRow,
+  type SqlIntegrationOkRow,
   type SqlIssueRow,
 } from './issuesSqlite.js';
 
@@ -66,6 +72,12 @@ export interface IntegrationPushResult {
 
 const MAX_GOOGLE_QUEUE = 5000;
 
+/** Fatia de integrados lidos do SQLite para `/api/list` (ordenados; cache invalidado ao integrar/remover). */
+const INTEGRADOS_LEDGER_FETCH_LIMIT = 450;
+
+/** Problemas mantidos em RAM para a UI — o restante permanece só no SQLite. */
+const ISSUES_WORKING_SET_LIMIT = 3000;
+
 /** Novos registros em Problemas desde o start do processo (sempre incrementa). */
 let problemasEventosSessao = 0;
 
@@ -90,8 +102,21 @@ export function hasOpenIssueForHandle(rawHandle: string): boolean {
 }
 
 const pending = new Map<string, PendingRow>();
-const integrated = new Map<string, IntegratedRow>();
+/** Janela curta de integrados recentes só para dedupe local rápido sem crescer sem limite. */
+const integratedRecentHandleKeys = new Set<string>();
+const integratedRecentOrder: string[] = [];
+const INTEGRATED_RECENT_MAX = (() => {
+  const raw = Number.parseInt(process.env.COLLECTOR_INTEGRATED_RECENT_MAX ?? '', 10);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(200_000, Math.max(5_000, raw));
+  return 30_000;
+})();
 const issues: IssueRow[] = [];
+
+let integradosLedgerCache: IntegratedRow[] | null = null;
+
+function invalidateIntegradosLedgerCache(): void {
+  integradosLedgerCache = null;
+}
 
 function issuesFilePath(): string {
   const raw = process.env.COLLECTOR_ISSUES_PATH?.trim();
@@ -135,15 +160,59 @@ function appendIssueToJsonlLine(row: IssueRow): void {
 
 function reloadIssuesWorkingSetFromDb(): void {
   openIssuesDb();
-  const rows = selectAllIssuesOrderByAtDesc();
+  const rows = selectIssuesOrderByAtDescLimit(ISSUES_WORKING_SET_LIMIT);
   issues.length = 0;
   for (const r of rows) {
     issues.push(r as IssueRow);
   }
 }
 
+function rememberIntegratedHandleKey(handleKey: string): void {
+  const k = norm(handleKey);
+  if (!k || integratedRecentHandleKeys.has(k)) return;
+  integratedRecentHandleKeys.add(k);
+  integratedRecentOrder.push(k);
+  while (integratedRecentOrder.length > INTEGRATED_RECENT_MAX) {
+    const oldest = integratedRecentOrder.shift();
+    if (oldest) integratedRecentHandleKeys.delete(oldest);
+  }
+}
+
+function sqlIntegrationRowToIntegratedRow(r: SqlIntegrationOkRow): IntegratedRow | null {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(r.profileJson) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const hk = norm(r.handleKey);
+  if (!hk) return null;
+  const rv = r.rocksVerified;
+  const rocksDbVerified =
+    rv === 'confirmed' || rv === 'unavailable' || rv === 'skipped' ? rv : undefined;
+  return {
+    handle: hk,
+    handleKey: hk,
+    profile: slimProfileForIntegratedLedger(parsed, hk),
+    collectedAt: r.collectedAt,
+    integratedAt: r.integratedAt,
+    apiHost: r.apiHost || undefined,
+    rocksDbVerified,
+  };
+}
+
+function loadIntegradosLedgerFromDb(): IntegratedRow[] {
+  const rows = selectRecentIntegrationOkOrderByIntegratedAtDesc(INTEGRADOS_LEDGER_FETCH_LIMIT);
+  const out: IntegratedRow[] = [];
+  for (const r of rows) {
+    const row = sqlIntegrationRowToIntegratedRow(r);
+    if (row) out.push(row);
+  }
+  return out;
+}
+
 /**
- * Abre SQLite, migra JSON legado se preciso, carrega todos os problemas em memória para a UI.
+ * Abre SQLite, migra JSON legado se preciso, carrega problemas e integrados com sucesso para a UI.
  */
 export function loadPersistedIssuesSync(): void {
   try {
@@ -173,12 +242,39 @@ const googleQueue: GoogleQueueItem[] = [];
 
 /** Evita spam de “duplicado” para o mesmo @ na mesma sessão. */
 const duplicateLogged = new Set<string>();
+const DUPLICATE_LOGGED_MAX = (() => {
+  const raw = Number.parseInt(process.env.COLLECTOR_DUPLICATE_LOGGED_MAX ?? '', 10);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(500_000, Math.max(10_000, raw));
+  return 80_000;
+})();
 
 function norm(h: string): string {
   return String(h ?? '')
     .replace(/^@/, '')
     .trim()
     .toLowerCase();
+}
+
+/**
+ * Mantém só o necessário para `/api/list` e contagens. O payload completo permanece em `profile_json` no SQLite.
+ * Sem isso, dezenas de milhares de integrações retêm cópias enormes do GraphQL no heap do Node (OOM ~4 GB).
+ */
+function slimProfileForIntegratedLedger(
+  full: Record<string, unknown>,
+  handleKey: string
+): Entity & { handle: string } {
+  const bio = full.biography;
+  const biography =
+    typeof bio === 'string' && bio.length > 800 ? `${bio.slice(0, 800)}…` : bio;
+  return {
+    handle: handleKey,
+    username: String(full.username ?? full.handle ?? handleKey),
+    full_name: full.full_name,
+    followers_count: full.followers_count,
+    account_type: full.account_type,
+    biography,
+    _collected_at: full._collected_at,
+  } as Entity & { handle: string };
 }
 
 function pushIssue(row: Omit<IssueRow, 'id'> & { id?: string }): void {
@@ -193,6 +289,9 @@ function pushIssue(row: Omit<IssueRow, 'id'> & { id?: string }): void {
   }
   problemasEventosSessao += 1;
   issues.unshift(full);
+  while (issues.length > ISSUES_WORKING_SET_LIMIT) {
+    issues.pop();
+  }
   appendIssueToJsonlLine(full);
 }
 
@@ -208,7 +307,21 @@ export function removeIssueById(id: string): boolean {
 
 /** Handles já coletados ou integrados (evita reprocessar). */
 export function listHandles(): Set<string> {
-  return new Set([...pending.keys(), ...integrated.keys()]);
+  return new Set([...pending.keys(), ...integratedRecentHandleKeys]);
+}
+
+/** Dedupe completo de integrados sem carregar histórico inteiro na RAM. */
+export function hasIntegratedHandle(rawHandle: string): boolean {
+  const k = norm(rawHandle);
+  if (!k) return false;
+  if (pending.has(k) || integratedRecentHandleKeys.has(k)) return true;
+  try {
+    const exists = hasIntegrationOkByHandleKey(k);
+    if (exists) rememberIntegratedHandleKey(k);
+    return exists;
+  } catch {
+    return false;
+  }
 }
 
 /** Adiciona handle à fila Google (evita duplicata por handle normalizado). snippet = trecho/descrição do resultado Google. */
@@ -287,6 +400,12 @@ export function issueHandleKeysSet(): Set<string> {
 export function recordDuplicate(handle: string): void {
   const k = norm(handle);
   if (!k || duplicateLogged.has(k)) return;
+  if (duplicateLogged.size >= DUPLICATE_LOGGED_MAX) {
+    duplicateLogged.clear();
+    console.warn(
+      `[ledger] duplicateLogged atingiu ${DUPLICATE_LOGGED_MAX} entradas — conjunto limpo para evitar estouro de memória em listas muito longas.`
+    );
+  }
   duplicateLogged.add(k);
 }
 
@@ -349,12 +468,26 @@ export async function registerCollectedWithIntegration(
   }
   if (result.ok) {
     pending.delete(key);
-    integrated.set(key, {
-      ...row,
-      integratedAt: new Date().toISOString(),
-      apiHost: result.apiHost,
-      rocksDbVerified: result.verifyStatus ?? 'skipped',
-    });
+    const integratedAt = new Date().toISOString();
+    const rocksDbVerified = result.verifyStatus ?? 'skipped';
+    try {
+      upsertIntegrationOkRow({
+        handleKey: key,
+        handle: key,
+        collectedAt,
+        integratedAt,
+        apiHost: result.apiHost ?? '',
+        rocksVerified: rocksDbVerified,
+        profileJson: JSON.stringify(row.profile),
+      });
+      rememberIntegratedHandleKey(key);
+      invalidateIntegradosLedgerCache();
+    } catch (e) {
+      console.warn(
+        '[ledger] Falha ao gravar integrado no SQLite:',
+        e instanceof Error ? e.message : e
+      );
+    }
     return result;
   }
   pending.delete(key);
@@ -380,9 +513,14 @@ export interface LedgerResponse {
 
 export function getLedger(): LedgerResponse {
   const coletados = [...pending.values()].sort((a, b) => b.collectedAt.localeCompare(a.collectedAt));
-  const integrados = [...integrated.values()].sort((a, b) =>
-    b.integratedAt.localeCompare(a.integratedAt)
-  );
+  if (integradosLedgerCache === null) {
+    try {
+      integradosLedgerCache = loadIntegradosLedgerFromDb();
+    } catch {
+      integradosLedgerCache = [];
+    }
+  }
+  const integrados = integradosLedgerCache;
   const problemas = issues.filter((i) => i.kind !== 'duplicado');
   return { coletados, problemas, integrados };
 }
@@ -406,12 +544,29 @@ export function getProfiles(): { handle: string; profile: Entity & { handle: str
 
 export function removeProfile(handle: string): boolean {
   const k = norm(handle);
-  return pending.delete(k) || integrated.delete(k);
+  let removed = pending.delete(k) || integratedRecentHandleKeys.delete(k);
+  try {
+    if (deleteIntegrationOkByHandleKey(k)) {
+      removed = true;
+      integratedRecentHandleKeys.delete(k);
+    }
+  } catch {
+    /* */
+  }
+  if (removed) invalidateIntegradosLedgerCache();
+  return removed;
 }
 
 export function clearAll(): void {
   pending.clear();
-  integrated.clear();
+  integratedRecentHandleKeys.clear();
+  integratedRecentOrder.length = 0;
+  invalidateIntegradosLedgerCache();
+  try {
+    deleteAllIntegrationOkRows();
+  } catch {
+    /* */
+  }
   try {
     deleteAllIssueRows();
   } catch {
