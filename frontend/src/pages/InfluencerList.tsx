@@ -42,8 +42,9 @@ import { PRICE_BUCKETS } from '../constants/pricingBuckets'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
 import type { AuthScope } from '../api'
 import { useListCache } from '../contexts/ListCacheContext'
-import SearchWizard from '../components/SearchWizard/SearchWizard'
+import SearchWizard, { STEP_QUERY } from '../components/SearchWizard/SearchWizard'
 import ReportDashboard from '../components/ReportDashboard/ReportDashboard'
+import InfluencerPreviewTable from '../components/InfluencerPreviewTable/InfluencerPreviewTable'
 
 /** `public/documents/contrato.html` — cadastro agência/marca na busca */
 const CONTRATO_AGENCIA_HREF = '/documents/contrato.html'
@@ -288,17 +289,6 @@ export default function InfluencerList() {
     [setFilterParams, location.pathname]
   )
 
-  const handleWizardSearchTermChange = useCallback(
-    (q: string) => {
-      if (q.length >= 3) {
-        setFilterParams({ q })
-      } else if (!q) {
-        setFilterParams({})
-      }
-    },
-    [setFilterParams]
-  )
-
   const fullQueryFromUrl = useMemo((): ProfilesSearchQuery | null => {
     if (!hasMandatoryFilters) return null
     const { hasMandatory: _hm, ...rest } = parsedUrl
@@ -309,6 +299,53 @@ export default function InfluencerList() {
       sort: (rest.sort as ProfilesSort) ?? 'relevance_desc',
     })
   }, [hasMandatoryFilters, parsedUrl, location.pathname])
+
+  /** Busca com `q` na URL antes de `done=1` (wizard + listagem ao lado). */
+  const wizardListingQueryFromUrl = useMemo((): ProfilesSearchQuery | null => {
+    if (!parsedUrl.q?.trim()) return null
+    const { hasMandatory: _hm, ...rest } = parsedUrl
+    return withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+      ...rest,
+      limit: PAGE_SIZE,
+      offset: rest.offset ?? 0,
+      sort: (rest.sort as ProfilesSort) ?? 'relevance_desc',
+    })
+  }, [parsedUrl, location.pathname])
+
+  const wizardInitialFilterState = useMemo(
+    () => ({
+      q: parsedUrl.q ?? undefined,
+      categories: parsedUrl.categories?.length
+        ? Array.isArray(parsedUrl.categories)
+          ? parsedUrl.categories
+          : [String(parsedUrl.categories)]
+        : undefined,
+      sizeFilter: parsedUrl.sizeFilter?.length ? parsedUrl.sizeFilter : undefined,
+      minFollowers: parsedUrl.minFollowers,
+      maxFollowers: parsedUrl.maxFollowers,
+      excludePrivate: parsedUrl.excludePrivate,
+      accountTypeFilter: parsedUrl.accountTypeFilter,
+      activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
+      llmProfileType: withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+        llmProfileType: parsedUrl.llmProfileType?.length ? parsedUrl.llmProfileType : undefined,
+        limit: PAGE_SIZE,
+        offset: 0,
+        sort: 'relevance_desc' as ProfilesSort,
+      }).llmProfileType,
+      llmMainCategory: parsedUrl.llmMainCategory?.length ? parsedUrl.llmMainCategory : undefined,
+      llmGender: parsedUrl.llmGender?.length ? parsedUrl.llmGender : undefined,
+      llmLanguage: parsedUrl.llmLanguage?.length ? parsedUrl.llmLanguage : undefined,
+      llmSubCategories: parsedUrl.llmSubCategories?.length ? parsedUrl.llmSubCategories : undefined,
+      llmContentPillars: parsedUrl.llmContentPillars?.length ? parsedUrl.llmContentPillars : undefined,
+      llmAudienceType: parsedUrl.llmAudienceType?.length ? parsedUrl.llmAudienceType : undefined,
+      llmToneOfVoice: parsedUrl.llmToneOfVoice?.length ? parsedUrl.llmToneOfVoice : undefined,
+      llmRiskLevel: parsedUrl.llmRiskLevel?.length ? parsedUrl.llmRiskLevel : undefined,
+      llmIsFamilySafe: parsedUrl.llmIsFamilySafe,
+      llmIsAdultContent: parsedUrl.llmIsAdultContent,
+    }),
+    [parsedUrl, location.pathname]
+  )
+
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [data, setData] = useState<ProfileListItem[]>([])
@@ -352,6 +389,8 @@ export default function InfluencerList() {
 
   type WizardPrefetchState = { status: 'loading' } | { status: 'ready'; facets: ProfilesSearchFacets | null }
   const [wizardPrefetch, setWizardPrefetch] = useState<WizardPrefetchState>({ status: 'loading' })
+  /** Etapa do SearchWizard; preview/lista à direita só depois de STEP_QUERY (primeira etapa só busca). */
+  const [wizardUiStep, setWizardUiStep] = useState<number | null>(null)
   const wizardFacetsAbortRef = useRef<AbortController | null>(null)
   useEffect(() => {
     if (!hasMandatoryFilters) {
@@ -519,21 +558,40 @@ export default function InfluencerList() {
     refetchedForZeroRef.current = false
   }, [location.search, location.hash])
 
+  useEffect(() => {
+    if (!hasMandatoryFilters && !wizardListingQueryFromUrl) {
+      setWizardUiStep(null)
+    }
+  }, [hasMandatoryFilters, wizardListingQueryFromUrl])
+
   /** useLayoutEffect: aplica filtros da URL e chama load antes dos useEffect seguintes, para `loading` já ser true e o efeito do dashboard não disparar fetch com query default (sem hash). */
   useLayoutEffect(() => {
     if (!hasMandatoryFilters) {
-      lastLoadQueryRef.current = null
       setSearchInput(parsedUrl.q ?? '')
-      setData([])
-      setTotal(0)
-      setFacets(null)
-      setQuery(
-        withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
-          limit: PAGE_SIZE,
-          offset: 0,
-          sort: 'engagement_desc' as ProfilesSort,
-        })
-      )
+      if (!wizardListingQueryFromUrl) {
+        lastLoadQueryRef.current = null
+        setData([])
+        setTotal(0)
+        setFacets(null)
+        setQuery(
+          withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+            limit: PAGE_SIZE,
+            offset: 0,
+            sort: 'engagement_desc' as ProfilesSort,
+          })
+        )
+        return
+      }
+      const listagemAposBusca = wizardUiStep != null && wizardUiStep > STEP_QUERY
+      if (listagemAposBusca) {
+        const queryKey = stableProfilesSearchQueryKey(wizardListingQueryFromUrl)
+        if (lastLoadQueryRef.current === queryKey) return
+        lastLoadQueryRef.current = queryKey
+        setQuery(wizardListingQueryFromUrl)
+        const controller = new AbortController()
+        load(wizardListingQueryFromUrl, controller.signal)
+        return () => controller.abort()
+      }
       return
     }
     const fullQuery = fullQueryFromUrl!
@@ -557,7 +615,7 @@ export default function InfluencerList() {
     const controller = new AbortController()
     load(fullQuery, controller.signal)
     return () => controller.abort()
-  }, [hasMandatoryFilters, location.search, location.hash, location.pathname, setFilterParams, fullQueryFromUrl])
+  }, [hasMandatoryFilters, location.search, location.hash, location.pathname, setFilterParams, fullQueryFromUrl, wizardListingQueryFromUrl, wizardUiStep, parsedUrl.q])
 
   useEffect(() => {
     const isDashboard = hasMandatoryFilters && listViewFromHash === 'dashboard'
@@ -594,6 +652,9 @@ export default function InfluencerList() {
     }
   })
 
+  /** GET /profiles/search não inclui `items` no recorte público; mostramos amostra via POST /profiles/preview. */
+  const showSearchPreviewPanel = !limitReachedCode && total > 0 && data.length === 0
+
   const myHandle = user?.profile_handle?.replace(/^@/, '').toLowerCase()
   const isViewingOwnProfile = user?.scope === 'influencer' && myHandle && urlHandle
     ? decodeURIComponent(urlHandle).toLowerCase() === myHandle
@@ -614,6 +675,19 @@ export default function InfluencerList() {
     params[WIZARD_DONE_PARAM] = '1'
     setFilterParams(new URLSearchParams(params))
     load(newQuery)
+  }
+
+  /** Preview à direita (/search): busca na hash como o wizard, sem `done=1`. */
+  const submitDiscoverySearchFromAside = () => {
+    const qTerm = searchInput.trim()
+    if (!qTerm) {
+      setFilterParams({})
+      return
+    }
+    handleWizardFiltersChange({
+      ...query,
+      q: qTerm,
+    })
   }
 
   const openDetail = (handleOrKey: string) => {
@@ -821,47 +895,122 @@ export default function InfluencerList() {
   }, [signupEmail, loginPassword, login, doCreateCampaignAndRedirect])
 
   if (!hasMandatoryFilters) {
+    const wizardListingActive =
+      Boolean(wizardListingQueryFromUrl) && wizardUiStep != null && wizardUiStep > STEP_QUERY
+    const wizardEl = (
+      <SearchWizard
+        splitColumnLayout={wizardListingActive}
+        initialFacets={wizardPrefetch.status === 'ready' ? wizardPrefetch.facets : null}
+        wizardPrefetchLoading={wizardPrefetch.status === 'loading'}
+        initialSearchTerm={parsedUrl.q ?? ''}
+        initialFilters={wizardInitialFilterState}
+        onFiltersChange={handleWizardFiltersChange}
+        onEstimate={handleWizardEstimate}
+        onComplete={handleWizardComplete}
+        onStepChange={setWizardUiStep}
+      />
+    )
+    const resultsAside = (
+      <>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <Spin size="large" />
+          </div>
+        ) : data.length === 0 && limitReachedCode === 'PUBLIC_SEARCH_LIMIT' ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <span>
+                Você chegou no limite de buscas de hoje. Volta amanhã ou <Link to="/premium">assina o Premium</Link>.
+              </span>
+            }
+          />
+        ) : data.length === 0 && (limitReachedCode === 'PUBLIC_PAGE_LIMIT' || limitReachedCode === 'PUBLIC_FILTERS_NOT_ALLOWED') ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <span>
+                {limitReachedCode === 'PUBLIC_PAGE_LIMIT' ? 'Ver mais páginas é só pra assinante.' : 'Filtros avançados são só pra assinante.'}{' '}
+                <Link to="/premium">Assina o Premium</Link> pra acessar.
+              </span>
+            }
+          />
+        ) : showSearchPreviewPanel ? (
+          <>
+            <div style={{ marginBottom: 16, width: '100%', maxWidth: 640 }}>
+              <Input.Search
+                size="large"
+                placeholder="Ex.: beleza, fitness, maternidade, @usuario…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onSearch={() => submitDiscoverySearchFromAside()}
+                enterButton="Buscar"
+                allowClear
+              />
+            </div>
+            <InfluencerPreviewTable
+              query={query}
+              limit={5}
+              title="Preview dos influenciadores"
+              selectionTotalCount={total}
+              className="influencer-list-search-preview"
+            />
+          </>
+        ) : data.length === 0 ? (
+          <Empty description="Nenhum criador encontrado. Ajusta os filtros ou tenta outro termo." />
+        ) : (
+          <>
+            <Row gutter={[16, 16]}>
+              {data.map((item) => (
+                <Col key={item.key} xs={24} sm={12} md={12} style={{ minWidth: 0 }}>
+                  <ProfileSummaryCard
+                    item={item}
+                    variant="list"
+                    onClick={() => openDetail(item.handle ?? item.key)}
+                    onImageRefreshQueued={(handle) => addHandleForImageUpdate.current(handle)}
+                    showMetrics={!!user}
+                  />
+                </Col>
+              ))}
+            </Row>
+            {data.length < total && !isLimitedView && (
+              <div style={{ textAlign: 'center', marginTop: 24 }}>
+                <Button type="primary" onClick={() => load({ offset: data.length })} loading={loadingMore} size="large">
+                  Ver mais
+                </Button>
+              </div>
+            )}
+            {data.length < total && isLimitedView && (
+              <div style={{ textAlign: 'center', marginTop: 24 }}>
+                <Button type="primary" onClick={() => navigate('/premium')} size="large">
+                  Assine pra ver mais resultados
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+        {total > 0 && !showSearchPreviewPanel && (
+          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 16 }}>
+            {data.length === 0 ? `Encontrados ${total} perfis` : `${data.length} de ${total} perfis`}
+          </Typography.Text>
+        )}
+      </>
+    )
     return (
-      <div className="influencer-list-wizard-shell">
-        <SearchWizard
-          initialFacets={wizardPrefetch.status === 'ready' ? wizardPrefetch.facets : null}
-          wizardPrefetchLoading={wizardPrefetch.status === 'loading'}
-          initialSearchTerm={parsedUrl.q ?? ''}
-          initialFilters={
-            (parsedUrl.q || parsedUrl.categories?.length)
-              ? {
-                q: parsedUrl.q ?? undefined,
-                categories: parsedUrl.categories?.length ? (Array.isArray(parsedUrl.categories) ? parsedUrl.categories : [parsedUrl.categories]) : undefined,
-                sizeFilter: parsedUrl.sizeFilter?.length ? parsedUrl.sizeFilter : undefined,
-                minFollowers: parsedUrl.minFollowers,
-                maxFollowers: parsedUrl.maxFollowers,
-                excludePrivate: parsedUrl.excludePrivate,
-                accountTypeFilter: parsedUrl.accountTypeFilter,
-                activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
-                llmProfileType: withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
-                  llmProfileType: parsedUrl.llmProfileType?.length ? parsedUrl.llmProfileType : undefined,
-                  limit: PAGE_SIZE,
-                  offset: 0,
-                  sort: 'relevance_desc' as ProfilesSort,
-                }).llmProfileType,
-                llmMainCategory: parsedUrl.llmMainCategory?.length ? parsedUrl.llmMainCategory : undefined,
-                llmGender: parsedUrl.llmGender?.length ? parsedUrl.llmGender : undefined,
-                llmLanguage: parsedUrl.llmLanguage?.length ? parsedUrl.llmLanguage : undefined,
-                llmSubCategories: parsedUrl.llmSubCategories?.length ? parsedUrl.llmSubCategories : undefined,
-                llmContentPillars: parsedUrl.llmContentPillars?.length ? parsedUrl.llmContentPillars : undefined,
-                llmAudienceType: parsedUrl.llmAudienceType?.length ? parsedUrl.llmAudienceType : undefined,
-                llmToneOfVoice: parsedUrl.llmToneOfVoice?.length ? parsedUrl.llmToneOfVoice : undefined,
-                llmRiskLevel: parsedUrl.llmRiskLevel?.length ? parsedUrl.llmRiskLevel : undefined,
-                llmIsFamilySafe: parsedUrl.llmIsFamilySafe,
-                llmIsAdultContent: parsedUrl.llmIsAdultContent,
-              }
-              : undefined
+      <div className={wizardListingActive ? 'influencer-list-wizard-split' : 'influencer-list-wizard-shell'}>
+        {/* Wrapper estável: evita remount do SearchWizard ao sair do split (URL ainda com q= nesse tick). */}
+        <div
+          className={
+            wizardListingActive ? 'influencer-list-wizard-split__left' : 'influencer-list-wizard-shell-inner'
           }
-          onSearchTermChange={handleWizardSearchTermChange}
-          onFiltersChange={handleWizardFiltersChange}
-          onEstimate={handleWizardEstimate}
-          onComplete={handleWizardComplete}
-        />
+        >
+          {wizardEl}
+        </div>
+        {wizardListingActive ? (
+          <aside className="influencer-list-wizard-split__right" aria-label="Influenciadores encontrados">
+            {resultsAside}
+          </aside>
+        ) : null}
       </div>
     )
   }
@@ -1508,13 +1657,13 @@ export default function InfluencerList() {
               </span>
             }
           />
-        ) : data.length === 0 && total > 0 ? (
-          <Empty
-            description={
-              <span>
-                Encontramos <b>{total}</b> perfis. Para ver os detalhes da lista, acesse <Link to="/premium">Premium</Link>.
-              </span>
-            }
+        ) : showSearchPreviewPanel ? (
+          <InfluencerPreviewTable
+            query={query}
+            limit={5}
+            title="Preview dos influenciadores"
+            selectionTotalCount={total}
+            className="influencer-list-search-preview"
           />
         ) : data.length === 0 ? (
           <Empty description="Nenhum criador encontrado. Ajusta os filtros ou tenta outro termo." />
@@ -1554,7 +1703,7 @@ export default function InfluencerList() {
             )}
           </>
         )}
-        {total > 0 && (
+        {total > 0 && !showSearchPreviewPanel && (
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 16 }}>
             {data.length === 0 ? `Encontrados ${total} perfis` : `${data.length} de ${total} perfis`}
           </Typography.Text>

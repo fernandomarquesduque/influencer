@@ -2136,11 +2136,11 @@ function parseCostTierFilter(v: unknown): string[] | undefined {
 }
 
 /** Requisições por minuto por IP (anônimo). Configurável por API_RATE_LIMIT_PER_MIN_IP. */
-const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 30;
+const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 120;
 /** Requisições por minuto por usuário (public/influencer). Configurável por API_RATE_LIMIT_PER_MIN_USER. */
-const RATE_LIMIT_PER_MIN_USER = Number(process.env.API_RATE_LIMIT_PER_MIN_USER) || 60;
+const RATE_LIMIT_PER_MIN_USER = Number(process.env.API_RATE_LIMIT_PER_MIN_USER) || 120;
 /** Requisições por minuto para adm/assinante. Configurável por API_RATE_LIMIT_PER_MIN_SUBSCRIBER. */
-const RATE_LIMIT_PER_MIN_SUBSCRIBER = Number(process.env.API_RATE_LIMIT_PER_MIN_SUBSCRIBER) || 120;
+const RATE_LIMIT_PER_MIN_SUBSCRIBER = Number(process.env.API_RATE_LIMIT_PER_MIN_SUBSCRIBER) || 300;
 
 function getClientKeyForRateLimit(req: RequestWithAuth): string {
   if (req.user) return `u:${req.user.sub}`;
@@ -2239,6 +2239,8 @@ interface ProfilePreviewItem {
   totalLikes: number;
   totalComments: number;
   postsCount: number;
+  avgLikes?: number;
+  avgComments?: number;
 }
 
 /** Varia o tamanho do texto no preview (cards com alturas diferentes) + um slot mais rico com metadados LLM. */
@@ -2311,7 +2313,7 @@ function buildProfilePreviewItem(item: ProfileListItem, previewIndex: number): P
   const audienceArr = Array.isArray(q?.audienceType)
     ? (q!.audienceType as unknown[])
       .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-      .slice(0, 2)
+      .slice(0, 6)
     : [];
   const audience = audienceArr.join(' / ') || '-';
   const profilePicUrl = String(item.stable_profile_pic_url ?? '').trim();
@@ -2324,6 +2326,8 @@ function buildProfilePreviewItem(item: ProfileListItem, previewIndex: number): P
   const totalLikes = Number(eng?.total_likes ?? 0);
   const totalComments = Number(eng?.total_comments ?? 0);
   const postsCount = Number(eng?.posts_count ?? 0);
+  const avgLikes = Number(eng?.avg_likes ?? 0);
+  const avgComments = Number(eng?.avg_comments ?? 0);
   return {
     firstName,
     profilePicUrl,
@@ -2337,6 +2341,8 @@ function buildProfilePreviewItem(item: ProfileListItem, previewIndex: number): P
     totalLikes: Number.isFinite(totalLikes) ? totalLikes : 0,
     totalComments: Number.isFinite(totalComments) ? totalComments : 0,
     postsCount: Number.isFinite(postsCount) ? postsCount : 0,
+    avgLikes: Number.isFinite(avgLikes) ? avgLikes : 0,
+    avgComments: Number.isFinite(avgComments) ? avgComments : 0,
   };
 }
 

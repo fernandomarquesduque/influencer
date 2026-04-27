@@ -4,6 +4,7 @@ import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
 import { requestCodeWithExtract, verifyProfile, type ExtractProfileResult } from '../api'
 import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, InstagramOutlined, ReloadOutlined, EditOutlined, ArrowRightOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import { trackMetaPixel } from '../utils/metaPixel'
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
   nao_segue_perfil: '', // tratado por bloco especial no RejectionFullScreen
@@ -523,6 +524,7 @@ export default function Auth() {
     setRejectionInfo(null)
     setLoading(true)
     setShowInstallLoader(true)
+    trackMetaPixel('Lead', { source: 'auth_request_code' })
     try {
       const data = await requestCodeWithExtract(n)
       if (data.rejectionReason === 'nao_segue_perfil') {
@@ -572,6 +574,7 @@ export default function Auth() {
         await refreshUser()
         message.success('Perfil validado.')
       }
+      trackMetaPixel('CompleteRegistration', { source: 'auth_verify_profile_success' })
       navigate('/app/create/password', { state: { handle: nickname }, replace: true })
     } catch (e) {
       message.error(e instanceof Error ? e.message : 'Código errado ou já venceu. Pede outro.')
@@ -595,6 +598,7 @@ export default function Auth() {
     setRejectionInfo(null)
     setLoading(true)
     setShowInstallLoader(true)
+    trackMetaPixel('Lead', { source: 'auth_retry_request_code' })
     try {
       const data = await requestCodeWithExtract(n)
       if (data.rejectionReason === 'nao_segue_perfil') {

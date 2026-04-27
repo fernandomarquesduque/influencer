@@ -126,8 +126,32 @@ article.iprv-card--checkout-clickable:focus-visible {
 
 .iprv-profile-cell {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
+}
+
+.iprv-avatar-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  min-width: 52px;
+}
+
+.iprv-tier-under-avatar {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.iprv-tier-under-avatar .iprv-mini-badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  justify-content: center;
 }
 
 .iprv-avatar-wrap {
@@ -158,33 +182,138 @@ article.iprv-card--checkout-clickable:focus-visible {
   border-radius: 50% !important;
 }
 
-.iprv-profile-cell b {
-  display: block;
-  font-size: 14px;
+.iprv-profile-text {
+  flex: 1;
+  min-width: 0;
 }
 
-.iprv-profile-cell small {
-  display: block;
-  color: var(--rdv2-muted, #6e738f);
-  margin-top: 2px;
-  max-width: 100%;
+/* Cabeçalho do card: coluna texto (nome + bio) | coluna meta (categoria + público-alvo) */
+.iprv-profile-head-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 30%);
+  gap: 8px 10px;
+  align-items: start;
+  min-width: 0;
 }
 
-.iprv-metrics {
+.iprv-profile-col--text {
+  min-width: 0;
+}
+
+.iprv-profile-col--meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.iprv-name-text {
+  display: block;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.iprv-profile-desc {
+  display: block;
+  margin-top: 4px;
+  color: var(--rdv2-muted, #6e738f);
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.iprv-category-pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Métricas logo abaixo da descrição — faixa leve */
+.iprv-metrics-strip--below-desc {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid var(--rdv2-line, #e9ebf5);
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--rdv2-muted, #6e738f);
+  border-top: 1px solid #f0f1f4;
 }
 
-.iprv-metrics strong {
-  color: var(--rdv2-text, #14162b);
+.iprv-strip {
+  display: flex;
+  width: 100%;
+  align-items: stretch;
+  border: 1px solid #e5e8ef;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.iprv-strip--metrics-discrete {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.iprv-strip-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 4px 10px;
+  text-align: center;
+  border-right: 1px solid #e5e8ef;
+}
+
+.iprv-strip--metrics-discrete .iprv-strip-cell {
+  padding: 2px 3px 0;
+  border-right: 1px solid #eceef2;
+}
+
+.iprv-strip--metrics-discrete .iprv-strip-cell:last-child {
+  border-right: none;
+}
+
+.iprv-strip-cell:last-child {
+  border-right: none;
+}
+
+.iprv-strip-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a1a2e;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.iprv-strip--metrics-discrete .iprv-strip-value {
+  font-size: 11px;
   font-weight: 600;
+  color: #5c6370;
+  letter-spacing: 0;
+}
+
+.iprv-strip-value--accent {
+  color: #6a3de8;
+}
+
+.iprv-strip--metrics-discrete .iprv-strip-value--accent {
+  color: #8574d9;
+}
+
+.iprv-strip-label {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #7d8597;
+  line-height: 1.25;
+  padding: 0 2px;
+}
+
+.iprv-strip--metrics-discrete .iprv-strip-label {
+  margin-top: 2px;
+  font-size: 8px;
+  color: #a1a8b5;
 }
 
 .iprv-view-more {
@@ -215,11 +344,74 @@ article.iprv-card--checkout-clickable:focus-visible {
   filter: brightness(0.95);
 }
 
-.iprv-card-meta {
-  margin-top: 8px;
+/* Público-alvo — uma linha (título + valores) */
+.iprv-audience-line {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 0 4px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #6b7280;
+  text-align: left;
+  cursor: default;
+}
+
+/* Coluna direita: público-alvo alinhado à direita */
+.iprv-audience-line--col-meta {
+  margin-top: 0;
+  margin-bottom: 0;
+  justify-content: flex-end;
+  text-align: right;
+  font-size: 10px;
+  line-height: 1.35;
+  max-width: 100%;
+}
+
+.iprv-audience-line-icon {
+  font-size: 11px;
+  color: #b4bac8;
+  flex-shrink: 0;
+}
+
+.iprv-audience-line-title {
+  font-weight: 600;
+  color: #8b92a0;
+  flex-shrink: 0;
+}
+
+.iprv-audience-line-sep {
+  color: #d1d5db;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.iprv-audience-line-name {
+  font-weight: 600;
+  color: #5c6370;
+}
+
+.iprv-audience-line-segment.iprv-audience-kind--women .iprv-audience-line-name {
+  color: #9d174d;
+}
+
+.iprv-audience-line-segment.iprv-audience-kind--men .iprv-audience-line-name {
+  color: #b45309;
+}
+
+.iprv-audience-line-segment.iprv-audience-kind--youth .iprv-audience-line-name {
+  color: #0c4a6e;
+}
+
+.iprv-audience-line-segment.iprv-audience-kind--children .iprv-audience-line-name {
+  color: #3f6212;
+}
+
+.iprv-audience-line-segment.iprv-audience-kind--neutral .iprv-audience-line-name {
+  color: #5c6370;
 }
 
 .iprv-mini-badges {

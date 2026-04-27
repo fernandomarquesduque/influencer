@@ -4,10 +4,11 @@
  */
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ComponentType } from 'react'
 import { flushSync } from 'react-dom'
-import { Button, Typography, Progress, Spin, Modal, message } from 'antd'
+import { Button, Typography, Progress, Spin, Modal, message, Input } from 'antd'
 import {
   TeamOutlined,
   RocketOutlined,
+  SearchOutlined,
   ApartmentOutlined,
   CrownOutlined,
   GlobalOutlined,
@@ -84,20 +85,24 @@ function buildWizardCollapsedChipList(
 
 const STEPS = [
   {
+    key: 'query',
+    icon: SearchOutlined,
+    title: 'O que você está buscando?',
+    subtitle: 'Digite tema, nicho, nome ou @ do criador e continue refinando ao lado da lista',
+  },
+  {
     key: 'llmMainCategory',
     icon: ApartmentOutlined,
     title: 'Qual a categoria deseja buscar?',
     subtitle: `Selecione de 1 a ${LLM_MAIN_CATEGORY_MAX} itens para buscar o influencer ideal para sua campanha`,
   },
   { key: 'porte', icon: TeamOutlined, title: 'Qual o tamanho do influencer?', subtitle: 'Escolha uma ou mais faixas de seguidores' },
-  { key: 'llmSubCategories', icon: AppstoreOutlined, title: 'Assuntos', subtitle: 'Escolha assuntos relevantes para sua campanha' },
   { key: 'llmAudience', icon: TeamOutlined, title: 'Qual o público-alvo que você busca?', subtitle: 'Opcional' },
 ] as const
 
-const STEP_LLM_FIRST = 0
-const STEP_LLM_MAIN_CATEGORY = 0
-const STEP_PORTE = 1
-const STEP_LLM_SUBCATEGORIES = 2
+export const STEP_QUERY = 0
+const STEP_LLM_MAIN_CATEGORY = 1
+const STEP_PORTE = 2
 const STEP_LLM_AUDIENCE = 3
 const STEP_LLM_LAST = 3
 
@@ -391,26 +396,37 @@ export interface SearchWizardProps {
   initialSearchTerm?: string
   /** Filtros iniciais da URL (evita sobrescrever ao montar quando URL já tem q, categories, etc.). */
   initialFilters?: Partial<WizardState>
-  /** Callback quando o termo de busca muda no step 0 (para sincronizar com URL). */
-  onSearchTermChange?: (q: string) => void
   /** Callback quando qualquer filtro é selecionado (para sincronizar com URL). */
   onFiltersChange?: (query: Partial<ProfilesSearchQuery>) => void
   /** Enquanto o primeiro fetch (facets iniciais) não termina. */
   wizardPrefetchLoading?: boolean
+  /** Rodapé do wizard preso à coluna (layout lista + wizard lado a lado). */
+  splitColumnLayout?: boolean
+  /** Etapa atual (0 = busca): para o pai esconder preview até sair da primeira etapa). */
+  onStepChange?: (step: number) => void
 }
 
 /**
- * Lista de categorias LLM na etapa 1: usa facetas do prefetch (`initialFacets`) quando existem,
- * pois não têm filtro `llmMainCategory` — ao voltar do porte, `facets` pode estar restrita à categoria
- * selecionada e só mostraria um chip.
+ * Chips de categoria LLM: facetas da estimativa (com `q` quando houver texto).
+ * Com `hasTextSearch`, nunca usa o prefetch global — ele não inclui `q` e mostra números enganosos
+ * (ex.: URL já abre na etapa 2 com `#q=` e `facets` ainda é null até a 1ª estimativa).
  */
 function mainCategoryFacetItemsForWizard(
   facetsState: ProfilesSearchFacets | null,
-  initial: ProfilesSearchFacets | null | undefined
+  initial: ProfilesSearchFacets | null | undefined,
+  hasTextSearch: boolean
 ): { name: string; count: number }[] {
-  const pre = initial?.llm?.mainCategory ?? []
-  if (pre.some((i) => i.count > 0)) return pre
-  return facetsState?.llm?.mainCategory ?? initial?.llm?.mainCategory ?? []
+  const stateCats = facetsState?.llm?.mainCategory ?? []
+  const initialCats = initial?.llm?.mainCategory ?? []
+  const statePositive = stateCats.filter((i) => (i.count ?? 0) > 0)
+  if (statePositive.length > 0) return stateCats
+
+  if (hasTextSearch) return stateCats
+
+  const initialPositive = initialCats.filter((i) => (i.count ?? 0) > 0)
+  if (initialPositive.length > 0) return initialCats
+
+  return stateCats.length > 0 ? stateCats : initialCats
 }
 
 function boundsToSizeKeyFromBuckets(
@@ -431,9 +447,9 @@ function boundsToSizeKeyFromBuckets(
 function maxLlmStepFromFilters(f: Partial<WizardState>): number {
   let max = -1
   if ((f.llmMainCategory?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_MAIN_CATEGORY)
-  if ((f.llmSubCategories?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_SUBCATEGORIES)
-  /** Links antigos com filtro de gênero: considera etapa 2 concluída para retomar o fluxo. */
-  if ((f.llmGender?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_SUBCATEGORIES)
+  if ((f.llmSubCategories?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
+  /** Links antigos com filtro de gênero (etapa “assuntos” removida). */
+  if ((f.llmGender?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if ((f.llmAudienceType?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if ((f.llmToneOfVoice?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if ((f.llmRiskLevel?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
@@ -443,6 +459,7 @@ function maxLlmStepFromFilters(f: Partial<WizardState>): number {
 }
 
 function stepFromFilters(f: Partial<WizardState>): number {
+  if (!(f.q?.trim())) return STEP_QUERY
   if ((f.sizeFilter?.length ?? 0) > 0 || f.minFollowers != null || f.maxFollowers != null) return STEP_PORTE
   const m = maxLlmStepFromFilters(f)
   if (m >= STEP_LLM_MAIN_CATEGORY) return m
@@ -452,14 +469,21 @@ function stepFromFilters(f: Partial<WizardState>): number {
 /** Filtro associado a cada índice de etapa do wizard. */
 function filterPatchForWizardStep(stepIndex: number): Partial<WizardState> {
   switch (stepIndex) {
+    case STEP_QUERY:
+      return {}
     case STEP_PORTE:
       return { sizeFilter: undefined, minFollowers: undefined, maxFollowers: undefined }
     case STEP_LLM_MAIN_CATEGORY:
       return { llmMainCategory: undefined }
-    case STEP_LLM_SUBCATEGORIES:
-      return { llmSubCategories: undefined }
     case STEP_LLM_AUDIENCE:
-      return { llmAudienceType: undefined, llmRiskLevel: undefined, llmToneOfVoice: undefined, llmIsFamilySafe: undefined, llmIsAdultContent: undefined }
+      return {
+        llmSubCategories: undefined,
+        llmAudienceType: undefined,
+        llmRiskLevel: undefined,
+        llmToneOfVoice: undefined,
+        llmIsFamilySafe: undefined,
+        llmIsAdultContent: undefined,
+      }
     default:
       return {}
   }
@@ -498,7 +522,7 @@ function filtersToWizardState(
   f: Partial<WizardState> | undefined,
   followersBuckets?: ProfilesSearchFacets['followers_buckets']
 ): WizardState {
-  if (!f?.categories?.length && !f?.q) return {}
+  if (!f) return {}
   let sizeFilter = f.sizeFilter?.length ? [...f.sizeFilter] : undefined
   if (!sizeFilter?.length && (f.minFollowers != null || f.maxFollowers != null)) {
     const k = boundsToSizeKeyFromBuckets(followersBuckets, f.minFollowers, f.maxFollowers)
@@ -539,6 +563,8 @@ export default function SearchWizard({
   initialFilters,
   onFiltersChange,
   wizardPrefetchLoading = false,
+  splitColumnLayout = false,
+  onStepChange,
 }: SearchWizardProps) {
   const initialBuckets = initialFacets?.followers_buckets
   const [step, setStep] = useState(() => stepFromFilters(filtersToWizardState(initialFilters, initialBuckets)))
@@ -547,11 +573,41 @@ export default function SearchWizard({
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
   const [nextStepLoading, setNextStepLoading] = useState(false)
   /** Etapa Assuntos: facetas com contagem menor que 2 só após "Ver mais". */
-  const [llmLowCountChipsExpanded, setLlmLowCountChipsExpanded] = useState(false)
+  const hasTextSearch = Boolean((state.q ?? '').trim())
   const mainCategoryItems = useMemo(
-    () => mainCategoryFacetItemsForWizard(facets, initialFacets),
-    [facets, initialFacets]
+    () => mainCategoryFacetItemsForWizard(facets, initialFacets, hasTextSearch),
+    [facets, initialFacets, hasTextSearch]
   )
+
+  /** URL com `#q=` pode abrir direto na etapa categoria: `facets` só vinha do prefetch até passar por “Próximo”. */
+  useEffect(() => {
+    if (step !== STEP_LLM_MAIN_CATEGORY || !onEstimate) return
+    if (!hasTextSearch) return
+    if (facets !== null) return
+    let cancelled = false
+    ;(async () => {
+      setNextStepLoading(true)
+      try {
+        const query = stateToQuery(state)
+        const { facets: nextFacets } = await onEstimate(query)
+        if (!cancelled) setFacets(nextFacets ?? null)
+      } catch (e) {
+        if (!cancelled) {
+          Modal.error({
+            title: 'Não foi possível atualizar',
+            content: (e as Error)?.message || 'Não foi possível atualizar a busca. Tente novamente.',
+            okText: 'Entendi',
+            centered: true,
+          })
+        }
+      } finally {
+        if (!cancelled) setNextStepLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [step, hasTextSearch, facets, onEstimate, state])
   /** Evita disparar duas vezes o auto-avanço do porte quando a URL pede buckets inexistentes. */
   const porteAutoSkipRef = useRef(false)
   /** Evita corrida entre prune do porte e o auto-avanço quando não há buckets válidos. */
@@ -566,12 +622,15 @@ export default function SearchWizard({
     setState((prev) => ({ ...prev, ...patch }))
   }, [step])
 
-  useEffect(() => {
-    setLlmLowCountChipsExpanded(false)
-  }, [step, facets])
+  useLayoutEffect(() => {
+    onStepChange?.(step)
+  }, [step, onStepChange])
 
-  /** Sincroniza seleções com a URL conforme os filtros do wizard. */
-  useEffect(() => {
+  /**
+   * Sincroniza seleções com a URL conforme os filtros do wizard.
+   * useLayoutEffect evita corrida com “Voltar” (useEffect do commit anterior podia regravar q= depois de limpar).
+   */
+  useLayoutEffect(() => {
     if (!onFiltersChange) return
     const sq = stateToQueryForHash(state, step)
     onFiltersChange(sq)
@@ -614,6 +673,40 @@ export default function SearchWizard({
   }
 
   const nextStep = async () => {
+    if (step === STEP_QUERY) {
+      const term = (state.q ?? '').trim()
+      if (!term) {
+        Modal.warning({
+          title: 'Busca obrigatória',
+          content: 'Digite um termo para buscar e ver a lista de influenciadores.',
+          okText: 'Entendi',
+          centered: true,
+        })
+        return
+      }
+      syncUrl()
+      if (onEstimate) {
+        setNextStepLoading(true)
+        try {
+          const query = stateToQuery(state)
+          const { facets: nextFacets } = await onEstimate(query)
+          setFacets(nextFacets ?? null)
+          runSearchWizardSlideTransition('forward', () => setStep(STEP_LLM_MAIN_CATEGORY))
+        } catch (e) {
+          Modal.error({
+            title: 'Não foi possível atualizar',
+            content: (e as Error)?.message || 'Não foi possível atualizar a busca. Tente novamente.',
+            okText: 'Entendi',
+            centered: true,
+          })
+        } finally {
+          setNextStepLoading(false)
+        }
+      } else {
+        runSearchWizardSlideTransition('forward', () => setStep(STEP_LLM_MAIN_CATEGORY))
+      }
+      return
+    }
     if (step === STEP_LLM_MAIN_CATEGORY) {
       const hasCats = mainCategoryItems.some((i) => i.count > 0)
       if (!wizardPrefetchLoading && hasCats && !(state.llmMainCategory?.length ?? 0)) {
@@ -669,6 +762,44 @@ export default function SearchWizard({
   }
 
   const prevStep = async () => {
+    /** Da etapa “categoria” (2/4) volta à busca (1/4): remove q= e filtros; sem View Transition para não atrasar o estado. */
+    const voltarParaBusca =
+      step === STEP_LLM_MAIN_CATEGORY || STEPS[step]?.key === 'llmMainCategory'
+    if (voltarParaBusca) {
+      const patch: Partial<WizardState> = {
+        ...filterPatchesFromStepForward(STEP_LLM_MAIN_CATEGORY),
+        q: undefined,
+        categories: undefined,
+      }
+      const cleaned: WizardState = { ...state, ...patch }
+      flushSync(() => {
+        update(patch)
+        setStep(STEP_QUERY)
+      })
+      if (onFiltersChange) {
+        const sq = { ...stateToQueryForHash(cleaned, STEP_QUERY) }
+        delete sq.q
+        onFiltersChange(sq)
+      }
+      if (onEstimate) {
+        setNextStepLoading(true)
+        try {
+          const query = stateToQuery(cleaned)
+          const { facets: nextFacets } = await onEstimate(query)
+          setFacets(nextFacets ?? null)
+        } catch (e) {
+          Modal.error({
+            title: 'Não foi possível atualizar',
+            content: (e as Error)?.message || 'Não foi possível atualizar a busca. Tente novamente.',
+            okText: 'Entendi',
+            centered: true,
+          })
+        } finally {
+          setNextStepLoading(false)
+        }
+      }
+      return
+    }
     if (step === STEP_PORTE) {
       const patch = filterPatchesBackToFirstStep()
       const cleaned = { ...state, ...patch }
@@ -793,7 +924,7 @@ export default function SearchWizard({
 
       ; (async () => {
         if (!onEstimate) {
-          runSearchWizardSlideTransition('back', () => setStep(STEP_LLM_FIRST))
+          runSearchWizardSlideTransition('back', () => setStep(STEP_LLM_MAIN_CATEGORY))
           return
         }
         setNextStepLoading(true)
@@ -801,7 +932,7 @@ export default function SearchWizard({
           const query = stateToQuery(cleaned)
           const { facets: nextFacets } = await onEstimate(query)
           setFacets(nextFacets ?? null)
-          runSearchWizardSlideTransition('back', () => setStep(STEP_LLM_FIRST))
+          runSearchWizardSlideTransition('back', () => setStep(STEP_LLM_MAIN_CATEGORY))
         } catch (e) {
           Modal.error({
             title: 'Não foi possível atualizar',
@@ -818,29 +949,35 @@ export default function SearchWizard({
   }, [step, facets, initialFacets, state, onEstimate])
 
   const isLoadingOptions =
-    nextStepLoading || (step >= 1 && !(facets ?? initialFacets)) || (step === STEP_LLM_MAIN_CATEGORY && wizardPrefetchLoading)
-  const showFullScreenLoader = step >= 1 && !(facets ?? initialFacets)
+    nextStepLoading ||
+    (step >= STEP_PORTE && !(facets ?? initialFacets)) ||
+    (step === STEP_LLM_MAIN_CATEGORY && wizardPrefetchLoading)
+  const showFullScreenLoader = step >= STEP_PORTE && !(facets ?? initialFacets)
 
   /** Só bloqueia o botão durante carregamento; validação de etapa mostra erro ao clicar. */
   const nextButtonDisabled = isLoadingOptions
 
   const isMainCategoryStep = step === STEP_LLM_MAIN_CATEGORY
-  const contentMaxWidth = isMainCategoryStep ? 'min(1040px, 100%)' : 580
+  const contentMaxWidth = splitColumnLayout ? '100%' : isMainCategoryStep ? 'min(1040px, 100%)' : 580
+
+  const showFooterChrome = step > STEP_QUERY
 
   return (
     <div
       className={
         (isMainCategoryStep ? 'search-wizard search-wizard--category-wide' : 'search-wizard') +
-        ' search-wizard--with-fixed-footer'
+        ' search-wizard--with-fixed-footer' +
+        (splitColumnLayout ? ' search-wizard--split-column' : '') +
+        (!showFooterChrome ? ' search-wizard--no-footer-chrome' : '')
       }
       style={{
-        maxWidth: isMainCategoryStep ? 'min(1040px, 100%)' : 680,
+        maxWidth: splitColumnLayout ? '100%' : isMainCategoryStep ? 'min(1040px, 100%)' : 680,
         width: '100%',
-        margin: '0 auto',
+        margin: splitColumnLayout ? 0 : '0 auto',
         overflow: 'visible',
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
+        alignItems: splitColumnLayout ? 'stretch' : 'center',
         position: 'relative',
       }}
     >
@@ -906,6 +1043,19 @@ export default function SearchWizard({
             </Text>
 
             <div style={{ marginTop: 20, width: '100%', maxWidth: contentMaxWidth, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              {step === STEP_QUERY && (
+                <div style={{ width: '100%', maxWidth: 520, textAlign: 'left' }}>
+                  <Input.Search
+                    size="large"
+                    placeholder="Ex.: beleza, fitness, maternidade, @usuario…"
+                    value={state.q ?? ''}
+                    onChange={(e) => update({ q: e.target.value })}
+                    onSearch={() => void nextStep()}
+                    enterButton="Buscar"
+                    allowClear
+                  />
+                </div>
+              )}
               {step === STEP_PORTE && (
                 <div style={{ width: '100%', textAlign: 'center' }}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
@@ -940,7 +1090,7 @@ export default function SearchWizard({
                 </div>
               )}
 
-              {step >= STEP_LLM_FIRST && step <= STEP_LLM_LAST && (
+              {(step === STEP_LLM_MAIN_CATEGORY || step === STEP_LLM_AUDIENCE) && (
                 <div style={{ width: '100%', textAlign: 'center' }}>
                   {(() => {
                     const llm = (facets ?? initialFacets)?.llm
@@ -971,17 +1121,6 @@ export default function SearchWizard({
                           </div>
                         )
                       }
-                      case STEP_LLM_SUBCATEGORIES:
-                        return chipOrHint(llm.subCategories ?? [], (
-                          <LlmChipSection
-                            items={llm.subCategories ?? []}
-                            selected={state.llmSubCategories}
-                            onToggle={(k) => toggleArray('llmSubCategories', k)}
-                            collapseLowCount
-                            lowCountExpanded={llmLowCountChipsExpanded}
-                            onLowCountExpandToggle={() => setLlmLowCountChipsExpanded((e) => !e)}
-                          />
-                        ))
                       case STEP_LLM_AUDIENCE:
                         return chipOrHint(llm.audienceType ?? [], (
                           <LlmChipSection
@@ -1002,42 +1141,47 @@ export default function SearchWizard({
         </div>
       </div>
 
-      <footer className="search-wizard-footer-fixed" role="contentinfo">
-        <div className="search-wizard-footer-fixed__inner" style={{ width: '100%', maxWidth: contentMaxWidth }}>
-          <div className="search-wizard-progress" style={{ width: '100%', maxWidth: 400, marginInline: 'auto' }}>
-            <Progress
-              percent={progressPercent}
-              showInfo={false}
-              strokeColor="#1677ff"
-              trailColor="rgba(0, 0, 0, 0.09)"
-              strokeWidth={3}
-              style={{ borderRadius: 999 }}
-            />
-            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block', opacity: 0.8, textAlign: 'center' }}>
-              {step + 1} / {STEPS.length}
-            </Text>
-          </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
-            {step > 0 && (
-              <Button size="middle" onClick={prevStep} disabled={!!isLoadingOptions} style={{ borderRadius: 10, minWidth: 100, height: 40, fontSize: 15 }}>
-                Voltar
+      {showFooterChrome ? (
+        <footer
+          className={splitColumnLayout ? 'search-wizard-footer-column' : 'search-wizard-footer-fixed'}
+          role="contentinfo"
+        >
+          <div className="search-wizard-footer-fixed__inner" style={{ width: '100%', maxWidth: contentMaxWidth }}>
+            <div className="search-wizard-progress" style={{ width: '100%', maxWidth: 400, marginInline: 'auto' }}>
+              <Progress
+                percent={progressPercent}
+                showInfo={false}
+                strokeColor="#1677ff"
+                trailColor="rgba(0, 0, 0, 0.09)"
+                strokeWidth={3}
+                style={{ borderRadius: 999 }}
+              />
+              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block', opacity: 0.8, textAlign: 'center' }}>
+                {step + 1} / {STEPS.length}
+              </Text>
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {step > 0 && (
+                <Button size="middle" onClick={prevStep} disabled={!!isLoadingOptions} style={{ borderRadius: 10, minWidth: 100, height: 40, fontSize: 15 }}>
+                  Voltar
+                </Button>
+              )}
+              <Button
+                type="primary"
+                size="middle"
+                onClick={nextStep}
+                disabled={nextButtonDisabled}
+                loading={!!isLoadingOptions}
+                icon={step === STEPS.length - 1 ? <RocketOutlined /> : undefined}
+                className="search-wizard-next-btn"
+                style={{ borderRadius: 10, minWidth: 200, height: 40, fontSize: 15 }}
+              >
+                {step === STEPS.length - 1 ? 'Ver resultados' : 'Próximo'}
               </Button>
-            )}
-            <Button
-              type="primary"
-              size="middle"
-              onClick={nextStep}
-              disabled={nextButtonDisabled}
-              loading={!!isLoadingOptions}
-              icon={step === STEPS.length - 1 ? <RocketOutlined /> : undefined}
-              className="search-wizard-next-btn"
-              style={{ borderRadius: 10, minWidth: 200, height: 40, fontSize: 15 }}
-            >
-              {step === STEPS.length - 1 ? 'Ver resultados' : 'Próximo'}
-            </Button>
+            </div>
           </div>
-        </div>
-      </footer>
+        </footer>
+      ) : null}
     </div>
   )
 }

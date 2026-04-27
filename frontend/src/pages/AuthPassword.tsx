@@ -3,6 +3,7 @@ import { Form, Input, Button, message } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { setMyPassword } from '../api'
 import { LockOutlined, MessageOutlined } from '@ant-design/icons'
+import { trackMetaPixel } from '../utils/metaPixel'
 
 export default function AuthPassword() {
   const navigate = useNavigate()
@@ -24,6 +25,7 @@ export default function AuthPassword() {
     setLoading(true)
     try {
       await setMyPassword(values.password)
+      trackMetaPixel('CompleteRegistration', { source: 'auth_password_created' })
       message.success('Senha criada. Te levando pro seu relatório...')
       navigate(`/app/influencer/${encodeURIComponent(handle)}`, { state: { fromSignup: true }, replace: true })
     } catch (e) {
@@ -212,7 +214,10 @@ export default function AuthPassword() {
               type="link"
               size="small"
               icon={<MessageOutlined />}
-              onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}`, { state: { fromSignup: true }, replace: true })}
+              onClick={() => {
+                trackMetaPixel('Lead', { source: 'auth_password_skip_dm' })
+                navigate(`/app/influencer/${encodeURIComponent(handle)}`, { state: { fromSignup: true }, replace: true })
+              }}
               style={{ color: 'var(--app-primary)', fontWeight: 600 }}
             >
               Pular e entrar por DM

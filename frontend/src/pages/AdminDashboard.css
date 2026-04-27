@@ -1,7 +1,7 @@
 /* Painel admin — layout compacto (menos espaço em branco) */
 
 .admin-dashboard {
-  padding: 8px 12px 20px;
+  padding: 8px 12px 0px;
   max-width: 1100px;
   margin: 0 auto;
 }
@@ -163,7 +163,7 @@
   min-width: 0;
 }
 
-.admin-dashboard__panel-head-stack > span:first-child {
+.admin-dashboard__panel-head-stack>span:first-child {
   line-height: 1.35;
 }
 
@@ -190,11 +190,11 @@
   font-size: 13px;
 }
 
-.admin-dashboard__panel-body .ant-table-tbody > tr > td {
+.admin-dashboard__panel-body .ant-table-tbody>tr>td {
   padding: 5px 10px !important;
 }
 
-.admin-dashboard__panel-body .ant-table-thead > tr > th {
+.admin-dashboard__panel-body .ant-table-thead>tr>th {
   padding: 6px 10px !important;
   background: var(--app-card-bg-soft, rgba(0, 0, 0, 0.02)) !important;
   font-weight: 600;
@@ -285,7 +285,7 @@
     background: #fff !important;
   }
 
-  html.print-admin-dashboard .ant-layout > *:not(.ant-layout-content) {
+  html.print-admin-dashboard .ant-layout>*:not(.ant-layout-content) {
     display: none !important;
   }
 

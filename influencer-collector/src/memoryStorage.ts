@@ -464,6 +464,13 @@ export async function registerCollectedWithIntegration(
   const result = hasMedia ? await pushFull(entity, media!) : await pushSlim(entity);
 
   if (result.skipped) {
+    // Sem API, cada perfil fica em «coletados» até o usuário remover. O payload completo do Instagram
+    // no heap (vários MB por perfil) causava OOM em execução longa; a UI só precisa dos campos resumidos.
+    const slim = slimProfileForIntegratedLedger(
+      row.profile as unknown as Record<string, unknown>,
+      key
+    );
+    pending.set(key, { ...row, profile: slim });
     return result;
   }
   if (result.ok) {

@@ -4,6 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { UserOutlined, LockOutlined, LoginOutlined, MessageOutlined, UserAddOutlined, CheckOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import Logo from '../components/Logo'
+import { trackMetaPixel } from '../utils/metaPixel'
 
 const { Title, Text } = Typography
 
@@ -50,6 +51,7 @@ function Login() {
   }
 
   const goToDmAccess = () => {
+    trackMetaPixel('Lead', { source: 'login_dm_continue' })
     navigate('/app/create', {
       replace: true,
       state: normalizedNick ? { nickname: normalizedNick.toLowerCase() } : {},
@@ -138,7 +140,10 @@ function Login() {
                 type="default"
                 size="large"
                 icon={<UserAddOutlined />}
-                onClick={() => navigate('/app/create')}
+                onClick={() => {
+                  trackMetaPixel('Lead', { source: 'login_cadastrar' })
+                  navigate('/app/create')
+                }}
                 className="login-tab"
                 style={{
                   height: 48,

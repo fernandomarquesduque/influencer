@@ -369,10 +369,16 @@ function categoriesAtMaxEvidenceScore(scores) {
         return [];
     return MAIN_CATEGORY_CANONICAL_LABELS.filter((c) => (scores.get(c) ?? 0) === max);
 }
+/** gender feminino: aceita rotulos Beleza sem termos explicitos na bio/amostras (politica de produto). */
+function beautyBioEvidenceWaivedForGender(qualification) {
+    return String(qualification.gender ?? '').trim().toLowerCase() === 'feminino';
+}
 /** Evita pillars só de beleza quando a bio/amostras não sustentam (ex.: advogada sem menção a maquiagem). */
 function validateContentPillarsAgainstProfileEvidence(qualification, profile) {
     const pillars = asStringArray(qualification.contentPillars, 100);
     if (!isBeautyOnlyContentPillars(pillars))
+        return [];
+    if (beautyBioEvidenceWaivedForGender(qualification))
         return [];
     const freeText = buildProfileFreeTextForCategoryEvidence(profile).trim();
     if (freeText.length < 12)
@@ -393,6 +399,8 @@ function validateSubCategoriesBeautyAgainstProfileEvidence(qualification, profil
         beautyScore += m.get('Beleza') ?? 0;
     }
     if (beautyScore <= 0)
+        return [];
+    if (beautyBioEvidenceWaivedForGender(qualification))
         return [];
     const freeText = buildProfileFreeTextForCategoryEvidence(profile).trim();
     if (freeText.length < 12)
@@ -1121,8 +1129,8 @@ function buildPrompt(profile, options = {}) {
         'Arrays nunca vazios.',
         'subCategories, contentPillars e audienceType: uma palavra macro por item (sem frases compostas).',
         'contentPillars: só temas presentes em "Dados do perfil"; uma palavra. Nao invente; nao copie palavras deste prompt. Evite "dicas","moto","receitas","bastidores","stories" como padrao — só se o texto mostrar (ex.: moto = moto/trilha/grau). Nao repita mainCategory como pillar.',
-        'contentPillars Beleza (validacao rigida): PROIBIDO usar APENAS rotulos de vitrine Beleza (beleza, maquiagem, skincare, unhas, estetica, cosmeticos, maquiador...) se NENHUMA bio nem amostra citar make/cosmeticos/salao/pele/tutorial/autocuidado ligado a estetica. Perfil juridico (adv., OAB, lei, tribunal, escritorio), saude, negocios, fitness sem estetica → pilares = tema REAL do conteudo (ex.: direito, consultoria, saude), nunca "beleza+maquiagem" por estereotipo.',
-        'subCategories: fonte do nicho; devem existir no mapa fechado (amostra acima). Ordem: mais especifico primeiro; pt-BR ou EN se no mapa (tv, dj). Maquiagem/beleza/skincare só se a bio ou amostras mencionarem; genero feminino ou maternidade não autoriza. Perfil adv./OAB/juridico sem cosmeticos → subs do oficio (direito, advocacia…), nunca maquiagem. Fora do vocabulario → falha de classificacao.',
+        'contentPillars Beleza (validacao): sem gender feminino, PROIBIDO usar APENAS rotulos de vitrine Beleza (beleza, maquiagem, skincare, unhas, estetica, cosmeticos, maquiador...) se NENHUMA bio nem amostra citar make/cosmeticos/salao/pele/tutorial/autocuidado ligado a estetica. Com gender feminino o servidor aceita pilares so Beleza mesmo sem essas palavras. Perfil juridico (adv., OAB, lei, tribunal, escritorio), saude, negocios, fitness sem estetica e sem feminino → pilares = tema REAL do conteudo, nunca "beleza+maquiagem" por estereotipo.',
+        'subCategories: fonte do nicho; devem existir no mapa fechado (amostra acima). Ordem: mais especifico primeiro; pt-BR ou EN se no mapa (tv, dj). Maquiagem/beleza/skincare: com evidencia na bio/amostras, ou com gender feminino (servidor aceita sem menção explicita). Maternidade sozinha nao dispensa evidencia. Perfil adv./OAB/juridico sem cosmeticos e sem feminino → subs do oficio (direito, advocacia…), nunca maquiagem. Fora do vocabulario → falha de classificacao.',
         'mainCategory: copiar LITERAL um rotulo da lista (uma palavra). Orientar pelas subCategories (ex.: maquiagem→Beleza; receitas→Alimentacao; viagem→Viagens; tatuagem→Lifestyle, nao Musica; futebol/futsal/esporte→Esportes; video game/gaming/jogos eletronicos→Games, nao só "jogos" que em pt-BR costuma ser esporte). Vaquejada/festa com som→Musica; Esportes só hipismo competitivo sem pilar musical. Ambiguo: macro mais comercial da lista. So rotulos da lista.',
         'Servidor: valida subs no mapa, alinha main a evidencias (subs+bio/contexto), preenche language (franc) e normaliza aliases; escolha coerente.',
         'mainCategory, gender e brandSafety obrigatorios (string). subCategories, contentPillars e audienceType: arrays com pelo menos 1 item. NAO inclua "language" no JSON — o servidor preenche.',
@@ -1397,6 +1405,18 @@ function buildAutoExclusionReason(qualification) {
     }
     return `Exclusao automatica: profileType deve ser pessoal ou criador (recebido: ${profileT || '(vazio)'})`;
 }
+/** True se o registro ja tinha classificacao LLM persistida — nunca auto-excluir na API ao falhar revalidacao. */
+function profileRecordAlreadyHasLlm(profile) {
+    const llm = profile.llm;
+    if (llm == null || typeof llm !== 'object' || Array.isArray(llm))
+        return false;
+    const lo = llm;
+    const status = String(lo.status ?? '').trim().toLowerCase();
+    if (status === 'done')
+        return true;
+    const q = lo.qualification;
+    return q != null && typeof q === 'object' && !Array.isArray(q);
+}
 /** JWT adm opcional; sem ele usa POST /crawl/collector-delete-profile com a mesma chave do ingest. */
 function getOptionalAdminBearerForPurge() {
     const t = process.env.QUALIFY_ADMIN_BEARER_TOKEN?.trim() ||
@@ -1466,7 +1486,7 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
             messages: [
                 {
                     role: 'system',
-                    content: 'Voce responde somente JSON valido. Textos descritivos (personaSummary, rotulos de categoria) em portugues do Brasil. Nao inclua chave "language" no JSON. contentPillars: nao preencha só com beleza/maquiagem se a bio e amostras nao citarem estetica ou make.',
+                    content: 'Voce responde somente JSON valido. Textos descritivos (personaSummary, rotulos de categoria) em portugues do Brasil. Nao inclua chave "language" no JSON. contentPillars: sem gender feminino, nao preencha só com beleza/maquiagem se a bio e amostras nao citarem estetica ou make; com gender feminino o validador aceita.',
                 },
                 { role: 'user', content: prompt },
             ],
@@ -1555,7 +1575,7 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
             messages: [
                 {
                     role: 'system',
-                    content: 'Voce corrige JSON e responde apenas JSON valido. Textos descritivos em pt-BR. Nao inclua "language". Se o erro citar beleza/maquiagem sem evidencia: remova maquiagem/beleza dos pillars ou subs e use termos sustentados pela bio/amostras.',
+                    content: 'Voce corrige JSON e responde apenas JSON valido. Textos descritivos em pt-BR. Nao inclua "language". Se o erro citar beleza/maquiagem sem evidencia e gender nao for feminino: remova maquiagem/beleza dos pillars ou subs e use termos sustentados pela bio/amostras; com gender feminino pode manter Beleza.',
                 },
                 { role: 'user', content: repairPrompt },
             ],
@@ -1723,28 +1743,49 @@ async function runBatch(options = {}) {
                     const langExclude = shouldExcludeByLanguageAndCreatorRules(qualOk);
                     if (authorialMismatchReason || langExclude) {
                         const reason = authorialMismatchReason ?? buildAutoExclusionReason(qualOk);
-                        emitLog(`@${handle} | EXCLUINDO | ${reason}`);
-                        const via = getOptionalAdminBearerForPurge() != null
-                            ? 'DELETE admin/influencers (JWT)'
-                            : 'POST crawl/collector-delete-profile (X-Collector-Key)';
-                        emitLog(`@${handle} | >> API crawl: ${via}...`);
-                        const delT0 = Date.now();
-                        await deleteProfileAfterAutoExclusion(apiBase, ingestKey, handle);
-                        const delMs = Date.now() - delT0;
-                        const totalMs = Date.now() - startedAt;
-                        emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms | total ${totalMs}ms`);
-                        progress.excluded++;
-                        options.onResult?.({
-                            handle,
-                            result: 'excluido',
-                            llmStatus: llm.status,
-                            confidence: llm.confidence,
-                            mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
-                            brandSafety: pickBrandSafetyFromQualification(qualOk),
-                            qualification: qualOk,
-                            processedAt: new Date().toISOString(),
-                            error: reason,
-                        });
+                        const hadPriorLlm = profileRecordAlreadyHasLlm(item.profile);
+                        if (hadPriorLlm) {
+                            const keepMsg = `NAO EXCLUI | perfil ja tinha LLM persistido — mantido na base | ${reason}`;
+                            emitLog(`@${handle} | ${keepMsg}`);
+                            progress.failed++;
+                            const totalMs = Date.now() - startedAt;
+                            emitLog(`@${handle} | ERRO (mantido) | total ${totalMs}ms`);
+                            options.onResult?.({
+                                handle,
+                                result: 'erro',
+                                llmStatus: String(llm.status ?? 'erro'),
+                                confidence: llm.confidence,
+                                mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
+                                brandSafety: pickBrandSafetyFromQualification(qualOk),
+                                qualification: qualOk,
+                                processedAt: new Date().toISOString(),
+                                error: keepMsg,
+                            });
+                        }
+                        else {
+                            emitLog(`@${handle} | EXCLUINDO | ${reason}`);
+                            const via = getOptionalAdminBearerForPurge() != null
+                                ? 'DELETE admin/influencers (JWT)'
+                                : 'POST crawl/collector-delete-profile (X-Collector-Key)';
+                            emitLog(`@${handle} | >> API crawl: ${via}...`);
+                            const delT0 = Date.now();
+                            await deleteProfileAfterAutoExclusion(apiBase, ingestKey, handle);
+                            const delMs = Date.now() - delT0;
+                            const totalMs = Date.now() - startedAt;
+                            emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms | total ${totalMs}ms`);
+                            progress.excluded++;
+                            options.onResult?.({
+                                handle,
+                                result: 'excluido',
+                                llmStatus: llm.status,
+                                confidence: llm.confidence,
+                                mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
+                                brandSafety: pickBrandSafetyFromQualification(qualOk),
+                                qualification: qualOk,
+                                processedAt: new Date().toISOString(),
+                                error: reason,
+                            });
+                        }
                     }
                     else {
                         emitLog(`@${handle} | >> API collector: ingest LLM (POST)...`);
@@ -1772,45 +1813,65 @@ async function runBatch(options = {}) {
                         const llmBad = error.lastLlm;
                         const qualBad = asObject(llmBad.qualification);
                         const reason = `Exclusao automatica: LLM sem classificacao valida apos ${DEFAULT_LLM_REPAIR_ATTEMPTS} reparo(s) — ${truncateLogLine(error.message, 220)}`;
-                        emitLog(`@${handle} | EXCLUINDO | ${reason}`);
-                        const via = getOptionalAdminBearerForPurge() != null
-                            ? 'DELETE admin/influencers (JWT)'
-                            : 'POST crawl/collector-delete-profile (X-Collector-Key)';
-                        emitLog(`@${handle} | >> API crawl: ${via}...`);
-                        try {
-                            const delT0 = Date.now();
-                            await deleteProfileAfterAutoExclusion(apiBase, ingestKey, handle);
-                            const delMs = Date.now() - delT0;
-                            emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms`);
-                            progress.excluded++;
+                        const hadPriorLlm = profileRecordAlreadyHasLlm(item.profile);
+                        if (hadPriorLlm) {
+                            const keepMsg = `NAO EXCLUI | perfil ja tinha LLM persistido — mantido na base | ${reason}`;
+                            emitLog(`@${handle} | ${keepMsg}`);
+                            progress.failed++;
                             options.onResult?.({
                                 handle,
-                                result: 'excluido',
-                                llmStatus: llmBad.status,
+                                result: 'erro',
+                                llmStatus: String(llmBad.status ?? 'erro'),
                                 confidence: llmBad.confidence,
                                 mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? ''),
                                 brandSafety: pickBrandSafetyFromQualification(qualBad),
                                 qualification: qualBad,
                                 processedAt: new Date().toISOString(),
-                                error: reason,
+                                error: keepMsg,
                             });
+                            emitLog(`@${handle} | ERRO (mantido) | ${truncateLogLine(keepMsg, 240)}`);
                         }
-                        catch (purgeErr) {
-                            progress.failed++;
-                            const purgeMsg = purgeErr instanceof Error ? purgeErr.message : String(purgeErr);
-                            const message = `${error.message} | purge falhou: ${purgeMsg}`;
-                            options.onResult?.({
-                                handle,
-                                result: 'erro',
-                                llmStatus: 'erro',
-                                confidence: null,
-                                mainCategory: '-',
-                                brandSafety: null,
-                                qualification: null,
-                                processedAt: new Date().toISOString(),
-                                error: message,
-                            });
-                            emitLog(`@${handle} | ERRO | ${truncateLogLine(message, 240)}`);
+                        else {
+                            emitLog(`@${handle} | EXCLUINDO | ${reason}`);
+                            const via = getOptionalAdminBearerForPurge() != null
+                                ? 'DELETE admin/influencers (JWT)'
+                                : 'POST crawl/collector-delete-profile (X-Collector-Key)';
+                            emitLog(`@${handle} | >> API crawl: ${via}...`);
+                            try {
+                                const delT0 = Date.now();
+                                await deleteProfileAfterAutoExclusion(apiBase, ingestKey, handle);
+                                const delMs = Date.now() - delT0;
+                                emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms`);
+                                progress.excluded++;
+                                options.onResult?.({
+                                    handle,
+                                    result: 'excluido',
+                                    llmStatus: llmBad.status,
+                                    confidence: llmBad.confidence,
+                                    mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? ''),
+                                    brandSafety: pickBrandSafetyFromQualification(qualBad),
+                                    qualification: qualBad,
+                                    processedAt: new Date().toISOString(),
+                                    error: reason,
+                                });
+                            }
+                            catch (purgeErr) {
+                                progress.failed++;
+                                const purgeMsg = purgeErr instanceof Error ? purgeErr.message : String(purgeErr);
+                                const message = `${error.message} | purge falhou: ${purgeMsg}`;
+                                options.onResult?.({
+                                    handle,
+                                    result: 'erro',
+                                    llmStatus: 'erro',
+                                    confidence: null,
+                                    mainCategory: '-',
+                                    brandSafety: null,
+                                    qualification: null,
+                                    processedAt: new Date().toISOString(),
+                                    error: message,
+                                });
+                                emitLog(`@${handle} | ERRO | ${truncateLogLine(message, 240)}`);
+                            }
                         }
                     }
                     else {

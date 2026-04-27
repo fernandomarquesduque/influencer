@@ -132,7 +132,7 @@ export function mapProfileListItemToPreviewItem(
   const audienceArr = Array.isArray(q?.audienceType)
     ? (q!.audienceType as unknown[])
       .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-      .slice(0, 2)
+      .slice(0, 6)
     : []
   const audience = audienceArr.join(' / ') || '-'
 
@@ -147,6 +147,8 @@ export function mapProfileListItemToPreviewItem(
   const totalLikes = Number(eng?.total_likes ?? 0)
   const totalComments = Number(eng?.total_comments ?? 0)
   const postsCount = Number(eng?.posts_count ?? 0)
+  const avgLikes = Number(eng?.avg_likes ?? 0)
+  const avgComments = Number(eng?.avg_comments ?? 0)
 
   return {
     firstName,
@@ -161,6 +163,8 @@ export function mapProfileListItemToPreviewItem(
     totalLikes: Number.isFinite(totalLikes) ? totalLikes : 0,
     totalComments: Number.isFinite(totalComments) ? totalComments : 0,
     postsCount: Number.isFinite(postsCount) ? postsCount : 0,
+    avgLikes: Number.isFinite(avgLikes) ? avgLikes : 0,
+    avgComments: Number.isFinite(avgComments) ? avgComments : 0,
   }
 }
 

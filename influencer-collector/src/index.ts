@@ -14,6 +14,15 @@ import { loadPersistedIssuesSync } from './memoryStorage.js';
 import { startServer } from './server.js';
 import { getCollectorApiBase, isRemoteIngestConfigured } from './serverIngest.js';
 
+process.on('uncaughtException', (err) => {
+  console.error('[Collector] uncaughtException:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Collector] unhandledRejection:', reason);
+  process.exit(1);
+});
+
 /**
  * Grava cookies no disco quando estiver logado.
  * Retorna função para reassociar o listener quando `pageRef.page` for trocada (browser reaberto).

@@ -80,21 +80,23 @@ export default function App() {
               path="search"
               element={
                 <div
+                  className="search-route-page"
                   style={{
                     minHeight: '100dvh',
                     display: 'flex',
                     flexDirection: 'column',
                     padding: '20px',
                     boxSizing: 'border-box',
+                    overflowX: 'hidden',
                   }}
                 >
                   <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
                     <Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" />
                   </div>
                   <div
+                    className="search-route-main"
                     style={{
-                      flex: 1,
-                      minHeight: 0,
+                      flex: '0 0 auto',
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'stretch',

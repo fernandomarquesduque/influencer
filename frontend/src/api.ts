@@ -365,6 +365,10 @@ export interface ProfilePreviewItem {
   totalLikes: number
   totalComments: number
   postsCount: number
+  /** Média de curtidas por post (mesma base da listagem). */
+  avgLikes?: number
+  /** Média de comentários por post. */
+  avgComments?: number
 }
 
 export interface ProfilesPreviewResponse {

@@ -12,6 +12,7 @@ import {
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
 import Logo from '../components/Logo'
 import { registerCheckoutUser, type AuthScope } from '../api'
+import { trackMetaPixel } from '../utils/metaPixel'
 
 const { Title, Text } = Typography
 
@@ -117,6 +118,7 @@ export default function AgencyLogin() {
     }
     setSubmitLoading(true)
     try {
+      trackMetaPixel('Lead', { source: 'agency_signup_submit' })
       const res = await registerCheckoutUser({
         email: signupEmail.trim().toLowerCase(),
         name: signupName.trim() || undefined,
@@ -130,6 +132,7 @@ export default function AgencyLogin() {
         displayName: res.user.display_name ?? null,
         emailVerified: res.user.email_verified,
       } as AuthUser)
+      trackMetaPixel('CompleteRegistration', { source: 'agency_signup_success' })
       message.success('Conta criada. Bem-vindo!')
       navigate(from, { replace: true })
     } catch (e) {
@@ -254,7 +257,13 @@ export default function AgencyLogin() {
                 <Button
                   type="default"
                   icon={panelMode === 'login' ? <UserAddOutlined /> : <LoginOutlined />}
-                  onClick={() => setPanelModeAndClearError(panelMode === 'login' ? 'signup' : 'login')}
+                  onClick={() => {
+                    const nextMode = panelMode === 'login' ? 'signup' : 'login'
+                    if (nextMode === 'signup') {
+                      trackMetaPixel('Lead', { source: 'agency_open_signup' })
+                    }
+                    setPanelModeAndClearError(nextMode)
+                  }}
                   block
                   style={{
                     fontWeight: 600,

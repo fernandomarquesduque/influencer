@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
-import { Typography, Button } from 'antd'
+import { TeamOutlined } from '@ant-design/icons'
+import { Typography, Button, Tooltip } from 'antd'
 import type { ProfileListItem, ProfilesSearchQuery, ProfilePreviewItem } from '../../api'
 import { fetchProfilesPreview } from '../../api'
 import { mapProfileListToPreviewItems } from '../../utils/mapProfileListToPreviewItems'
@@ -8,7 +9,7 @@ import InfluencerTierPill from '../InfluencerTierPill'
 import { sizeBucketKeyToTierLabel } from '../../utils/influencerTier'
 import './InfluencerPreviewTable.css'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 interface InfluencerPreviewTableProps {
   /** Obrigatório quando `campaignProfiles` não é passado (fluxo dashboard / busca). */
@@ -102,17 +103,35 @@ function formatCompact(n: number): string {
   return Math.round(n).toLocaleString('pt-BR')
 }
 
+/** Normaliza para matching sem acentos (ex.: "crianças" / "criancas"). */
+function audienceKeyAscii(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+}
+
+/** Segmento visual do público-alvo (Mulheres, Homens, Jovens, Crianças, …). */
+function audienceSegmentKind(label: string): 'women' | 'men' | 'youth' | 'children' | 'neutral' {
+  const k = label.trim().toLowerCase()
+  const a = audienceKeyAscii(label)
+  if (k === 'mulheres' || k.startsWith('mulher')) return 'women'
+  if (k === 'homens' || k.startsWith('homem')) return 'men'
+  if (k === 'jovens' || k.startsWith('joven')) return 'youth'
+  if (a === 'criancas' || a.startsWith('crianc')) return 'children'
+  return 'neutral'
+}
+
 export default function InfluencerPreviewTable({
   query,
   campaignProfiles,
   selectionTotalCount,
   loading = false,
   limit = 5,
-  title = 'Preview de perfis',
   onViewMore,
   className,
   previewStablePicOnly = false,
-  hideSelectionCountInTitle = false,
   onSelectionOverflowClick,
 }: InfluencerPreviewTableProps) {
   const avatarSize = 52
@@ -155,9 +174,9 @@ export default function InfluencerPreviewTable({
     fromCampaign && onSelectionOverflowClick ? onSelectionOverflowClick : undefined
   const moreInSelection =
     fromCampaign &&
-    selectionTotalCount != null &&
-    selectionTotalCount > displayItems.length &&
-    displayItems.length > 0
+      selectionTotalCount != null &&
+      selectionTotalCount > displayItems.length &&
+      displayItems.length > 0
       ? selectionTotalCount - displayItems.length
       : 0
 
@@ -166,25 +185,7 @@ export default function InfluencerPreviewTable({
 
   return (
     <section className={`iprv-preview${className ? ` ${className}` : ''}`}>
-      {selectionTotalCount != null && !hideSelectionCountInTitle ? (
-        <div className="iprv-preview-head-row">
-          <Title level={4} className="iprv-preview-head-title">
-            {title}
-          </Title>
-          <span className="iprv-preview-count-pill">
-            {selectionTotalCount} perfil{selectionTotalCount !== 1 ? 's' : ''}
-          </span>
-        </div>
-      ) : (
-        <Title
-          level={4}
-          className={
-            selectionTotalCount != null && hideSelectionCountInTitle ? 'iprv-preview-head-title' : undefined
-          }
-        >
-          {title}
-        </Title>
-      )}
+
       {displayItems.length > 0 ? (
         <div className="iprv-cards">
           {displayItems.map((item, idx) => {
@@ -199,7 +200,6 @@ export default function InfluencerPreviewTable({
             const toneLabels: string[] = []
             if (!sizeTierOk && sizeBadge && sizeBadge !== '-') toneLabels.push(sizeBadge)
             if (categoryBadge && categoryBadge !== '-') toneLabels.push(categoryBadge)
-            toneLabels.push(...audienceBadges)
             const toneMap = buildUniqueToneMap(toneLabels)
             const toneClass = (label: string) =>
               `iprv-badge--tone-${toneMap.get(label.trim().toLowerCase().replace(/\s+/g, ' ')) ?? 0}`
@@ -209,81 +209,117 @@ export default function InfluencerPreviewTable({
                 className={`iprv-card${checkoutPreviewClick ? ' iprv-card--checkout-clickable' : ''}`}
                 {...(checkoutPreviewClick
                   ? {
-                      role: 'button' as const,
-                      tabIndex: 0,
-                      'aria-label': 'Saiba como liberar o relatório completo',
-                      onClick: () => checkoutPreviewClick(),
-                      onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          checkoutPreviewClick()
-                        }
-                      },
-                    }
+                    role: 'button' as const,
+                    tabIndex: 0,
+                    'aria-label': 'Saiba como liberar o relatório completo',
+                    onClick: () => checkoutPreviewClick(),
+                    onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        checkoutPreviewClick()
+                      }
+                    },
+                  }
                   : {})}
               >
                 <div className="iprv-profile-cell">
-                  <div className="iprv-avatar-wrap">
-                    <ProfileAvatar
-                      src={item.profilePicUrl || undefined}
-                      handle={null}
-                      size={avatarSize}
-                      border="2px solid #ece9ff"
-                      shadow="none"
-                      queueOnError={false}
-                    />
-                  </div>
-                  <div>
-                    <b>{item.firstName || 'Influenciador'}</b>
-                    <small>{item.llmDescription || 'Sem descrição LLM disponível.'}</small>
-                    <div className="iprv-metrics" aria-label="Métricas do perfil">
-                      <span title="Seguidores">
-                        <strong>{formatCompact(item.followersCount ?? 0)}</strong> seg.
-                      </span>
-                      <span title="Taxa de engajamento">
-                        <strong>{(item.engagementRate ?? 0).toFixed(1)}%</strong> ER
-                      </span>
-                      <span title="Curtidas (total no período analisado)">
-                        <strong>{formatCompact(item.totalLikes ?? 0)}</strong> likes
-                      </span>
-                      <span title="Comentários (total)">
-                        <strong>{formatCompact(item.totalComments ?? 0)}</strong> com.
-                      </span>
-                      <span title="Posts analisados">
-                        <strong>{Math.round(item.postsCount ?? 0)}</strong> posts
-                      </span>
+                  <div className="iprv-avatar-column">
+                    <div className="iprv-avatar-wrap">
+                      <ProfileAvatar
+                        src={item.profilePicUrl || undefined}
+                        handle={null}
+                        size={avatarSize}
+                        border="2px solid #ece9ff"
+                        shadow="none"
+                        queueOnError={false}
+                      />
+                    </div>
+                    <div className="iprv-tier-under-avatar">
+                      {sizeTierOk ? (
+                        <InfluencerTierPill sizeKey={item.size} variant="chip" />
+                      ) : (
+                        sizeBadge && sizeBadge !== '-' ? (
+                          <span className={`iprv-mini-badge ${toneClass(sizeBadge)}`}>{sizeBadge}</span>
+                        ) : (
+                          <span className="iprv-mini-badge iprv-badge--muted">{sizeBadge}</span>
+                        )
+                      )}
                     </div>
                   </div>
-                </div>
-                <div className="iprv-card-meta">
-                  {sizeTierOk ? (
-                    <InfluencerTierPill sizeKey={item.size} variant="chip" />
-                  ) : (
-                    sizeBadge && sizeBadge !== '-' ? (
-                      <span className={`iprv-mini-badge ${toneClass(sizeBadge)}`}>{sizeBadge}</span>
-                    ) : (
-                      <span className="iprv-mini-badge iprv-badge--muted">{sizeBadge}</span>
-                    )
-                  )}
-                  <span
-                    className={
-                      !categoryBadge || categoryBadge === '-'
-                        ? 'iprv-mini-badge iprv-badge--muted'
-                        : `iprv-mini-badge ${toneClass(categoryBadge)}`
-                    }
-                  >
-                    {categoryBadge || '-'}
-                  </span>
-                  <div className="iprv-mini-badges">
-                    {audienceBadges.length > 0 ? (
-                      audienceBadges.map((badge) => (
-                        <span key={`${cardKey}-${badge}`} className={`iprv-mini-badge ${toneClass(badge)}`}>
-                          {badge}
+                  <div className="iprv-profile-text">
+                    <div className="iprv-profile-head-grid">
+                      <div className="iprv-profile-col iprv-profile-col--text">
+                        <b className="iprv-name-text">{item.firstName || 'Influenciador'}</b>
+                        <small className="iprv-profile-desc">{item.llmDescription || 'Sem descrição LLM disponível.'}</small>
+                      </div>
+                      <div className="iprv-profile-col iprv-profile-col--meta">
+                        <span
+                          className={
+                            !categoryBadge || categoryBadge === '-'
+                              ? 'iprv-mini-badge iprv-badge--muted iprv-category-pill'
+                              : `iprv-mini-badge ${toneClass(categoryBadge)} iprv-category-pill`
+                          }
+                        >
+                          {categoryBadge || '-'}
                         </span>
-                      ))
-                    ) : (
-                      <span className="iprv-mini-badge iprv-badge--muted">-</span>
-                    )}
+                        {audienceBadges.length > 0 ? (
+                          <Tooltip title="Segmentos de público-alvo inferidos pelo LLM.">
+                            <div className="iprv-audience-line iprv-audience-line--col-meta" aria-label="Público-alvo">
+                              <TeamOutlined className="iprv-audience-line-icon" aria-hidden />
+                              <span className="iprv-audience-line-title">Público-alvo</span>
+                              <span className="iprv-audience-line-sep" aria-hidden>
+                                ·
+                              </span>
+                              {audienceBadges.map((badge, bi) => (
+                                <span key={`${cardKey}-aud-${bi}`} className={`iprv-audience-line-segment iprv-audience-kind--${audienceSegmentKind(badge)}`}>
+                                  {bi > 0 ? (
+                                    <span className="iprv-audience-line-sep" aria-hidden>
+                                      {' '}
+                                      ·{' '}
+                                    </span>
+                                  ) : null}
+                                  <span className="iprv-audience-line-name">{badge}</span>
+                                </span>
+                              ))}
+                            </div>
+                          </Tooltip>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="iprv-metrics-strip iprv-metrics-strip--below-desc">
+                      <div className="iprv-strip iprv-strip--metrics iprv-strip--metrics-discrete" role="group" aria-label="Métricas do perfil">
+                        <Tooltip title="Seguidores no Instagram">
+                          <div className="iprv-strip-cell">
+                            <div className="iprv-strip-value">{formatCompact(item.followersCount ?? 0)}</div>
+                            <div className="iprv-strip-label">Seguidores</div>
+                          </div>
+                        </Tooltip>
+                        <Tooltip title="Taxa de engajamento (interações vs. seguidores)">
+                          <div className="iprv-strip-cell">
+                            <div className="iprv-strip-value iprv-strip-value--accent">{(item.engagementRate ?? 0).toFixed(1)}%</div>
+                            <div className="iprv-strip-label">Taxa de engajamento</div>
+                          </div>
+                        </Tooltip>
+                        <Tooltip title="Média de curtidas por post no período analisado">
+                          <div className="iprv-strip-cell">
+                            <div className="iprv-strip-value">{formatCompact(item.avgLikes ?? 0)}</div>
+                            <div className="iprv-strip-label">Curtidas médias</div>
+                          </div>
+                        </Tooltip>
+                        <Tooltip title="Média de comentários por post">
+                          <div className="iprv-strip-cell">
+                            <div className="iprv-strip-value">{formatCompact(item.avgComments ?? 0)}</div>
+                            <div className="iprv-strip-label">Comentários médios</div>
+                          </div>
+                        </Tooltip>
+                        <Tooltip title="Posts analisados no recorte">
+                          <div className="iprv-strip-cell">
+                            <div className="iprv-strip-value">{Math.round(item.postsCount ?? 0)}</div>
+                            <div className="iprv-strip-label">Posts</div>
+                          </div>
+                        </Tooltip>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </article>

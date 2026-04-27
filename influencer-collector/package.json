@@ -9,8 +9,10 @@
     "package:mac": "bash scripts/package-mac.sh",
     "package:mac-share": "pwsh -ExecutionPolicy Bypass -File scripts/package-mac-share.ps1",
     "package:windows": "pwsh -ExecutionPolicy Bypass -File scripts/package-win.ps1",
-    "start": "tsx src/index.ts",
-    "collect": "tsx src/index.ts",
+    "start": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/index.ts",
+    "collect": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs src/index.ts",
+    "watchdog": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-collector-watchdog.ps1",
+    "watchdog:unix": "bash scripts/run-collector-watchdog.sh",
     "verify": "tsx src/scripts/verify.ts",
     "test": "npm run build && npm run verify"
   },

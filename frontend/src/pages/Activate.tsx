@@ -43,6 +43,7 @@ import type { ProfileItem, EngagementStats } from '../api'
 import { useAuth } from '../contexts/AuthContext'
 import ProfileAvatar from '../components/ProfileAvatar'
 import './Activate.css'
+import { trackMetaPixel } from '../utils/metaPixel'
 
 const { Title, Text } = Typography
 
@@ -592,7 +593,10 @@ export default function Activate() {
       scrollToFirstError()
     }
     if (step === 0) {
-      form.validateFields(['gender', 'audience_gender', 'content_type', 'influence_audience', 'influence_age_range', 'description']).then(() => setStep((s) => s + 1)).catch(onError)
+      form.validateFields(['gender', 'audience_gender', 'content_type', 'influence_audience', 'influence_age_range', 'description']).then(() => {
+        trackMetaPixel('Lead', { source: 'activate_step_0_complete' })
+        setStep((s) => s + 1)
+      }).catch(onError)
     } else if (step === 1) {
       const informar = form.getFieldValue('informar_endereco_completo')
       const address = form.getFieldValue('address')
@@ -607,9 +611,13 @@ export default function Activate() {
         scrollToFirstError()
         return
       }
-      form.validateFields(['zip_code', 'informar_endereco_completo', 'address', 'address_number']).then(() => setStep((s) => s + 1)).catch(onError)
+      form.validateFields(['zip_code', 'informar_endereco_completo', 'address', 'address_number']).then(() => {
+        trackMetaPixel('Lead', { source: 'activate_step_1_complete' })
+        setStep((s) => s + 1)
+      }).catch(onError)
     } else if (step === 2) {
       // Preços: opcional, pode seguir sem validar
+      trackMetaPixel('Lead', { source: 'activate_step_2_complete' })
       setStep((s) => s + 1)
     } else if (step === 3) {
       form.validateFields(['whatsapp']).then(() => {
@@ -623,6 +631,7 @@ export default function Activate() {
     setSaving(true)
     try {
       await saveProfileActivation(handle, buildPayload(values))
+      trackMetaPixel('CompleteRegistration', { source: 'activate_submit_success' })
       await refreshUser()
       try {
         localStorage.removeItem(ACTIVATE_DRAFT_KEY(handle))
