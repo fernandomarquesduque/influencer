@@ -1,7 +1,7 @@
 /**
  * Galeria estilo Instagram: posts/reels onde o termo de busca aparece (dados atuais do índice).
  */
-import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from 'react'
 import { Typography, Spin, Empty, Tooltip } from 'antd'
 import './CampaignOriginGallery.css'
 import {
@@ -12,6 +12,7 @@ import {
   proxyImageUrlForDisplay,
   type PostItem,
   type MediaKind,
+  type ProfilesSearchQuery,
 } from '../api'
 import { PostPreviewMedia } from './PostPreviewCard'
 import ProfileAvatar from './ProfileAvatar'
@@ -23,6 +24,7 @@ import {
   getLlmTripleBadgesFromLlmRoot,
   type LlmQualificationBadge,
 } from '../utils/campaignLlmBadges'
+import type { InfluencerConnectSnapshot } from './InfluencerConnectModal/InfluencerConnectModal'
 
 const { Text } = Typography
 
@@ -43,7 +45,7 @@ const ORIGIN_LOADER_SLIDES = [
   },
 ] as const
 
-function OriginGalleryLoadingState() {
+export function OriginGalleryLoadingState({ railShiftX = 0 }: { railShiftX?: number }) {
   const [slide, setSlide] = useState(0)
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -58,8 +60,8 @@ function OriginGalleryLoadingState() {
       role="status"
       aria-live="polite"
       aria-busy="true"
+      style={railShiftX !== 0 ? { transform: `translateX(-${railShiftX}px)` } : undefined}
     >
-      <div className="campaign-origin-search-loader__mesh" aria-hidden />
       <div className="campaign-origin-search-loader__inner">
         <div className="campaign-origin-search-loader__orbit" aria-hidden>
           <span className="campaign-origin-search-loader__dot" />
@@ -69,9 +71,6 @@ function OriginGalleryLoadingState() {
         <div key={slide} className="campaign-origin-search-loader__copy">
           <h3 className="campaign-origin-search-loader__title">{headline}</h3>
           <p className="campaign-origin-search-loader__line">{line}</p>
-        </div>
-        <div className="campaign-origin-search-loader__rail" aria-hidden>
-          <div className="campaign-origin-search-loader__beam" />
         </div>
       </div>
     </div>
@@ -134,28 +133,10 @@ function getPostEngagementRatePercent(post: PostItem): number | null {
   return Math.round(((likes + comments) / fc) * 10000) / 100
 }
 
-function getInstagramPostUrl(post: PostItem): string | null {
-  const raw = post.post?.shortcode ?? (typeof post.key === 'string' ? post.key.split(':')[1] : undefined)
-  const shortcode = typeof raw === 'string' ? raw.trim() : ''
-  if (!shortcode) return null
-  const safe = encodeURIComponent(shortcode)
-  const ct = (post.content_type || 'post') as MediaKind
-  if (ct === 'reel') return `https://www.instagram.com/reel/${safe}/`
-  return `https://www.instagram.com/p/${safe}/`
-}
-
-function getInstagramProfileUrl(handleKey: string): string | null {
-  if (!handleKey || handleKey === '—') return null
-  const h = handleKey.replace(/^@/, '').trim()
-  if (!h) return null
-  return `https://www.instagram.com/${encodeURIComponent(h)}/`
-}
-
 function influencerBarData(post: PostItem): {
   handleKey: string
   /** Nome de exibição: `full_name` do perfil (API) ou fallback no username sem @. */
   displayName: string
-  atLine: string
   avatarSrc?: string
   avatarStable?: string
 } {
@@ -177,9 +158,21 @@ function influencerBarData(post: PostItem): {
   return {
     handleKey: h || '—',
     displayName: fullNameRaw || h || '—',
-    atLine: h ? `@${h}` : '—',
     avatarSrc,
     avatarStable: stable,
+  }
+}
+
+function postToConnectSnapshot(post: PostItem): InfluencerConnectSnapshot {
+  const bar = influencerBarData(post)
+  const fc = post.influencer?.followers_count
+  const er = getPostEngagementRatePercent(post)
+  return {
+    displayName: bar.displayName,
+    profilePicUrl: bar.avatarSrc,
+    stableProfilePicUrl: bar.avatarStable,
+    followersCount: typeof fc === 'number' && Number.isFinite(fc) ? fc : undefined,
+    engagementRatePercent: er ?? undefined,
   }
 }
 
@@ -226,14 +219,20 @@ function highlightKeywordInText(text: string, keyword: string): ReactNode {
   }
 }
 
-/** Tipo, gênero e categoria LLM abaixo do nome (dados em `post.influencer.llm`). */
-function OriginInfluencerLlmBadges({ inf }: { inf: PostItem['influencer'] }) {
+/** Tipo, gênero e/ou categoria LLM (dados em `post.influencer.llm`). */
+function OriginInfluencerLlmBadges({
+  inf,
+  subset = 'all',
+}: {
+  inf: PostItem['influencer']
+  /** `categoria`: só categoria principal; `all`: tipo + categoria (sem gênero). */
+  subset?: 'all' | 'categoria'
+}) {
   const rec =
     inf != null && typeof inf === 'object' ? (inf as unknown as Record<string, unknown>) : undefined
-  const { tipo, genero, categoria } = getLlmTripleBadgesFromLlmRoot(rec)
-  const badges: LlmQualificationBadge[] = [tipo, genero, categoria].filter(
-    (b): b is LlmQualificationBadge => b != null
-  )
+  const { tipo, categoria } = getLlmTripleBadgesFromLlmRoot(rec)
+  const parts = subset === 'categoria' ? [categoria] : [tipo, categoria]
+  const badges: LlmQualificationBadge[] = parts.filter((b): b is LlmQualificationBadge => b != null)
   if (badges.length === 0) return null
   return (
     <div className="campaign-origin-llm-badges">
@@ -261,6 +260,15 @@ export default function CampaignOriginGallery({
   textQuery,
   viewMode = 'list',
   mediaKinds,
+  onLoadingChange,
+  onOriginSearchSettled,
+  /** Base completa com só o logo à esquerda: desloca o loader/empty para o centro da viewport (metade da coluna + gap). */
+  viewportCenterShiftX = 0,
+  /** Mesmos filtros de perfil da URL (LLM, porte, geo, etc.) — backend restringe handles antes de casar legendas. */
+  profileFilters,
+  /** Se definido, substitui o `window.open` ao abrir o perfil a partir do card (ex.: convidado sem login). */
+  onOpenInfluencerDetail,
+  captionFilterReady = true,
 }: {
   campaignId: string
   /** Termo da URL / busca; vazio = todo conteúdo indexado dos perfis da campanha. */
@@ -269,6 +277,18 @@ export default function CampaignOriginGallery({
   viewMode?: OriginGalleryViewMode
   /** Filtro por tipo(s) de mídia (feed, reels, marcados, destaques); vazio = todos. */
   mediaKinds?: MediaKind[]
+  /** Primeira página da busca: `true` enquanto carrega, `false` ao terminar (erro ou sucesso). */
+  onLoadingChange?: (loading: boolean) => void
+  /** Após a primeira página com termo: `empty` se não houver posts (pai pode ocultar o painel lateral). */
+  onOriginSearchSettled?: (payload: { empty: boolean }) => void
+  viewportCenterShiftX?: number
+  profileFilters?: Partial<ProfilesSearchQuery>
+  onOpenInfluencerDetail?: (handle: string, snapshot?: InfluencerConnectSnapshot) => void
+  /**
+   * Com termo de busca: só dispara post-matches quando true (ex.: após handlesOnly no pai),
+   * para não duplicar a mesma busca pesada no backend.
+   */
+  captionFilterReady?: boolean
 }) {
   const [items, setItems] = useState<PostItem[]>([])
   const [total, setTotal] = useState(0)
@@ -278,48 +298,107 @@ export default function CampaignOriginGallery({
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
 
   const kindsKey = mediaKinds?.length ? [...mediaKinds].sort().join(',') : ''
+  const hasSearchTerm = textQuery.trim().length > 0
 
-  const reload = useCallback(async () => {
-    setFailedPostImages(new Set())
-    setLoading(true)
-    try {
-      const res = await fetchCampaignPostMatches(campaignId, {
-        q: textQuery.trim() || undefined,
-        mediaKinds: mediaKinds?.length ? mediaKinds : undefined,
-        limit: PAGE,
-        offset: 0,
-      })
-      setItems(res.items)
-      setTotal(res.total)
-    } catch {
-      setItems([])
-      setTotal(0)
-    } finally {
-      setLoading(false)
-    }
-  }, [campaignId, textQuery, kindsKey])
+  const runOpenInfluencerDetail = useCallback(
+    (handle: string, snapshot?: InfluencerConnectSnapshot) => {
+      if (!handle || handle === '—') return
+      if (onOpenInfluencerDetail) {
+        onOpenInfluencerDetail(handle, snapshot)
+        return
+      }
+      const path = `/app/campaigns/${campaignId}/influencer/${encodeURIComponent(handle)}`
+      const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
+      window.open(url, '_blank', 'noopener,noreferrer')
+    },
+    [campaignId, onOpenInfluencerDetail]
+  )
 
-  useLayoutEffect(() => {
-    void reload()
+  const reload = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!hasSearchTerm) {
+        setItems([])
+        setTotal(0)
+        setLoading(false)
+        setLoadingMore(false)
+        return
+      }
+      if (!captionFilterReady) {
+        setLoading(true)
+        return
+      }
+      setFailedPostImages(new Set())
+      setLoading(true)
+      try {
+        const res = await fetchCampaignPostMatches(
+          campaignId,
+          {
+            q: textQuery.trim() || undefined,
+            mediaKinds: mediaKinds?.length ? mediaKinds : undefined,
+            limit: PAGE,
+            offset: 0,
+          },
+          { signal, profileFilters }
+        )
+        if (signal?.aborted) return
+        setItems(res.items)
+        setTotal(res.total)
+      } catch (e) {
+        if (signal?.aborted || (e as { name?: string }).name === 'AbortError') return
+        setItems([])
+        setTotal(0)
+      } finally {
+        if (!signal?.aborted) setLoading(false)
+      }
+    },
+    [campaignId, textQuery, kindsKey, hasSearchTerm, profileFilters, captionFilterReady]
+  )
+
+  useEffect(() => {
+    const ac = new AbortController()
+    void reload(ac.signal)
+    return () => ac.abort()
   }, [reload])
 
   const loadMore = useCallback(async () => {
+    if (!hasSearchTerm) return
     if (items.length >= total || loadingMore || loading) return
     setLoadingMore(true)
     try {
-      const res = await fetchCampaignPostMatches(campaignId, {
-        q: textQuery.trim() || undefined,
-        mediaKinds: mediaKinds?.length ? mediaKinds : undefined,
-        limit: PAGE,
-        offset: items.length,
-      })
+      const res = await fetchCampaignPostMatches(
+        campaignId,
+        {
+          q: textQuery.trim() || undefined,
+          mediaKinds: mediaKinds?.length ? mediaKinds : undefined,
+          limit: PAGE,
+          offset: items.length,
+        },
+        { profileFilters }
+      )
       setItems((prev) => [...prev, ...res.items])
     } catch {
       /* ignore */
     } finally {
       setLoadingMore(false)
     }
-  }, [campaignId, textQuery, kindsKey, items.length, total, loadingMore, loading])
+  }, [campaignId, textQuery, kindsKey, items.length, total, loadingMore, loading, hasSearchTerm, profileFilters])
+
+  const onLoadingChangeRef = useRef(onLoadingChange)
+  onLoadingChangeRef.current = onLoadingChange
+  useEffect(() => {
+    onLoadingChangeRef.current?.(loading)
+  }, [loading])
+
+  const onOriginSearchSettledRef = useRef(onOriginSearchSettled)
+  onOriginSearchSettledRef.current = onOriginSearchSettled
+  useEffect(() => {
+    if (!hasSearchTerm) {
+      onOriginSearchSettledRef.current?.({ empty: false })
+      return
+    }
+    if (loading) return
+    onOriginSearchSettledRef.current?.({ empty: items.length === 0 })
+  }, [loading, hasSearchTerm, items.length])
 
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current
@@ -334,12 +413,19 @@ export default function CampaignOriginGallery({
     return () => observer.disconnect()
   }, [items.length, total, loadMore, loading, loadingMore])
 
+  const emptyShiftStyle =
+    viewportCenterShiftX !== 0 ? ({ transform: `translateX(-${viewportCenterShiftX}px)` } as const) : undefined
+
   return (
     <div style={{ minWidth: 0 }}>
       {loading ? (
-        <OriginGalleryLoadingState />
+        <OriginGalleryLoadingState railShiftX={viewportCenterShiftX} />
+      ) : !hasSearchTerm ? (
+        <Empty description="Digite uma palavra para iniciar a busca." />
       ) : items.length === 0 ? (
-        <Empty description={textQuery.trim() ? 'Nenhum post encontrado com esse termo.' : 'Nenhum post indexado para estes perfis.'} />
+        <div style={emptyShiftStyle}>
+          <Empty description="Nenhum post encontrado com esse termo." />
+        </div>
       ) : (
         <>
           {viewMode === 'grid' ? (
@@ -359,15 +445,7 @@ export default function CampaignOriginGallery({
                 const bar = influencerBarData(post)
                 const handle = bar.handleKey
                 const ct = (post.content_type || 'post') as MediaKind
-                const openInfluencerDetail = () => {
-                  if (handle !== '—') {
-                    const path = `/app/campaigns/${campaignId}/influencer/${encodeURIComponent(handle)}`
-                    const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
-                    window.open(url, '_blank', 'noopener,noreferrer')
-                  }
-                }
-                const igUrl = getInstagramPostUrl(post)
-                const igProfileUrl = getInstagramProfileUrl(handle)
+                const openInfluencerDetail = () => runOpenInfluencerDetail(handle, postToConnectSnapshot(post))
                 const followersCount = post.influencer?.followers_count
                 const mediaShellStyle: CSSProperties = {
                   position: 'relative',
@@ -383,6 +461,11 @@ export default function CampaignOriginGallery({
                 return (
                   <div
                     key={post.key}
+                    role={handle !== '—' ? 'button' : undefined}
+                    tabIndex={handle !== '—' ? 0 : undefined}
+                    onClick={openInfluencerDetail}
+                    onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
+                    aria-label={handle !== '—' ? `Ver perfil de ${bar.displayName}` : undefined}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
@@ -392,42 +475,20 @@ export default function CampaignOriginGallery({
                       borderRadius: 6,
                       overflow: 'hidden',
                       border: '1px solid var(--app-border, #f0f0f0)',
+                      cursor: handle !== '—' ? 'pointer' : 'default',
                     }}
                   >
-                    {igUrl ? (
-                      <a
-                        href={igUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label="Abrir publicação no Instagram"
-                        style={mediaShellStyle}
-                      >
-                        <PostPreviewMedia
-                          fill
-                          imageDisplaySrc={failed ? undefined : displayUrl}
-                          stableBackgroundUrl={stableBg}
-                          imageUnavailable={failed || !displayUrl}
-                          onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
-                        />
-                        <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
-                      </a>
-                    ) : (
-                      <div style={{ ...mediaShellStyle, display: 'block', cursor: 'default' }}>
-                        <PostPreviewMedia
-                          fill
-                          imageDisplaySrc={failed ? undefined : displayUrl}
-                          stableBackgroundUrl={stableBg}
-                          imageUnavailable={failed || !displayUrl}
-                          onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
-                        />
-                        <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
-                      </div>
-                    )}
+                    <div style={{ ...mediaShellStyle, display: 'block' }}>
+                      <PostPreviewMedia
+                        fill
+                        imageDisplaySrc={failed ? undefined : displayUrl}
+                        stableBackgroundUrl={stableBg}
+                        imageUnavailable={failed || !displayUrl}
+                        onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
+                      />
+                      <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
+                    </div>
                     <div
-                      role={handle !== '—' ? 'button' : undefined}
-                      tabIndex={handle !== '—' ? 0 : undefined}
-                      onClick={openInfluencerDetail}
-                      onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
                       style={{
                         display: 'flex',
                         alignItems: 'flex-start',
@@ -436,7 +497,6 @@ export default function CampaignOriginGallery({
                         borderTop: '1px solid var(--app-border, #f0f0f0)',
                         background: 'var(--app-bg, #fff)',
                         minHeight: 44,
-                        cursor: handle !== '—' ? 'pointer' : 'default',
                       }}
                     >
                       <div
@@ -477,42 +537,6 @@ export default function CampaignOriginGallery({
                           {bar.displayName}
                         </div>
                         <OriginInfluencerLlmBadges inf={post.influencer} />
-                        {igProfileUrl ? (
-                          <a
-                            href={igProfileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            style={{
-                              display: 'block',
-                              fontSize: 11,
-                              lineHeight: 1.25,
-                              color: 'var(--app-primary, #722ed1)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              marginTop: 2,
-                              textDecoration: 'none',
-                              fontWeight: 600,
-                            }}
-                          >
-                            {bar.atLine}
-                          </a>
-                        ) : (
-                          <div
-                            style={{
-                              fontSize: 11,
-                              lineHeight: 1.25,
-                              color: 'var(--app-primary, #722ed1)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              marginTop: 2,
-                            }}
-                          >
-                            {bar.atLine}
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -531,15 +555,12 @@ export default function CampaignOriginGallery({
                 const er = getPostEngagementRatePercent(post)
                 const fc = post.influencer?.followers_count
                 const followersLabel = formatFollowersShort(fc)
-                const openInfluencerDetail = () => {
-                  if (handle !== '—') {
-                    const path = `/app/campaigns/${campaignId}/influencer/${encodeURIComponent(handle)}`
-                    const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
-                    window.open(url, '_blank', 'noopener,noreferrer')
-                  }
-                }
-                const igUrl = getInstagramPostUrl(post)
-                const igProfileUrl = getInstagramProfileUrl(handle)
+                const llmInfRecord =
+                  post.influencer != null && typeof post.influencer === 'object'
+                    ? (post.influencer as unknown as Record<string, unknown>)
+                    : undefined
+                const hasLlmCategoriaBadge = getLlmTripleBadgesFromLlmRoot(llmInfRecord).categoria != null
+                const openInfluencerDetail = () => runOpenInfluencerDetail(handle, postToConnectSnapshot(post))
                 const listMediaShellStyle: CSSProperties = {
                   position: 'relative',
                   width: '100%',
@@ -554,12 +575,18 @@ export default function CampaignOriginGallery({
                 return (
                   <div
                     key={post.key}
+                    role={handle !== '—' ? 'button' : undefined}
+                    tabIndex={handle !== '—' ? 0 : undefined}
+                    onClick={openInfluencerDetail}
+                    onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
+                    aria-label={handle !== '—' ? `Ver perfil de ${bar.displayName}` : undefined}
                     style={{
                       borderRadius: 14,
                       overflow: 'hidden',
                       border: '1px solid var(--app-border, #e8e8e8)',
                       background: 'var(--app-bg, #fff)',
                       boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                      cursor: handle !== '—' ? 'pointer' : 'default',
                     }}
                   >
                     <div
@@ -583,116 +610,52 @@ export default function CampaignOriginGallery({
                           background: 'var(--app-bg-secondary, #fafafa)',
                         }}
                       >
-                        {igUrl ? (
-                          <a
-                            href={igUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="Abrir publicação no Instagram"
-                            style={listMediaShellStyle}
-                          >
-                            <PostPreviewMedia
-                              fill
-                              imageDisplaySrc={failed ? undefined : displayUrl}
-                              stableBackgroundUrl={stableBg}
-                              imageUnavailable={failed || !displayUrl}
-                              onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
-                            />
-                            <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
-                          </a>
-                        ) : (
-                          <div style={{ ...listMediaShellStyle, cursor: 'default' }}>
-                            <PostPreviewMedia
-                              fill
-                              imageDisplaySrc={failed ? undefined : displayUrl}
-                              stableBackgroundUrl={stableBg}
-                              imageUnavailable={failed || !displayUrl}
-                              onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
-                            />
-                            <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
-                          </div>
-                        )}
-                        {igProfileUrl ? (
-                          <a
-                            href={igProfileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{
-                              display: 'block',
-                              padding: '8px 10px 10px',
-                              flexShrink: 0,
-                              borderTop: '1px solid var(--app-border-light, #f0f0f0)',
-                              fontSize: 12,
-                              color: 'var(--app-primary, #722ed1)',
-                              fontWeight: 600,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              cursor: 'pointer',
-                              textDecoration: 'none',
-                            }}
-                          >
-                            {bar.atLine}
-                          </a>
-                        ) : (
-                          <div
-                            style={{
-                              padding: '8px 10px 10px',
-                              flexShrink: 0,
-                              borderTop: '1px solid var(--app-border-light, #f0f0f0)',
-                              fontSize: 12,
-                              color: 'var(--app-primary, #722ed1)',
-                              fontWeight: 600,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {bar.atLine}
-                          </div>
-                        )}
-                      </div>
-                      <div
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          padding: '14px 18px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 12,
-                          background: 'var(--app-bg, #fff)',
-                        }}
-                      >
+                        <div style={{ ...listMediaShellStyle, display: 'block' }}>
+                          <PostPreviewMedia
+                            fill
+                            imageDisplaySrc={failed ? undefined : displayUrl}
+                            stableBackgroundUrl={stableBg}
+                            imageUnavailable={failed || !displayUrl}
+                            onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
+                          />
+                          <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
+                        </div>
                         <div
-                          role={handle !== '—' ? 'button' : undefined}
-                          tabIndex={handle !== '—' ? 0 : undefined}
-                          onClick={openInfluencerDetail}
-                          onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
                           style={{
-                            paddingBottom: 12,
-                            borderBottom: '1px solid var(--app-border-light, #f0f0f0)',
+                            flexShrink: 0,
+                            borderTop: '1px solid var(--app-border-light, #f0f0f0)',
+                            padding: '12px 10px 14px',
                             display: 'flex',
                             flexDirection: 'column',
+                            alignItems: 'flex-start',
                             gap: 8,
-                            cursor: handle !== '—' ? 'pointer' : 'default',
+                            background: 'var(--app-bg, #fff)',
                           }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'row',
+                              alignItems: 'flex-start',
+                              gap: 10,
+                              width: '100%',
+                              minWidth: 0,
+                            }}
+                          >
                             <div
                               style={{
                                 display: 'flex',
                                 flexDirection: 'column',
                                 alignItems: 'center',
                                 flexShrink: 0,
-                                width: 36,
                               }}
                             >
                               <ProfileAvatar
                                 src={bar.avatarSrc}
                                 stableBackgroundUrl={bar.avatarStable}
                                 handle={handle !== '—' ? handle : undefined}
-                                size={36}
-                                fallbackIconSize={16}
+                                size={40}
+                                fallbackIconSize={18}
                                 queueOnError={false}
                               />
                               {getInfluencerTierShort(fc) !== '—' ? (
@@ -701,7 +664,14 @@ export default function CampaignOriginGallery({
                                 </div>
                               ) : null}
                             </div>
-                            <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
+                            <div
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                                paddingTop: 2,
+                                textAlign: 'left',
+                              }}
+                            >
                               <div
                                 style={{
                                   fontSize: 13,
@@ -710,22 +680,29 @@ export default function CampaignOriginGallery({
                                   lineHeight: 1.3,
                                   overflow: 'hidden',
                                   display: '-webkit-box',
-                                  WebkitLineClamp: 2,
+                                  WebkitLineClamp: 3,
                                   WebkitBoxOrient: 'vertical',
                                 }}
                               >
                                 {bar.displayName}
                               </div>
-                              <OriginInfluencerLlmBadges inf={post.influencer} />
+                              {hasLlmCategoriaBadge ? (
+                                <div style={{ marginTop: 6, width: '100%', minWidth: 0 }}>
+                                  <OriginInfluencerLlmBadges inf={post.influencer} subset="categoria" />
+                                </div>
+                              ) : null}
                               {er != null || followersLabel ? (
                                 <div
                                   style={{
                                     display: 'flex',
                                     flexWrap: 'wrap',
                                     alignItems: 'center',
+                                    justifyContent: 'flex-start',
                                     gap: 6,
-                                    marginTop: 4,
+                                    marginTop: 6,
                                     lineHeight: 1.25,
+                                    width: '100%',
+                                    minWidth: 0,
                                   }}
                                 >
                                   {followersLabel ? (
@@ -755,6 +732,18 @@ export default function CampaignOriginGallery({
                             </div>
                           </div>
                         </div>
+                      </div>
+                      <div
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          padding: '14px 18px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 12,
+                          background: 'var(--app-bg, #fff)',
+                        }}
+                      >
                         <Text style={{ fontSize: 12, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--app-text)' }}>
                           {highlightKeywordInText(getCaptionSnippet(post, 99999) || '—', textQuery)}
                         </Text>

@@ -133,9 +133,19 @@ export default function MyCampaigns() {
         <Title level={3} className="my-campaigns-title">
           <FolderOpenOutlined /> Minhas campanhas
         </Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/app/campaigns/create')}>
-          Nova Campanha
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button
+            onClick={() => navigate('/app/campaigns/all')}
+            title="Base completa"
+            aria-label="Base completa"
+            style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 12px' }}
+          >
+            <img src="/images/logo.svg" alt="" style={{ height: 22, width: 'auto', maxWidth: 140, objectFit: 'contain', display: 'block' }} />
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/app/campaigns/create')}>
+            Nova Campanha
+          </Button>
+        </div>
       </div>
 
       {error && (

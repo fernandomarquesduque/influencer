@@ -27,6 +27,32 @@ function pushMinimalUserBody(capturedBodies: Record<string, unknown>[], body: Re
   capturedBodies.push(body);
 }
 
+/**
+ * Rola o feed do perfil para disparar lazy-load (GraphQL).
+ * Evita `page.mouse.wheel` (abas em segundo plano). Não percorre todos os `div` do DOM do IG
+ * (isso deixava cada passo de scroll na casa de segundos ou minutos).
+ */
+async function scrollInstagramProfileLazyStep(page: Page, deltaY: number): Promise<void> {
+  await page.evaluate((dy) => {
+    const dyN = Number(dy) || 0;
+    const tryScroll = (el: HTMLElement | null): boolean => {
+      if (!el) return false;
+      if (el.scrollHeight > el.clientHeight + 40) {
+        el.scrollTop += dyN;
+        return true;
+      }
+      return false;
+    };
+    const main = document.querySelector('main');
+    if (tryScroll(main instanceof HTMLElement ? main : null)) return;
+    const rMain = document.querySelector('[role="main"]');
+    if (tryScroll(rMain instanceof HTMLElement ? rMain : null)) return;
+    window.scrollBy(0, dyN);
+    document.documentElement.scrollTop += dyN;
+    document.body.scrollTop += dyN;
+  }, deltaY);
+}
+
 function getIn(obj: unknown, path: string): unknown {
   if (obj == null || typeof obj !== 'object') return undefined;
   const parts = path.split('.');
@@ -147,76 +173,88 @@ function parsePlainTitle(title: string | null): number | null {
 }
 
 /**
- * Layout antigo: a[href*="/followers/"]. Layout novo (2024+): a[href="#"][role=link] com texto "N seguidores" e span[title="N"].
- * O cabeçalho do perfil pode estar em <section> fora de <main>.
+ * Layout antigo: a[href*="/followers/"]. Layout novo (2024+): a[role=link] com "N seguidores" e span[title="N"].
+ * Evita `locator('main a[role="link"]').filter(...)` — no feed há milhares de links e o Playwright fica minutos em “travado”.
+ * Cabeçalho: `header` + só os primeiros links do `main` (topo do perfil).
  */
 export async function readFollowersFromDOM(page: Page): Promise<number | null> {
   if (await isInstagramPrivateProfilePage(page)) return null;
-  await page.waitForTimeout(1500);
-  const main = page.locator('main').first();
-  await main.waitFor({ state: 'visible', timeout: 8000 }).catch(() => null);
+  await page.waitForTimeout(450);
+  await page.locator('main').first().waitFor({ state: 'visible', timeout: 4000 }).catch(() => null);
 
-  const textFrom = async (loc: ReturnType<Page['locator']>): Promise<string> =>
-    loc
-      .allTextContents()
-      .then((a) => a.join('\n'))
-      .catch(() => '');
-
-  const classicLink = page.locator('a[href*="/followers/"]').first();
-  const classicTitle = await classicLink.locator('span[title]').first().getAttribute('title').catch(() => null);
-  const classicN = parsePlainTitle(classicTitle);
-  if (classicN != null) return classicN;
-
-  const newUiTitle = await page
-    .locator('main a[role="link"]')
-    .filter({ hasText: /\bseguidores\b/i })
-    .first()
-    .locator('span[title]')
+  const classicTitle = await page
+    .locator('a[href*="/followers/"] span[title]')
     .first()
     .getAttribute('title')
     .catch(() => null);
-  const newUiN = parsePlainTitle(newUiTitle);
-  if (newUiN != null) return newUiN;
+  const classicN = parsePlainTitle(classicTitle);
+  if (classicN != null) return classicN;
 
-  const fromEvaluate = await page.evaluate(() => {
-    const roots: Element[] = [];
-    const m = document.querySelector('main');
-    if (m) roots.push(m);
-    document.querySelectorAll('section').forEach((s) => roots.push(s));
-    if (roots.length === 0 && document.body) roots.push(document.body);
-
-    for (const root of roots) {
-      const links = root.querySelectorAll('a[role="link"], a._a6hd');
-      for (const a of links) {
-        const txt = a.textContent ?? '';
-        if (!/\bseguidores\b/i.test(txt)) continue;
-        const span = a.querySelector('span[title]');
-        const t = span?.getAttribute('title')?.trim();
-        if (!t) continue;
-        const numStr = t.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
-        const n = parseFloat(numStr);
-        if (Number.isFinite(n) && n > 0) return Math.round(n);
+  /** Só topo do perfil — nunca `querySelectorAll` em todo o `main` (feed = milhares de nós, ~30s). */
+  const fromDomJs = await page.evaluate(() => {
+    const readFollowersLink = (a: Element): number | null => {
+      const txt = a.textContent ?? '';
+      if (!/\bseguidores\b/i.test(txt) && !/\bfollowers?\b/i.test(txt)) return null;
+      const span = a.querySelector('span[title]');
+      const t = span?.getAttribute('title')?.trim();
+      if (!t) return null;
+      const numStr = t.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+      const n = parseFloat(numStr);
+      return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+    };
+    const header = document.querySelector('header');
+    if (header) {
+      for (const a of header.querySelectorAll('a[role="link"], a[href*="/followers/"]')) {
+        const n = readFollowersLink(a);
+        if (n != null) return n;
+      }
+    }
+    const main = document.querySelector('main');
+    if (main) {
+      const tops: Element[] = [];
+      const firstSec = main.querySelector('section');
+      if (firstSec) tops.push(firstSec);
+      for (const c of Array.from(main.children).slice(0, 5)) {
+        if (c !== firstSec) tops.push(c);
+      }
+      for (const root of tops) {
+        let walked = 0;
+        for (const a of root.querySelectorAll('a[role="link"], a[href*="/followers/"], a._a6hd')) {
+          if (walked++ > 50) break;
+          const n = readFollowersLink(a);
+          if (n != null) return n;
+        }
+      }
+    }
+    for (const sec of Array.from(document.querySelectorAll('body > section')).slice(0, 4)) {
+      let walked = 0;
+      for (const a of sec.querySelectorAll('a[role="link"], a._a6hd')) {
+        if (walked++ > 40) break;
+        const n = readFollowersLink(a);
+        if (n != null) return n;
       }
     }
     return null as number | null;
   });
-  if (fromEvaluate != null) return fromEvaluate;
+  if (fromDomJs != null) return fromDomJs;
 
-  const fromMain = parseFollowersFromText((await textFrom(main)).replace(/\s+/g, ' '));
-  if (fromMain != null) return fromMain;
+  /** textContent só em header + primeiros blocos do main — `innerText` no main inteiro trava o Chrome (~30s). */
+  const tinyText = await page.evaluate(() => {
+    const bits: string[] = [];
+    const h = document.querySelector('header');
+    if (h) bits.push((h.textContent ?? '').slice(0, 6000));
+    const main = document.querySelector('main');
+    if (main) {
+      for (const c of Array.from(main.children).slice(0, 3)) {
+        bits.push((c.textContent ?? '').slice(0, 4000));
+      }
+    }
+    return bits.join(' ').slice(0, 14_000);
+  });
+  const fromSnippet = parseFollowersFromText(tinyText.replace(/\s+/g, ' '));
+  if (fromSnippet != null) return fromSnippet;
 
-  const fromSection = parseFollowersFromText(
-    (await textFrom(page.locator('section').filter({ hasText: /\bseguidores\b/i }).first())).replace(/\s+/g, ' ')
-  );
-  if (fromSection != null) return fromSection;
-
-  const fromHeader = parseFollowersFromText(
-    (await textFrom(page.locator('header').first())).replace(/\s+/g, ' ')
-  );
-  if (fromHeader != null) return fromHeader;
-
-  const bodyText = await page.evaluate(() => document.body?.innerText ?? '');
-  return parseFollowersFromText(bodyText.replace(/\s+/g, ' '));
+  return null;
 }
 
 export interface GetFollowersOptions {
@@ -280,7 +318,8 @@ export async function getFollowersAndMinimalProfile(
       /** Em perfil privado o GraphQL costuma vir com 0 seguidores no payload; ler o DOM dispara esperas longas (main visível etc.). */
       const privateDom = await isInstagramPrivateProfilePage(page);
       let followers: number | null = fromApi > 0 ? fromApi : null;
-      if (followers == null && !privateDom) {
+      /** Gate rápido: não ler DOM pesado aqui (várias abas + feed grande = travamento); `resolveFollowersForEarlyGate` faz uma leitura se precisar. */
+      if (followers == null && !privateDom && !options?.quickGate) {
         followers = await readFollowersFromDOM(page);
       }
       return {
@@ -298,16 +337,16 @@ export async function getFollowersAndMinimalProfile(
       await page.waitForTimeout(400);
       if (await isInstagramPrivateProfilePage(page)) return finalize();
       await page.waitForTimeout(450);
-      await page.mouse.wheel(0, 300).catch(() => {});
+      await scrollInstagramProfileLazyStep(page, 300).catch(() => {});
       await page.waitForTimeout(1100);
-      await page.mouse.wheel(0, 350).catch(() => {});
+      await scrollInstagramProfileLazyStep(page, 350).catch(() => {});
       await page.waitForTimeout(1400);
-      await page.mouse.wheel(0, 300).catch(() => {});
+      await scrollInstagramProfileLazyStep(page, 300).catch(() => {});
       await page.waitForTimeout(1100);
       /* Sem reload: é aba secundária de perfil; reload aqui só atrapalha e não deve afetar a grade. */
       if (capturedBodies.length === 0) {
         await page.waitForTimeout(2000);
-        await page.mouse.wheel(0, 500).catch(() => {});
+        await scrollInstagramProfileLazyStep(page, 500).catch(() => {});
         await page.waitForTimeout(1800);
       }
       return finalize();
@@ -325,9 +364,9 @@ export async function getFollowersAndMinimalProfile(
     await page.waitForTimeout(500);
     if (await isInstagramPrivateProfilePage(page)) return finalize();
     await page.waitForTimeout(1300);
-    await page.mouse.wheel(0, 450).catch(() => {});
+    await scrollInstagramProfileLazyStep(page, 450).catch(() => {});
     await page.waitForTimeout(1400);
-    await page.mouse.wheel(0, 400).catch(() => {});
+    await scrollInstagramProfileLazyStep(page, 400).catch(() => {});
     await page.waitForTimeout(1200);
     return finalize();
   } finally {
@@ -736,7 +775,7 @@ export async function extractProfileFull(
 
     coletaLog(`@${keyHandle} [full] rolando timeline (8×) para carregar mais posts…`);
     for (let s = 0; s < 8; s++) {
-      await page.mouse.wheel(0, 950);
+      await scrollInstagramProfileLazyStep(page, 950);
       await page.waitForTimeout(1300);
     }
 
@@ -761,7 +800,7 @@ export async function extractProfileFull(
     coletaLog(`@${keyHandle} [full] aba Reels ${reelsOk ? 'OK' : 'não achada'} → scroll…`);
     if (reelsOk) {
       for (let s = 0; s < 6; s++) {
-        await page.mouse.wheel(0, 900);
+        await scrollInstagramProfileLazyStep(page, 900);
         await page.waitForTimeout(1100);
       }
     }
@@ -776,7 +815,7 @@ export async function extractProfileFull(
     coletaLog(`@${keyHandle} [full] aba Marcados ${taggedOk ? 'OK' : 'não achada'} → scroll…`);
     if (taggedOk) {
       for (let s = 0; s < 5; s++) {
-        await page.mouse.wheel(0, 900);
+        await scrollInstagramProfileLazyStep(page, 900);
         await page.waitForTimeout(1100);
       }
     }

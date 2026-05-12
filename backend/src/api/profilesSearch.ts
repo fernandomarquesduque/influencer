@@ -1082,6 +1082,11 @@ export interface SearchProfilesOptions {
    * use no GET /api/profiles/search (só expõe total + facets, sem lista).
    */
   skipSort?: boolean;
+  /**
+   * Quando true, não tenta reconstruir índice auxiliar (engagement/hashtags/search_blob) para handles
+   * sem linha em `profile_search_aux`; evita leituras pesadas de posts no primeiro hit.
+   */
+  skipAuxBackfill?: boolean;
 }
 
 /** Filtra e ordena perfis; retorna lista com engajamento e facets para sumarização. */
@@ -1217,7 +1222,7 @@ export async function searchProfiles(
   }
 
   /** Campanha: muitos handles sem linha aux — preenche em paralelo (evita N× await sequencial no loop). */
-  if (!useInitialItems && restrictToHandles != null && restrictToHandles.size > 0) {
+  if (!options?.skipAuxBackfill && !useInitialItems && restrictToHandles != null && restrictToHandles.size > 0) {
     const missingAux = [...restrictToHandles].filter((h) => !auxByHandle.has(h));
     const AUX_BATCH = 20;
     for (let ai = 0; ai < missingAux.length; ai += AUX_BATCH) {
@@ -1240,6 +1245,7 @@ export async function searchProfiles(
       );
     }
   } else if (
+    !options?.skipAuxBackfill &&
     !useInitialItems &&
     profilesRaw.length > 0 &&
     (restrictToHandles == null || restrictToHandles.size === 0)
@@ -1341,17 +1347,28 @@ export async function searchProfiles(
 
       if (q && ftsNarrowSet !== null && !ftsNarrowSet.has(handle)) continue;
 
+      const fullName = getFullName(profile);
+      const baseCategories = getCategories(profile);
       let aux = auxByHandle.get(handle);
       if (!aux) {
-        const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
-        const postsOne = postsRawOne.map(({ value: pv }) => pv);
-        const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
-        db.upsertProfileSearchIndexFromPayload(handle, payload);
-        aux = {
-          engagement_json: payload.engagementJson,
-          hashtags_json: payload.hashtagsJson,
-          search_blob: payload.searchBlob,
-        };
+        if (options?.skipAuxBackfill) {
+          const searchBlob = getSearchableTextProfileOnly(profile, key, fullName, baseCategories);
+          aux = {
+            engagement_json: JSON.stringify(emptyEngagement),
+            hashtags_json: '[]',
+            search_blob: searchBlob,
+          };
+        } else {
+          const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
+          const postsOne = postsRawOne.map(({ value: pv }) => pv);
+          const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
+          db.upsertProfileSearchIndexFromPayload(handle, payload);
+          aux = {
+            engagement_json: payload.engagementJson,
+            hashtags_json: payload.hashtagsJson,
+            search_blob: payload.searchBlob,
+          };
+        }
         auxByHandle.set(handle, aux);
       }
 
@@ -1372,8 +1389,6 @@ export async function searchProfiles(
       }
 
       const followersCount = getFollowers(profile);
-      const fullName = getFullName(profile);
-      const baseCategories = getCategories(profile);
       const categoriesSet = new Set<string>(
         [...baseCategories.map((c) => c.trim().toLowerCase()), ...postHashtags].filter(Boolean)
       );

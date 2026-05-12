@@ -4,29 +4,13 @@
  */
 import { useState, useEffect } from 'react'
 import { Button, Card, Typography, Input } from 'antd'
-import {
-  UserOutlined,
-  TeamOutlined,
-  HeartOutlined,
-  CommentOutlined,
-  RiseOutlined,
-  FileTextOutlined,
-  EnvironmentOutlined,
-  FilterOutlined,
-} from '@ant-design/icons'
-import type { ProfileListItem, ProfilesSearchFacets, ProfilesSearchQuery } from '../../api'
+import { EnvironmentOutlined, FilterOutlined } from '@ant-design/icons'
+import type { ProfilesSearchFacets, ProfilesSearchQuery } from '../../api'
 import { CONTENT_TYPE_LABELS } from '../../constants/contentTypes'
 import { getInfluencerTierSolidHexForBucketKey } from '../../utils/influencerTier'
 import './CampaignBIPanel.css'
 
 const { Text } = Typography
-
-function formatShortNum(n: number | undefined | null): string {
-  if (n == null || !Number.isFinite(n)) return '0'
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`
-  return String(n)
-}
 
 /** Rótulo legível para chips de facet LLM (chaves em minúsculas). */
 function formatLlmFacetLabel(raw: string): string {
@@ -86,36 +70,7 @@ function showFacetMulti<T extends { count?: number }>(items: T[], isItemSelected
   return false
 }
 
-function computeStats(items: ProfileListItem[] | null) {
-  if (!items?.length) return { totalLikes: 0, totalComments: 0, totalViews: 0, totalFollowers: 0, postsCount: 0, avgEngagementRate: 0, count: 0 }
-  let totalLikes = 0, totalComments = 0, totalViews = 0, totalFollowers = 0, postsCount = 0, engSum = 0, engCount = 0
-  for (const it of items) {
-    totalFollowers += it.followers_count ?? 0
-    const eng = it.engagement
-    if (eng) {
-      totalLikes += eng.total_likes ?? 0
-      totalComments += eng.total_comments ?? 0
-      totalViews += eng.total_views ?? 0
-      postsCount += eng.posts_count ?? 0
-      if (Number.isFinite(eng.engagement_rate)) {
-        engSum += eng.engagement_rate
-        engCount++
-      }
-    }
-  }
-  return {
-    totalLikes,
-    totalComments,
-    totalViews,
-    totalFollowers,
-    postsCount,
-    avgEngagementRate: engCount > 0 ? Math.round((engSum / engCount) * 100) / 100 : 0,
-    count: items.length,
-  }
-}
-
 export interface CampaignBIPanelProps {
-  items: ProfileListItem[]
   facets: ProfilesSearchFacets | null
   query?: Partial<ProfilesSearchQuery>
   onFilter?: (overrides: Partial<ProfilesSearchQuery>) => void
@@ -126,10 +81,6 @@ export interface CampaignBIPanelProps {
   expiresAt?: string | null
   /** Data de criação do relatório (ISO string). */
   createdAt?: string | null
-  /** Quando há pagamento pendente, a API envia stats agregados; use em vez de computeStats(items). */
-  statsOverride?: { totalLikes: number; totalComments: number; totalViews: number; totalFollowers: number; postsCount: number; avgEngagementRate: number; count: number }
-  /** Com busca por palavra nos posts: total de posts que casam com o termo (substitui a soma de posts_count dos perfis). */
-  postCaptionMatchTotal?: number | null
 }
 
 function toggleInArray(arr: string[] | undefined, value: string): string[] | undefined {
@@ -154,7 +105,6 @@ function formatDate(iso: string | null | undefined): string | null {
 }
 
 export default function CampaignBIPanel({
-  items,
   facets,
   query,
   onFilter,
@@ -162,16 +112,9 @@ export default function CampaignBIPanel({
   onDescriptionSave,
   expiresAt,
   createdAt,
-  statsOverride,
-  postCaptionMatchTotal,
 }: CampaignBIPanelProps) {
   const [descLocal, setDescLocal] = useState(description ?? '')
   useEffect(() => { setDescLocal(description ?? '') }, [description])
-  const baseStats = statsOverride ?? computeStats(items)
-  const stats =
-    postCaptionMatchTotal != null && postCaptionMatchTotal >= 0
-      ? { ...baseStats, postsCount: postCaptionMatchTotal }
-      : baseStats
   const social = facets?.social
   const cities = facets?.cities ?? []
   const states = facets?.states ?? []
@@ -272,54 +215,8 @@ export default function CampaignBIPanel({
     onFilter({ [key]: next.length ? next : undefined } as Partial<ProfilesSearchQuery>)
   }
 
-  const totalProfiles = stats.count
-
   return (
     <div className="campaign-bi-panel">
-      <div className="campaign-bi-stats campaign-bi-stats-above">
-        <div className="campaign-bi-stat">
-          <UserOutlined className="campaign-bi-stat-icon" />
-          <div>
-            <Text strong className="campaign-bi-stat-value">{formatShortNum(totalProfiles)}</Text>
-            <Text type="secondary" className="campaign-bi-stat-label">perfis</Text>
-          </div>
-        </div>
-        <div className="campaign-bi-stat">
-          <TeamOutlined className="campaign-bi-stat-icon" />
-          <div>
-            <Text strong className="campaign-bi-stat-value">{formatShortNum(stats.totalFollowers)}</Text>
-            <Text type="secondary" className="campaign-bi-stat-label">seg.</Text>
-          </div>
-        </div>
-        <div className="campaign-bi-stat">
-          <HeartOutlined className="campaign-bi-stat-icon" />
-          <div>
-            <Text strong className="campaign-bi-stat-value">{formatShortNum(stats.totalLikes)}</Text>
-            <Text type="secondary" className="campaign-bi-stat-label">likes</Text>
-          </div>
-        </div>
-        <div className="campaign-bi-stat">
-          <CommentOutlined className="campaign-bi-stat-icon" />
-          <div>
-            <Text strong className="campaign-bi-stat-value">{formatShortNum(stats.totalComments)}</Text>
-            <Text type="secondary" className="campaign-bi-stat-label">com.</Text>
-          </div>
-        </div>
-        <div className="campaign-bi-stat">
-          <FileTextOutlined className="campaign-bi-stat-icon" />
-          <div>
-            <Text strong className="campaign-bi-stat-value">{formatShortNum(stats.postsCount)}</Text>
-            <Text type="secondary" className="campaign-bi-stat-label">posts</Text>
-          </div>
-        </div>
-        <div className="campaign-bi-stat">
-          <RiseOutlined className="campaign-bi-stat-icon" />
-          <div>
-            <Text strong className="campaign-bi-stat-value">{stats.avgEngagementRate.toFixed(2)}%</Text>
-            <Text type="secondary" className="campaign-bi-stat-label">eng.</Text>
-          </div>
-        </div>
-      </div>
       {onDescriptionSave && (
         <div className="campaign-bi-description campaign-bi-description-above">
           <Input.TextArea

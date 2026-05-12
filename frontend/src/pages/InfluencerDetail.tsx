@@ -231,7 +231,6 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     }
   }
   const mediaKitCtaShortLabel = mustCompleteCadastro ? 'Gerar MediaKit' : user ? 'Gerar MediaKit' : 'Entrar'
-  const isLimitedView = !user || isPublic
   const [profileLoading, setProfileLoading] = useState(true)
   const [postsLoading, setPostsLoading] = useState(true)
   const [profile, setProfile] = useState<ProfileItem | null>(null)
@@ -239,6 +238,8 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
   const [posts, setPosts] = useState<PostItem[]>([])
   const [, setPostsTotal] = useState(0)
   const [dataRedacted, setDataRedacted] = useState(false)
+  const [allBasePreview, setAllBasePreview] = useState(false)
+  const isLimitedView = !user || isPublic || allBasePreview
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const [showActivationCta, setShowActivationCta] = useState(false)
@@ -289,6 +290,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     let cancelled = false
     setProfileLoading(true)
     setDataRedacted(false)
+    setAllBasePreview(false)
     const loadProfile = campaignId
       ? () => fetchCampaignProfile(campaignId, handle)
       : () => fetchProfile(handle)
@@ -297,6 +299,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
         if (!cancelled) {
           const pr = p as Record<string, unknown> | null
           if (pr?._redacted === true) setDataRedacted(true)
+          setAllBasePreview(pr?._all_base_preview === true)
           setProfile(p ?? null)
         }
       })
@@ -313,6 +316,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     if (p != null) {
       const pr = p as Record<string, unknown> | null
       if (pr?._redacted === true) setDataRedacted(true)
+      setAllBasePreview(pr?._all_base_preview === true)
       setProfile(p)
     }
   }, [handle, campaignId])
@@ -329,6 +333,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
           const ar = a as Record<string, unknown> | undefined
           if (ar?._redacted === true) {
             setDataRedacted(true)
+            if (ar?._all_base_preview === true) setAllBasePreview(true)
             setActivation(null)
           } else {
             setActivation(a && (a.city ?? a.whatsapp ?? a.content_type?.length) ? a : null)
@@ -355,7 +360,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
       .catch(() => { if (!cancelled) setPosts([]) })
       .finally(() => { if (!cancelled) setPostsLoading(false) })
     return () => { cancelled = true }
-  }, [handle, authLoading])
+  }, [handle, campaignId, authLoading])
 
   const startRefreshPolling = useRef<(h: string) => void>(() => { })
   startRefreshPolling.current = (h: string) => {
@@ -369,6 +374,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
       loadProfile().then((p) => {
         const pr = p as Record<string, unknown> | null
         if (pr?._redacted === true) setDataRedacted(true)
+        setAllBasePreview(pr?._all_base_preview === true)
         setProfile(p ?? null)
       }).catch(() => { })
       fetchPosts(h, 100, 0, undefined, campaignId ? { campaignId } : undefined).then((res) => {
@@ -576,7 +582,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     (user?.scope === 'influencer' && handle && !canEditProfile(handle)) ||
     (!hasActivationData && isOwnProfileAsInfluencer)
 
-  const isRedacted = dataRedacted && isLimitedView
+  const isRedacted = dataRedacted && isLimitedView && !allBasePreview
 
   const tierLabel = getInfluencerTierLongLabel(followersCount)
 
@@ -664,7 +670,18 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
         </div>
       )}
 
-      {isLimitedView && !isRedacted && (
+      {allBasePreview && user && (
+        <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
+          <div style={{ marginBottom: s.md, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
+            <Text>
+              Este criador não está em nenhum dos seus relatórios pagos. Você vê uma prévia; inclua-o numa campanha para desbloquear métricas e dados completos.{' '}
+              <Link to="/app/campaigns">Minhas campanhas</Link>
+            </Text>
+          </div>
+        </div>
+      )}
+
+      {isLimitedView && !isRedacted && !allBasePreview && (
         <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
           <div style={{ marginBottom: s.md, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
             <Text>Você está vendo uma prévia limitada. <Link to="/premium">Seja assinante</Link> para ver métricas completas e filtros avançados.</Text>

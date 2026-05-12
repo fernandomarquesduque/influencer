@@ -2171,7 +2171,7 @@ function rateLimitDataApi(req: RequestWithAuth, res: Response, next: () => void)
 }
 
 /** Reduz perfil para versão sem dados sensíveis (público que atingiu limite). Mantém apenas bio e dados mínimos de exibição (foto, nome, handle). */
-function redactProfile(profile: Record<string, unknown>): Record<string, unknown> {
+function redactProfile(profile: Record<string, unknown>, opts?: { allBasePreview?: boolean }): Record<string, unknown> {
   const out = { ...profile };
   const sensitive = ['followers_count', 'following_count', 'media_count', 'media_count_visible', 'categories', 'external_url', 'mutual_followers_count', 'total_clips_count', '_collected_at', '_discovered_by', '_discovered_value'];
   for (const k of sensitive) {
@@ -2197,6 +2197,9 @@ function redactProfile(profile: Record<string, unknown>): Record<string, unknown
     };
   }
   out._redacted = true;
+  if (opts?.allBasePreview) {
+    (out as { _all_base_preview?: boolean })._all_base_preview = true;
+  }
   return out;
 }
 
@@ -4399,16 +4402,12 @@ app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: R
   }
 });
 
-/** Visão agregada "Todos": metadados sintéticos (perfis = união das campanhas pagas). */
+/** Visão agregada "Todos": metadados sintéticos (base completa de perfis). */
 app.get('/api/campaigns/all', async (req: RequestWithAuth, res: Response) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Login necessário' });
-      return;
-    }
-    const userId = Number(req.user.sub);
-    const rows = creditsCampaignsDb.listCampaigns(userId);
-    const handles = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+    const userId = req.user ? Number(req.user.sub) : null;
+    const rows = userId != null ? creditsCampaignsDb.listCampaigns(userId) : [];
+    const handlesCount = await db.countKeysInBucket('profile');
     const paidRows = rows.filter((r) => r.payment_status === 'paid');
     const oldestCreated =
       paidRows.length > 0
@@ -4420,9 +4419,9 @@ app.get('/api/campaigns/all', async (req: RequestWithAuth, res: Response) => {
         : new Date(Date.now() + 365 * 864e5).toISOString();
     res.json({
       id: 'all',
-      name: 'Todos',
-      description: 'Todos os perfis das suas campanhas pagas, sem duplicar handles.',
-      handlesCount: handles.length,
+      name: 'Base completa',
+      description: 'Todos os perfis disponíveis na base.',
+      handlesCount,
       creditsUsed: 0,
       creditsPaid: 0,
       created_at: oldestCreated,
@@ -5026,6 +5025,19 @@ function normalizeHandle(h: string | undefined): string {
   return (h ?? '').replace(/^@/, '').trim().toLowerCase();
 }
 
+/** Base completa (`/campaigns/all/...`): redigir perfil/posts se o handle não está em nenhuma campanha paga do usuário. */
+function shouldRedactAllBaseCampaignAccess(req: RequestWithAuth, profileHandle: string): boolean {
+  if (!req.user) return false;
+  const handle = normalizeHandle(profileHandle);
+  if (!handle) return false;
+  if (canEditProfile(req.user, handle)) return false;
+  const userId = Number(req.user.sub);
+  const favoriteHandles = sqlite.getFavoriteHandles(userId);
+  if (favoriteHandles.some((h) => normalizeHandle(h) === handle)) return false;
+  const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
+  return !union.some((h) => normalizeHandle(String(h)) === handle);
+}
+
 /**
  * Middleware: autoriza acesso a dados de um perfil somente se (1) o usuário logado é o dono do perfil, ou
  * (2) o header X-Campaign-Id é enviado com um GUID de campanha do usuário que contenha o handle.
@@ -5091,14 +5103,9 @@ function requireProfileOrCampaign(
     }
     if (campaignId.toLowerCase() === 'all') {
       const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
-      if (!union.some((h) => normalizeHandle(h) === handle)) {
-        res.status(403).json({
-          error: 'Perfil não encontrado nas suas campanhas pagas.',
-          code: 'PROFILE_NOT_IN_CAMPAIGN',
-        });
-        return;
-      }
+      const inPaid = union.some((h) => normalizeHandle(String(h)) === handle);
       (req as RequestWithAuth).allowedCampaignId = 'all';
+      (req as RequestWithAuth).allBaseOutsidePaidCampaigns = !inPaid;
       next();
       return;
     }
@@ -5139,11 +5146,6 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
   }
   const userId = Number(req.user.sub);
   if (campaignId.toLowerCase() === 'all') {
-    const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
-    if (union.length === 0) {
-      res.status(403).json({ error: 'Nenhuma campanha paga com perfis.', code: 'CAMPAIGN_NOT_FOUND' });
-      return;
-    }
     (req as RequestWithAuth).allowedCampaignId = 'all';
     next();
     return;
@@ -5164,20 +5166,10 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
   next();
 }
 
-/** Listagem agregada: união dos perfis de todas as campanhas pagas (sem duplicar handles). */
+/** Listagem agregada: base completa de perfis (mesma experiência da campanha). */
 app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Login necessário' });
-      return;
-    }
-    const userId = Number(req.user.sub);
-    const handles = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
-    if (handles.length === 0) {
-      res.json({ total: 0, items: [], facets: null });
-      return;
-    }
-    const cacheKey = `all:${userId}`;
+    const cacheKey = 'all-base:public';
     const query = buildCampaignProfilesQuery(req, { maxLimit: 10000 });
     const ctxAll = getCachedCampaignContext(cacheKey);
     let contextItems: ProfileListItem[];
@@ -5186,7 +5178,7 @@ app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWith
       const fullResult = await searchProfiles(
         db,
         { limit: 10000, offset: 0, sort: 'engagement_desc' },
-        { restrictToHandles: handles, skipInstagramBi: true },
+        { skipInstagramBi: true, allowLargeLimit: true },
       );
       contextItems = fullResult.items;
       campaignBaseFacets = fullResult.facets;
@@ -5318,22 +5310,12 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
   }
 });
 
-/** Perfil na visão agregada "Todos" (handle deve estar em alguma campanha paga). */
+/** Perfil na visão agregada "Todos" (base completa). */
 app.get('/api/campaigns/all/profiles/:handle', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Login necessário' });
-      return;
-    }
     const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
     if (!handle) {
       res.status(400).json({ error: 'Handle inválido' });
-      return;
-    }
-    const userId = Number(req.user.sub);
-    const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
-    if (!union.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle)) {
-      res.status(404).json({ error: 'Perfil não encontrado nas suas campanhas pagas', handle: req.params.handle });
       return;
     }
     const value = await db.get('profile', handle);
@@ -5343,6 +5325,10 @@ app.get('/api/campaigns/all/profiles/:handle', rateLimitDataApi, async (req: Req
     }
     const profile = value as Record<string, unknown>;
     res.setHeader('Cache-Control', 'no-store');
+    if (shouldRedactAllBaseCampaignAccess(req, handle)) {
+      res.json(redactProfile(profile, { allBasePreview: true }));
+      return;
+    }
     res.json(profile);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -5390,22 +5376,12 @@ app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: Req
   }
 });
 
-/** Ativação na visão agregada "Todos". */
+/** Ativação na visão agregada "Todos" (base completa). */
 app.get('/api/campaigns/all/profiles/:handle/activation', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Login necessário' });
-      return;
-    }
     const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
     if (!handle) {
       res.status(400).json({ error: 'Handle inválido' });
-      return;
-    }
-    const userId = Number(req.user.sub);
-    const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
-    if (!union.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle)) {
-      res.status(404).json({ error: 'Perfil não encontrado nas suas campanhas pagas', handle: req.params.handle });
       return;
     }
     const data = sqlite.getActivation(handle);
@@ -5424,6 +5400,10 @@ app.get('/api/campaigns/all/profiles/:handle/activation', rateLimitDataApi, asyn
       }
     }
     res.setHeader('Cache-Control', 'no-store');
+    if (shouldRedactAllBaseCampaignAccess(req, handle)) {
+      res.json({ _redacted: true, _all_base_preview: true });
+      return;
+    }
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -5738,6 +5718,10 @@ app.get(
         res.json({ total, items: redactPostsItems(slice), _redacted: true });
         return;
       }
+      if ((req as RequestWithAuth).allBaseOutsidePaidCampaigns === true) {
+        res.json({ total, items: redactPostsItems(slice), _redacted: true });
+        return;
+      }
       res.json({ total, items: slice });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -5824,11 +5808,19 @@ function influencerFieldsFromProfile(profile: Record<string, unknown> | null | u
   };
 }
 
-const POST_MATCHES_HANDLE_BATCH = 48;
+const POST_MATCHES_HANDLE_BATCH = 256;
+const POST_MATCHES_FTS_HANDLE_LIMIT = Math.max(
+  500,
+  Number(process.env.POST_MATCHES_FTS_HANDLE_LIMIT) || 3000
+);
 
 /** Evita revarrer RocksDB a cada página / refetch (post-matches “Todos” com muitos perfis). */
 const POST_MATCHES_CACHE_TTL_MS = 50_000;
 const POST_MATCHES_CACHE_MAX = 40;
+const ALL_POST_MATCHES_HANDLES_TTL_MS = Math.max(
+  5_000,
+  Number(process.env.ALL_POST_MATCHES_HANDLES_TTL_MS) || 60_000
+);
 
 type PostMatchesCachedRow = { key: string; value: Record<string, unknown>; ct: string };
 
@@ -5839,6 +5831,10 @@ interface PostMatchesCachePayload {
 }
 
 const postMatchesResultCache = new Map<string, { expires: number; payload: PostMatchesCachePayload }>();
+const allPostMatchesHandlesCache = {
+  expires: 0,
+  handles: [] as string[],
+};
 
 function postMatchesCacheKey(userId: number, normHandles: string[], qRaw: string, typeFilters: string[]): string {
   const fp = crypto.createHash('sha256').update([...normHandles].sort().join('\0')).digest('hex').slice(0, 24);
@@ -5867,6 +5863,109 @@ function postMatchesCacheSet(key: string, payload: PostMatchesCachePayload): voi
   }
 }
 
+function postMatchesQueryToFtsExpression(q: string): string | null {
+  const t = q.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!t) return null;
+  const words = t.split(' ').map((w) => w.trim()).filter((w) => w.length >= 2);
+  if (words.length === 0) return null;
+  const parts = words.map((w) => {
+    if (/^[a-z0-9_]+$/i.test(w)) return `content:${w}*`;
+    const esc = w.replace(/"/g, '""');
+    return `content:"${esc}"*`;
+  });
+  return parts.join(' AND ');
+}
+
+/**
+ * Pré-filtra handles pelo índice FTS (legendas/posts agregados no SQLite).
+ * Se há expressão FTS válida e zero linhas, retorna [] — não varrer todos os perfis no RocksDB (caso típico: termo sem match).
+ * Ordem: relevância da FTS (bm25 ascendente na query).
+ */
+function scopeHandlesForPostCaptionSearch(handlesUniverse: string[], qRaw: string): string[] {
+  const trimmed = qRaw.trim();
+  if (!trimmed) return handlesUniverse;
+  const expr = postMatchesQueryToFtsExpression(trimmed);
+  if (!expr) return handlesUniverse;
+  const fts = db.searchProfileHandlesFts(expr, POST_MATCHES_FTS_HANDLE_LIMIT);
+  if (fts.length === 0) return [];
+  const universe = new Set(handlesUniverse.map((h) => normalizeHandle(h)).filter(Boolean));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const row of fts) {
+    const h = normalizeHandle(row.handle);
+    if (!h || !universe.has(h) || seen.has(h)) continue;
+    seen.add(h);
+    out.push(h);
+  }
+  return out;
+}
+
+/** Filtros de perfil na query string (LLM, porte, geo, etc.) — `q` aqui é só legenda dos posts (tratado à parte). */
+function postMatchesHasProfileSideFilters(pq: ProfilesSearchQuery): boolean {
+  if (pq.minFollowers != null || pq.maxFollowers != null) return true;
+  if (pq.minEngagementRate != null || pq.minAvgLikes != null || pq.minPostsCount != null) return true;
+  if ((pq.engagementRateBuckets?.length ?? 0) > 0) return true;
+  if ((pq.avgLikesBuckets?.length ?? 0) > 0) return true;
+  if ((pq.postsCountBuckets?.length ?? 0) > 0) return true;
+  if ((pq.activationFilter?.length ?? 0) > 0) return true;
+  if ((pq.cities?.length ?? 0) > 0 || (pq.states?.length ?? 0) > 0 || (pq.neighborhoods?.length ?? 0) > 0) return true;
+  if ((pq.socialNetworks?.length ?? 0) > 0) return true;
+  if (pq.excludePrivate) return true;
+  if ((pq.accountTypeFilter?.length ?? 0) > 0) return true;
+  if (pq.categories != null && (Array.isArray(pq.categories) ? pq.categories.length > 0 : String(pq.categories).trim() !== '')) return true;
+  if ((pq.contentTypes?.length ?? 0) > 0) return true;
+  if (
+    (pq.pricingFeed?.length ?? 0) > 0 ||
+    (pq.pricingReels?.length ?? 0) > 0 ||
+    (pq.pricingStory?.length ?? 0) > 0 ||
+    (pq.pricingDestaque?.length ?? 0) > 0
+  ) {
+    return true;
+  }
+  if ((pq.costTierFilter?.length ?? 0) > 0) return true;
+  if ((pq.sizeFilter?.length ?? 0) > 0) return true;
+  const llmArr = [
+    pq.llmProfileType,
+    pq.llmMainCategory,
+    pq.llmGender,
+    pq.llmLanguage,
+    pq.llmSubCategories,
+    pq.llmContentPillars,
+    pq.llmAudienceType,
+    pq.llmToneOfVoice,
+    pq.llmRiskLevel,
+  ];
+  if (llmArr.some((a) => (a?.length ?? 0) > 0)) return true;
+  if (pq.llmIsFamilySafe === true || pq.llmIsFamilySafe === false) return true;
+  if (pq.llmIsAdultContent === true || pq.llmIsAdultContent === false) return true;
+  return false;
+}
+
+/** Restringe handles aos que passam nos mesmos filtros de perfil da listagem (exceto `q` de legenda). */
+async function narrowPostMatchHandlesByProfileFilters(
+  req: RequestWithAuth,
+  scopedHandles: string[]
+): Promise<string[]> {
+  if (scopedHandles.length === 0) return scopedHandles;
+  const base = buildCampaignProfilesQuery(req, { maxLimit: 1 });
+  const pq: ProfilesSearchQuery = { ...base, q: undefined };
+  if (!postMatchesHasProfileSideFilters(pq)) return scopedHandles;
+  const norm = scopedHandles.map((h) => normalizeHandle(h)).filter(Boolean);
+  const lim = Math.min(Math.max(norm.length, 1), 100_000);
+  const result = await searchProfiles(
+    db,
+    { ...pq, limit: lim, offset: 0, includeFacets: false },
+    {
+      restrictToHandles: norm,
+      skipSort: true,
+      skipInstagramBi: true,
+      skipAuxBackfill: true,
+    }
+  );
+  const allowed = new Set((result.items ?? []).map((i) => normalizeHandle(String(i.handle ?? ''))));
+  return norm.filter((h) => allowed.has(h));
+}
+
 /**
  * Posts/reels/etc. dos handles informados (`q` na legenda/hashtags). Usado por campanha única e visão "Todos".
  */
@@ -5886,9 +5985,10 @@ async function runPostMatchesForHandles(
     const offset = Math.max(0, Number(req.query.offset) || 0);
 
     const userId = Number(req.user?.sub ?? 0);
+    const cacheOwner = Number.isFinite(userId) && userId > 0 ? userId : 0;
     const cacheKey =
-      userId > 0 && normHandles.length > 0
-        ? postMatchesCacheKey(userId, normHandles, qRaw, typeFilters)
+      normHandles.length > 0
+        ? postMatchesCacheKey(cacheOwner, normHandles, qRaw, typeFilters)
         : '';
     const cached = cacheKey ? postMatchesCacheGet(cacheKey) : null;
 
@@ -5969,6 +6069,33 @@ async function runPostMatchesForHandles(
       if (cacheKey) postMatchesCacheSet(cacheKey, { total, mediaKindCounts, rows: orderedRows });
     }
 
+    const handlesOnlyRaw = req.query.handlesOnly ?? req.query.handles_only;
+    const handlesOnly =
+      handlesOnlyRaw === '1' ||
+      handlesOnlyRaw === 'true' ||
+      String(handlesOnlyRaw ?? '').toLowerCase() === 'yes';
+    if (handlesOnly && qRaw) {
+      const profileHandlesSet = new Set<string>();
+      for (const row of orderedRows) {
+        const h = postBucketKeyToHandle(row.key);
+        if (h) profileHandlesSet.add(h);
+      }
+      const profileHandles = [...profileHandlesSet].sort((a, b) => a.localeCompare(b));
+      const payload = {
+        total,
+        items: [] as unknown[],
+        profileHandles,
+        mediaKindCounts,
+        q: qRaw || undefined,
+      };
+      if (!req.user) {
+        res.json({ ...payload, _redacted: true });
+        return;
+      }
+      res.json(payload);
+      return;
+    }
+
     const slice = orderedRows.slice(offset, offset + limit).map(({ key, value, ct }) => {
       const item = { ...value } as Record<string, unknown>;
       const post = item?.post as Record<string, unknown> | undefined;
@@ -6030,18 +6157,26 @@ async function runPostMatchesForHandles(
 
 app.get('/api/campaigns/all/post-matches', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Login necessário' });
-      return;
+    const now = Date.now();
+    let handles = allPostMatchesHandlesCache.handles;
+    if (allPostMatchesHandlesCache.expires <= now || handles.length === 0) {
+      const keys = await db.listKeys('profile');
+      handles = keys.map((k) => normalizeHandle(k)).filter(Boolean);
+      allPostMatchesHandlesCache.handles = handles;
+      allPostMatchesHandlesCache.expires = now + ALL_POST_MATCHES_HANDLES_TTL_MS;
     }
-    const userId = Number(req.user.sub);
-    const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
-    if (union.length === 0) {
+    if (handles.length === 0) {
       res.json({ total: 0, items: [], q: undefined, mediaKindCounts: {} });
       return;
     }
-    const handleSet = new Set(union.map((h) => normalizeHandle(h)));
-    await runPostMatchesForHandles(req, res, Array.from(handleSet));
+    const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
+    const scopedHandles = scopeHandlesForPostCaptionSearch(handles, qRaw);
+    if (scopedHandles.length === 0) {
+      res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
+      return;
+    }
+    const narrowedAll = await narrowPostMatchHandlesByProfileFilters(req, scopedHandles);
+    await runPostMatchesForHandles(req, res, narrowedAll);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -6068,8 +6203,15 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
       res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
       return;
     }
-    const handleSet = new Set(handles.map((h) => normalizeHandle(h)));
-    await runPostMatchesForHandles(req, res, Array.from(handleSet));
+    const normalizedHandles = Array.from(new Set(handles.map((h) => normalizeHandle(h))));
+    const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
+    const scopedHandles = scopeHandlesForPostCaptionSearch(normalizedHandles, qRaw);
+    if (scopedHandles.length === 0) {
+      res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
+      return;
+    }
+    const narrowed = await narrowPostMatchHandlesByProfileFilters(req, scopedHandles);
+    await runPostMatchesForHandles(req, res, narrowed);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }

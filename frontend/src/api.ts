@@ -427,6 +427,12 @@ export function profilesSearchQueryToParams(query: Partial<ProfilesSearchQuery>)
   return params
 }
 
+/** Remove busca por palavra na legenda (`q`) e campos só de UI/paginação de perfis ao reutilizar filtros em `post-matches`. */
+export function profileFiltersForCampaignPostApis(query: Partial<ProfilesSearchQuery>): Partial<ProfilesSearchQuery> {
+  const { q: _q, originMediaKinds: _om, limit: _l, offset: _o, sort: _s, ...rest } = query
+  return rest
+}
+
 export async function fetchProfilesSearch(
   query: ProfilesSearchQuery,
   options?: { signal?: AbortSignal; campaignId?: string | null }
@@ -1108,7 +1114,7 @@ export async function adminAddCredits(
 export async function fetchCampaignProfiles(
   campaignId: string,
   query: Partial<ProfilesSearchQuery>,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; includeFacets?: boolean }
 ): Promise<ProfilesSearchResponse> {
   const params = new URLSearchParams()
   if (query.q?.trim()) params.set('q', query.q.trim())
@@ -1136,6 +1142,7 @@ export async function fetchCampaignProfiles(
   if (query.sort) params.set('sort', query.sort)
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))
+  if (options?.includeFacets === false) params.set('includeFacets', 'false')
   const llmJoinCamp = (key: string, arr?: string[]) => {
     if (arr?.length) params.set(key, arr.join(','))
   }
@@ -1221,19 +1228,39 @@ export function getPostCoverDisplayUrl(post: PostItem): string | undefined {
 export interface PostsResponse {
   total: number
   items: PostItem[]
+  /** Quando `handlesOnly=1` na API: handles com ao menos um post que casa com `q`. */
+  profileHandles?: string[]
 }
 
 /** Posts dos perfis da campanha onde `q` bate em legenda/hashtags (dados atuais). */
 export async function fetchCampaignPostMatches(
   campaignId: string,
-  params: { q?: string; mediaKinds?: MediaKind[]; limit?: number; offset?: number },
-  options?: { signal?: AbortSignal }
+  params: {
+    q?: string
+    mediaKinds?: MediaKind[]
+    limit?: number
+    offset?: number
+    /** Uma ida: total + handles únicos (sem paginar itens de post). */
+    handlesOnly?: boolean
+  },
+  options?: { signal?: AbortSignal; profileFilters?: Partial<ProfilesSearchQuery> }
 ): Promise<PostsResponse & { q?: string; mediaKindCounts?: Partial<Record<MediaKind, number>> }> {
   const p = new URLSearchParams()
   if (params.q?.trim()) p.set('q', params.q.trim())
   if (params.mediaKinds?.length) p.set('type', params.mediaKinds.join(','))
   p.set('limit', String(params.limit ?? 48))
   p.set('offset', String(params.offset ?? 0))
+  if (params.handlesOnly) p.set('handlesOnly', '1')
+  const reservedPostKeys = new Set(['q', 'limit', 'offset', 'type', 'handlesOnly', 'handles_only'])
+  if (options?.profileFilters) {
+    const pf = profilesSearchQueryToParams(
+      profileFiltersForCampaignPostApis(options.profileFilters)
+    )
+    pf.forEach((value, key) => {
+      if (reservedPostKeys.has(key)) return
+      p.set(key, value)
+    })
+  }
   const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/post-matches?${p}`, {
     headers: { ...authHeaders() },
     signal: options?.signal,
@@ -1245,38 +1272,27 @@ export async function fetchCampaignPostMatches(
   return res.json()
 }
 
-const POST_SEARCH_HANDLES_PAGE = 200
-
 /**
  * Handles únicos na campanha com ao menos um post que casa com `q` (mesma API da galeria Origem).
- * Pagina até cobrir `total` para o painel BI bater com a listagem de posts.
+ * Uma requisição: backend agrega `profileHandles` com `handlesOnly=1`.
  */
 export async function fetchCampaignPostSearchHandles(
   campaignId: string,
   params: { q: string; mediaKinds?: MediaKind[] },
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; profileFilters?: Partial<ProfilesSearchQuery> }
 ): Promise<{ handles: string[]; totalPosts: number }> {
   const q = params.q.trim()
   if (!q) return { handles: [], totalPosts: 0 }
-  const handles = new Set<string>()
-  let offset = 0
-  let totalPosts = 0
-  for (; ;) {
-    const res = await fetchCampaignPostMatches(
-      campaignId,
-      { q, mediaKinds: params.mediaKinds, limit: POST_SEARCH_HANDLES_PAGE, offset },
-      options
-    )
-    totalPosts = res.total
-    for (const it of res.items) {
-      const raw = it.profile_handle ?? it.influencer?.username ?? ''
-      const h = String(raw).toLowerCase().replace(/^@/, '').trim()
-      if (h) handles.add(h)
-    }
-    if (res.items.length === 0 || offset + res.items.length >= res.total) break
-    offset += res.items.length
-  }
-  return { handles: [...handles], totalPosts }
+  const res = await fetchCampaignPostMatches(
+    campaignId,
+    { q, mediaKinds: params.mediaKinds, limit: 1, offset: 0, handlesOnly: true },
+    options
+  )
+  const list = Array.isArray(res.profileHandles) ? res.profileHandles : []
+  const handles = list
+    .map((h) => String(h).toLowerCase().replace(/^@/, '').trim())
+    .filter(Boolean)
+  return { handles, totalPosts: res.total }
 }
 
 export async function fetchProfiles(

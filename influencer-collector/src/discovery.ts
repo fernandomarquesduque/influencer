@@ -1222,6 +1222,25 @@ async function profileExtractionPipelineNewTab(
         quickGate: true,
       });
     }
+    /** GraphQL do contador de seguidores costuma atrasar vs. o HTML; uma espera curta + novo quickGate evita `readFollowersFromDOM` lento. */
+    if (
+      (config.minFollowersToSave > 0 || config.maxFollowersToSave > 0) &&
+      followersFromSnap(snapH) == null &&
+      snapH.minimalProfile
+    ) {
+      await profileTab.waitForTimeout(1200);
+      const snapLate = await getFollowersAndMinimalProfile(profileTab, profileUrlFull, {
+        skipGoto: true,
+        quickGate: true,
+      });
+      const lateF = followersFromSnap(snapLate);
+      if (lateF != null) {
+        snapH = {
+          followers: lateF,
+          minimalProfile: snapLate.minimalProfile ?? snapH.minimalProfile,
+        };
+      }
+    }
     if (snapH.minimalProfile && isPrivateFromEntity(snapH.minimalProfile as Record<string, unknown>)) {
       coletaLog(`${logCtx}: @${handle}: perfil privado (Instagram) — ignorado; próximo.`);
       recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);

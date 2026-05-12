@@ -64,12 +64,19 @@ import VerifyEmail from './pages/VerifyEmail'
 import MissionReward from './pages/MissionReward'
 import LinkInstagramMission from './pages/LinkInstagramMission'
 import Logo from './components/Logo'
+import { useMetaPixelSpaPageView } from './utils/useMetaPixelSpaPageView'
+
+function MetaPixelSpaPageViewBridge() {
+  useMetaPixelSpaPageView()
+  return null
+}
 
 export default function App() {
   return (
     <AuthProvider>
       <CreditsProvider>
         <PendingPaymentCelebrationProvider>
+          <MetaPixelSpaPageViewBridge />
           <FocusScrollHandler />
           <Routes>
             <Route path="/login" element={<Login />} />

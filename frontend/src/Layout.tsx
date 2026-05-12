@@ -12,6 +12,7 @@ import Logo from './components/Logo'
 import ProfileAvatar from './components/ProfileAvatar'
 import MissionsBar from './components/MissionsBar/MissionsBar'
 import { Grid } from 'antd'
+import { trackAppUiClick } from './utils/metaPixel'
 
 const { Content } = AntLayout
 const { useBreakpoint } = Grid
@@ -101,22 +102,70 @@ export default function Layout() {
   const userMenuItems = useMemo((): MenuProps['items'] => {
     if (!user) return []
     const items: MenuProps['items'] = [
-      { key: 'edit-profile', label: 'Editar perfil', onClick: () => navigate('/app/profile') },
+      {
+        key: 'edit-profile',
+        label: 'Editar perfil',
+        onClick: () => {
+          trackAppUiClick('menu_edit_profile', { target_path: '/app/profile' })
+          navigate('/app/profile')
+        },
+      },
     ]
 
     const influencerChildren: NonNullable<MenuProps['items']> = []
-    if (isAdm) influencerChildren.push({ key: 'influencers', label: 'Influenciadores', onClick: () => navigate('/app') })
+    if (isAdm) {
+      influencerChildren.push({
+        key: 'influencers',
+        label: 'Influenciadores',
+        onClick: () => {
+          trackAppUiClick('menu_influenciadores', { target_path: '/app' })
+          navigate('/app')
+        },
+      })
+    }
 
     const assinanteChildren: NonNullable<MenuProps['items']> = []
-    if (isAssinante) influencerChildren.push({ key: 'campaigns/create', label: 'Buscar Influencer', onClick: () => navigate('/app/campaigns/create') })
-    if (isAdm) assinanteChildren.push({ key: 'advertisers', label: 'Anúnciantes', onClick: () => navigate('/app/projects') })
+    if (isAssinante) {
+      influencerChildren.push({
+        key: 'campaigns/create',
+        label: 'Buscar Influencer',
+        onClick: () => {
+          trackAppUiClick('menu_busca_influencer', { target_path: '/app/campaigns/create' })
+          navigate('/app/campaigns/create')
+        },
+      })
+    }
+    if (isAdm) {
+      assinanteChildren.push({
+        key: 'advertisers',
+        label: 'Anúnciantes',
+        onClick: () => {
+          trackAppUiClick('menu_anunciantes', { target_path: '/app/projects' })
+          navigate('/app/projects')
+        },
+      })
+    }
     if (assinanteChildren.length > 0) {
       items.push({ type: 'group', label: 'Assinante', children: assinanteChildren })
     }
     if (showCampaignsAndCredits) {
       influencerChildren.push(
-        { key: 'campaigns', label: 'Minhas campanhas', onClick: () => navigate('/app/campaigns') },
-        { key: 'payments', label: 'Comprar Créditos', onClick: () => navigate('/app/payments') },
+        {
+          key: 'campaigns',
+          label: 'Minhas campanhas',
+          onClick: () => {
+            trackAppUiClick('menu_minhas_campanhas', { target_path: '/app/campaigns' })
+            navigate('/app/campaigns')
+          },
+        },
+        {
+          key: 'payments',
+          label: 'Comprar Créditos',
+          onClick: () => {
+            trackAppUiClick('menu_comprar_creditos', { target_path: '/app/payments' })
+            navigate('/app/payments')
+          },
+        },
       )
     }
     if (influencerChildren.length > 0) {
@@ -128,24 +177,61 @@ export default function Layout() {
         type: 'group',
         label: 'Administrativo',
         children: [
-          { key: 'admin-dash', label: 'Painel admin', onClick: () => navigate('/app/admin/dashboard') },
-          { key: 'users', label: 'Usuários', onClick: () => navigate('/app/admin/users') },
+          {
+            key: 'admin-dash',
+            label: 'Painel admin',
+            onClick: () => {
+              trackAppUiClick('menu_admin_dashboard', { target_path: '/app/admin/dashboard' })
+              navigate('/app/admin/dashboard')
+            },
+          },
+          {
+            key: 'users',
+            label: 'Usuários',
+            onClick: () => {
+              trackAppUiClick('menu_admin_usuarios', { target_path: '/app/admin/users' })
+              navigate('/app/admin/users')
+            },
+          },
           {
             key: 'admin-mentions',
             label: 'Relatório @ não cadastrados',
-            onClick: () => navigate('/app/admin/reports/unregistered-mentions'),
+            onClick: () => {
+              trackAppUiClick('menu_admin_mentions', { target_path: '/app/admin/reports/unregistered-mentions' })
+              navigate('/app/admin/reports/unregistered-mentions')
+            },
           },
           {
             key: 'admin-bulk-purge',
             label: 'Exclusão em lote',
-            onClick: () => navigate('/app/admin/influencers/bulk-purge'),
+            onClick: () => {
+              trackAppUiClick('menu_admin_bulk_purge', { target_path: '/app/admin/influencers/bulk-purge' })
+              navigate('/app/admin/influencers/bulk-purge')
+            },
           },
-          { key: 'bulk', label: 'Disparo em massa', onClick: () => navigate('/app/bulk-message') },
+          {
+            key: 'bulk',
+            label: 'Disparo em massa',
+            onClick: () => {
+              trackAppUiClick('menu_bulk_message', { target_path: '/app/bulk-message' })
+              navigate('/app/bulk-message')
+            },
+          },
         ],
       })
     }
 
-    items.push({ type: 'divider' }, { key: 'logout', label: 'Sair', onClick: () => logout() })
+    items.push(
+      { type: 'divider' },
+      {
+        key: 'logout',
+        label: 'Sair',
+        onClick: () => {
+          trackAppUiClick('menu_logout')
+          logout()
+        },
+      },
+    )
     return items
   }, [user, isAdm, isAssinante, showCampaignsAndCredits, navigate, logout])
   /** Barra de missões/recompensas só na lista Minhas campanhas (não em create, detalhe de campanha, etc.). */
@@ -193,7 +279,8 @@ export default function Layout() {
     return location.pathname.startsWith(path)
   }
 
-  const showNavbar = !location.pathname.startsWith('/app/create')
+  const isAllCampaignsRoute = location.pathname === '/app/campaigns/all'
+  const showNavbar = !location.pathname.startsWith('/app/create') && !isAllCampaignsRoute
 
   return (
     <AntLayout style={{ minHeight: '100vh', background: 'var(--app-bg)' }}>
@@ -226,8 +313,17 @@ export default function Layout() {
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => { window.location.href = '/app' }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/app' } }}
+                  onClick={() => {
+                    trackAppUiClick('header_logo_home', { target_path: '/app' })
+                    window.location.href = '/app'
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      trackAppUiClick('header_logo_home', { target_path: '/app' })
+                      window.location.href = '/app'
+                    }
+                  }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -250,8 +346,17 @@ export default function Layout() {
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => { window.location.href = '/app' }}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/app' } }}
+                    onClick={() => {
+                      trackAppUiClick('header_logo_home', { target_path: '/app' })
+                      window.location.href = '/app'
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        trackAppUiClick('header_logo_home', { target_path: '/app' })
+                        window.location.href = '/app'
+                      }
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -274,7 +379,10 @@ export default function Layout() {
                   <Button
                     type="text"
                     icon={<MenuOutlined style={{ fontSize: 22, color: 'var(--app-header-text)' }} />}
-                    onClick={() => setMobileMenuOpen(true)}
+                    onClick={() => {
+                      trackAppUiClick('mobile_open_drawer')
+                      setMobileMenuOpen(true)
+                    }}
                     style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', flexShrink: 0, zIndex: 1 }}
                     aria-label="Abrir menu"
                   />
@@ -284,8 +392,17 @@ export default function Layout() {
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => { window.location.href = '/app' }}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/app' } }}
+                    onClick={() => {
+                      trackAppUiClick('header_logo_home', { target_path: '/app' })
+                      window.location.href = '/app'
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        trackAppUiClick('header_logo_home', { target_path: '/app' })
+                        window.location.href = '/app'
+                      }
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -314,6 +431,7 @@ export default function Layout() {
                         >
                           <button
                             type="button"
+                            onClick={() => trackAppUiClick('header_open_account_menu')}
                             style={{
                               display: 'flex',
                               alignItems: 'flex-end',
@@ -376,6 +494,7 @@ export default function Layout() {
                           <span className="layout-credits-wrap">
                             <Link
                               to="/app/payments"
+                              onClick={() => trackAppUiClick('header_credits_pill', { target_path: '/app/payments' })}
                               className={`layout-credits-pill${hasPendingInvoice ? ' layout-credits-pill--pending' : ''}`}
                               style={{
                                 fontSize: 15,
@@ -412,11 +531,16 @@ export default function Layout() {
                       </>
                     ) : (
                       <>
-                        <Link to="/login" style={isActive('/login') ? navLinkActiveStyle : navLinkStyle}>
+                        <Link
+                          to="/login"
+                          onClick={() => trackAppUiClick('header_entrar', { target_path: '/login' })}
+                          style={isActive('/login') ? navLinkActiveStyle : navLinkStyle}
+                        >
                           Entrar
                         </Link>
                         <Link
                           to="/app/create"
+                          onClick={() => trackAppUiClick('header_cadastrar', { target_path: '/app/create' })}
                           style={{
                             ...navLinkStyle,
                             background: 'var(--app-primary)',
@@ -446,12 +570,31 @@ export default function Layout() {
                 {user && (
                   <>
                     {(user.scope === 'influencer' || isAdm) && (
-                      <Link to="/app/projects" style={{ ...drawerLinkStyle, ...(isActive('/app/projects') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                      <Link
+                        to="/app/projects"
+                        style={{ ...drawerLinkStyle, ...(isActive('/app/projects') ? drawerLinkActiveStyle : {}) }}
+                        onClick={() => {
+                          trackAppUiClick('drawer_projetos', { target_path: '/app/projects' })
+                          setMobileMenuOpen(false)
+                        }}
+                      >
                         Projetos
                       </Link>
                     )}
                     {(isAdm || isAssinante) && (
-                      <Link to="/app/campaigns/create" style={{ ...drawerLinkStyle, ...(isActive('/app/campaigns/create') && location.pathname === '/app/campaigns/create' ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                      <Link
+                        to="/app/campaigns/create"
+                        style={{
+                          ...drawerLinkStyle,
+                          ...(isActive('/app/campaigns/create') && location.pathname === '/app/campaigns/create'
+                            ? drawerLinkActiveStyle
+                            : {}),
+                        }}
+                        onClick={() => {
+                          trackAppUiClick('drawer_busca_influencer', { target_path: '/app/campaigns/create' })
+                          setMobileMenuOpen(false)
+                        }}
+                      >
                         Busca Influencer
                       </Link>
                     )}
@@ -459,7 +602,10 @@ export default function Layout() {
                       <Link
                         to="/app/payments"
                         style={{ ...drawerLinkStyle, ...(isActive('/app/payments') ? drawerLinkActiveStyle : {}) }}
-                        onClick={() => setMobileMenuOpen(false)}
+                        onClick={() => {
+                          trackAppUiClick('drawer_comprar_creditos', { target_path: '/app/payments' })
+                          setMobileMenuOpen(false)
+                        }}
                       >
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                           Comprar Créditos
@@ -472,12 +618,26 @@ export default function Layout() {
                       </Link>
                     )}
                     {showCampaignsAndCredits && (
-                      <Link to="/app/campaigns" style={{ ...drawerLinkStyle, ...(isActive('/app/campaigns') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                      <Link
+                        to="/app/campaigns"
+                        style={{ ...drawerLinkStyle, ...(isActive('/app/campaigns') ? drawerLinkActiveStyle : {}) }}
+                        onClick={() => {
+                          trackAppUiClick('drawer_minhas_campanhas', { target_path: '/app/campaigns' })
+                          setMobileMenuOpen(false)
+                        }}
+                      >
                         Minhas campanhas
                       </Link>
                     )}
                     {myHandle && (
-                      <Link to={myProfilePath} style={{ ...drawerLinkStyle, ...(isActive(myProfilePath) ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                      <Link
+                        to={myProfilePath}
+                        style={{ ...drawerLinkStyle, ...(isActive(myProfilePath) ? drawerLinkActiveStyle : {}) }}
+                        onClick={() => {
+                          trackAppUiClick('drawer_meu_perfil', { target_path: myProfilePath })
+                          setMobileMenuOpen(false)
+                        }}
+                      >
                         Meu perfil
                       </Link>
                     )}
@@ -485,7 +645,10 @@ export default function Layout() {
                       <Link
                         to="/app/admin/dashboard"
                         style={{ ...drawerLinkStyle, ...(isActive('/app/admin/dashboard') ? drawerLinkActiveStyle : {}) }}
-                        onClick={() => setMobileMenuOpen(false)}
+                        onClick={() => {
+                          trackAppUiClick('drawer_admin_dashboard', { target_path: '/app/admin/dashboard' })
+                          setMobileMenuOpen(false)
+                        }}
                       >
                         Painel admin
                       </Link>
@@ -494,7 +657,10 @@ export default function Layout() {
                       <Link
                         to="/app/admin/users"
                         style={{ ...drawerLinkStyle, ...(isActive('/app/admin/users') ? drawerLinkActiveStyle : {}) }}
-                        onClick={() => setMobileMenuOpen(false)}
+                        onClick={() => {
+                          trackAppUiClick('drawer_admin_usuarios', { target_path: '/app/admin/users' })
+                          setMobileMenuOpen(false)
+                        }}
                       >
                         Usuários
                       </Link>
@@ -506,7 +672,12 @@ export default function Layout() {
                           ...drawerLinkStyle,
                           ...(isActive('/app/admin/reports/unregistered-mentions') ? drawerLinkActiveStyle : {}),
                         }}
-                        onClick={() => setMobileMenuOpen(false)}
+                        onClick={() => {
+                          trackAppUiClick('drawer_admin_mentions', {
+                            target_path: '/app/admin/reports/unregistered-mentions',
+                          })
+                          setMobileMenuOpen(false)
+                        }}
                       >
                         Relatório @ não cadastrados
                       </Link>
@@ -518,24 +689,50 @@ export default function Layout() {
                           ...drawerLinkStyle,
                           ...(isActive('/app/admin/influencers/bulk-purge') ? drawerLinkActiveStyle : {}),
                         }}
-                        onClick={() => setMobileMenuOpen(false)}
+                        onClick={() => {
+                          trackAppUiClick('drawer_admin_bulk_purge', { target_path: '/app/admin/influencers/bulk-purge' })
+                          setMobileMenuOpen(false)
+                        }}
                       >
                         Exclusão em lote
                       </Link>
                     )}
                     {isAdm && (
-                      <Link to="/app/bulk-message" style={{ ...drawerLinkStyle, ...(isActive('/app/bulk-message') ? drawerLinkActiveStyle : {}) }} onClick={() => setMobileMenuOpen(false)}>
+                      <Link
+                        to="/app/bulk-message"
+                        style={{ ...drawerLinkStyle, ...(isActive('/app/bulk-message') ? drawerLinkActiveStyle : {}) }}
+                        onClick={() => {
+                          trackAppUiClick('drawer_bulk_message', { target_path: '/app/bulk-message' })
+                          setMobileMenuOpen(false)
+                        }}
+                      >
                         Disparo em massa
                       </Link>
                     )}
                   </>
                 )}
                 {user ? (
-                  <Button type="text" block style={{ textAlign: 'left', padding: '12px 0', fontSize: 14, color: 'var(--app-text-secondary)' }} onClick={() => { setMobileMenuOpen(false); logout(); }}>
+                  <Button
+                    type="text"
+                    block
+                    style={{ textAlign: 'left', padding: '12px 0', fontSize: 14, color: 'var(--app-text-secondary)' }}
+                    onClick={() => {
+                      trackAppUiClick('drawer_logout')
+                      setMobileMenuOpen(false)
+                      logout()
+                    }}
+                  >
                     Sair
                   </Button>
                 ) : (
-                  <Link to="/login" style={{ ...drawerLinkStyle, display: 'block' }} onClick={() => setMobileMenuOpen(false)}>
+                  <Link
+                    to="/login"
+                    style={{ ...drawerLinkStyle, display: 'block' }}
+                    onClick={() => {
+                      trackAppUiClick('drawer_entrar', { target_path: '/login' })
+                      setMobileMenuOpen(false)
+                    }}
+                  >
                     Entrar
                   </Link>
                 )}
@@ -553,7 +750,10 @@ export default function Layout() {
                       textAlign: 'center',
                       marginTop: 8,
                     }}
-                    onClick={() => setMobileMenuOpen(false)}
+                    onClick={() => {
+                      trackAppUiClick('drawer_cadastrar', { target_path: '/app/create' })
+                      setMobileMenuOpen(false)
+                    }}
                   >
                     Cadastrar conta
                   </Link>
@@ -563,7 +763,10 @@ export default function Layout() {
           )}
         </>
       )}
-      <Content className="app-layout-content" style={{ overflowX: 'hidden' }}>
+      <Content
+        className={isAllCampaignsRoute ? 'app-layout-content app-layout-content--no-app-navbar' : 'app-layout-content'}
+        style={{ overflowX: 'hidden' }}
+      >
         {user && showMissionsBar && <MissionsBar />}
         <div className="app-page">
           <Outlet />
