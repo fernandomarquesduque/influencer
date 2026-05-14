@@ -19,7 +19,6 @@ import {
   SafetyOutlined,
   MessageOutlined,
   SyncOutlined,
-  InstagramOutlined,
   VideoCameraOutlined,
   FacebookOutlined,
   LinkedinOutlined,
@@ -29,11 +28,10 @@ import {
   HeartFilled,
   CheckCircleOutlined,
   DeleteOutlined,
-  FolderOpenOutlined,
   RobotOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
-import { fetchProfile, fetchCampaignProfile, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, adminPurgeInfluencer, type ProfileItem, type PostItem, type ProfileActivation } from '../api'
+import { fetchProfile, fetchCampaignProfile, fetchProfileSummary, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, adminPurgeInfluencer, type ProfileItem, type PostItem, type ProfileActivation, type EngagementStats } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import { getInfluencerTierLongLabel } from '../utils/influencerTier'
 import { buildReportInsights, getWeekdayName, getPostsByWeekday } from '../utils/reportInsights'
@@ -55,7 +53,9 @@ import {
   StrategicMetricsSection,
   StickyCTA,
   ReportSkeleton,
+  ProofCarousel,
 } from './InfluencerDetailReport'
+import { getProfilePersonaSummary } from '../utils/mapProfileListToPreviewItems'
 import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
 import { AlcanceSection } from '../components/AlcanceSection'
 import { PostAnalysisSection } from '../components/PostAnalysisSection'
@@ -83,26 +83,12 @@ const DETAIL_SUBTLE_ACTION = {
     color: '#9d174d',
     boxShadow: '0 1px 4px rgba(157, 23, 77, 0.06)',
   },
-  instagram: {
-    ...detailActionBtnShell(),
-    background: 'linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%)',
-    border: '1px solid #e9d5ff',
-    color: '#6b21a8',
-    boxShadow: '0 1px 4px rgba(107, 33, 168, 0.06)',
-  },
   editProfile: {
     ...detailActionBtnShell(),
     background: 'linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%)',
     border: '1px solid #fde68a',
     color: '#b45309',
     boxShadow: '0 1px 4px rgba(180, 83, 9, 0.07)',
-  },
-  reports: {
-    ...detailActionBtnShell(),
-    background: 'linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%)',
-    border: '1px solid #99f6e4',
-    color: '#0f766e',
-    boxShadow: '0 1px 4px rgba(15, 118, 110, 0.07)',
   },
   adminSync: {
     ...detailActionBtnShell(),
@@ -189,14 +175,26 @@ const CAMPAIGN_ID_GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab]
 const sectionGap = (t.spacing.xl as number)
 interface InfluencerDetailProps {
   overrideHandle?: string
+  /** Substitui campaignId da URL (ex.: modal sobre a campanha). */
+  overrideCampaignId?: string | null
   /** Quando true, exige campaignId na URL (rota campaigns/:campaignId/influencer/:handle) e redireciona se inválido. */
   requireCampaignId?: boolean
+  /** Renderizado dentro de InfluencerDetailModal: fecha o modal em vez de navegar no voltar. */
+  embeddedInModal?: boolean
+  onModalClose?: () => void
 }
 
-export default function InfluencerDetail({ overrideHandle, requireCampaignId }: InfluencerDetailProps = {}) {
+export default function InfluencerDetail({
+  overrideHandle,
+  overrideCampaignId,
+  requireCampaignId,
+  embeddedInModal = false,
+  onModalClose,
+}: InfluencerDetailProps = {}) {
   const params = useParams<{ handle?: string; campaignId?: string }>()
   const handle = overrideHandle ?? params.handle
-  const rawCampaignParam = params.campaignId?.trim() ?? ''
+  const rawCampaignParam =
+    overrideCampaignId !== undefined ? (overrideCampaignId ?? '') : (params.campaignId?.trim() ?? '')
   const campaignId =
     rawCampaignParam.toLowerCase() === 'all'
       ? 'all'
@@ -212,7 +210,6 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
   }, [requireCampaignId, campaignId, params.campaignId, navigate])
 
   const { user, isPublic, canEditProfile, isAdm, loading: authLoading } = useAuth()
-  const showMeusRelatoriosCta = !user || user.scope !== 'influencer'
 
   const mediaKitPath = handle ? `/app/influencer/${encodeURIComponent(handle)}/media-kit` : '/app'
   const canEdit = handle ? canEditProfile(handle) : false
@@ -239,6 +236,8 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
   const [, setPostsTotal] = useState(0)
   const [dataRedacted, setDataRedacted] = useState(false)
   const [allBasePreview, setAllBasePreview] = useState(false)
+  const [previewEngagement, setPreviewEngagement] = useState<EngagementStats | null>(null)
+  const [previewSummaryFollowers, setPreviewSummaryFollowers] = useState<number | null>(null)
   const isLimitedView = !user || isPublic || allBasePreview
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
@@ -361,6 +360,31 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
       .finally(() => { if (!cancelled) setPostsLoading(false) })
     return () => { cancelled = true }
   }, [handle, campaignId, authLoading])
+
+  useEffect(() => {
+    if (!handle || authLoading) return
+    const limited = !user || isPublic || allBasePreview
+    if (!limited) {
+      setPreviewEngagement(null)
+      setPreviewSummaryFollowers(null)
+      return
+    }
+    let cancelled = false
+    fetchProfileSummary(handle, { campaignId: campaignId ?? undefined })
+      .then((res) => {
+        if (cancelled) return
+        setPreviewEngagement(res?.engagement ?? null)
+        const fc = res?.profile?.followers_count
+        setPreviewSummaryFollowers(typeof fc === 'number' && Number.isFinite(fc) ? fc : null)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreviewEngagement(null)
+          setPreviewSummaryFollowers(null)
+        }
+      })
+    return () => { cancelled = true }
+  }, [handle, campaignId, authLoading, user, isPublic, allBasePreview])
 
   const startRefreshPolling = useRef<(h: string) => void>(() => { })
   startRefreshPolling.current = (h: string) => {
@@ -506,6 +530,23 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     }
   }, [mediaByType.posts, mediaByType.reels, mediaByType.tagged, followersCount])
 
+  const guestPreviewPosts = useMemo(() => {
+    const mixed = [...mediaByType.posts, ...mediaByType.reels]
+    if (mixed.length > 0) return mixed.slice(0, 9)
+    return ownPosts.slice(0, 9)
+  }, [mediaByType.posts, mediaByType.reels, ownPosts])
+
+  const guestPreviewProofItems = useMemo(
+    () =>
+      guestPreviewPosts.map((post) => ({
+        post,
+        interactions: 0,
+        erPost: 0,
+        oQueFuncionou: '',
+      })),
+    [guestPreviewPosts],
+  )
+
   /** Quando o usuário informou preços na ativação, sobrescreve o valor estimado por tipo com o valor informado. (Hook antes de qualquer return.) */
   const valorEstimadoPorTipoExibir = useMemo(() => {
     const rocks = reportInsights?.valorEstimadoPorTipo
@@ -576,15 +617,21 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
       activation.linkedin?.trim() || activation.twitter?.trim() || activation.websites?.trim() ||
       activation.description?.trim() || activation.about_topics?.trim())
 
-  /** Blur das métricas: apenas quando logado como influenciador (vendo perfil de outro) ou quando é o próprio influenciador vendo seu perfil sem ativação. Admin e assinante nunca veem blur. */
+  const isRedacted = dataRedacted && isLimitedView && !allBasePreview && !!user
+
+  /** Blur das métricas: influenciador vendo outro / próprio sem ativação; ou visitante em prévia limitada (fotos desfocadas). */
   const isOwnProfileAsInfluencer = user?.scope === 'influencer' && handle && canEditProfile(handle)
+  const showGuestPreviewBlur = isLimitedView && !isRedacted
   const showMetricsBlur =
     (user?.scope === 'influencer' && handle && !canEditProfile(handle)) ||
     (!hasActivationData && isOwnProfileAsInfluencer)
 
-  const isRedacted = dataRedacted && isLimitedView && !allBasePreview
-
-  const tierLabel = getInfluencerTierLongLabel(followersCount)
+  const displayEngagement = showGuestPreviewBlur && previewEngagement ? previewEngagement : engagement
+  const displayFollowersCount =
+    showGuestPreviewBlur && previewSummaryFollowers != null && previewSummaryFollowers > 0
+      ? previewSummaryFollowers
+      : followersCount
+  const tierLabel = getInfluencerTierLongLabel(displayFollowersCount)
 
   const engagementScore = reportInsights?.score.total ?? Math.min(100, Math.round((engagement.engagement_rate / 12) * 100))
   const scoreSelo = reportInsights?.score.selo ?? 'Alto Engajamento'
@@ -637,7 +684,9 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
   const rowGutter: [number, number] = isMobile ? [s.md, s.md] : [s.lg, s.lg]
 
   const bio = profile?.biography ?? (profile?.data?.user as Record<string, unknown>)?.biography
-  const defaultHeadline = (bio != null && String(bio).trim()) ? String(bio).trim() : 'Seu perfil tem potencial real de monetização'
+  const personaSummary = profile ? getProfilePersonaSummary(profile as unknown as Record<string, unknown>) : ''
+  const bioHeadline = bio != null && String(bio).trim() ? String(bio).trim() : ''
+  const defaultHeadline = personaSummary || bioHeadline || 'Seu perfil tem potencial real de monetização'
   const heroHeadline = (hasActivationData && activation && (activation.content_type?.length || activation.description?.trim()))
     ? (activation.description?.trim() ? <div style={{ marginBottom: 0 }}>{activation.description.trim()}</div> : null)
     : defaultHeadline
@@ -651,21 +700,33 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
     )
     : undefined
 
+  const closeDetailView = () => {
+    if (embeddedInModal && onModalClose) {
+      onModalClose()
+      return
+    }
+    if (campaignId) navigate(`/app/campaigns/${campaignId}`)
+    else navigate(-1)
+  }
+
+  const detailContentPadX = isMobile
+    ? (lay.contentPaddingMobile ?? s.md)
+    : embeddedInModal
+      ? (lay.contentPadding ?? s.lg)
+      : 0
+  const detailContentPadTop = embeddedInModal ? detailContentPadX : 0
+
   return (
-    <div style={{ paddingBottom: s.xl, background: c.pageBg, minHeight: '100vh' }}>
+    <div
+      className={embeddedInModal ? 'influencer-detail--embedded' : undefined}
+      style={{ paddingBottom: s.xl, background: c.pageBg, minHeight: embeddedInModal ? 0 : '100vh' }}
+    >
 
 
-      {isRedacted && (
+      {isRedacted && user && (
         <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
           <div style={{ marginBottom: s.lg, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
-            {user ? (
-              <Text>Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.</Text>
-            ) : (
-              <>
-                <Text>Faça login para ver as métricas e os dados completos deste perfil.</Text>
-                <div style={{ marginTop: s.xs }}><Link to="/login"><Button type="primary" size="small">Entrar</Button></Link></div>
-              </>
-            )}
+            <Text>Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.</Text>
           </div>
         </div>
       )}
@@ -681,7 +742,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
         </div>
       )}
 
-      {isLimitedView && !isRedacted && !allBasePreview && (
+      {isLimitedView && !isRedacted && user && !allBasePreview && (
         <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
           <div style={{ marginBottom: s.md, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
             <Text>Você está vendo uma prévia limitada. <Link to="/premium">Seja assinante</Link> para ver métricas completas e filtros avançados.</Text>
@@ -689,10 +750,169 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
         </div>
       )}
 
-      <div style={{ width: '100%', padding: `0 ${isMobile ? (lay.contentPaddingMobile ?? s.md) : 0}px ${isMobile ? 160 : s.xl}px`, position: 'relative', zIndex: 1, background: c.pageBg }}>
+      <div style={{ width: '100%', padding: `${detailContentPadTop}px ${detailContentPadX}px ${isMobile ? 160 : s.xl}px`, position: 'relative', zIndex: 1, background: c.pageBg, boxSizing: 'border-box' }}>
         {!isRedacted && (
           <>
-            {/* Ações da tela: acima do perfil — bloco admin separado (cor / borda distintas) */}
+            <ReportHero
+              profilePic={profilePic || ''}
+              stableProfilePicUrl={stableProfilePic}
+              name={fullName}
+              handle={displayHandle}
+              isMobile={isMobile}
+              score={reportInsights ? engagementScore : undefined}
+              scoreTooltip={reportInsights?.score?.pillars
+                ? `Sua nota é uma mistura de: comunidade (${reportInsights.score.pillars.comunidade}), consistência (${reportInsights.score.pillars.consistencia}), alcance (${reportInsights.score.pillars.alcance}), autoridade (${reportInsights.score.pillars.autoridade}) e conteúdo (${reportInsights.score.pillars.conteudo}). Quanto maior, mais seu perfil está pronto para marcas e parcerias.`
+                : reportInsights ? 'É a nota geral do perfil. Quanto maior, mais pronto você está para fechar parcerias com marcas.' : undefined}
+              tierLabel={reportInsights ? tierLabel : undefined}
+              percentil={reportInsights?.benchmark?.percentil ?? undefined}
+              scoreSelo={reportInsights ? scoreSelo : undefined}
+              headline={heroHeadline}
+              typesTags={heroTypesTags}
+              badgeLabel={!reportInsights ? tierLabel : undefined}
+              blurHighlights={showGuestPreviewBlur}
+              highlights={[
+                { label: 'Seguidores', value: formatShortNum(displayFollowersCount) },
+                { label: 'Posts/sem', value: displayEngagement.posts_per_week != null
+                  ? displayEngagement.posts_per_week.toFixed(1)
+                  : (reportInsights?.consistency?.postsPerWeekByWeek?.length
+                    ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1)
+                    : '0') },
+                { label: 'ER médio', value: `${(displayEngagement.engagement_rate ?? 0).toFixed(1)}%` },
+              ]}
+              onBack={closeDetailView}
+              onAvatarError={() => {
+                if (!refreshQueuedRef.current && handle) {
+                  refreshQueuedRef.current = true
+                  queueRefreshProfile(handle).catch(() => { })
+                  startRefreshPolling.current(handle)
+                }
+              }}
+              extraContent={
+                <>
+                  {!isLimitedView ? (
+                    <>
+                      {reportInsights ? (
+                        <ScoreOverview
+                          embedded
+                          tierInHero
+                          hidePostsPerWeek
+                          hideExplanationInEmbedded
+                          score={engagementScore}
+                          tierLabel={tierLabel}
+                          scoreSelo={scoreSelo}
+                          percentil={reportInsights.benchmark?.percentil ?? null}
+                          explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
+                          scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
+                          statPills={layout.showScorePills ? [
+                            { label: 'Seguidores', value: formatShortNum(followersCount) },
+                            { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
+                            { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
+                          ] : []}
+                          postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
+                          bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
+                          bestHour={reportInsights.consistency.bestHour}
+                        />
+                      ) : null}
+                      {!isRedacted && hasActivationData && activation ? (
+                        <div className="collapse-endereco-transparent">
+                          <Collapse
+                            ghost
+                            defaultActiveKey={[]}
+                            items={[{
+                              key: 'contato',
+                              label: (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
+                                  <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />{[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || 'Localização'}</span>
+                                  {canEdit && handle && (
+                                    <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
+                                      Editar
+                                    </Button>
+                                  )}
+                                </div>
+                              ),
+                              children: (
+                                <>
+                                  {activation.pricing && (() => {
+                                    const costTier = getCostTier(activation.pricing)
+                                    const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
+                                      const val = activation.pricing![key as keyof typeof activation.pricing]
+                                      return val !== undefined && val !== null && String(val).trim() !== ''
+                                    })
+                                    if (!hasAnyPricing) return null
+                                    return (
+                                      <>
+                                        <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
+                                        <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
+                                          {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
+                                          {PRICING_FIELD_KEYS.map((key) => {
+                                            const val = activation.pricing![key as keyof typeof activation.pricing]
+                                            if (val === undefined || val === null || String(val).trim() === '') return null
+                                            const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
+                                            return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
+                                          })}
+                                        </Descriptions>
+                                      </>
+                                    )
+                                  })()}
+                                  <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
+
+                                    <Descriptions column={1} bordered size="small">
+                                      {activation.gender && (
+                                        <Descriptions.Item label="Gênero">{GENDER_LABELS[activation.gender] ?? activation.gender}</Descriptions.Item>
+                                      )}
+                                      {activation.audience_gender && (
+                                        <Descriptions.Item label="Gênero predominante do público">{AUDIENCE_GENDER_LABELS[activation.audience_gender] ?? activation.audience_gender}</Descriptions.Item>
+                                      )}
+                                      {activation.content_type?.length ? (
+                                        <Descriptions.Item label="Tipos de conteúdo">{activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}</Descriptions.Item>
+                                      ) : null}
+                                      {activation.influence_audience?.length ? (
+                                        <Descriptions.Item label="Público que influencia (A, B, C, D)">{activation.influence_audience.join(', ')}</Descriptions.Item>
+                                      ) : null}
+                                      {activation.influence_age_range?.length ? (
+                                        <Descriptions.Item label="Faixa etária que influencia">{activation.influence_age_range.map((fa) => INFLUENCE_AGE_RANGE_LABELS[fa] ?? fa).join(', ')}</Descriptions.Item>
+                                      ) : null}
+                                      {activation.description?.trim() && (
+                                        <Descriptions.Item label="Fala de você (trajetória e proposta)"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.description.trim()}</Text></Descriptions.Item>
+                                      )}
+                                      {activation.brands_worked_with?.trim() && (
+                                        <Descriptions.Item label="Marcas que já trabalhou"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.brands_worked_with.trim()}</Text></Descriptions.Item>
+                                      )}
+                                      {(activation.city || activation.state || activation.neighborhood || activation.country) && (
+                                        <Descriptions.Item label="Localização">
+                                          {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
+                                        </Descriptions.Item>
+                                      )}
+                                      {activation.address && (
+                                        <Descriptions.Item label="Endereço">
+                                          {[activation.address, activation.address_number].filter(Boolean).join(', ')}
+                                        </Descriptions.Item>
+                                      )}
+                                      {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
+                                      {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
+                                      {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
+                                      {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
+                                      {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
+                                      {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
+                                      {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
+                                      {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
+                                      {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
+                                      {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
+                                    </Descriptions>
+                                  </div>
+                                </>
+                              ),
+                            }]}
+                            style={{ borderRadius: r, overflow: 'hidden', border: 'none', background: 'transparent' }}
+                          />
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </>
+              }
+            />
+            {/* Ações da tela: abaixo do painel do perfil — bloco admin separado (cor / borda distintas) */}
             <div
               style={{
                 display: 'flex',
@@ -700,7 +920,7 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                 gap: isMobile ? s.md : s.lg,
                 alignItems: 'center',
                 justifyContent: 'center',
-                marginBottom: s.md,
+                marginTop: s.md, marginBottom: s.md,
                 flexDirection: isMobile ? 'column' : 'row',
               }}
             >
@@ -720,21 +940,6 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                     </Button>
                   </Tooltip>
                 )}
-                {handle && (
-                  <Tooltip title="Abrir perfil no Instagram">
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={<InstagramOutlined />}
-                      onClick={() => window.open(`https://www.instagram.com/${encodeURIComponent(handle)}/`, '_blank', 'noopener,noreferrer')}
-                      style={DETAIL_SUBTLE_ACTION.instagram}
-                      aria-label="Abrir Instagram"
-                    >
-                      Abrir Instagram
-                    </Button>
-                  </Tooltip>
-                )}
                 {handle && canEdit && (
                   <Tooltip title="Editar cadastro, ativação e dados do seu perfil na plataforma">
                     <Button
@@ -747,21 +952,6 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                       aria-label="Editar perfil"
                     >
                       Editar perfil
-                    </Button>
-                  </Tooltip>
-                )}
-                {showMeusRelatoriosCta && (
-                  <Tooltip title={user ? 'Campanhas e relatórios que você comprou' : 'Entre para ver seus relatórios'}>
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={<FolderOpenOutlined />}
-                      onClick={() => navigate('/app/campaigns')}
-                      style={DETAIL_SUBTLE_ACTION.reports}
-                      aria-label="Minhas campanhas"
-                    >
-                      Campanhas
                     </Button>
                   </Tooltip>
                 )}
@@ -892,162 +1082,87 @@ export default function InfluencerDetail({ overrideHandle, requireCampaignId }: 
                 </div>
               )}
             </div>
-            <ReportHero
-              profilePic={profilePic || ''}
-              stableProfilePicUrl={stableProfilePic}
-              name={fullName}
-              handle={displayHandle}
-              isMobile={isMobile}
-              score={reportInsights ? engagementScore : undefined}
-              scoreTooltip={reportInsights?.score?.pillars
-                ? `Sua nota é uma mistura de: comunidade (${reportInsights.score.pillars.comunidade}), consistência (${reportInsights.score.pillars.consistencia}), alcance (${reportInsights.score.pillars.alcance}), autoridade (${reportInsights.score.pillars.autoridade}) e conteúdo (${reportInsights.score.pillars.conteudo}). Quanto maior, mais seu perfil está pronto para marcas e parcerias.`
-                : reportInsights ? 'É a nota geral do perfil. Quanto maior, mais pronto você está para fechar parcerias com marcas.' : undefined}
-              tierLabel={reportInsights ? tierLabel : undefined}
-              percentil={reportInsights?.benchmark?.percentil ?? undefined}
-              scoreSelo={reportInsights ? scoreSelo : undefined}
-              headline={heroHeadline}
-              typesTags={heroTypesTags}
-              badgeLabel={!reportInsights ? tierLabel : undefined}
-              highlights={[
-                { label: 'Seguidores', value: formatShortNum(followersCount) },
-                { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
-                { label: 'Posts/sem', value: reportInsights?.consistency?.postsPerWeekByWeek?.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
-              ]}
-              onBack={() => (campaignId ? navigate(`/app/campaigns/${campaignId}`) : navigate(-1))}
-              onAvatarError={() => {
-                if (!refreshQueuedRef.current && handle) {
-                  refreshQueuedRef.current = true
-                  queueRefreshProfile(handle).catch(() => { })
-                  startRefreshPolling.current(handle)
-                }
-              }}
-              extraContent={
-                <>
-                  <ProfileLlmDetailPanel profile={profile} variant="embedded" />
-                  {!isLimitedView ? (
-                    <>
-                      {reportInsights ? (
-                        <ScoreOverview
-                          embedded
-                          tierInHero
-                          hidePostsPerWeek
-                          hideExplanationInEmbedded
-                          score={engagementScore}
-                          tierLabel={tierLabel}
-                          scoreSelo={scoreSelo}
-                          percentil={reportInsights.benchmark?.percentil ?? null}
-                          explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
-                          scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
-                          statPills={layout.showScorePills ? [
-                            { label: 'Seguidores', value: formatShortNum(followersCount) },
-                            { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
-                            { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
-                          ] : []}
-                          postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
-                          bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
-                          bestHour={reportInsights.consistency.bestHour}
-                        />
-                      ) : null}
-                      {!isRedacted && hasActivationData && activation ? (
-                        <div className="collapse-endereco-transparent">
-                          <Collapse
-                            ghost
-                            defaultActiveKey={[]}
-                            items={[{
-                              key: 'contato',
-                              label: (
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
-                                  <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />{[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || 'Localização'}</span>
-                                  {canEdit && handle && (
-                                    <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
-                                      Editar
-                                    </Button>
-                                  )}
-                                </div>
-                              ),
-                              children: (
-                                <>
-                                  {activation.pricing && (() => {
-                                    const costTier = getCostTier(activation.pricing)
-                                    const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
-                                      const val = activation.pricing![key as keyof typeof activation.pricing]
-                                      return val !== undefined && val !== null && String(val).trim() !== ''
-                                    })
-                                    if (!hasAnyPricing) return null
-                                    return (
-                                      <>
-                                        <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
-                                        <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
-                                          {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
-                                          {PRICING_FIELD_KEYS.map((key) => {
-                                            const val = activation.pricing![key as keyof typeof activation.pricing]
-                                            if (val === undefined || val === null || String(val).trim() === '') return null
-                                            const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
-                                            return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
-                                          })}
-                                        </Descriptions>
-                                      </>
-                                    )
-                                  })()}
-                                  <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
-
-                                    <Descriptions column={1} bordered size="small">
-                                      {activation.gender && (
-                                        <Descriptions.Item label="Gênero">{GENDER_LABELS[activation.gender] ?? activation.gender}</Descriptions.Item>
-                                      )}
-                                      {activation.audience_gender && (
-                                        <Descriptions.Item label="Gênero predominante do público">{AUDIENCE_GENDER_LABELS[activation.audience_gender] ?? activation.audience_gender}</Descriptions.Item>
-                                      )}
-                                      {activation.content_type?.length ? (
-                                        <Descriptions.Item label="Tipos de conteúdo">{activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}</Descriptions.Item>
-                                      ) : null}
-                                      {activation.influence_audience?.length ? (
-                                        <Descriptions.Item label="Público que influencia (A, B, C, D)">{activation.influence_audience.join(', ')}</Descriptions.Item>
-                                      ) : null}
-                                      {activation.influence_age_range?.length ? (
-                                        <Descriptions.Item label="Faixa etária que influencia">{activation.influence_age_range.map((fa) => INFLUENCE_AGE_RANGE_LABELS[fa] ?? fa).join(', ')}</Descriptions.Item>
-                                      ) : null}
-                                      {activation.description?.trim() && (
-                                        <Descriptions.Item label="Fala de você (trajetória e proposta)"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.description.trim()}</Text></Descriptions.Item>
-                                      )}
-                                      {activation.brands_worked_with?.trim() && (
-                                        <Descriptions.Item label="Marcas que já trabalhou"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.brands_worked_with.trim()}</Text></Descriptions.Item>
-                                      )}
-                                      {(activation.city || activation.state || activation.neighborhood || activation.country) && (
-                                        <Descriptions.Item label="Localização">
-                                          {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
-                                        </Descriptions.Item>
-                                      )}
-                                      {activation.address && (
-                                        <Descriptions.Item label="Endereço">
-                                          {[activation.address, activation.address_number].filter(Boolean).join(', ')}
-                                        </Descriptions.Item>
-                                      )}
-                                      {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
-                                      {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
-                                      {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
-                                      {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
-                                      {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
-                                      {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
-                                      {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
-                                      {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
-                                      {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
-                                      {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
-                                    </Descriptions>
-                                  </div>
-                                </>
-                              ),
-                            }]}
-                            style={{ borderRadius: r, overflow: 'hidden', border: 'none', background: 'transparent' }}
-                          />
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                </>
-              }
-            />
+            <ProfileLlmDetailPanel profile={profile} variant="embedded" isMobile={isMobile} />
           </>
+        )}
+
+        {showGuestPreviewBlur && (
+          <div id="secao-previa-limitada" style={{ marginBottom: gap }}>
+            <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+              Prévia do conteúdo
+            </h2>
+            <div
+              style={{
+                position: 'relative',
+                overflow: 'hidden',
+                borderRadius: t.radius.lg,
+                minHeight: guestPreviewProofItems.length > 0 ? undefined : 120,
+              }}
+            >
+              {guestPreviewProofItems.length > 0 ? (
+                <div style={{ filter: 'blur(8px)', userSelect: 'none', pointerEvents: 'none' }}>
+                  <ProofCarousel
+                    items={guestPreviewProofItems}
+                    getImageUrl={(post) => getPostImageUrl(post as PostItem)}
+                    getLink={(post) => getPostLink(post as PostItem)}
+                    failedImages={failedPostImages}
+                    formatShortNum={formatShortNum}
+                  />
+                </div>
+              ) : postsLoading ? (
+                <Card size="small" style={cardStyle}>
+                  <Skeleton active paragraph={{ rows: 2 }} />
+                </Card>
+              ) : (
+                <Card size="small" style={cardStyle}>
+                  <Text type="secondary">Nenhum post público disponível para prévia.</Text>
+                </Card>
+              )}
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'rgba(0,0,0,0.35)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: s.sm,
+                  padding: s.lg,
+                  pointerEvents: 'auto',
+                }}
+              >
+                {!user ? (
+                  <>
+                    <Link to="/login">
+                      <Button type="primary" size="small">Entrar para ver tudo</Button>
+                    </Link>
+                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                      Métricas, análises e dados de contato ficam disponíveis após o login.
+                    </Text>
+                  </>
+                ) : allBasePreview ? (
+                  <>
+                    <Link to="/app/campaigns">
+                      <Button type="primary" size="small">Ver minhas campanhas</Button>
+                    </Link>
+                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                      Inclua este criador num relatório pago para desbloquear métricas completas.
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Link to="/premium">
+                      <Button type="primary" size="small">Assinar premium</Button>
+                    </Link>
+                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                      Assine para ver métricas completas e filtros avançados.
+                    </Text>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
         {!isLimitedView && !isRedacted && isOwnProfileAsInfluencer && reportInsights?.diagnosticoBI?.insightPatamar && (

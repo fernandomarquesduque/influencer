@@ -53,11 +53,10 @@ function formatShortNum(n: number | undefined | null): string {
   return String(n)
 }
 
-/** Cor do engajamento: >70% verde, >40% amarelo, >0% rosa. */
-function engagementColor(rate: number): string {
-  if (rate > 70) return 'var(--app-rate-high)'
-  if (rate > 40) return 'var(--app-rate-mid)'
-  return 'var(--app-rate-low)'
+function formatPostsPerWeek(n: number | undefined | null): string {
+  if (n == null || !Number.isFinite(n)) return '—'
+  const rounded = Math.round(n * 10) / 10
+  return rounded.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: rounded % 1 === 0 ? 0 : 1 })
 }
 
 interface ProfileSummaryCardProps {
@@ -432,7 +431,7 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                 const priceLabel = costTier ? (() => { const t = costTier.label.trim(); return t.charAt(0).toUpperCase() + t.slice(1); })() : '—'
                 const metrics = [
                   { val: formatShortNum(item.followers_count), label: 'Seguidores', title: 'Seguidores' },
-                  { val: `${eng.engagement_rate.toFixed(1)}%`, label: 'Engajamento', title: 'Engajamento', color: engagementColor(eng.engagement_rate) },
+                  { val: formatPostsPerWeek(eng.posts_per_week), label: 'Posts/sem', title: 'Posts por semana' },
                   { val: formatShortNum(eng.total_likes), label: 'Likes', title: 'Total curtidas' },
                   { val: formatShortNum(eng.total_comments), label: 'Comentários', title: 'Total comentários' },
                   { val: formatShortNum(eng.avg_likes), label: 'Posts', title: 'Média likes/post' },
@@ -482,10 +481,10 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
                       <div style={{ fontSize: 10, color: 'var(--app-text-tertiary)' }}>seg.</div>
                     </div>
                   </Tooltip>
-                  <Tooltip title="Engajamento">
+                  <Tooltip title="Posts por semana">
                     <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: engagementColor(eng.engagement_rate) }}>{eng.engagement_rate.toFixed(1)}%</div>
-                      <div style={{ fontSize: 10, color: 'var(--app-text-tertiary)' }}>eng.</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--app-text)' }}>{formatPostsPerWeek(eng.posts_per_week)}</div>
+                      <div style={{ fontSize: 10, color: 'var(--app-text-tertiary)' }}>posts/sem</div>
                     </div>
                   </Tooltip>
                   <Tooltip title="Posts analisados">

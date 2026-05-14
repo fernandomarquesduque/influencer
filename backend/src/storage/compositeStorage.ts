@@ -6,7 +6,9 @@
 import type { Entity } from '../types/index.js';
 import type { MediaKind } from '../types/index.js';
 import type { RocksDBStorage } from './rocksdb.js';
-import type { SqliteSync, ProfileActivationData } from './sqliteSync.js';
+import type { ProfileSearchIndexPayload } from '../api/profilesSearch.js';
+import type { SqliteSync, ProfileActivationData, GlobalAuxSqlFilter, AuxNumericFacetAggregate } from './sqliteSync.js';
+import { deleteInfluencerFromMeilisearch } from '../search/meilisearchProfile.js';
 
 export type ProfileSearchIndexSyncFn = (db: CompositeStorage, handle: string) => void | Promise<void>;
 
@@ -46,7 +48,7 @@ export class CompositeStorage {
     await this.rocks.deletePostsByHandle(handle);
     this.sqlite.deleteActivation(handle);
     this.sqlite.deleteProjectApplicationsByHandle(handle);
-    this.sqlite.deleteProfileSearchIndex(handle);
+    this.deleteProfileSearchIndex(handle);
     this.onInvalidateSearch?.(this);
   }
 
@@ -121,14 +123,26 @@ export class CompositeStorage {
 
   upsertProfileSearchIndexFromPayload(
     handle: string,
-    payload: { ftsText: string; engagementJson: string; hashtagsJson: string; searchBlob: string }
+    payload: ProfileSearchIndexPayload & { costTier?: string | null }
   ): void {
     this.sqlite.upsertProfileSearchIndex(
       handle,
       payload.ftsText,
       payload.engagementJson,
       payload.hashtagsJson,
-      payload.searchBlob
+      payload.searchBlob,
+      {
+        followersCount: payload.followersCount ?? 0,
+        engagementRate: payload.engagementRate ?? 0,
+        avgLikes: payload.avgLikes ?? 0,
+        postsCount: payload.postsCount ?? 0,
+        accountType: payload.accountType ?? null,
+        isPrivate: payload.isPrivate,
+        categoriesJson: payload.categoriesJson,
+        costTier: payload.costTier ?? null,
+        llmQualificationJson: payload.llmQualificationJson,
+        llmBrandLevel: payload.llmBrandLevel,
+      }
     );
   }
 
@@ -141,8 +155,37 @@ export class CompositeStorage {
     engagement_json: string;
     hashtags_json: string;
     search_blob: string;
+    followers_count: number;
+    engagement_rate: number;
+    avg_likes: number;
+    posts_count: number;
+    account_type: number | null;
   }[] {
     return this.sqlite.getAllProfileSearchAuxRows();
+  }
+
+  getProfileSearchAuxRowsForHandles(
+    handles: string[]
+  ): {
+    handle: string;
+    engagement_json: string;
+    hashtags_json: string;
+    search_blob: string;
+    followers_count: number;
+    engagement_rate: number;
+    avg_likes: number;
+    posts_count: number;
+    account_type: number | null;
+  }[] {
+    return this.sqlite.getProfileSearchAuxRowsForHandles(handles);
+  }
+
+  globalAuxSearchHandles(filter: GlobalAuxSqlFilter): { handles: string[]; total: number } {
+    return this.sqlite.globalAuxSearchHandles(filter);
+  }
+
+  aggregateAuxNumericFacetsForHandles(handles: string[]): AuxNumericFacetAggregate | null {
+    return this.sqlite.aggregateAuxNumericFacetsForHandles(handles);
   }
 
   countProfileSearchAuxRows(): number {
@@ -151,6 +194,9 @@ export class CompositeStorage {
 
   deleteProfileSearchIndex(handle: string): void {
     this.sqlite.deleteProfileSearchIndex(handle);
+    void deleteInfluencerFromMeilisearch(handle).catch((e) =>
+      console.warn('[meilisearch] delete:', handle, e instanceof Error ? e.message : e)
+    );
   }
 
   async clearAll(): Promise<void> {

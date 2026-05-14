@@ -860,7 +860,7 @@ export async function extractProfile(
       } catch (navErr) {
         const navMsg = navErr instanceof Error ? navErr.message : String(navErr);
         if (/ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR/i.test(navMsg)) {
-          throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login');
+          throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta backend: npm run login');
         }
         throw navErr;
       }
@@ -870,7 +870,7 @@ export async function extractProfile(
 
       const urlAfterGoto = page.url();
       if (urlAfterGoto.includes('/accounts/login') || urlAfterGoto.includes('/challenge/')) {
-        throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login');
+        throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta backend: npm run login');
       }
     }
 
@@ -897,7 +897,7 @@ export async function extractProfile(
       return href.includes('/accounts/login') || href.includes('/challenge/');
     }).catch(() => false);
     if (isLoginPage) {
-      throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login');
+      throw new Error('Sessão do Instagram expirada ou não logada. Execute o login na pasta backend: npm run login');
     }
 
     // Perfil não existe: Instagram exibe "Sorry, this page isn't available" (ou equivalente)

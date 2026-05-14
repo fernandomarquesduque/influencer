@@ -17,6 +17,16 @@ export function getLlmQualification(record: Record<string, unknown>): Record<str
   return q as Record<string, unknown>
 }
 
+/** Resumo do perfil gerado pela LLM (`personaSummary`), quando disponível. */
+export function getProfilePersonaSummary(record: Record<string, unknown> | null | undefined): string {
+  if (!record) return ''
+  const llm = record.llm
+  if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) return ''
+  const q = (llm as Record<string, unknown>).qualification
+  if (q == null || typeof q !== 'object' || Array.isArray(q)) return ''
+  return String((q as Record<string, unknown>).personaSummary ?? '').trim()
+}
+
 /** Texto curto da qualificação LLM (personaSummary ou fallback) para listagem — ex.: abaixo do @. */
 export function getLlmDescriptionLine(item: ProfileListItem): { line: string; tooltip?: string } | null {
   const q = getLlmQualification(item as unknown as Record<string, unknown>)

@@ -4,14 +4,52 @@
         {
             "type": "node",
             "request": "launch",
-            "name": "Crawl API",
+            "name": "Backend API (watch)",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "api:dev"
+            ],
+            "cwd": "${workspaceFolder}/backend",
+            "console": "integratedTerminal",
+            "preLaunchTask": "kill-api-and-frontend",
+            "presentation": {
+                "group": "dev",
+                "order": 1
+            }
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Backend API (sem watch)",
             "runtimeExecutable": "npm",
             "runtimeArgs": [
                 "run",
                 "api"
             ],
-            "cwd": "${workspaceFolder}/crawl",
-            "console": "integratedTerminal"
+            "cwd": "${workspaceFolder}/backend",
+            "console": "integratedTerminal",
+            "preLaunchTask": "kill-api-and-frontend",
+            "presentation": {
+                "group": "dev",
+                "order": 2
+            }
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Frontend",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "dev"
+            ],
+            "cwd": "${workspaceFolder}/frontend",
+            "console": "integratedTerminal",
+            "presentation": {
+                "group": "dev",
+                "order": 3
+            }
         },
         {
             "type": "node",
@@ -25,7 +63,7 @@
                 "--delay-extra",
                 "1000"
             ],
-            "cwd": "${workspaceFolder}/crawl",
+            "cwd": "${workspaceFolder}/backend",
             "console": "integratedTerminal",
             "preLaunchTask": "kill-extract"
         },
@@ -43,7 +81,7 @@
                 "--delay-extra",
                 "1000"
             ],
-            "cwd": "${workspaceFolder}/crawl",
+            "cwd": "${workspaceFolder}/backend",
             "console": "integratedTerminal"
         },
         {
@@ -60,7 +98,7 @@
                 "--delay-extra",
                 "1000"
             ],
-            "cwd": "${workspaceFolder}/crawl",
+            "cwd": "${workspaceFolder}/backend",
             "console": "integratedTerminal"
         },
         {
@@ -77,19 +115,7 @@
                 "--delay-extra",
                 "1000"
             ],
-            "cwd": "${workspaceFolder}/crawl",
-            "console": "integratedTerminal"
-        },
-        {
-            "type": "node",
-            "request": "launch",
-            "name": "Frontend",
-            "runtimeExecutable": "npm",
-            "runtimeArgs": [
-                "run",
-                "dev"
-            ],
-            "cwd": "${workspaceFolder}/frontend",
+            "cwd": "${workspaceFolder}/backend",
             "console": "integratedTerminal"
         },
         {
@@ -119,11 +145,17 @@
     ],
     "compounds": [
         {
-            "name": "Start All (restart API + Frontend)",
+            "name": "Dev: API (watch) + Frontend",
             "configurations": [
-                "Crawl API",
+                "Backend API (watch)",
                 "Frontend"
-            ]
+            ],
+            "preLaunchTask": "kill-api-and-frontend",
+            "stopAll": true,
+            "presentation": {
+                "group": "dev",
+                "order": 1
+            }
         }
     ]
 }

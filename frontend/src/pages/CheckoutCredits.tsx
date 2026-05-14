@@ -36,6 +36,7 @@ export default function CheckoutCredits() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
+  const [cpfCnpj, setCpfCnpj] = useState('')
   const [credits, setCredits] = useState(50)
   const [billingType, setBillingType] = useState<'PIX' | 'BOLETO'>('PIX')
   const [submitting, setSubmitting] = useState(false)
@@ -64,6 +65,11 @@ export default function CheckoutCredits() {
       setError('A senha deve ter no mínimo 6 caracteres.')
       return
     }
+    const cpfDigits = cpfCnpj.replace(/\D/g, '')
+    if (cpfDigits.length !== 11 && cpfDigits.length !== 14) {
+      setError('Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.')
+      return
+    }
     setError(null)
     setSubmitting(true)
     try {
@@ -71,6 +77,7 @@ export default function CheckoutCredits() {
         email: emailTrim,
         password,
         name: name.trim() || undefined,
+        cpfCnpj: cpfDigits,
         credits,
         billingType,
       })
@@ -197,6 +204,17 @@ export default function CheckoutCredits() {
             onChange={(e) => setName(e.target.value)}
             style={{ marginTop: 6 }}
             size="large"
+          />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <Text strong>CPF ou CNPJ</Text>
+          <Input
+            placeholder="Apenas números (11 ou 14 dígitos)"
+            value={cpfCnpj}
+            onChange={(e) => setCpfCnpj(e.target.value.replace(/\D/g, '').slice(0, 14))}
+            style={{ marginTop: 6 }}
+            size="large"
+            inputMode="numeric"
           />
         </div>
         <div style={{ marginBottom: 16 }}>

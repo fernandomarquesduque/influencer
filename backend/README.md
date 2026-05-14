@@ -14,7 +14,7 @@ Ferramenta de extração de perfis de microinfluenciadores no Instagram com **fo
 
 - Node.js 18+
 - Conta Instagram (usuário/senha em variáveis de ambiente)
-- **Chromium na pasta do projeto** (não usa Chrome do sistema): no `.env` defina `PLAYWRIGHT_BROWSERS_PATH=./browser` e depois rode `npx playwright install chromium`. O Chromium será instalado em `crawl/browser/`.
+- **Chromium na pasta do projeto** (não usa Chrome do sistema): no `.env` defina `PLAYWRIGHT_BROWSERS_PATH=./browser` e depois rode `npx playwright install chromium`. O Chromium será instalado em `backend/browser/`.
 
 ## Configuração
 
@@ -88,3 +88,37 @@ Se o login falhar ("Login falhou (verifique usuário/senha ou desafio do Instagr
    ```
 4. O Instagram pode **bloquear ou desafiar** automação (headless). Se funcionar com `HEADFUL=true` e falhar em headless, use login com navegador visível uma vez para gerar a sessão; depois o crawl pode reutilizar `data/instagram-auth.json`.
 5. Se aparecer **"Senha incorreta"** ou similar na página, o script tenta exibir essa mensagem no console quando `LOGIN_DEBUG=true`.
+
+## Índice de busca (API / SQLite)
+
+A busca de influenciadores usa o SQLite (`profile_search_aux` + FTS). O índice é atualizado automaticamente ao gravar perfil ou mídia via `CompositeStorage` (`save`, `savePosts`, `saveMedia`).
+
+Após **importação em massa** ou migração, reconstrua o índice a partir do RocksDB (na pasta `backend`, com os mesmos `STORAGE_DB_PATH` / `SQLITE_DB_PATH` do `.env`):
+
+```bash
+npm run rebuild-search-index
+```
+
+Perfis com LLM concluída mas sem linha auxiliar **não entram** no resultado da busca até o índice existir ou o script acima ser executado.
+
+### Atalho SQL (busca global com ou sem texto)
+
+Quando a busca **não** usa filtros de ativação/LLM/categorias/preço/custo e a ordenação é compatível (ex.: por engajamento ou seguidores; com texto, também `relevance_desc` quando o Meili **não** devolve hits), o backend **lista handles já filtrados no SQLite** (`profile_search_aux`, e **FTS5 na mesma query** quando há `q` e a query vira expressão FTS válida) e só então carrega os perfis correspondentes no RocksDB — em vez de ler **todos** os perfis do bucket. Com **`MEILISEARCH_SEARCH=1`** e o Meili retornar resultados para `q`, o atalho SQL global com FTS **não** é usado (mantém o estreitamento pelo Meili + caminho legado).
+
+Após o carregamento, o filtro **`matchesQuery`** em cima de `search_blob` continua aplicado quando há `q` (paridade com o legado). O **`total`** da resposta reflete só os itens que passam por esse filtro (e demais filtros em memória), alinhado à paginação.
+
+### Colunas denormalizadas (`profile_search_aux`)
+
+A tabela inclui `followers_count`, `engagement_rate`, `avg_likes`, `posts_count` e `account_type` (preenchidos no sync) para índices SQL e evitar parsear JSON em massa. Na primeira subida após atualizar o código, o SQLite aplica `ALTER TABLE` + backfill a partir de `engagement_json`. Rode `npm run rebuild-search-index` se quiser alinhar seguidores e `account_type` com o Rocks em lote.
+
+### Meilisearch (opcional)
+
+Com **`MEILISEARCH_HOST`** definido (ex.: `http://127.0.0.1:7700`), cada sync de índice envia o documento ao índice `influencer_profiles` (salvo se `MEILISEARCH_SYNC=0`). Com **`MEILISEARCH_SEARCH=1`**, a busca textual (`q`) tenta o Meili primeiro (typo/relevância) e cai no FTS5 do SQLite se não houver hits ou em caso de erro.
+
+- **`MEILISEARCH_API_KEY`**: opcional (chave master ou search no Meili).
+- **`MEILISEARCH_SYNC=0`**: não envia atualizações ao Meili.
+- **`MEILISEARCH_SEARCH=1`**: ativa uso do Meili na leitura da busca; sem isso permanece só FTS SQLite.
+
+### Debug de performance
+
+`SEARCH_PROFILE_TIMING=1` loga marcas `[search-timing]` ao longo de `searchProfiles` (mapa aux, estreitamento textual, retorno).

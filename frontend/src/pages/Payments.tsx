@@ -1,20 +1,17 @@
 /**
- * Meus pagamentos: histórico e atalho para compra de créditos (modal centralizado).
+ * Meus pagamentos: fatura pendente em card na página; histórico só com pagamentos concluídos.
  */
-import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Typography, Spin, Alert, Space, Tag, Popconfirm, message } from 'antd'
-import { DollarOutlined, DeleteOutlined, AppstoreOutlined } from '@ant-design/icons'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { Card, Table, Button, Typography, Spin, Alert, Tag } from 'antd'
 import { useAuth } from '../contexts/AuthContext'
-import { useCredits } from '../contexts/CreditsContext'
 import {
   fetchMyPayments,
   fetchMyPendingPayment,
-  deleteMyPendingPayment,
   type PaymentItem,
   type CreatePaymentForCreditsResponse,
 } from '../api'
-import BuyCreditsModal from '../components/BuyCreditsModal/BuyCreditsModal'
+import PendingPaymentCard from '../components/PendingPaymentCard/PendingPaymentCard'
 import './Payments.css'
 
 const { Text } = Typography
@@ -65,14 +62,22 @@ function StatusTag({ status }: { status: string }) {
 
 export default function Payments() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, loading: authLoading } = useAuth()
-  const { balance } = useCredits()
   const [payments, setPayments] = useState<PaymentItem[]>([])
+  const [pendingPayment, setPendingPayment] = useState<CreatePaymentForCreditsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [buyModalOpen, setBuyModalOpen] = useState(false)
-  const [buyCreditsResume, setBuyCreditsResume] = useState<CreatePaymentForCreditsResponse | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const pendingCardRef = useRef<HTMLDivElement | null>(null)
+
+  const loadPendingPayment = useCallback(async () => {
+    try {
+      const p = await fetchMyPendingPayment()
+      setPendingPayment(p)
+    } catch {
+      setPendingPayment(null)
+    }
+  }, [])
 
   const loadPayments = useCallback(async () => {
     try {
@@ -87,32 +92,22 @@ export default function Payments() {
     }
   }, [])
 
+  const refreshAll = useCallback(async () => {
+    await Promise.all([loadPayments(), loadPendingPayment()])
+  }, [loadPayments, loadPendingPayment])
+
   useEffect(() => {
-    if (user) void loadPayments()
-  }, [user, loadPayments])
+    if (user) void refreshAll()
+  }, [user, refreshAll])
 
-  const handleOpenBuy = async () => {
-    try {
-      const p = await fetchMyPendingPayment()
-      setBuyCreditsResume(p)
-    } catch {
-      setBuyCreditsResume(null)
-    }
-    setBuyModalOpen(true)
-  }
-
-  const handleDeletePending = async (paymentId: string) => {
-    setDeletingId(paymentId)
-    try {
-      await deleteMyPendingPayment(paymentId)
-      message.success('Cobrança pendente removida.')
-      await loadPayments()
-    } catch (e) {
-      message.error((e as Error).message)
-    } finally {
-      setDeletingId(null)
-    }
-  }
+  useEffect(() => {
+    const openPending = (location.state as { openPendingPayment?: boolean } | null)?.openPendingPayment
+    if (!openPending || !user) return
+    navigate(location.pathname, { replace: true, state: {} })
+    window.setTimeout(() => {
+      pendingCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 200)
+  }, [location.state, location.pathname, user, navigate])
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -128,39 +123,41 @@ export default function Payments() {
     )
   }
 
+  const completedPayments = payments.filter((p) => p.status !== 'PENDING' && p.status !== 'OVERDUE')
+
   return (
     <div className="app-page" style={{ maxWidth: 960, margin: '0 auto', padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>
-        <Space wrap size="middle">
-          <Text strong style={{ color: 'var(--app-primary)' }}>
-            Saldo: {balance} créditos
-          </Text>
-          <Button type="primary" icon={<DollarOutlined />} onClick={() => void handleOpenBuy()}>
-            Comprar créditos
-          </Button>
-          <Button type="default" icon={<AppstoreOutlined />} onClick={() => navigate('/app/campaigns')}>
-            Minhas campanhas
-          </Button>
-        </Space>
-      </div>
-
       {error && (
         <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} onClose={() => setError(null)} closable />
       )}
+
+      {pendingPayment ? (
+        <div ref={pendingCardRef}>
+          <PendingPaymentCard
+            payment={pendingPayment}
+            onRemoved={() => void refreshAll()}
+            onResolved={() => void refreshAll()}
+          />
+        </div>
+      ) : null}
 
       <Card title="Histórico de pagamentos" className="payments-history-card">
         {loading ? (
           <div style={{ padding: 48, textAlign: 'center' }}>
             <Spin />
           </div>
-        ) : payments.length === 0 ? (
+        ) : completedPayments.length === 0 ? (
           <div style={{ padding: '24px 20px' }}>
-            <Text type="secondary">Nenhum pagamento ainda. Compre créditos para usar nos relatórios.</Text>
+            <Text type="secondary">
+              {pendingPayment
+                ? 'Nenhum pagamento concluído ainda. A fatura em aberto aparece acima.'
+                : 'Nenhum pagamento concluído ainda.'}
+            </Text>
           </div>
         ) : (
           <Table
             className="payments-history-table"
-            dataSource={payments}
+            dataSource={completedPayments}
             rowKey="id"
             pagination={false}
             size="middle"
@@ -199,7 +196,7 @@ export default function Payments() {
                 key: 'billingType',
                 align: 'center',
                 width: '12%',
-                render: (v: string) => (v === 'PIX' ? 'PIX' : 'Boleto'),
+                render: (v: string) => (v === 'PIX' ? 'PIX' : v === 'CREDIT_CARD' ? 'Cartão' : 'Boleto'),
               },
               {
                 title: 'Status',
@@ -224,36 +221,16 @@ export default function Payments() {
                       gap: 4,
                     }}
                   >
-                    {row.bankSlipUrl && row.status === 'PENDING' && (
+                    {row.bankSlipUrl ? (
                       <Button type="link" size="small" href={row.bankSlipUrl} target="_blank" rel="noopener noreferrer">
                         Ver boleto
                       </Button>
-                    )}
-                    {row.invoiceUrl && (
+                    ) : null}
+                    {row.invoiceUrl ? (
                       <Button type="link" size="small" href={row.invoiceUrl} target="_blank" rel="noopener noreferrer">
                         Fatura
                       </Button>
-                    )}
-                    {row.status === 'PENDING' && (
-                      <Popconfirm
-                        title="Remover cobrança pendente?"
-                        description="Cancela no gateway e some do histórico. Não dá para desfazer."
-                        okText="Remover"
-                        cancelText="Cancelar"
-                        okButtonProps={{ danger: true, loading: deletingId === row.id }}
-                        disabled={deletingId != null}
-                        onConfirm={() => void handleDeletePending(row.id)}
-                      >
-                        <Button
-                          type="link"
-                          size="small"
-                          danger
-                          icon={<DeleteOutlined />}
-                          disabled={deletingId != null}
-                          aria-label="Remover cobrança pendente"
-                        />
-                      </Popconfirm>
-                    )}
+                    ) : null}
                   </div>
                 ),
               },
@@ -261,16 +238,6 @@ export default function Payments() {
           />
         )}
       </Card>
-
-      <BuyCreditsModal
-        open={buyModalOpen}
-        onClose={() => {
-          setBuyModalOpen(false)
-          setBuyCreditsResume(null)
-        }}
-        resumePayment={buyCreditsResume}
-        onAfterPaymentCreated={loadPayments}
-      />
     </div>
   )
 }

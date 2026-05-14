@@ -1,5 +1,211 @@
 /* Estilos gerais da página; painel de pagamento (carrinho) em CampaignPaymentCart.css */
 
+/* Layout Posts/Perfis: header fixo (logo + busca); lateral fixa abaixo */
+.campaign-page {
+  --campaign-rail-width: 240px;
+  --campaign-rail-gap: 24px;
+  --campaign-header-height: 56px;
+  --campaign-header-gap: 10px;
+  --campaign-chrome-bg: #ffffff;
+  --campaign-page-inset: max(24px, calc((100vw - 1120px) / 2 + 24px));
+}
+
+.campaign-page--all {
+  --campaign-fixed-top: 10px;
+}
+
+.campaign-page:not(.campaign-page--all) {
+  --campaign-fixed-top: 66px;
+}
+
+.campaign-split-layout {
+  align-items: flex-start;
+  gap: 0;
+}
+
+.campaign-split-layout__rail {
+  position: fixed;
+  top: var(--campaign-fixed-top, 10px);
+  left: 0;
+  width: calc(var(--campaign-rail-width) + var(--campaign-page-inset));
+  padding-left: var(--campaign-page-inset);
+  padding-right: 0;
+  padding-bottom: 12px;
+  max-height: calc(100dvh - var(--campaign-fixed-top, 10px) - 12px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 15;
+  background-color: var(--campaign-chrome-bg);
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+
+.campaign-page--with-top-header .campaign-split-layout__rail {
+  top: calc(var(--campaign-fixed-top) + var(--campaign-header-height) + var(--campaign-header-gap) - 1px);
+  padding-top: 6px;
+  max-height: calc(
+    100dvh - var(--campaign-fixed-top) - var(--campaign-header-height) - var(--campaign-header-gap) - 12px
+  );
+}
+
+.campaign-split-layout__rail-spacer {
+  flex: 0 0 calc(var(--campaign-rail-width) + var(--campaign-rail-gap));
+  width: calc(var(--campaign-rail-width) + var(--campaign-rail-gap));
+  pointer-events: none;
+}
+
+.campaign-split-layout__rail::-webkit-scrollbar {
+  width: 6px;
+}
+
+.campaign-split-layout__rail::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+
+.campaign-top-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: calc(var(--campaign-header-height) + var(--campaign-fixed-top, 10px));
+  padding: calc(var(--campaign-fixed-top, 10px) + 4px) var(--campaign-page-inset) 10px;
+  box-sizing: border-box;
+  background-color: var(--campaign-chrome-bg);
+  border-bottom: 1px solid var(--app-border-light, #ececec);
+  box-shadow: none;
+}
+
+.campaign-top-header__brand {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.campaign-top-header__brand img {
+  height: 28px;
+  width: auto;
+  max-width: min(100%, 200px);
+  object-fit: contain;
+  display: block;
+}
+
+.campaign-top-header__search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.campaign-top-header__search .ant-input-affix-wrapper.ant-input-affix-wrapper-lg {
+  border-radius: 999px 0 0 999px;
+}
+
+.campaign-top-header__search .ant-space-compact .ant-btn-lg:last-child {
+  border-radius: 0 999px 999px 0;
+}
+
+.campaign-top-header-account-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  height: 40px;
+  min-width: 52px;
+  padding: 0 14px;
+  border: 1px solid #dbdbdb;
+  border-radius: 999px;
+  background: #fff;
+  color: #595959;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.campaign-top-header-account-btn:hover {
+  color: #262626;
+  background: #fafafa;
+  border-color: #c7c7c7;
+}
+
+.campaign-top-header-account-btn:focus-visible {
+  outline: 2px solid var(--app-primary, #722ed1);
+  outline-offset: 2px;
+}
+
+.campaign-top-header-account-btn__user {
+  font-size: 17px;
+}
+
+.campaign-top-header-account-btn__chevron {
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.campaign-top-header-spacer {
+  height: calc(var(--campaign-fixed-top) + var(--campaign-header-height) + var(--campaign-header-gap) + 10px);
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 768px) {
+  .campaign-page {
+    --campaign-page-inset: 16px;
+  }
+
+  .campaign-split-layout__rail {
+    position: static;
+    left: auto;
+    width: auto;
+    padding-left: 0;
+    max-height: none;
+    overflow: visible;
+    background-color: transparent;
+  }
+
+  .campaign-page--with-top-header .campaign-split-layout__rail {
+    top: auto;
+    max-height: none;
+    padding-top: 0;
+  }
+
+  .campaign-split-layout__rail-spacer {
+    display: none;
+  }
+
+  .campaign-top-header {
+    padding-left: 16px;
+    padding-right: 16px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .campaign-top-header__brand img {
+    height: 24px;
+    max-width: 160px;
+  }
+
+  .campaign-page--all {
+    --campaign-fixed-top: 0;
+  }
+
+  .campaign-top-header {
+    min-height: calc(var(--campaign-header-height) + var(--campaign-fixed-top));
+    padding-top: calc(var(--campaign-fixed-top) + 4px);
+  }
+
+  .campaign-top-header-spacer {
+    height: calc(var(--campaign-fixed-top) + var(--campaign-header-height) + var(--campaign-header-gap) + 8px);
+  }
+}
+
 /* Qualificação LLM abaixo do @ na tabela de campanha */
 .campaign-list-llm-badges {
   display: flex;
@@ -307,6 +513,33 @@
 .campaign-instagram-view-toggle-btn:focus-visible {
   outline: 2px solid var(--app-primary, #722ed1);
   outline-offset: 2px;
+}
+
+.campaign-instagram-view-toggle--full {
+  display: flex;
+  width: 100%;
+}
+
+.campaign-instagram-view-toggle--full .campaign-instagram-view-toggle-btn {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  height: 36px;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.campaign-instagram-view-toggle--full .campaign-instagram-view-toggle-btn span {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.campaign-rail-view-toggle {
+  width: 100%;
 }
 
 /* Remoção de campanha: quase invisível até passar o mouse (modal de nome). */

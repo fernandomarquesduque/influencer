@@ -29,7 +29,7 @@ body {
   overflow-y: visible;
 }
 
-/* /app/campaigns/all: sem header de 56px — evita min-height “curta” + rolagem por 100vh vs dvh */
+/* /search: sem header de 56px — evita min-height “curta” + rolagem por 100vh vs dvh */
 .app-layout-content--no-app-navbar {
   min-height: 100vh;
   min-height: 100dvh;

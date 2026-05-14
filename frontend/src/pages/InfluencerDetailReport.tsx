@@ -10,6 +10,9 @@ import {
   DollarOutlined,
   CommentOutlined,
   MessageOutlined,
+  TeamOutlined,
+  FileTextOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons'
 import { reportTokens as t } from './reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
@@ -19,6 +22,7 @@ import type { StrategicMetrics, ExecutiveSummaryForBrands, BenchmarkInsight } fr
 import { getPostStablePreviewUrl, type PostItem } from '../api'
 import ProfileAvatar from '../components/ProfileAvatar'
 import PostPreviewCard, { getPostCaptionOverlayLines } from '../components/PostPreviewCard'
+import { HeroInfoStrip, type HeroInfoStripItem } from '../components/HeroInfoStrip'
 
 const s = t.spacing
 const c = t.colors
@@ -66,10 +70,64 @@ export interface ReportHeroProps {
   scoreTooltip?: string
   /** Tags de tipo/conteúdo exibidas na coluna direita (ex.: Moda, Beleza) */
   typesTags?: React.ReactNode
+  /** Prévia limitada: desfoca os números do hero (seguidores, ER, posts/sem). */
+  blurHighlights?: boolean
 }
 
 const AVATAR_SIZE = 120
 const AVATAR_SIZE_MOBILE = 64
+
+function heroMetricMeta(label: string): { icon: React.ReactNode; bg: string; fg: string } {
+  if (label === 'Seguidores') {
+    return { icon: <TeamOutlined />, bg: 'rgba(104, 39, 143, 0.14)', fg: '#68278f' }
+  }
+  if (label === 'Posts/sem') {
+    return { icon: <CalendarOutlined />, bg: 'rgba(14, 165, 233, 0.14)', fg: '#0ea5e9' }
+  }
+  if (label === 'ER médio' || label === 'ER') {
+    return {
+      icon: <span style={{ fontSize: '1em', fontWeight: 700, lineHeight: 1 }}>%</span>,
+      bg: 'rgba(219, 39, 119, 0.14)',
+      fg: '#db2777',
+    }
+  }
+  return { icon: <FileTextOutlined />, bg: 'rgba(104, 39, 143, 0.14)', fg: '#68278f' }
+}
+
+function ReportHeroMetricsStrip({
+  highlights,
+  blurHighlights,
+  isMobile,
+}: {
+  highlights: { label: string; value: string }[]
+  blurHighlights: boolean
+  isMobile: boolean
+}) {
+  const items: HeroInfoStripItem[] = highlights.map(({ label, value }) => {
+    const meta = heroMetricMeta(label)
+    const tooltipKey =
+      label === 'Seguidores' ? 'seguidores' : label === 'ER' || label === 'ER médio' ? 'er' : label === 'Posts/sem' ? 'postsPerSemana' : null
+    const tip = tooltipKey ? METRIC_TOOLTIPS[tooltipKey as keyof typeof METRIC_TOOLTIPS] : undefined
+    return {
+      key: label,
+      value,
+      label,
+      icon: meta.icon,
+      iconBg: meta.bg,
+      iconFg: meta.fg,
+      tooltip: tip,
+    }
+  })
+  return (
+    <HeroInfoStrip
+      className="report-hero-metrics"
+      items={items}
+      isMobile={isMobile}
+      blur={blurHighlights}
+      density="compact"
+    />
+  )
+}
 
 export function ReportHero({
   profilePic,
@@ -90,6 +148,7 @@ export function ReportHero({
   score: scoreValue,
   scoreTooltip: _scoreTooltip,
   typesTags,
+  blurHighlights = false,
 }: ReportHeroProps) {
   const atHandle = handleProp ? `@${handleProp.replace(/^@/, '')}` : ''
   const avatarSize = isMobile ? AVATAR_SIZE_MOBILE : AVATAR_SIZE
@@ -129,11 +188,10 @@ export function ReportHero({
               />
             </div>
             <div style={{ flex: isMobile ? undefined : 1, minWidth: 0, width: isMobile ? '100%' : undefined, textAlign: isMobile ? 'center' : undefined }}>
-              {(name || atHandle || (hasRightBadge && !showRightColumn)) && (
+              {(name || (hasRightBadge && !showRightColumn)) && (
                 <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: isMobile ? 'center' : showRightColumn ? 'flex-start' : 'space-between', gap: s.xs, marginBottom: 0 }}>
                   <div style={{ minWidth: 0, textAlign: isMobile ? 'center' : undefined, lineHeight: 1.25 }}>
                     {name && <h1 style={{ ...typ.hero, color: c.text, margin: 0, marginBottom: 0, lineHeight: 1.2, fontSize: isMobile ? 18 : 20 }}>{name}</h1>}
-                    {atHandle && <div style={{ ...typ.body, color: c.textSecondary, fontWeight: 500, fontSize: isMobile ? 12 : 13, marginTop: 0 }}>{atHandle}</div>}
                   </div>
                   {hasRightBadge && !showRightColumn && (
                     <div style={{ flexShrink: 0 }}>
@@ -179,15 +237,7 @@ export function ReportHero({
               {!hasRightBadge && badgeLabel != null && (
                 <Tag style={{ background: c.primary, color: 'var(--brand-white)', border: 'none', borderRadius: r.full, padding: isMobile ? '2px 8px' : '2px 10px', marginBottom: 4, fontSize: 11 }}>{badgeLabel}</Tag>
               )}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.xs : s.sm, marginBottom: secondaryMetrics ? 2 : scoreValue != null ? 4 : 6, justifyContent: isMobile ? 'center' : undefined }}>
-                {highlights.map(({ label, value }) => {
-                  const tooltipKey = label === 'Seguidores' ? 'seguidores' : label === 'ER' ? 'er' : label === 'Posts/sem' ? 'postsPerSemana' : null
-                  const tip = tooltipKey ? METRIC_TOOLTIPS[tooltipKey as keyof typeof METRIC_TOOLTIPS] : null
-                  const content = <><strong style={{ color: c.text }}>{value}</strong> {label}</>
-                  const span = <span style={{ ...typ.bodySmall, color: c.textSecondary, cursor: tip ? 'help' : undefined }}>{content}</span>
-                  return <span key={label}>{tip ? <Tooltip title={tip} placement="top">{span}</Tooltip> : span}</span>
-                })}
-              </div>
+              <ReportHeroMetricsStrip highlights={highlights} blurHighlights={blurHighlights} isMobile={isMobile} />
               {secondaryMetrics && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.xs : s.sm, alignItems: 'center', justifyContent: isMobile ? 'center' : undefined, ...typ.bodySmall, color: c.textSecondary, marginBottom: scoreValue != null ? 4 : 6, fontSize: 12 }}>
                   {secondaryMetrics}

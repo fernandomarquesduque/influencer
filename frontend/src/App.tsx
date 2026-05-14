@@ -4,6 +4,7 @@ import { AuthProvider } from './contexts/AuthContext'
 import { CreditsProvider } from './contexts/CreditsContext'
 import { PendingPaymentCelebrationProvider } from './contexts/PendingPaymentCelebrationContext'
 import { RequireAuth } from './components/RequireAuth'
+import AllCampaignsRedirect from './components/AllCampaignsRedirect'
 import Layout from './Layout'
 
 /** Ao focar em input/textarea/select, reposiciona o scroll para o campo não ficar atrás do teclado e o botão de ação continuar visível. (Desativado na Home.) */
@@ -60,6 +61,7 @@ import BulkMessage from './pages/BulkMessage'
 import Payments from './pages/Payments'
 import Profile from './pages/Profile'
 import CheckoutCredits from './pages/CheckoutCredits'
+import CheckoutPlan from './pages/CheckoutPlan'
 import VerifyEmail from './pages/VerifyEmail'
 import MissionReward from './pages/MissionReward'
 import LinkInstagramMission from './pages/LinkInstagramMission'
@@ -83,39 +85,11 @@ export default function App() {
             <Route path="/agencia/login" element={<AgencyLogin />} />
             <Route path="/agencia/esqueci-senha" element={<AgencyForgotPassword />} />
             <Route path="/premium" element={<Premium />} />
-            <Route
-              path="search"
-              element={
-                <div
-                  className="search-route-page"
-                  style={{
-                    minHeight: '100dvh',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    padding: '20px',
-                    boxSizing: 'border-box',
-                    overflowX: 'hidden',
-                  }}
-                >
-                  <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
-                    <Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" />
-                  </div>
-                  <div
-                    className="search-route-main"
-                    style={{
-                      flex: '0 0 auto',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'stretch',
-                      width: '100%',
-                    }}
-                  >
-                    <ListAndDetailModal />
-                  </div>
-                </div>
-              }
-            />
+            <Route path="/search" element={<Layout />}>
+              <Route index element={<CampaignInfluencers />} />
+            </Route>
             <Route path="/checkout" element={<><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /><CheckoutCredits /></>} />
+            <Route path="/checkout/plan/:planId" element={<CheckoutPlan />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/missions/reward" element={<MissionReward />} />
             <Route path="/" element={<Home />} />
@@ -124,6 +98,7 @@ export default function App() {
               <Route index element={<MyCampaigns />} />
               <Route path="campaigns" element={<MyCampaigns />} />
               <Route path="campaigns/create" element={<ListAndDetailModal />} />
+              <Route path="campaigns/all" element={<AllCampaignsRedirect />} />
               <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
               <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail />} />
               <Route path="payments" element={<Payments />} />

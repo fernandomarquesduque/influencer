@@ -30,6 +30,7 @@ import {
 } from '../api'
 import { getLlmQualification } from '../utils/mapProfileListToPreviewItems'
 import { getLlmProfileTypeBadge, getLlmMainCategoryLabel, getLlmGenderBadge } from '../utils/campaignLlmBadges'
+import { facetOptionLabel } from '../utils/facetLabels'
 import './AdminBulkPurgeInfluencers.css'
 
 const PAGE_SIZE = 50
@@ -48,7 +49,7 @@ const SORT_OPTIONS: { value: ProfilesSort; label: string }[] = [
 function facetOptions(rows: { name: string; count: number }[] | undefined): { label: string; value: string }[] {
   if (!rows?.length) return []
   return rows.map((r) => ({
-    label: `${r.name} (${r.count})`,
+    label: facetOptionLabel(r.name, r.count),
     value: r.name,
   }))
 }
@@ -76,8 +77,6 @@ export default function AdminBulkPurgeInfluencers() {
   const [llmLanguage, setLlmLanguage] = useState<string[]>([])
   const [llmAudienceType, setLlmAudienceType] = useState<string[]>([])
   const [llmToneOfVoice, setLlmToneOfVoice] = useState<string[]>([])
-  const [llmSubCategories, setLlmSubCategories] = useState<string[]>([])
-  const [llmContentPillars, setLlmContentPillars] = useState<string[]>([])
   const [llmRiskLevelRaw, setLlmRiskLevelRaw] = useState('')
   const [brandSafetyFilter, setBrandSafetyFilter] = useState<'' | 'familia' | 'adulto'>('')
   const [sizeFilter, setSizeFilter] = useState<string[]>([])
@@ -110,8 +109,6 @@ export default function AdminBulkPurgeInfluencers() {
     if (llmLanguage.length) q.llmLanguage = llmLanguage
     if (llmAudienceType.length) q.llmAudienceType = llmAudienceType
     if (llmToneOfVoice.length) q.llmToneOfVoice = llmToneOfVoice
-    if (llmSubCategories.length) q.llmSubCategories = llmSubCategories
-    if (llmContentPillars.length) q.llmContentPillars = llmContentPillars
     if (riskParts.length) q.llmRiskLevel = riskParts
     if (brandSafetyFilter === 'familia') q.llmIsFamilySafe = true
     if (brandSafetyFilter === 'adulto') q.llmIsAdultContent = true
@@ -127,8 +124,6 @@ export default function AdminBulkPurgeInfluencers() {
     llmLanguage,
     llmAudienceType,
     llmToneOfVoice,
-    llmSubCategories,
-    llmContentPillars,
     llmRiskLevelRaw,
     brandSafetyFilter,
     sizeFilter,
@@ -389,40 +384,6 @@ export default function AdminBulkPurgeInfluencers() {
                       value={llmToneOfVoice}
                       onChange={(v) => {
                         setLlmToneOfVoice(v)
-                        setPage(1)
-                      }}
-                    />
-                  </Col>
-                  <Col xs={24} sm={12} md={8}>
-                    <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-                      Subcategorias
-                    </Typography.Text>
-                    <Select
-                      mode="multiple"
-                      allowClear
-                      style={{ width: '100%' }}
-                      placeholder="Qualquer"
-                      options={facetOptions(llmFacets?.subCategories)}
-                      value={llmSubCategories}
-                      onChange={(v) => {
-                        setLlmSubCategories(v)
-                        setPage(1)
-                      }}
-                    />
-                  </Col>
-                  <Col xs={24} sm={12} md={8}>
-                    <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-                      Pilares de conteúdo
-                    </Typography.Text>
-                    <Select
-                      mode="multiple"
-                      allowClear
-                      style={{ width: '100%' }}
-                      placeholder="Qualquer"
-                      options={facetOptions(llmFacets?.contentPillars)}
-                      value={llmContentPillars}
-                      onChange={(v) => {
-                        setLlmContentPillars(v)
                         setPage(1)
                       }}
                     />

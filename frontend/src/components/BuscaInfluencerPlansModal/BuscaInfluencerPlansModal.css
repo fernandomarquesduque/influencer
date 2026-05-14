@@ -1,0 +1,234 @@
+.busca-plans-modal .ant-modal-content {
+  padding: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 48px rgba(40, 20, 80, 0.14), 0 8px 16px rgba(0, 0, 0, 0.06);
+}
+
+.busca-plans-modal .ant-modal-header {
+  display: none;
+}
+
+.busca-plans-modal .ant-modal-body {
+  padding: 0;
+}
+
+.busca-plans-modal__body {
+  padding: 28px 24px 24px;
+  background: var(--app-bg, #fff);
+}
+
+.busca-plans-modal__eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--app-text-secondary, #888);
+  margin-bottom: 8px;
+}
+
+.busca-plans-modal__title {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--app-text, #111);
+  letter-spacing: -0.02em;
+}
+
+.busca-plans-modal__intro {
+  margin: 0 0 18px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--app-text, #333);
+}
+
+.busca-plans-modal__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.busca-plans-modal__card {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--app-primary, #68278f) 14%, var(--app-border, #eee));
+  background: color-mix(in srgb, var(--app-primary, #68278f) 4%, var(--app-bg-secondary, #fafafa));
+  padding: 14px;
+}
+
+.busca-plans-modal__card--featured {
+  border-color: color-mix(in srgb, var(--app-primary, #68278f) 32%, var(--app-border, #eee));
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--app-primary, #68278f) 10%, var(--app-bg, #fff)) 0%,
+    color-mix(in srgb, var(--app-primary, #68278f) 4%, var(--app-bg-secondary, #fafafa)) 100%
+  );
+  box-shadow: 0 4px 16px rgba(104, 39, 143, 0.1);
+}
+
+.busca-plans-modal__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 8px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--app-primary, #68278f);
+  background: color-mix(in srgb, var(--app-primary, #68278f) 14%, var(--app-bg, #fff));
+}
+
+.busca-plans-modal__card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.busca-plans-modal__plan-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--app-text, #111);
+}
+
+.busca-plans-modal__price {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.busca-plans-modal__price-currency {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-primary, #68278f);
+}
+
+.busca-plans-modal__price-value {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--app-primary, #68278f);
+  letter-spacing: -0.03em;
+}
+
+.busca-plans-modal__price-period {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--app-text-secondary, #666);
+}
+
+.busca-plans-modal__card-desc {
+  margin: 0 0 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--app-text, #333);
+}
+
+.busca-plans-modal__features {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.busca-plans-modal__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--app-text, #222);
+}
+
+.busca-plans-modal__features .anticon {
+  margin-top: 2px;
+  color: var(--app-primary, #68278f);
+  font-size: 11px;
+}
+
+.busca-plans-modal__card-cta {
+  margin-top: 10px;
+  height: 36px !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  border-color: color-mix(in srgb, var(--app-primary, #68278f) 28%, var(--app-border, #e8e8e8)) !important;
+  color: var(--app-primary, #68278f) !important;
+  background: var(--app-bg, #fff) !important;
+}
+
+.busca-plans-modal__card-cta:hover {
+  border-color: var(--app-primary, #68278f) !important;
+  color: var(--app-primary, #68278f) !important;
+  background: color-mix(in srgb, var(--app-primary, #68278f) 8%, var(--app-bg, #fff)) !important;
+}
+
+.busca-plans-modal__card-cta--primary {
+  border: none !important;
+  background: linear-gradient(135deg, var(--app-primary, #68278f) 0%, #9d4edd 100%) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 12px rgba(104, 39, 143, 0.28);
+}
+
+.busca-plans-modal__card-cta--primary:hover {
+  filter: brightness(1.06);
+  color: #fff !important;
+}
+
+.busca-plans-modal__cta-secondary {
+  height: 44px !important;
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  margin-top: 4px;
+  border-color: color-mix(in srgb, var(--app-primary, #68278f) 22%, var(--app-border, #e8e8e8)) !important;
+  color: var(--app-primary, #68278f) !important;
+}
+
+.busca-plans-modal__cta-secondary:hover {
+  border-color: var(--app-primary, #68278f) !important;
+  color: var(--app-primary, #68278f) !important;
+  background: color-mix(in srgb, var(--app-primary, #68278f) 6%, var(--app-bg, #fff)) !important;
+}
+
+.busca-plans-modal__cta {
+  height: 46px !important;
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+  border: none !important;
+  background: linear-gradient(135deg, var(--app-primary, #68278f) 0%, #9d4edd 100%) !important;
+  box-shadow: 0 4px 14px rgba(104, 39, 143, 0.35);
+}
+
+.busca-plans-modal__cta:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 6px 18px rgba(104, 39, 143, 0.4) !important;
+}
+
+.busca-plans-modal__loading {
+  display: flex;
+  justify-content: center;
+  padding: 48px 0;
+}
+
+.busca-plans-modal__pending-cta {
+  margin-top: 8px;
+}
+
+.busca-plans-modal__hint {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--app-text-secondary, #888);
+  text-align: center;
+}

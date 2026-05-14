@@ -7,19 +7,19 @@ import express, { type NextFunction, type Request, type RequestHandler, type Res
 import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-/** Raiz do projeto crawl (onde ficam .env e data/). Funciona com tsx (src/api) e com node após build (dist/api). */
+/** Raiz do projeto backend (onde ficam .env e data/). Funciona com tsx (src/api) e com node após build (dist/api). */
 const _twoUp = path.resolve(__dirname, '../..');
-const CRAWL_ROOT = path.basename(_twoUp) === 'dist' ? path.resolve(__dirname, '../../..') : _twoUp;
+const BACKEND_ROOT = path.basename(_twoUp) === 'dist' ? path.resolve(__dirname, '../../..') : _twoUp;
 
-/** .env na pasta crawl — não depende do cwd (evita depurador/IDE com cwd errado sem AWS). */
-const CRAWL_ENV_PATH = path.join(CRAWL_ROOT, '.env');
-dotenv.config({ path: CRAWL_ENV_PATH });
+/** .env na pasta backend — não depende do cwd (evita depurador/IDE com cwd errado sem AWS). */
+const BACKEND_ENV_PATH = path.join(BACKEND_ROOT, '.env');
+dotenv.config({ path: BACKEND_ENV_PATH });
 dotenv.config();
 logMemorySnapshot('API pós-.env (baseline de processo)');
 
 function resolveAuthStatePath(relativeOrAbsolute: string): string {
   if (path.isAbsolute(relativeOrAbsolute)) return relativeOrAbsolute;
-  return path.resolve(CRAWL_ROOT, relativeOrAbsolute);
+  return path.resolve(BACKEND_ROOT, relativeOrAbsolute);
 }
 import swaggerUi from 'swagger-ui-express';
 import { createRequire } from 'node:module';
@@ -34,6 +34,7 @@ import {
 } from '../crawl/extractSingleProfile.js';
 import {
   searchProfiles,
+  narrowHandlesByProfilesQuery,
   getProfileSummary,
   isSearchCacheWarmBlockedError,
   scheduleSearchCacheRewarm,
@@ -43,7 +44,11 @@ import {
   matchesQuery,
   getPostSearchableNormalized,
   getPostTimestamp,
+  computePostsPerWeek,
   collectMentionHandlesFromPostItem,
+  computeCampaignFacetBoostScore,
+  hasCampaignFacetBoostInQuery,
+  stripCampaignFacetBoostFromProfilesQuery,
   type ProfilesSearchQuery,
   type ProfileListItem,
   type ProfilesSearchFacets,
@@ -52,6 +57,7 @@ import { rebuildAllProfileSearchIndexes, syncProfileSearchIndexForHandle } from 
 import { CreditsCampaignsDb, isCampaignIdGuid } from '../storage/creditsCampaignsDb.js';
 import { PaymentsDb, type PaymentRow } from '../storage/paymentsDb.js';
 import * as asaas from '../asaas/client.js';
+import { getBuscaPlanById } from '../billing/buscaPlans.js';
 import { InstagramClient } from '../instagramClient/index.js';
 import { loginWithCredentials } from '../instagramClient/login.js';
 import { profileExtractDelay, profileExtractDelayForApi } from '../utils/delay.js';
@@ -73,6 +79,13 @@ import { isFollowingViewerFromEntity } from '../utils/entityAccess.js';
 import { AuthDb } from '../auth/authDb.js';
 import { authOptional, requireScopes, requireScopesOrPublic, canEditProfile, type RequestWithAuth } from '../auth/middleware.js';
 import { checkApiRateLimit, getRetryAfterSeconds } from '../utils/apiRateLimit.js';
+import {
+  redactContactInfoInActivation,
+  redactContactInfoInPostItems,
+  redactContactInfoInProfile,
+  redactContactInfoInProfileListItem,
+  redactContactInfoInText,
+} from '../utils/redactContactInfo.js';
 import { signJwt, verifyJwt, getJwtSecret } from '../auth/jwt.js';
 import { verifyPassword, hashPassword } from '../auth/password.js';
 import type { AuthScope } from '../auth/types.js';
@@ -2117,7 +2130,9 @@ app.get('/api/profiles', rateLimitDataApi, requireCampaignIdHeader, async (req: 
       }
     }
     const total = items.length;
-    const slice = items.slice(offset, offset + limit).map(({ key, value }) => ({ key, ...value as object }));
+    const slice = items
+      .slice(offset, offset + limit)
+      .map(({ key, value }) => redactContactInfoInProfile({ key, ...(value as object) }));
     res.json({ total, items: slice });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -2173,9 +2188,15 @@ function rateLimitDataApi(req: RequestWithAuth, res: Response, next: () => void)
 /** Reduz perfil para versão sem dados sensíveis (público que atingiu limite). Mantém apenas bio e dados mínimos de exibição (foto, nome, handle). */
 function redactProfile(profile: Record<string, unknown>, opts?: { allBasePreview?: boolean }): Record<string, unknown> {
   const out = { ...profile };
-  const sensitive = ['followers_count', 'following_count', 'media_count', 'media_count_visible', 'categories', 'external_url', 'mutual_followers_count', 'total_clips_count', '_collected_at', '_discovered_by', '_discovered_value'];
-  for (const k of sensitive) {
+  const alwaysStrip = ['categories', 'external_url', 'mutual_followers_count', '_collected_at', '_discovered_by', '_discovered_value'];
+  const countsStrip = ['followers_count', 'following_count', 'media_count', 'media_count_visible', 'total_clips_count'];
+  for (const k of alwaysStrip) {
     out[k] = null;
+  }
+  if (!opts?.allBasePreview) {
+    for (const k of countsStrip) {
+      out[k] = null;
+    }
   }
   if (out.data && typeof out.data === 'object') {
     const d = out.data as Record<string, unknown>;
@@ -2188,9 +2209,9 @@ function redactProfile(profile: Record<string, unknown>, opts?: { allBasePreview
           profile_pic_url: u?.profile_pic_url,
           is_verified: u?.is_verified,
           biography: u?.biography,
-          follower_count: null,
-          following_count: null,
-          media_count: null,
+          follower_count: opts?.allBasePreview ? u?.follower_count ?? null : null,
+          following_count: opts?.allBasePreview ? u?.following_count ?? null : null,
+          media_count: opts?.allBasePreview ? u?.media_count ?? null : null,
           external_url: null,
         }
         : d.user,
@@ -2200,13 +2221,12 @@ function redactProfile(profile: Record<string, unknown>, opts?: { allBasePreview
   if (opts?.allBasePreview) {
     (out as { _all_base_preview?: boolean })._all_base_preview = true;
   }
-  return out;
+  return redactContactInfoInProfile(out);
 }
 
 /** Reduz lista de posts removendo métricas (likes, comentários, views) para público que atingiu limite. */
 function redactPostsItems(items: Array<{ key: string;[k: string]: unknown }>): Array<Record<string, unknown>> {
-  return items.map(({ key, ...item }) => {
-    const out = { key, ...item } as Record<string, unknown>;
+  return redactContactInfoInPostItems(items).map((out) => {
     if (out.metrics && typeof out.metrics === 'object') {
       out.metrics = { likes: null, comments: null, view_count: null };
     }
@@ -2216,6 +2236,15 @@ function redactPostsItems(items: Array<{ key: string;[k: string]: unknown }>): A
     }
     return out;
   });
+}
+
+/** Posts para resposta da API: sempre oculta @ e telefones em legendas/textos. */
+function preparePostItemsForApiResponse(items: Array<{ key: string;[k: string]: unknown }>): Array<Record<string, unknown>> {
+  return redactContactInfoInPostItems(items);
+}
+
+function prepareProfileListItemsForApiResponse(items: ProfileListItem[]): ProfileListItem[] {
+  return items.map((item) => redactContactInfoInProfileListItem(item as Record<string, unknown>) as ProfileListItem);
 }
 
 /** Resposta de busca para público/anônimo: só totais e facets agregados — sem lista de perfis (`items`). */
@@ -2311,7 +2340,7 @@ function buildProfilePreviewItem(item: ProfileListItem, previewIndex: number): P
   })();
   const q = getLlmQualification(item as unknown as Record<string, unknown>);
   const personaRaw = String(q?.personaSummary ?? '').trim();
-  const llmDescription = varyPreviewPersonaDescription(personaRaw, item, previewIndex);
+  const llmDescription = redactContactInfoInText(varyPreviewPersonaDescription(personaRaw, item, previewIndex));
   const category = String(q?.mainCategory ?? '').trim() || '-';
   const audienceArr = Array.isArray(q?.audienceType)
     ? (q!.audienceType as unknown[])
@@ -2525,8 +2554,6 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       llmMainCategory: optStrList(req.query.llmMainCategory),
       llmGender: optStrList(req.query.llmGender),
       llmLanguage: optStrList(req.query.llmLanguage),
-      llmSubCategories: optStrList(req.query.llmSubCategories),
-      llmContentPillars: optStrList(req.query.llmContentPillars),
       llmAudienceType: optStrList(req.query.llmAudienceType),
       llmToneOfVoice: optStrList(req.query.llmToneOfVoice),
       llmRiskLevel: optStrList(req.query.llmRiskLevel),
@@ -2896,6 +2923,32 @@ app.get('/api/me/payments/pending', async (req: RequestWithAuth, res: Response) 
   }
 });
 
+/** Status da assinatura de plano (acesso ao app para assinantes). */
+app.get('/api/me/subscription', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const pending = paymentsDb.getFirstPendingForUser(userId);
+    if (pending?.plan_id) {
+      await syncPendingPaymentFromAsaasIfConfigured(pending);
+    }
+    const active = paymentsDb.hasActivePlanSubscription(userId);
+    const latest = paymentsDb.getLatestPlanPayment(userId);
+    const pendingAfter = paymentsDb.getFirstPendingForUser(userId);
+    res.json({
+      active,
+      planId: latest?.plan_id ?? null,
+      subscriptionId: latest?.asaas_subscription_id ?? null,
+      hasPendingPlanPayment: Boolean(pendingAfter?.plan_id),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 /** Detalhe de um pagamento do usuário. */
 app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
   try {
@@ -3243,11 +3296,16 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
       res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
       return;
     }
-    const body = req.body as { email?: string; password?: string; name?: string; credits?: number; billingType?: string };
+    const body = req.body as { email?: string; password?: string; name?: string; credits?: number; billingType?: string; cpfCnpj?: string };
     const email = (body?.email ?? '').toString().trim().toLowerCase();
     const password = (body?.password ?? '').toString();
     const name = (body?.name ?? '').toString().trim() || email;
     const credits = Number(body?.credits);
+    const cpfDigits = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
+    if (cpfDigits.length !== 11 && cpfDigits.length !== 14) {
+      res.status(400).json({ error: 'Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.' });
+      return;
+    }
     if (!email || !email.includes('@')) {
       res.status(400).json({ error: 'E-mail é obrigatório e deve ser válido' });
       return;
@@ -3299,12 +3357,24 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
       externalRef,
       name: displayName,
       email,
+      cpfCnpj: cpfDigits,
+      retryFindAfterCreate: true,
     });
     if (!customerRes.ok) {
       res.status(502).json(jsonAsaasCustomerGatewayError(customerRes));
       return;
     }
     const asaasCustomerId = customerRes.asaasCustomerId;
+    try {
+      await asaas.updateCustomer(asaasCustomerId, { name: displayName, cpfCnpj: cpfDigits });
+    } catch (updateErr) {
+      console.warn('[register-and-pay] Asaas updateCustomer:', updateErr);
+    }
+    try {
+      authDb.setBillingCpfCnpj(userId, cpfDigits);
+    } catch (saveDocErr) {
+      console.warn('[register-and-pay] setBillingCpfCnpj:', saveDocErr);
+    }
 
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + (billingType === 'BOLETO' ? 3 : 1));
@@ -3367,6 +3437,223 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
       invoiceUrl,
       bankSlipUrl,
       pixCopyPaste,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Checkout de plano: cadastro (opcional) + assinatura mensal Asaas (cartão de crédito). */
+app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!asaas.isAsaasConfigured()) {
+      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      return;
+    }
+    const body = req.body as {
+      planId?: string;
+      email?: string;
+      password?: string;
+      name?: string;
+      cpfCnpj?: string;
+    };
+    const planId = (body?.planId ?? '').toString().trim();
+    const plan = getBuscaPlanById(planId);
+    if (!plan) {
+      res.status(400).json({ error: 'Plano inválido' });
+      return;
+    }
+    const cpfDigits = (body?.cpfCnpj ?? '').toString().replace(/\D/g, '');
+    if (cpfDigits.length !== 11 && cpfDigits.length !== 14) {
+      res.status(400).json({ error: 'Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.' });
+      return;
+    }
+
+    let userId: number;
+    let authUser: NonNullable<ReturnType<typeof authDb.getById>>;
+    let issuedToken: string | null = null;
+
+    if (req.user) {
+      userId = Number(req.user.sub);
+      const row = authDb.getById(userId);
+      if (!row) {
+        res.status(401).json({ error: 'Usuário não encontrado' });
+        return;
+      }
+      authUser = row;
+    } else {
+      const email = (body?.email ?? '').toString().trim().toLowerCase();
+      const password = (body?.password ?? '').toString();
+      const name = (body?.name ?? '').toString().trim() || email;
+      if (!email || !email.includes('@')) {
+        res.status(400).json({ error: 'E-mail é obrigatório e deve ser válido' });
+        return;
+      }
+      if (!password || password.length < 6) {
+        res.status(400).json({ error: 'A senha deve ter no mínimo 6 caracteres' });
+        return;
+      }
+      const existing = authDb.getByUsername(email);
+      if (existing) {
+        res.status(409).json({ error: 'Já existe uma conta com este e-mail. Faça login e assine em Meus pagamentos.' });
+        return;
+      }
+      const passwordHash = hashPassword(password);
+      userId = authDb.createUser(email, passwordHash, 'assinante' as AuthScope, null, undefined, 0);
+      const created = authDb.getById(userId);
+      if (!created) {
+        res.status(500).json({ error: 'Erro ao criar conta' });
+        return;
+      }
+      authUser = created;
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+      authDb.setEmailVerification(userId, verificationToken, expiresAt);
+      const frontBase = process.env.FRONTEND_BASE_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
+      const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
+      void sendVerificationEmail({
+        to: email,
+        subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
+        verifyUrl,
+        bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+      }).catch(() => {});
+
+      const secret = getJwtSecret();
+      issuedToken = signJwt(
+        { sub: String(userId), username: authUser.username, scope: 'assinante' as AuthScope, profile_handle: authUser.profile_handle ?? undefined },
+        secret
+      );
+    }
+
+    const pendingExisting = paymentsDb.getFirstPendingForUser(userId);
+    if (pendingExisting) {
+      res.status(409).json({
+        error: 'Já existe uma cobrança pendente. Conclua ou cancele em Meus pagamentos antes de assinar.',
+        payment: paymentRowToCreditsChargePayload(pendingExisting),
+        ...(issuedToken
+          ? {
+              token: issuedToken,
+              user: {
+                id: authUser.id,
+                username: authUser.username,
+                scope: authUser.scope,
+                profile_handle: authUser.profile_handle,
+              },
+            }
+          : {}),
+      });
+      return;
+    }
+
+    const displayName =
+      (body?.name ?? '').toString().trim() ||
+      (authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username);
+    const email = authUser.username.includes('@')
+      ? authUser.username
+      : `user${userId}@payments.influencer.local`;
+    const externalRef = `user_${userId}`;
+
+    const customerRes = await resolveAsaasCustomerId({
+      externalRef,
+      name: displayName,
+      email,
+      cpfCnpj: cpfDigits,
+      retryFindAfterCreate: true,
+    });
+    if (!customerRes.ok) {
+      res.status(502).json(jsonAsaasCustomerGatewayError(customerRes));
+      return;
+    }
+    const asaasCustomerId = customerRes.asaasCustomerId;
+    try {
+      await asaas.updateCustomer(asaasCustomerId, { name: displayName, cpfCnpj: cpfDigits });
+    } catch (updateErr) {
+      console.warn('[plan-subscribe] Asaas updateCustomer:', updateErr);
+    }
+    try {
+      authDb.setBillingCpfCnpj(userId, cpfDigits);
+    } catch (saveDocErr) {
+      console.warn('[plan-subscribe] setBillingCpfCnpj:', saveDocErr);
+    }
+
+    const nextDue = new Date();
+    const nextDueStr = nextDue.toISOString().slice(0, 10);
+    const credits = plan.credits;
+    const valueBrl = plan.priceBrl;
+    const amountCents = credits * CREDITS_PRICE_CENTS;
+
+    const subscription = await asaas.createSubscription({
+      customer: asaasCustomerId,
+      billingType: 'CREDIT_CARD',
+      value: valueBrl,
+      nextDueDate: nextDueStr,
+      cycle: 'MONTHLY',
+      description: `${plan.name} - Busca Influencer (mensal)`,
+      externalReference: `plan_${planId}_user_${userId}_${Date.now()}`,
+    });
+    const subscriptionId = subscription?.id ?? null;
+    if (!subscriptionId) {
+      res.status(502).json({ error: 'Assinatura criada no gateway sem identificador. Tente em Meus pagamentos.' });
+      return;
+    }
+
+    const asaasPayment = await asaas.waitForSubscriptionFirstPayment(subscriptionId);
+    const asaasPaymentId = asaasPayment?.id ?? null;
+    const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
+    const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
+    const remoteStatus = (asaasPayment?.status ?? 'PENDING').toUpperCase();
+    const localStatus =
+      remoteStatus === 'RECEIVED' || remoteStatus === 'CONFIRMED' || remoteStatus === 'RECEIVED_IN_CASH'
+        ? 'CONFIRMED'
+        : 'PENDING';
+
+    const paymentId = paymentsDb.createPayment({
+      userId,
+      asaasPaymentId,
+      asaasCustomerId,
+      amountCents,
+      creditsGranted: credits,
+      status: localStatus,
+      billingType: 'CREDIT_CARD',
+      invoiceUrl,
+      bankSlipUrl,
+      pixCopyPaste: null,
+      planId,
+      asaasSubscriptionId: subscriptionId,
+    });
+
+    if (localStatus === 'CONFIRMED' && asaasPaymentId) {
+      const row = paymentsDb.getByAsaasPaymentId(asaasPaymentId);
+      if (row) {
+        await finalizePendingPaymentRow(row);
+      }
+    }
+
+    res.status(201).json({
+      ...(issuedToken
+        ? {
+            token: issuedToken,
+            user: {
+              id: authUser.id,
+              username: authUser.username,
+              scope: authUser.scope,
+              profile_handle: authUser.profile_handle,
+              email_verified: authUser.email_verified === 1 ? true : false,
+            },
+          }
+        : {}),
+      subscriptionId,
+      paymentId,
+      asaasPaymentId,
+      status: localStatus,
+      credits,
+      amountCents,
+      valueBrl,
+      billingType: 'CREDIT_CARD',
+      invoiceUrl,
+      bankSlipUrl,
+      pixCopyPaste: null,
+      planId,
     });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -4946,8 +5233,6 @@ function buildCampaignProfilesQuery(
     llmMainCategory: optStrList(req.query.llmMainCategory),
     llmGender: optStrList(req.query.llmGender),
     llmLanguage: optStrList(req.query.llmLanguage),
-    llmSubCategories: optStrList(req.query.llmSubCategories),
-    llmContentPillars: optStrList(req.query.llmContentPillars),
     llmAudienceType: optStrList(req.query.llmAudienceType),
     llmToneOfVoice: optStrList(req.query.llmToneOfVoice),
     llmRiskLevel: optStrList(req.query.llmRiskLevel),
@@ -4983,7 +5268,7 @@ app.get('/api/admin/influencers', requireScopes('adm'), rateLimitDataApi, async 
     };
     const result = await searchProfiles(db, query, { allowLargeLimit: true });
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ total: result.total, items: result.items, facets: result.facets });
+    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items), facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5025,9 +5310,9 @@ function normalizeHandle(h: string | undefined): string {
   return (h ?? '').replace(/^@/, '').trim().toLowerCase();
 }
 
-/** Base completa (`/campaigns/all/...`): redigir perfil/posts se o handle não está em nenhuma campanha paga do usuário. */
+/** Base completa (`/campaigns/all/...`): redigir perfil/posts se anônimo ou se o handle não está em nenhuma campanha paga do usuário. */
 function shouldRedactAllBaseCampaignAccess(req: RequestWithAuth, profileHandle: string): boolean {
-  if (!req.user) return false;
+  if (!req.user) return true;
   const handle = normalizeHandle(profileHandle);
   if (!handle) return false;
   if (canEditProfile(req.user, handle)) return false;
@@ -5169,7 +5454,7 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
 /** Listagem agregada: base completa de perfis (mesma experiência da campanha). */
 app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
-    const cacheKey = 'all-base:public';
+    const cacheKey = 'all-base:public-v2';
     const query = buildCampaignProfilesQuery(req, { maxLimit: 10000 });
     const ctxAll = getCachedCampaignContext(cacheKey);
     let contextItems: ProfileListItem[];
@@ -5178,7 +5463,7 @@ app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWith
       const fullResult = await searchProfiles(
         db,
         { limit: 10000, offset: 0, sort: 'engagement_desc' },
-        { skipInstagramBi: true, allowLargeLimit: true },
+        { skipInstagramBi: true, allowLargeLimit: true, includeProfilesWithoutLlm: true, skipAuxBackfill: true },
       );
       contextItems = fullResult.items;
       campaignBaseFacets = fullResult.facets;
@@ -5191,7 +5476,7 @@ app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWith
       initialItems: contextItems,
       ...(campaignBaseFacets != null ? { campaignBaseFacets } : {}),
     });
-    res.json({ total: result.total, items: result.items, facets: result.facets });
+    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items), facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5281,7 +5566,7 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
       const billableProfileCount = result.items.length - priceSums.alreadyOwnedCount;
       res.json({
         total: result.total,
-        items: result.items,
+        items: prepareProfileListItemsForApiResponse(result.items),
         facets: result.facets,
         pricePreview: {
           amountCents,
@@ -5304,7 +5589,7 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
       });
       return;
     }
-    res.json({ total: result.total, items: result.items, facets: result.facets });
+    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items), facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5329,7 +5614,7 @@ app.get('/api/campaigns/all/profiles/:handle', rateLimitDataApi, async (req: Req
       res.json(redactProfile(profile, { allBasePreview: true }));
       return;
     }
-    res.json(profile);
+    res.json(redactContactInfoInProfile(profile));
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5370,7 +5655,7 @@ app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: Req
     }
     const profile = value as Record<string, unknown>;
     res.setHeader('Cache-Control', 'no-store');
-    res.json(profile);
+    res.json(redactContactInfoInProfile(profile));
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5404,7 +5689,7 @@ app.get('/api/campaigns/all/profiles/:handle/activation', rateLimitDataApi, asyn
       res.json({ _redacted: true, _all_base_preview: true });
       return;
     }
-    res.json(data);
+    res.json(redactContactInfoInActivation(data as unknown as Record<string, unknown>));
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5454,7 +5739,7 @@ app.get('/api/campaigns/:id/profiles/:handle/activation', rateLimitDataApi, asyn
       }
     }
     res.setHeader('Cache-Control', 'no-store');
-    res.json(data);
+    res.json(redactContactInfoInActivation(data as unknown as Record<string, unknown>));
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5505,7 +5790,7 @@ app.get(
           // Se não conseguir carregar perfil (ex.: handle não existe no RocksDB), mantém pricing vazio
         }
       }
-      res.json(data);
+      res.json(redactContactInfoInActivation(data as unknown as Record<string, unknown>));
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -5608,7 +5893,7 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
     }
     //}
 
-    res.json(data ?? {});
+    res.json(data != null ? redactContactInfoInActivation(data as unknown as Record<string, unknown>) : {});
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5629,7 +5914,7 @@ app.get(
       }
       const profile = value as Record<string, unknown>;
       res.setHeader('Cache-Control', 'no-store');
-      res.json(profile);
+      res.json(redactContactInfoInProfile(profile));
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -5651,10 +5936,17 @@ app.get(
       }
       res.setHeader('Cache-Control', 'no-store');
       if (!req.user) {
-        res.json({ profile: redactProfile(summary.profile), engagement: summary.engagement, bi: summary.bi });
+        res.json({
+          profile: redactProfile(summary.profile, { allBasePreview: true }),
+          engagement: summary.engagement,
+          bi: summary.bi,
+        });
         return;
       }
-      res.json(summary);
+      res.json({
+        ...summary,
+        profile: redactContactInfoInProfile(summary.profile as Record<string, unknown>),
+      });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -5715,14 +6007,14 @@ app.get(
         return { key, ...item };
       });
       if (!req.user) {
-        res.json({ total, items: redactPostsItems(slice), _redacted: true });
+        res.json({ total, items: redactPostsItems(slice), _redacted: true, _all_base_preview: true });
         return;
       }
       if ((req as RequestWithAuth).allBaseOutsidePaidCampaigns === true) {
         res.json({ total, items: redactPostsItems(slice), _redacted: true });
         return;
       }
-      res.json({ total, items: slice });
+      res.json({ total, items: preparePostItemsForApiResponse(slice) });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -5749,6 +6041,7 @@ function postItemShortcodeForDedupe(key: string, item: Record<string, unknown>):
 /** Campos de `influencer` em post-matches, lidos do perfil indexado (RocksDB). */
 function influencerFieldsFromProfile(profile: Record<string, unknown> | null | undefined): {
   followers_count: number;
+  posts_per_week?: number;
   full_name?: string;
   profile_pic_url?: string;
   stable_profile_pic_url?: string;
@@ -5808,14 +6101,52 @@ function influencerFieldsFromProfile(profile: Record<string, unknown> | null | u
   };
 }
 
-const POST_MATCHES_HANDLE_BATCH = 256;
+const POST_MATCHES_HANDLE_BATCH = 32;
 const POST_MATCHES_FTS_HANDLE_LIMIT = Math.max(
-  500,
-  Number(process.env.POST_MATCHES_FTS_HANDLE_LIMIT) || 3000
+  200,
+  Number(process.env.POST_MATCHES_FTS_HANDLE_LIMIT) || 800
 );
+/** Máximo de perfis cujos posts são lidos no RocksDB por requisição (performance). */
+const POST_MATCHES_MAX_SCAN_HANDLES = Math.max(
+  40,
+  Number(process.env.POST_MATCHES_MAX_SCAN_HANDLES) || 180
+);
+/** Posts além de offset+limit antes de parar o scan (1 post/perfil → poucos perfis bastam). */
+const POST_MATCHES_EARLY_STOP_BUFFER = 4;
+
+type PostMatchRowScratch = { key: string; value: Record<string, unknown>; ts: number; ct: string };
+
+function postMatchTaggedRank(ct: string): number {
+  return ct === 'tagged' ? 1 : 0;
+}
+
+/** true se `a` deve substituir `b` como melhor post do perfil. */
+function isBetterPostMatchRow(a: PostMatchRowScratch, b: PostMatchRowScratch): boolean {
+  const rankA = postMatchTaggedRank(a.ct);
+  const rankB = postMatchTaggedRank(b.ct);
+  if (rankA !== rankB) return rankA < rankB;
+  if (a.ts !== b.ts) return a.ts > b.ts;
+  return a.key.localeCompare(b.key) < 0;
+}
+
+/** Limite FTS menor para termos curtos/ambíguos (ex.: "das") — menos handles → scan mais rápido. */
+function postMatchesFtsHandleLimitForQuery(qRaw: string): number {
+  const ceiling = POST_MATCHES_FTS_HANDLE_LIMIT;
+  const t = qRaw.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!t) return Math.min(400, ceiling);
+  const words = t.split(' ').map((w) => w.trim()).filter((w) => w.length >= 2);
+  if (words.length === 0) return Math.min(300, ceiling);
+  if (words.length === 1) {
+    const w = words[0]!;
+    if (w.length <= 3) return Math.min(200, ceiling);
+    if (w.length <= 5) return Math.min(400, ceiling);
+    return Math.min(700, ceiling);
+  }
+  return Math.min(1000, ceiling);
+}
 
 /** Evita revarrer RocksDB a cada página / refetch (post-matches “Todos” com muitos perfis). */
-const POST_MATCHES_CACHE_TTL_MS = 50_000;
+const POST_MATCHES_CACHE_TTL_MS = 90_000;
 const POST_MATCHES_CACHE_MAX = 40;
 const ALL_POST_MATCHES_HANDLES_TTL_MS = Math.max(
   5_000,
@@ -5828,17 +6159,64 @@ interface PostMatchesCachePayload {
   total: number;
   mediaKindCounts: Record<string, number>;
   rows: PostMatchesCachedRow[];
+  scanPartial?: boolean;
+  handlesScanned?: number;
+  handlesTotal?: number;
 }
 
 const postMatchesResultCache = new Map<string, { expires: number; payload: PostMatchesCachePayload }>();
+const postMatchNarrowHandlesCache = new Map<string, { expires: number; handles: string[] }>();
+const POST_MATCH_NARROW_CACHE_TTL_MS = 50_000;
+const POST_MATCH_NARROW_CACHE_MAX = 60;
 const allPostMatchesHandlesCache = {
   expires: 0,
   handles: [] as string[],
 };
 
-function postMatchesCacheKey(userId: number, normHandles: string[], qRaw: string, typeFilters: string[]): string {
+function postMatchesCacheKey(
+  userId: number,
+  normHandles: string[],
+  qRaw: string,
+  typeFilters: string[],
+  boostFp: string
+): string {
   const fp = crypto.createHash('sha256').update([...normHandles].sort().join('\0')).digest('hex').slice(0, 24);
-  return `${userId}|${fp}|${qRaw}|${typeFilters.join(',')}`;
+  return `${userId}|${fp}|${qRaw}|${typeFilters.join(',')}|${boostFp}`;
+}
+
+function postMatchesFacetBoostFingerprint(req: RequestWithAuth): string {
+  if (req.query.facetBoostSort !== '1') return '';
+  const base = buildCampaignProfilesQuery(req, { maxLimit: 1 });
+  if (!hasCampaignFacetBoostInQuery(base)) return '';
+  return crypto.createHash('sha256').update(JSON.stringify(base)).digest('hex').slice(0, 12);
+}
+
+async function sortPostMatchRowsByCampaignFacetBoost(
+  rows: PostMatchesCachedRow[],
+  query: ProfilesSearchQuery
+): Promise<PostMatchesCachedRow[]> {
+  if (!hasCampaignFacetBoostInQuery(query) || rows.length < 2) return rows;
+  const handleScores = new Map<string, number>();
+  const handles = [...new Set(rows.map((r) => postBucketKeyToHandle(r.key)).filter(Boolean))];
+  await Promise.all(
+    handles.map(async (h) => {
+      const profile = (await db.loadByHandle(h)) as Record<string, unknown> | null;
+      const auxRows = db.getProfileSearchAuxRowsForHandles([h]);
+      const fc = auxRows[0]?.followers_count;
+      handleScores.set(h, computeCampaignFacetBoostScore(profile, query, fc));
+    })
+  );
+  return [...rows]
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const ha = postBucketKeyToHandle(a.row.key);
+      const hb = postBucketKeyToHandle(b.row.key);
+      const sa = handleScores.get(ha) ?? 0;
+      const sb = handleScores.get(hb) ?? 0;
+      if (sb !== sa) return sb - sa;
+      return a.index - b.index;
+    })
+    .map(({ row }) => row);
 }
 
 function postMatchesCacheGet(key: string): PostMatchesCachePayload | null {
@@ -5860,6 +6238,34 @@ function postMatchesCacheSet(key: string, payload: PostMatchesCachePayload): voi
   while (postMatchesResultCache.size > POST_MATCHES_CACHE_MAX) {
     const first = postMatchesResultCache.keys().next().value;
     if (first !== undefined) postMatchesResultCache.delete(first);
+  }
+}
+
+function postMatchNarrowCacheKey(scopedHandles: string[], pq: ProfilesSearchQuery): string {
+  const hfp = crypto.createHash('sha256').update(scopedHandles.join('\0')).digest('hex').slice(0, 20);
+  const fq = crypto.createHash('sha256').update(JSON.stringify(pq)).digest('hex').slice(0, 16);
+  return `${hfp}|${fq}`;
+}
+
+function postMatchNarrowCacheGet(key: string): string[] | null {
+  const e = postMatchNarrowHandlesCache.get(key);
+  const now = Date.now();
+  if (!e || e.expires <= now) {
+    if (e) postMatchNarrowHandlesCache.delete(key);
+    return null;
+  }
+  return e.handles;
+}
+
+function postMatchNarrowCacheSet(key: string, handles: string[]): void {
+  const now = Date.now();
+  for (const [k, v] of postMatchNarrowHandlesCache) {
+    if (v.expires <= now) postMatchNarrowHandlesCache.delete(k);
+  }
+  postMatchNarrowHandlesCache.set(key, { expires: now + POST_MATCH_NARROW_CACHE_TTL_MS, handles });
+  while (postMatchNarrowHandlesCache.size > POST_MATCH_NARROW_CACHE_MAX) {
+    const first = postMatchNarrowHandlesCache.keys().next().value;
+    if (first !== undefined) postMatchNarrowHandlesCache.delete(first);
   }
 }
 
@@ -5886,7 +6292,7 @@ function scopeHandlesForPostCaptionSearch(handlesUniverse: string[], qRaw: strin
   if (!trimmed) return handlesUniverse;
   const expr = postMatchesQueryToFtsExpression(trimmed);
   if (!expr) return handlesUniverse;
-  const fts = db.searchProfileHandlesFts(expr, POST_MATCHES_FTS_HANDLE_LIMIT);
+  const fts = db.searchProfileHandlesFts(expr, postMatchesFtsHandleLimitForQuery(trimmed));
   if (fts.length === 0) return [];
   const universe = new Set(handlesUniverse.map((h) => normalizeHandle(h)).filter(Boolean));
   const out: string[] = [];
@@ -5929,8 +6335,6 @@ function postMatchesHasProfileSideFilters(pq: ProfilesSearchQuery): boolean {
     pq.llmMainCategory,
     pq.llmGender,
     pq.llmLanguage,
-    pq.llmSubCategories,
-    pq.llmContentPillars,
     pq.llmAudienceType,
     pq.llmToneOfVoice,
     pq.llmRiskLevel,
@@ -5942,28 +6346,21 @@ function postMatchesHasProfileSideFilters(pq: ProfilesSearchQuery): boolean {
 }
 
 /** Restringe handles aos que passam nos mesmos filtros de perfil da listagem (exceto `q` de legenda). */
-async function narrowPostMatchHandlesByProfileFilters(
+function narrowPostMatchHandlesByProfileFilters(
   req: RequestWithAuth,
   scopedHandles: string[]
-): Promise<string[]> {
+): string[] {
   if (scopedHandles.length === 0) return scopedHandles;
   const base = buildCampaignProfilesQuery(req, { maxLimit: 1 });
   const pq: ProfilesSearchQuery = { ...base, q: undefined };
-  if (!postMatchesHasProfileSideFilters(pq)) return scopedHandles;
+  if (!postMatchesHasProfileSideFilters(stripCampaignFacetBoostFromProfilesQuery(pq))) return scopedHandles;
   const norm = scopedHandles.map((h) => normalizeHandle(h)).filter(Boolean);
-  const lim = Math.min(Math.max(norm.length, 1), 100_000);
-  const result = await searchProfiles(
-    db,
-    { ...pq, limit: lim, offset: 0, includeFacets: false },
-    {
-      restrictToHandles: norm,
-      skipSort: true,
-      skipInstagramBi: true,
-      skipAuxBackfill: true,
-    }
-  );
-  const allowed = new Set((result.items ?? []).map((i) => normalizeHandle(String(i.handle ?? ''))));
-  return norm.filter((h) => allowed.has(h));
+  const nKey = postMatchNarrowCacheKey(norm, pq);
+  const hit = postMatchNarrowCacheGet(nKey);
+  if (hit) return hit;
+  const narrowed = narrowHandlesByProfilesQuery(db, norm, pq);
+  postMatchNarrowCacheSet(nKey, narrowed);
+  return narrowed;
 }
 
 /**
@@ -5986,40 +6383,47 @@ async function runPostMatchesForHandles(
 
     const userId = Number(req.user?.sub ?? 0);
     const cacheOwner = Number.isFinite(userId) && userId > 0 ? userId : 0;
+    const boostFp = postMatchesFacetBoostFingerprint(req);
     const cacheKey =
       normHandles.length > 0
-        ? postMatchesCacheKey(cacheOwner, normHandles, qRaw, typeFilters)
+        ? postMatchesCacheKey(cacheOwner, normHandles, qRaw, typeFilters, boostFp)
         : '';
     const cached = cacheKey ? postMatchesCacheGet(cacheKey) : null;
 
     let orderedRows: PostMatchesCachedRow[];
     let total: number;
     let mediaKindCounts: Record<string, number>;
+    let scanPartial = false;
+    let handlesScanned = 0;
+    const handlesTotal = normHandles.length;
 
     if (cached) {
       orderedRows = cached.rows;
       total = cached.total;
       mediaKindCounts = cached.mediaKindCounts;
+      scanPartial = cached.scanPartial === true;
+      handlesScanned = cached.handlesScanned ?? handlesTotal;
     } else {
-      const postsChunks: { key: string; value: Record<string, unknown> }[][] = [];
-      for (let i = 0; i < normHandles.length; i += POST_MATCHES_HANDLE_BATCH) {
-        const batch = normHandles.slice(i, i + POST_MATCHES_HANDLE_BATCH);
-        const part = await Promise.all(
-          batch.map((h) =>
-            db.getByBucket<Record<string, unknown>>('post', `${h}:`, { sort: false })
-          )
-        );
-        for (const items of part) postsChunks.push(items);
-      }
+      const bestPerHandle = new Map<string, PostMatchRowScratch>();
 
-      const candidates: Array<{ key: string; value: Record<string, unknown>; ts: number; ct: string }> = [];
-      for (const items of postsChunks) {
+      const buildFilteredSorted = (): PostMatchesCachedRow[] => {
+        const sorted = [...bestPerHandle.values()].sort((a, b) => {
+          const rankA = postMatchTaggedRank(a.ct);
+          const rankB = postMatchTaggedRank(b.ct);
+          if (rankA !== rankB) return rankA - rankB;
+          return b.ts - a.ts || a.key.localeCompare(b.key);
+        });
+        const filtered =
+          typeFilters.length > 0 ? sorted.filter((x) => typeFilters.includes(x.ct)) : sorted;
+        return filtered.map(({ key, value, ct }) => ({ key, value, ct }));
+      };
+
+      const ingestPosts = (items: { key: string; value: Record<string, unknown> }[]): void => {
         for (const { key, value } of items) {
           const h = postBucketKeyToHandle(key);
           if (!handleSet.has(h)) continue;
           const item = value as Record<string, unknown>;
           const ct = getContentTypeFromItem(key, item);
-          // Marcados (tagged): só entram no índice de post-matches quando há busca por palavra (`q`).
           if (!qRaw && ct === 'tagged') continue;
           if (qRaw) {
             const searchable = getPostSearchableNormalized(item);
@@ -6027,47 +6431,69 @@ async function runPostMatchesForHandles(
             if (!match) continue;
           }
           const ts = getPostTimestamp(item) ?? 0;
-          candidates.push({ key, value: item, ts, ct });
+          const candidate: PostMatchRowScratch = { key, value: item, ts, ct };
+          const prev = bestPerHandle.get(h);
+          if (!prev || isBetterPostMatchRow(candidate, prev)) {
+            bestPerHandle.set(h, candidate);
+          }
+        }
+      };
+
+      const maxScan = Math.min(normHandles.length, POST_MATCHES_MAX_SCAN_HANDLES);
+      const needCount = limit > 0 ? offset + limit : 0;
+
+      for (let i = 0; i < maxScan; i += POST_MATCHES_HANDLE_BATCH) {
+        const batch = normHandles.slice(i, i + POST_MATCHES_HANDLE_BATCH);
+        const parts = await Promise.all(
+          batch.map((h) =>
+            db.getByBucket<Record<string, unknown>>('post', `${h}:`, { sort: false })
+          )
+        );
+        for (const items of parts) ingestPosts(items);
+        handlesScanned = Math.min(i + batch.length, maxScan);
+
+        if (needCount > 0) {
+          const rowsSoFar = buildFilteredSorted();
+          if (rowsSoFar.length >= needCount + POST_MATCHES_EARLY_STOP_BUFFER) {
+            if (handlesScanned < normHandles.length) scanPartial = true;
+            break;
+          }
         }
       }
 
-      /** Uma entrada por (perfil, shortcode): evita repetir a mesma mídia (ex.: chaves duplicadas / tipos cruzados). */
-      const deduped = new Map<string, { key: string; value: Record<string, unknown>; ts: number; ct: string }>();
-      for (const c of candidates) {
-        const h = postBucketKeyToHandle(c.key);
-        const sc = postItemShortcodeForDedupe(c.key, c.value);
-        const id = `${h}:${sc}`;
-        const prev = deduped.get(id);
-        if (
-          !prev ||
-          c.ts > prev.ts ||
-          (c.ts === prev.ts && c.key.localeCompare(prev.key) < 0)
-        ) {
-          deduped.set(id, c);
-        }
+      if (handlesScanned < normHandles.length && handlesScanned >= maxScan) {
+        scanPartial = true;
       }
 
-      /** Marcados (`tagged`) sempre no fim; dentro de cada grupo, mais recente primeiro. */
-      const postMatchTaggedRank = (ct: string): number => (ct === 'tagged' ? 1 : 0);
-      const sorted = [...deduped.values()].sort((a, b) => {
-        const rankA = postMatchTaggedRank(a.ct);
-        const rankB = postMatchTaggedRank(b.ct);
-        if (rankA !== rankB) return rankA - rankB;
-        return b.ts - a.ts || a.key.localeCompare(b.key);
-      });
+      orderedRows = buildFilteredSorted();
+      const sortQuery = buildCampaignProfilesQuery(req, { maxLimit: 1 });
+      if (req.query.facetBoostSort === '1' && hasCampaignFacetBoostInQuery(sortQuery)) {
+        orderedRows = await sortPostMatchRowsByCampaignFacetBoost(orderedRows, sortQuery);
+      }
 
       mediaKindCounts = {};
-      for (const row of deduped.values()) {
+      for (const row of bestPerHandle.values()) {
         const k = row.ct;
         mediaKindCounts[k] = (mediaKindCounts[k] ?? 0) + 1;
       }
 
-      const filteredSorted =
-        typeFilters.length > 0 ? sorted.filter((x) => typeFilters.includes(x.ct)) : sorted;
-      total = filteredSorted.length;
-      orderedRows = filteredSorted.map(({ key, value, ct }) => ({ key, value, ct }));
-      if (cacheKey) postMatchesCacheSet(cacheKey, { total, mediaKindCounts, rows: orderedRows });
+      total = orderedRows.length;
+      if (!scanPartial && cacheKey) {
+        postMatchesCacheSet(cacheKey, {
+          total,
+          mediaKindCounts,
+          rows: orderedRows,
+          scanPartial: false,
+          handlesScanned: handlesTotal,
+          handlesTotal,
+        });
+      }
     }
+
+    const scanMeta =
+      scanPartial || handlesScanned < handlesTotal
+        ? { partial: true as const, handlesScanned, handlesTotal }
+        : undefined;
 
     const handlesOnlyRaw = req.query.handlesOnly ?? req.query.handles_only;
     const handlesOnly =
@@ -6087,6 +6513,7 @@ async function runPostMatchesForHandles(
         profileHandles,
         mediaKindCounts,
         q: qRaw || undefined,
+        ...(scanMeta ? { scanMeta } : {}),
       };
       if (!req.user) {
         res.json({ ...payload, _redacted: true });
@@ -6120,7 +6547,10 @@ async function runPostMatchesForHandles(
     await Promise.all(
       [...handlesInSlice].map(async (h) => {
         const profile = await db.loadByHandle(h);
-        influencerByHandle.set(h, influencerFieldsFromProfile(profile as Record<string, unknown> | null));
+        const fields = influencerFieldsFromProfile(profile as Record<string, unknown> | null);
+        const postsRaw = await db.getByBucket<Record<string, unknown>>('post', `${h}:`);
+        const posts_per_week = computePostsPerWeek(postsRaw.map(({ value }) => value));
+        influencerByHandle.set(h, { ...fields, posts_per_week });
       })
     );
     for (const row of slice) {
@@ -6149,7 +6579,7 @@ async function runPostMatchesForHandles(
       };
     }
 
-    res.json({ total, items: slice, q: qRaw || undefined, mediaKindCounts });
+    res.json({ total, items: preparePostItemsForApiResponse(slice), q: qRaw || undefined, mediaKindCounts, ...(scanMeta ? { scanMeta } : {}) });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -6175,7 +6605,7 @@ app.get('/api/campaigns/all/post-matches', rateLimitDataApi, async (req: Request
       res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
       return;
     }
-    const narrowedAll = await narrowPostMatchHandlesByProfileFilters(req, scopedHandles);
+    const narrowedAll = narrowPostMatchHandlesByProfileFilters(req, scopedHandles);
     await runPostMatchesForHandles(req, res, narrowedAll);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -6210,7 +6640,7 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
       res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
       return;
     }
-    const narrowed = await narrowPostMatchHandlesByProfileFilters(req, scopedHandles);
+    const narrowed = narrowPostMatchHandlesByProfileFilters(req, scopedHandles);
     await runPostMatchesForHandles(req, res, narrowed);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -6386,10 +6816,10 @@ async function runExtractAndStore(handle: string, runOptions?: RunOneExtractOpti
     const msg = e instanceof Error ? e.message : String(e);
     const isLoginRelated = /ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR|sessão|login/i.test(msg);
     let error = isLoginRelated
-      ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta crawl: npm run login'
+      ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta backend: npm run login'
       : msg;
     if (msg === 'Perfil não encontrado') {
-      error = 'Perfil não encontrado. Se o perfil existir, a sessão do Instagram pode ter expirado. Execute na pasta crawl: npm run login';
+      error = 'Perfil não encontrado. Se o perfil existir, a sessão do Instagram pode ter expirado. Execute na pasta backend: npm run login';
     }
     extractProfileResults.set(handle, { status: 'error', error });
   }
@@ -6446,7 +6876,7 @@ app.post('/api/crawl/extract-profile', requireScopesOrPublic('adm'), (req: Reque
     res.status(503).json({
       success: false,
       handle,
-      error: `Sessão do Instagram não configurada. Execute o login na pasta crawl: npm run login (arquivo esperado: ${authStatePath})`,
+      error: `Sessão do Instagram não configurada. Execute o login na pasta backend: npm run login (arquivo esperado: ${authStatePath})`,
     });
     return;
   }
@@ -6632,7 +7062,7 @@ app.get('/api-docs', (_req: Request, res: Response) => {
     console.log(`API: http://localhost:${PORT}`);
     console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
     console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
-    logS3StartupStatus({ envPath: CRAWL_ENV_PATH, crawlRoot: CRAWL_ROOT });
+    logS3StartupStatus({ envPath: BACKEND_ENV_PATH, backendRoot: BACKEND_ROOT });
     // Aquecer o browser em background para o primeiro extract-profile não esperar abrir o Chromium
     getApiExtractClient()
       .init()

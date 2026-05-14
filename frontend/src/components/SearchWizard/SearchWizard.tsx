@@ -36,6 +36,7 @@ import {
 } from '@ant-design/icons'
 import type { ProfilesSearchQuery, ProfilesSearchFacets } from '../../api'
 import { formatPatamarRangeCompact } from '../../utils/influencerTier'
+import { formatFacetLabel } from '../../utils/facetLabels'
 
 const { Text } = Typography
 
@@ -162,7 +163,7 @@ const LLM_ENUM_LABELS: Record<string, string> = {
 
 function llmOptionLabel(raw: string): string {
   const k = raw.trim().toLowerCase()
-  return LLM_ENUM_LABELS[k] ?? raw
+  return LLM_ENUM_LABELS[k] ?? formatFacetLabel(raw)
 }
 
 type CategoryIconComp = ComponentType<{ style?: React.CSSProperties }>
@@ -343,8 +344,6 @@ export interface WizardState {
   llmMainCategory?: string[]
   llmGender?: string[]
   llmLanguage?: string[]
-  llmSubCategories?: string[]
-  llmContentPillars?: string[]
   llmAudienceType?: string[]
   llmToneOfVoice?: string[]
   llmRiskLevel?: string[]
@@ -376,8 +375,6 @@ function stateToQuery(state: WizardState): Partial<ProfilesSearchQuery> {
     llmMainCategory: state.llmMainCategory?.length ? state.llmMainCategory : undefined,
     llmGender: state.llmGender?.length ? state.llmGender : undefined,
     llmLanguage: state.llmLanguage?.length ? state.llmLanguage : undefined,
-    llmSubCategories: state.llmSubCategories?.length ? state.llmSubCategories : undefined,
-    llmContentPillars: state.llmContentPillars?.length ? state.llmContentPillars : undefined,
     llmAudienceType: state.llmAudienceType?.length ? state.llmAudienceType : undefined,
     llmToneOfVoice: state.llmToneOfVoice?.length ? state.llmToneOfVoice : undefined,
     llmRiskLevel: state.llmRiskLevel?.length ? state.llmRiskLevel : undefined,
@@ -447,7 +444,6 @@ function boundsToSizeKeyFromBuckets(
 function maxLlmStepFromFilters(f: Partial<WizardState>): number {
   let max = -1
   if ((f.llmMainCategory?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_MAIN_CATEGORY)
-  if ((f.llmSubCategories?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   /** Links antigos com filtro de gênero (etapa “assuntos” removida). */
   if ((f.llmGender?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if ((f.llmAudienceType?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
@@ -477,7 +473,6 @@ function filterPatchForWizardStep(stepIndex: number): Partial<WizardState> {
       return { llmMainCategory: undefined }
     case STEP_LLM_AUDIENCE:
       return {
-        llmSubCategories: undefined,
         llmAudienceType: undefined,
         llmRiskLevel: undefined,
         llmToneOfVoice: undefined,
@@ -545,8 +540,6 @@ function filtersToWizardState(
     })(),
     llmGender: copyStrArr(f.llmGender?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmLanguage: copyStrArr(f.llmLanguage?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmSubCategories: copyStrArr(f.llmSubCategories?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmContentPillars: copyStrArr(f.llmContentPillars?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmAudienceType: copyStrArr(f.llmAudienceType?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmToneOfVoice: copyStrArr(f.llmToneOfVoice?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmRiskLevel: copyStrArr(f.llmRiskLevel?.map((x) => x.trim().toLowerCase()).filter(Boolean)),

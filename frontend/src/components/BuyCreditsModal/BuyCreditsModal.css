@@ -1,0 +1,305 @@
+.buy-credits-modal--plan-checkout .ant-modal-header {
+  display: none;
+}
+
+.buy-credits-modal--plan-checkout .ant-modal-body {
+  padding: 0;
+}
+
+.buy-credits-plan-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  min-height: 420px;
+}
+
+.buy-credits-plan-info {
+  padding: 28px 26px;
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--app-primary, #68278f) 10%, var(--app-bg, #fff)) 0%,
+    color-mix(in srgb, var(--app-primary, #68278f) 4%, var(--app-bg-secondary, #fafafa)) 100%
+  );
+  border-right: 1px solid color-mix(in srgb, var(--app-primary, #68278f) 12%, var(--app-border, #eee));
+  display: flex;
+  flex-direction: column;
+}
+
+.buy-credits-plan-info__eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--app-text-secondary, #888);
+  margin-bottom: 10px;
+}
+
+.buy-credits-plan-info__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 10px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--app-primary, #68278f);
+  background: color-mix(in srgb, var(--app-primary, #68278f) 14%, var(--app-bg, #fff));
+}
+
+.buy-credits-plan-info__name {
+  margin: 0 0 8px;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--app-text, #111);
+  letter-spacing: -0.02em;
+}
+
+.buy-credits-plan-info__price {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-bottom: 14px;
+}
+
+.buy-credits-plan-info__price-currency {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--app-primary, #68278f);
+}
+
+.buy-credits-plan-info__price-value {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--app-primary, #68278f);
+  letter-spacing: -0.03em;
+}
+
+.buy-credits-plan-info__price-period {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--app-text-secondary, #666);
+}
+
+.buy-credits-plan-info__desc {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--app-text, #333);
+}
+
+.buy-credits-plan-info__features {
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.buy-credits-plan-info__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--app-text, #222);
+}
+
+.buy-credits-plan-info__features .anticon {
+  margin-top: 2px;
+  color: var(--app-primary, #68278f);
+  font-size: 11px;
+}
+
+.buy-credits-plan-info__hint {
+  margin: 0 0 18px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--app-text-secondary, #666);
+}
+
+.buy-credits-plan-info__payment {
+  margin-top: auto;
+}
+
+.buy-credits-plan-info__payment .buy-credits-form-block {
+  margin-bottom: 0;
+}
+
+.buy-credits-plan-info__payment .buy-credits-payment-row {
+  flex-direction: column;
+}
+
+.buy-credits-plan-info__payment .payment-option {
+  width: 100%;
+}
+
+.buy-credits-plan-layout__form {
+  padding: 24px 24px 20px;
+  background: var(--app-bg, #fff);
+  display: flex;
+  flex-direction: column;
+}
+
+.buy-credits-form-block {
+  margin-bottom: 18px;
+}
+
+.buy-credits-form-block__intro {
+  display: block;
+  margin-bottom: 14px !important;
+  font-size: 13px !important;
+}
+
+.buy-credits-guest-auth-toggle {
+  margin-bottom: 14px;
+}
+
+.buy-credits-guest-auth-toggle__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--app-primary, #68278f);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.buy-credits-guest-auth-toggle__link:hover {
+  opacity: 0.85;
+}
+
+.buy-credits-section-title {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.buy-credits-field {
+  margin-bottom: 12px;
+}
+
+.buy-credits-field--last {
+  margin-bottom: 0;
+}
+
+.buy-credits-field__label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.buy-credits-pack-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.buy-credits-payment-row {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.buy-credits-payment-row .payment-option {
+  flex: 1;
+  min-width: 0;
+  width: 50%;
+}
+
+.buy-credits-form-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.buy-credits-form-actions--plan {
+  justify-content: flex-end;
+}
+
+.buy-credits-submit-btn {
+  background: linear-gradient(135deg, var(--app-primary, #68278f) 0%, rgba(104, 39, 143, 0.9) 100%) !important;
+  border: none !important;
+  padding-left: 24px !important;
+  padding-right: 24px !important;
+  font-weight: 600 !important;
+}
+
+.buy-credits-page-card {
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--app-bg, #fff);
+  border: 1px solid color-mix(in srgb, var(--app-primary, #68278f) 12%, var(--app-border, #eee));
+  box-shadow:
+    0 12px 40px color-mix(in srgb, var(--app-primary, #68278f) 10%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.buy-credits-page-card--result {
+  padding: 28px 24px 24px;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.buy-credits-page-card__title {
+  margin: 0 0 20px;
+  font-size: 1.35rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--app-text, #111);
+}
+
+.buy-credits-page-card__footer {
+  margin-top: 24px;
+  padding-top: 8px;
+}
+
+.buy-credits-page-card.buy-credits-modal--plan-checkout .buy-credits-plan-layout {
+  min-height: 480px;
+}
+
+.buy-credits-card-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 520px) {
+  .buy-credits-card-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.buy-credits-plan-info__billing-note {
+  margin-top: -8px;
+  margin-bottom: 0;
+  font-weight: 500;
+  color: var(--app-primary, #68278f);
+}
+
+@media (max-width: 720px) {
+  .buy-credits-plan-layout {
+    grid-template-columns: 1fr;
+    min-height: unset;
+  }
+
+  .buy-credits-plan-info {
+    border-right: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--app-primary, #68278f) 12%, var(--app-border, #eee));
+    padding: 22px 20px;
+  }
+
+  .buy-credits-plan-layout__form {
+    padding: 20px;
+  }
+}

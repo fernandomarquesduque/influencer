@@ -8,7 +8,7 @@
             "args": [
                 "-NoProfile",
                 "-Command",
-                "$ports = @(3000, 5173); foreach ($port in $ports) { $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($conn -and $conn.OwningProcess -gt 0) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500 } }; exit 0"
+                "$ports = @(3500, 5173); foreach ($port in $ports) { $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($conn -and $conn.OwningProcess -gt 0) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500 } }; exit 0"
             ],
             "presentation": {
                 "reveal": "silent",
@@ -32,6 +32,87 @@
                 "panel": "shared"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Backend: API (watch)",
+            "type": "shell",
+            "command": "npm run api:dev",
+            "options": {
+                "cwd": "${workspaceFolder}/backend",
+                "env": {
+                    "NODE_OPTIONS": "--max-old-space-size=16384"
+                }
+            },
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "typescript",
+                "pattern": {
+                    "regexp": "^(.*)$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".",
+                    "endsPattern": "API: http://localhost"
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "group": "dev",
+                "clear": true
+            },
+            "runOptions": {
+                "instanceLimit": 1
+            }
+        },
+        {
+            "label": "Frontend: dev",
+            "type": "shell",
+            "command": "npm run dev",
+            "options": {
+                "cwd": "${workspaceFolder}/frontend"
+            },
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "typescript",
+                "pattern": {
+                    "regexp": "^(.*)$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".",
+                    "endsPattern": "Local:\\s+http://localhost:5173"
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "group": "dev",
+                "clear": true
+            },
+            "runOptions": {
+                "instanceLimit": 1
+            }
+        },
+        {
+            "label": "Dev: API (watch) + Frontend",
+            "dependsOn": [
+                "kill-api-and-frontend",
+                "Backend: API (watch)",
+                "Frontend: dev"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
         }
     ]
 }

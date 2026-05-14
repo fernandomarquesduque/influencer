@@ -3,24 +3,16 @@
  * Exibido na coluna esquerda da tela de influenciadores da campanha.
  */
 import { useState, useEffect } from 'react'
-import { Button, Card, Typography, Input } from 'antd'
+import { Card, Typography, Input } from 'antd'
 import { EnvironmentOutlined, FilterOutlined } from '@ant-design/icons'
 import type { ProfilesSearchFacets, ProfilesSearchQuery } from '../../api'
+import { facetBucketFilterMin } from '../../utils/campaignFilterClient'
+import { formatFacetLabel } from '../../utils/facetLabels'
 import { CONTENT_TYPE_LABELS } from '../../constants/contentTypes'
 import { getInfluencerTierSolidHexForBucketKey } from '../../utils/influencerTier'
 import './CampaignBIPanel.css'
 
 const { Text } = Typography
-
-/** Rótulo legível para chips de facet LLM (chaves em minúsculas). */
-function formatLlmFacetLabel(raw: string): string {
-  const s = raw.replace(/[_-]+/g, ' ').trim()
-  if (!s) return raw
-  return s
-    .split(/\s+/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-}
 
 function llmPillColor(seed: string): string {
   let h = 0
@@ -34,40 +26,16 @@ type LlmArrayFilterKey =
   | 'llmProfileType'
   | 'llmMainCategory'
   | 'llmGender'
-  | 'llmSubCategories'
-  | 'llmContentPillars'
   | 'llmAudienceType'
 
 type LlmNameCountRow = { name: string; count: number }
 
-/** Sem itens com contagem zero na lista. */
-function filterPositiveLlmCounts(items: LlmNameCountRow[]): LlmNameCountRow[] {
-  return items.filter((x) => (x.count ?? 0) > 0)
+function filterNamedFacetRows(items: LlmNameCountRow[]): LlmNameCountRow[] {
+  return items.filter((x) => String(x.name ?? '').trim().length > 0 && (x.count ?? 0) > 0)
 }
 
-/** Acima deste total de itens (contagem > 0), oculta facet LLM com count < 2 até "Ver mais" (subcategorias, pilares, etc.). */
-const LLM_LONG_FACET_LIST_OVER = 20
-
-/**
- * Só exibe a seção se houver 2+ opções com contagem > 0, ou 1 opção que esteja selecionada
- * (para o usuário poder ver e limpar o filtro ativo).
- */
-function showLlmFacetMulti(items: LlmNameCountRow[], selected: string[], isSelected: (sel: string[], name: string) => boolean): boolean {
-  const pos = filterPositiveLlmCounts(items)
-  if (pos.length > 1) return true
-  if (pos.length === 1) return isSelected(selected, pos[0]!.name)
-  return false
-}
-
-function filterPositiveFacetCounts<T extends { count?: number }>(items: T[]): T[] {
-  return items.filter((x) => (x.count ?? 0) > 0)
-}
-
-function showFacetMulti<T extends { count?: number }>(items: T[], isItemSelected: (item: T) => boolean): boolean {
-  const pos = filterPositiveFacetCounts(items)
-  if (pos.length > 1) return true
-  if (pos.length === 1) return isItemSelected(pos[0]!)
-  return false
+function showNamedFacetList(items: LlmNameCountRow[]): boolean {
+  return filterNamedFacetRows(items).length > 0
 }
 
 export interface CampaignBIPanelProps {
@@ -77,10 +45,6 @@ export interface CampaignBIPanelProps {
   /** Descrição/anotações da campanha (salva no banco). */
   description?: string | null
   onDescriptionSave?: (value: string) => void
-  /** Data de expiração do relatório (YYYY-MM-DD). */
-  expiresAt?: string | null
-  /** Data de criação do relatório (ISO string). */
-  createdAt?: string | null
 }
 
 function toggleInArray(arr: string[] | undefined, value: string): string[] | undefined {
@@ -93,25 +57,12 @@ function toggleInArray(arr: string[] | undefined, value: string): string[] | und
   return [...list, value]
 }
 
-function formatDate(iso: string | null | undefined): string | null {
-  if (!iso) return null
-  try {
-    const d = new Date(iso)
-    const day = String(d.getDate()).padStart(2, '0')
-    const month = String(d.getMonth() + 1).padStart(2, '0')
-    const year = d.getFullYear()
-    return `${day}/${month}/${year}`
-  } catch { return null }
-}
-
 export default function CampaignBIPanel({
   facets,
   query,
   onFilter,
   description,
   onDescriptionSave,
-  expiresAt,
-  createdAt,
 }: CampaignBIPanelProps) {
   const [descLocal, setDescLocal] = useState(description ?? '')
   useEffect(() => { setDescLocal(description ?? '') }, [description])
@@ -124,12 +75,33 @@ export default function CampaignBIPanel({
   const selectedCities = (query?.cities ?? []) as string[]
   const selectedStates = (query?.states ?? []) as string[]
   const selectedSize = (query?.sizeFilter ?? []) as string[]
-  const sizeBuckets = facets?.size_buckets ?? []
+  const selectedEngagement = (query?.engagementRateBuckets ?? []) as number[]
+  const selectedAvgLikes = (query?.avgLikesBuckets ?? []) as number[]
+  const engagementBuckets = facets?.engagement_rate ?? []
+  const avgLikesFacetBuckets = facets?.avg_likes ?? []
+  const sizeBuckets =
+    facets?.size_buckets ??
+    facets?.followers_buckets?.map((b) => ({
+      key: b.key === 'medio' ? 'mid' : b.key,
+      label: b.label,
+      count: b.count,
+    })) ??
+    []
 
   const handleSize = (key: string) => {
     if (!onFilter) return
     const next = selectedSize.includes(key) ? selectedSize.filter((s) => s !== key) : [...selectedSize, key]
     onFilter({ sizeFilter: next.length ? next : undefined })
+  }
+
+  const handleMetricBucket = (
+    selected: number[],
+    min: number,
+    key: 'engagementRateBuckets' | 'avgLikesBuckets'
+  ) => {
+    if (!onFilter) return
+    const next = selected.includes(min) ? selected.filter((x) => x !== min) : [...selected, min]
+    onFilter({ [key]: next.length ? next : undefined } as Partial<ProfilesSearchQuery>)
   }
 
   const handleContentType = (name: string) => {
@@ -153,8 +125,6 @@ export default function CampaignBIPanel({
   const selectedLlmProfileType = (query?.llmProfileType ?? []) as string[]
   const selectedLlmMainCategory = (query?.llmMainCategory ?? []) as string[]
   const selectedLlmGender = (query?.llmGender ?? []) as string[]
-  const selectedLlmSubCategories = (query?.llmSubCategories ?? []) as string[]
-  const selectedLlmContentPillars = (query?.llmContentPillars ?? []) as string[]
   const selectedLlmAudienceType = (query?.llmAudienceType ?? []) as string[]
 
   const llmArraySelected = (selected: string[], facetName: string): boolean => {
@@ -163,48 +133,8 @@ export default function CampaignBIPanel({
   }
 
   const showLlmMainCategorySection = !!(
-    llm && showLlmFacetMulti(llm.mainCategory, selectedLlmMainCategory, llmArraySelected)
+    llm && showNamedFacetList(llm.mainCategory)
   )
-  const showLlmSubCategoriesSection = !!(
-    llm && showLlmFacetMulti(llm.subCategories, selectedLlmSubCategories, llmArraySelected)
-  )
-
-  const [llmSubCategoriesExpanded, setLlmSubCategoriesExpanded] = useState(false)
-  const [llmContentPillarsExpanded, setLlmContentPillarsExpanded] = useState(false)
-  const allLlmSubCategories = llm ? filterPositiveLlmCounts(llm.subCategories) : []
-  const llmSubCategoriesLongList = allLlmSubCategories.length > LLM_LONG_FACET_LIST_OVER
-  const llmSubCategoriesHiddenLowCount = llmSubCategoriesLongList
-    ? allLlmSubCategories.filter(
-      (r) => (r.count ?? 0) < 2 && !llmArraySelected(selectedLlmSubCategories, r.name),
-    ).length
-    : 0
-  const llmSubCategoriesRowsForDisplay =
-    llmSubCategoriesLongList && !llmSubCategoriesExpanded
-      ? allLlmSubCategories.filter(
-        (r) => (r.count ?? 0) >= 2 || llmArraySelected(selectedLlmSubCategories, r.name),
-      )
-      : allLlmSubCategories
-  const showLlmSubCategoriesVerMaisToggle = llmSubCategoriesLongList && llmSubCategoriesHiddenLowCount > 0
-
-  const allLlmContentPillars = llm ? filterPositiveLlmCounts(llm.contentPillars) : []
-  const llmContentPillarsLongList = allLlmContentPillars.length > LLM_LONG_FACET_LIST_OVER
-  const llmContentPillarsHiddenLowCount = llmContentPillarsLongList
-    ? allLlmContentPillars.filter(
-      (r) => (r.count ?? 0) < 2 && !llmArraySelected(selectedLlmContentPillars, r.name),
-    ).length
-    : 0
-  const llmContentPillarsRowsForDisplay =
-    llmContentPillarsLongList && !llmContentPillarsExpanded
-      ? allLlmContentPillars.filter(
-        (r) => (r.count ?? 0) >= 2 || llmArraySelected(selectedLlmContentPillars, r.name),
-      )
-      : allLlmContentPillars
-  const showLlmContentPillarsVerMaisToggle = llmContentPillarsLongList && llmContentPillarsHiddenLowCount > 0
-
-  useEffect(() => {
-    setLlmSubCategoriesExpanded(false)
-    setLlmContentPillarsExpanded(false)
-  }, [facets])
 
   const handleLlmArrayToggle = (key: LlmArrayFilterKey, facetName: string) => {
     if (!onFilter) return
@@ -235,17 +165,17 @@ export default function CampaignBIPanel({
         title={
           <span className="campaign-bi-card-title-row">
             <FilterOutlined className="campaign-bi-card-title-icon" aria-hidden />
-            Filtrar relatório
+            Ordenar relatório
           </span>
         }
       >
         {onFilter &&
           llm &&
-          showLlmFacetMulti(llm.audienceType, selectedLlmAudienceType, llmArraySelected) && (
+          showNamedFacetList(llm.audienceType) && (
             <div className="campaign-bi-section">
               <Text strong className="campaign-bi-section-title">Público-alvo</Text>
               <div className="campaign-bi-content">
-                {filterPositiveLlmCounts(llm.audienceType).map(({ name, count }) => (
+                {filterNamedFacetRows(llm.audienceType).map(({ name }) => (
                   <span
                     key={name}
                     className={`campaign-bi-clickable ${llmArraySelected(selectedLlmAudienceType, name) ? 'campaign-bi-selected' : ''}`}
@@ -255,7 +185,7 @@ export default function CampaignBIPanel({
                     onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmAudienceType', name)}
                     style={{ color: llmPillColor(`aud-${name}`) }}
                   >
-                    <Text type="secondary">{formatLlmFacetLabel(name)}</Text> <strong>{count}</strong>
+                    {formatFacetLabel(name)}
                   </span>
                 ))}
               </div>
@@ -264,11 +194,11 @@ export default function CampaignBIPanel({
 
         {onFilter &&
           llm &&
-          showLlmFacetMulti(llm.gender, selectedLlmGender, llmArraySelected) && (
+          showNamedFacetList(llm.gender) && (
             <div className="campaign-bi-section">
               <Text strong className="campaign-bi-section-title">Gênero do Influencer</Text>
               <div className="campaign-bi-price">
-                {filterPositiveLlmCounts(llm.gender).map(({ name, count }) => (
+                {filterNamedFacetRows(llm.gender).map(({ name }) => (
                   <span
                     key={name}
                     className={`campaign-bi-clickable ${llmArraySelected(selectedLlmGender, name) ? 'campaign-bi-selected' : ''}`}
@@ -278,18 +208,18 @@ export default function CampaignBIPanel({
                     onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmGender', name)}
                     style={{ color: llmPillColor(`g-${name}`) }}
                   >
-                    <Text type="secondary">{formatLlmFacetLabel(name)}</Text> <strong>{count}</strong>
+                    {formatFacetLabel(name)}
                   </span>
                 ))}
               </div>
             </div>
           )}
 
-        {onFilter && showFacetMulti(sizeBuckets, (b) => selectedSize.includes(b.key)) && (
+        {onFilter && sizeBuckets.some((b) => (b.count ?? 0) > 0) && (
           <div className="campaign-bi-section">
             <Text strong className="campaign-bi-section-title">Tamanho</Text>
             <div className="campaign-bi-price">
-              {filterPositiveFacetCounts(sizeBuckets).map(({ key, label, count }) => {
+              {sizeBuckets.filter((b) => (b.count ?? 0) > 0).map(({ key, label }) => {
                 const selected = selectedSize.includes(key)
                 return (
                   <span
@@ -301,10 +231,62 @@ export default function CampaignBIPanel({
                     onKeyDown={(e) => e.key === 'Enter' && handleSize(key)}
                     style={{ color: getInfluencerTierSolidHexForBucketKey(key) }}
                   >
-                    <Text type="secondary">{label}</Text> <strong>{count}</strong>
+                    {label}
                   </span>
                 )
               })}
+            </div>
+          </div>
+        )}
+
+        {onFilter && engagementBuckets.some((b) => (b.count ?? 0) > 0) && (
+          <div className="campaign-bi-section">
+            <Text strong className="campaign-bi-section-title">Engajamento</Text>
+            <div className="campaign-bi-price">
+              {engagementBuckets
+                .filter((b) => (b.count ?? 0) > 0)
+                .map((bucket) => {
+                  const min = facetBucketFilterMin(bucket)
+                  const selected = selectedEngagement.includes(min)
+                  return (
+                    <span
+                      key={bucket.key}
+                      className={`campaign-bi-clickable ${selected ? 'campaign-bi-selected' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleMetricBucket(selectedEngagement, min, 'engagementRateBuckets')}
+                      onKeyDown={(e) => e.key === 'Enter' && handleMetricBucket(selectedEngagement, min, 'engagementRateBuckets')}
+                    >
+                      {bucket.label}
+                    </span>
+                  )
+                })}
+            </div>
+          </div>
+        )}
+
+        {onFilter && avgLikesFacetBuckets.some((b) => (b.count ?? 0) > 0) && (
+          <div className="campaign-bi-section">
+            <Text strong className="campaign-bi-section-title">Média de curtidas</Text>
+            <div className="campaign-bi-price">
+              {avgLikesFacetBuckets
+                .filter((b) => (b.count ?? 0) > 0)
+                .map((bucket) => {
+                  const min = facetBucketFilterMin(bucket)
+                  const selected = selectedAvgLikes.includes(min)
+                  return (
+                    <span
+                      key={bucket.key}
+                      className={`campaign-bi-clickable ${selected ? 'campaign-bi-selected' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleMetricBucket(selectedAvgLikes, min, 'avgLikesBuckets')}
+                      onKeyDown={(e) => e.key === 'Enter' && handleMetricBucket(selectedAvgLikes, min, 'avgLikesBuckets')}
+                    >
+                      {bucket.label}
+                    </span>
+                  )
+                })}
             </div>
           </div>
         )}
@@ -318,13 +300,12 @@ export default function CampaignBIPanel({
             if ((social.facebook ?? 0) > 0) nets.push({ net: 'facebook', label: 'Facebook', count: social.facebook })
             if ((social.linkedin ?? 0) > 0) nets.push({ net: 'linkedin', label: 'LinkedIn', count: social.linkedin })
             if ((social.twitter ?? 0) > 0) nets.push({ net: 'twitter', label: 'X/Twitter', count: social.twitter })
-            const showNets =
-              nets.length > 1 || (nets.length === 1 && selectedSocial.includes(nets[0]!.net))
+            const showNets = nets.length > 0
             return showNets ? (
               <div className="campaign-bi-section">
                 <Text strong className="campaign-bi-section-title">Redes sociais</Text>
                 <div className="campaign-bi-social">
-                  {nets.map(({ net, label, count }) => (
+                  {nets.map(({ net, label }) => (
                     <span
                       key={net}
                       className={`campaign-bi-clickable ${selectedSocial.includes(net) ? 'campaign-bi-selected' : ''}`}
@@ -333,7 +314,7 @@ export default function CampaignBIPanel({
                       onClick={() => handleSocial(net)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSocial(net)}
                     >
-                      <Text type="secondary">{label}</Text> <strong>{count}</strong>
+                      {label}
                     </span>
                   ))}
                 </div>
@@ -341,11 +322,12 @@ export default function CampaignBIPanel({
             ) : null
           })()}
 
-        {onFilter && showFacetMulti(contentTypes, (c) => selectedContent.includes(c.name)) && (
+        {onFilter && contentTypes.some((c) => (c.count ?? 0) > 0) && (
           <div className="campaign-bi-section">
             <Text strong className="campaign-bi-section-title">Tipo de conteúdo</Text>
             <div className="campaign-bi-content">
-              {filterPositiveFacetCounts(contentTypes)
+              {contentTypes
+                .filter((c) => (c.count ?? 0) > 0)
                 .map((c) => (
                   <span
                     key={c.name}
@@ -355,7 +337,7 @@ export default function CampaignBIPanel({
                     onClick={() => handleContentType(c.name)}
                     onKeyDown={(e) => e.key === 'Enter' && handleContentType(c.name)}
                   >
-                    <Text type="secondary">{CONTENT_TYPE_LABELS[c.name] ?? c.name}</Text> <strong>{c.count}</strong>
+                    {CONTENT_TYPE_LABELS[c.name] ?? formatFacetLabel(c.name)}
                   </span>
                 ))}
             </div>
@@ -364,11 +346,11 @@ export default function CampaignBIPanel({
 
         {onFilter && llm && (
           <>
-            {showLlmFacetMulti(llm.profileType, selectedLlmProfileType, llmArraySelected) && (
+            {showNamedFacetList(llm.profileType) && (
               <div className="campaign-bi-section">
                 <Text strong className="campaign-bi-section-title">Tipo de perfil</Text>
                 <div className="campaign-bi-content">
-                  {filterPositiveLlmCounts(llm.profileType).map(({ name, count }) => (
+                  {filterNamedFacetRows(llm.profileType).map(({ name }) => (
                     <span
                       key={name}
                       className={`campaign-bi-clickable ${llmArraySelected(selectedLlmProfileType, name) ? 'campaign-bi-selected' : ''}`}
@@ -378,71 +360,17 @@ export default function CampaignBIPanel({
                       onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmProfileType', name)}
                       style={{ color: llmPillColor(name) }}
                     >
-                      <Text type="secondary">{formatLlmFacetLabel(name)}</Text> <strong>{count}</strong>
+                      {formatFacetLabel(name)}
                     </span>
                   ))}
                 </div>
               </div>
             )}
-            {showLlmMainCategorySection && showLlmSubCategoriesSection && (
-              <div className="campaign-bi-section campaign-bi-category-sub-pair">
-                <div className="campaign-bi-category-sub-pair-grid">
-                  <div className="campaign-bi-category-sub-col">
-                    <Text strong className="campaign-bi-section-title">Categoria principal</Text>
-                    <div className="campaign-bi-content">
-                      {filterPositiveLlmCounts(llm.mainCategory).map(({ name, count }) => (
-                        <span
-                          key={name}
-                          className={`campaign-bi-clickable ${llmArraySelected(selectedLlmMainCategory, name) ? 'campaign-bi-selected' : ''}`}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => handleLlmArrayToggle('llmMainCategory', name)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmMainCategory', name)}
-                          style={{ color: llmPillColor(`cat-${name}`) }}
-                        >
-                          <Text type="secondary">{formatLlmFacetLabel(name)}</Text> <strong>{count}</strong>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="campaign-bi-category-sub-col">
-                    <Text strong className="campaign-bi-section-title">Subcategorias</Text>
-                    <div className="campaign-bi-content">
-                      {llmSubCategoriesRowsForDisplay.map(({ name, count }) => (
-                        <span
-                          key={name}
-                          className={`campaign-bi-clickable ${llmArraySelected(selectedLlmSubCategories, name) ? 'campaign-bi-selected' : ''}`}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => handleLlmArrayToggle('llmSubCategories', name)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmSubCategories', name)}
-                          style={{ color: llmPillColor(`sub-${name}`) }}
-                        >
-                          <Text type="secondary">{formatLlmFacetLabel(name)}</Text> <strong>{count}</strong>
-                        </span>
-                      ))}
-                    </div>
-                    {showLlmSubCategoriesVerMaisToggle && (
-                      <Button
-                        type="link"
-                        size="small"
-                        className="campaign-bi-subcategories-ver-mais"
-                        onClick={() => setLlmSubCategoriesExpanded((e) => !e)}
-                      >
-                        {llmSubCategoriesExpanded
-                          ? 'Ver menos'
-                          : `Ver mais (${llmSubCategoriesHiddenLowCount})`}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-            {showLlmMainCategorySection && !showLlmSubCategoriesSection && (
+            {showLlmMainCategorySection && (
               <div className="campaign-bi-section">
                 <Text strong className="campaign-bi-section-title">Categoria principal</Text>
                 <div className="campaign-bi-content">
-                  {filterPositiveLlmCounts(llm.mainCategory).map(({ name, count }) => (
+                  {filterNamedFacetRows(llm.mainCategory).map(({ name }) => (
                     <span
                       key={name}
                       className={`campaign-bi-clickable ${llmArraySelected(selectedLlmMainCategory, name) ? 'campaign-bi-selected' : ''}`}
@@ -452,74 +380,10 @@ export default function CampaignBIPanel({
                       onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmMainCategory', name)}
                       style={{ color: llmPillColor(`cat-${name}`) }}
                     >
-                      <Text type="secondary">{formatLlmFacetLabel(name)}</Text> <strong>{count}</strong>
+                      {formatFacetLabel(name)}
                     </span>
                   ))}
                 </div>
-              </div>
-            )}
-            {!showLlmMainCategorySection && showLlmSubCategoriesSection && (
-              <div className="campaign-bi-section">
-                <Text strong className="campaign-bi-section-title">Subcategorias</Text>
-                <div className="campaign-bi-content">
-                  {llmSubCategoriesRowsForDisplay.map(({ name, count }) => (
-                    <span
-                      key={name}
-                      className={`campaign-bi-clickable ${llmArraySelected(selectedLlmSubCategories, name) ? 'campaign-bi-selected' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleLlmArrayToggle('llmSubCategories', name)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmSubCategories', name)}
-                      style={{ color: llmPillColor(`sub-${name}`) }}
-                    >
-                      <Text type="secondary">{formatLlmFacetLabel(name)}</Text> <strong>{count}</strong>
-                    </span>
-                  ))}
-                </div>
-                {showLlmSubCategoriesVerMaisToggle && (
-                  <Button
-                    type="link"
-                    size="small"
-                    className="campaign-bi-subcategories-ver-mais"
-                    onClick={() => setLlmSubCategoriesExpanded((e) => !e)}
-                  >
-                    {llmSubCategoriesExpanded
-                      ? 'Ver menos'
-                      : `Ver mais (${llmSubCategoriesHiddenLowCount})`}
-                  </Button>
-                )}
-              </div>
-            )}
-            {showLlmFacetMulti(llm.contentPillars, selectedLlmContentPillars, llmArraySelected) && (
-              <div className="campaign-bi-section">
-                <Text strong className="campaign-bi-section-title">Pilares de conteúdo</Text>
-                <div className="campaign-bi-content">
-                  {llmContentPillarsRowsForDisplay.map(({ name, count }) => (
-                    <span
-                      key={name}
-                      className={`campaign-bi-clickable ${llmArraySelected(selectedLlmContentPillars, name) ? 'campaign-bi-selected' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleLlmArrayToggle('llmContentPillars', name)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmContentPillars', name)}
-                      style={{ color: llmPillColor(`pillar-${name}`) }}
-                    >
-                      <Text type="secondary">{formatLlmFacetLabel(name)}</Text> <strong>{count}</strong>
-                    </span>
-                  ))}
-                </div>
-                {showLlmContentPillarsVerMaisToggle && (
-                  <Button
-                    type="link"
-                    size="small"
-                    className="campaign-bi-subcategories-ver-mais"
-                    onClick={() => setLlmContentPillarsExpanded((e) => !e)}
-                  >
-                    {llmContentPillarsExpanded
-                      ? 'Ver menos'
-                      : `Ver mais (${llmContentPillarsHiddenLowCount})`}
-                  </Button>
-                )}
               </div>
             )}
           </>
@@ -527,8 +391,8 @@ export default function CampaignBIPanel({
 
         {onFilter &&
           (() => {
-            const st = filterPositiveFacetCounts(states)
-            const ci = filterPositiveFacetCounts(cities)
+            const st = states.filter((s) => (s.count ?? 0) > 0)
+            const ci = cities.filter((c) => (c.count ?? 0) > 0)
             const locTotal = st.length + ci.length
             const showLoc =
               locTotal > 1 ||
@@ -549,7 +413,7 @@ export default function CampaignBIPanel({
                       onClick={() => handleState(s.name)}
                       onKeyDown={(e) => e.key === 'Enter' && handleState(s.name)}
                     >
-                      <Text type="secondary">{s.name}</Text> <strong>{s.count}</strong>
+                      {formatFacetLabel(s.name)}
                     </span>
                   ))}
                   {ci.slice(0, 5).map((c) => (
@@ -561,7 +425,7 @@ export default function CampaignBIPanel({
                       onClick={() => handleCity(c.name)}
                       onKeyDown={(e) => e.key === 'Enter' && handleCity(c.name)}
                     >
-                      <Text type="secondary">{c.name}</Text> <strong>{c.count}</strong>
+                      {formatFacetLabel(c.name)}
                     </span>
                   ))}
                 </div>
@@ -569,13 +433,6 @@ export default function CampaignBIPanel({
             ) : null
           })()}
       </Card>
-      {(formatDate(createdAt) || formatDate(expiresAt)) && (
-        <div className="campaign-bi-report-dates">
-          {formatDate(createdAt) && <span>Criação {formatDate(createdAt)}</span>}
-          {formatDate(createdAt) && formatDate(expiresAt) && <span className="campaign-bi-report-dates-sep">·</span>}
-          {formatDate(expiresAt) && <span>Término {formatDate(expiresAt)}</span>}
-        </div>
-      )}
     </div>
   )
 }

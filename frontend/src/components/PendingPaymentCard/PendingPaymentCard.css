@@ -1,0 +1,92 @@
+.pending-payment-card {
+  margin-bottom: 24px;
+  border-radius: var(--app-card-radius, 10px);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.06) 0%, rgba(104, 39, 143, 0.04) 100%);
+  box-shadow: var(--app-card-shadow, 0 1px 3px rgba(0, 0, 0, 0.06));
+}
+
+.pending-payment-card .ant-card-body {
+  padding: 20px 24px;
+}
+
+.pending-payment-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.pending-payment-card__eyebrow {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--app-text-secondary);
+  margin-bottom: 4px;
+}
+
+.pending-payment-card__title {
+  margin: 0 !important;
+  color: var(--app-text);
+}
+
+.pending-payment-card__status {
+  margin: 0;
+  border-radius: 999px;
+  font-weight: 600;
+  padding: 2px 12px;
+}
+
+.pending-payment-card__summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .pending-payment-card__summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pending-payment-card__amount-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pending-payment-card__amount-label {
+  font-size: 13px;
+}
+
+.pending-payment-card__amount {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--app-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.pending-payment-card__actions-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pending-payment-card__qr {
+  width: 220px;
+  height: 220px;
+  display: block;
+  margin: 0 auto 4px;
+  border-radius: 8px;
+}
+
+.pending-payment-card__footer {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--app-border);
+}

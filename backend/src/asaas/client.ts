@@ -394,3 +394,90 @@ export function isAsaasConfigured(): boolean {
   const k = getAsaasApiKey();
   return Boolean(k && k.trim());
 }
+
+export interface AsaasSubscription {
+  id?: string;
+  customer?: string;
+  value?: number;
+  cycle?: string;
+  billingType?: string;
+  status?: string;
+  nextDueDate?: string;
+  description?: string;
+  externalReference?: string;
+}
+
+/** POST /subscriptions — assinatura recorrente (mensal). */
+export async function createSubscription(payload: {
+  customer: string;
+  billingType: 'PIX' | 'BOLETO' | 'CREDIT_CARD';
+  value: number;
+  nextDueDate: string;
+  cycle: 'MONTHLY' | 'WEEKLY' | 'BIWEEKLY' | 'QUARTERLY' | 'SEMIANNUALLY' | 'YEARLY';
+  description?: string;
+  externalReference?: string;
+  creditCard?: {
+    holderName: string;
+    number: string;
+    expiryMonth: string;
+    expiryYear: string;
+    ccv: string;
+  };
+  creditCardHolderInfo?: {
+    name: string;
+    email: string;
+    cpfCnpj: string;
+    postalCode: string;
+    addressNumber: string;
+    phone?: string;
+    mobilePhone?: string;
+  };
+}): Promise<AsaasSubscription> {
+  const raw = await request<AsaasSubscription & { data?: AsaasSubscription[] }>('POST', 'subscriptions', payload);
+  logAsaasJson('POST /subscriptions — corpo bruto', raw);
+  if (raw?.id) return raw;
+  const list = raw?.data;
+  if (Array.isArray(list) && list.length > 0) {
+    const ext = payload.externalReference;
+    if (ext) {
+      const hit = list.find((s) => s.externalReference === ext && s.id);
+      if (hit) return hit;
+    }
+    const first = list.find((s) => s.id);
+    if (first) return first;
+  }
+  return raw;
+}
+
+/** GET /subscriptions/:id/payments — cobranças geradas pela assinatura. */
+export async function getSubscriptionPayments(
+  subscriptionId: string
+): Promise<{ data?: AsaasPayment[] }> {
+  return request<{ data?: AsaasPayment[] }>(
+    'GET',
+    `subscriptions/${encodeURIComponent(subscriptionId)}/payments`
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** A primeira cobrança da assinatura pode demorar alguns instantes após o POST. */
+export async function waitForSubscriptionFirstPayment(
+  subscriptionId: string,
+  maxAttempts = 10
+): Promise<AsaasPayment | null> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await getSubscriptionPayments(subscriptionId);
+      const rows = res?.data ?? [];
+      const hit = rows.find((p) => p.id);
+      if (hit) return hit;
+    } catch (e) {
+      console.warn('[asaas] getSubscriptionPayments:', e instanceof Error ? e.message : e);
+    }
+    if (i < maxAttempts - 1) await sleep(400);
+  }
+  return null;
+}

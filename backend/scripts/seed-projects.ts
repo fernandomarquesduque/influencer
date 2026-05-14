@@ -1,6 +1,6 @@
 /**
  * Insere projetos de exemplo no banco para validar o frontend (lista e detalhe).
- * Uso: npx tsx scripts/seed-projects.ts (a partir da pasta crawl)
+ * Uso: npx tsx scripts/seed-projects.ts (a partir da pasta backend)
  */
 import 'dotenv/config';
 import path from 'path';

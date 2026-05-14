@@ -110,6 +110,9 @@ export interface BuyCreditsModalProps {
   onAfterPaymentCreated?: () => void | Promise<void>
   /** Se o usuário já tem cobrança pendente, abre direto o modal de PIX/boleto (sem formulário). */
   resumePayment?: CreatePaymentForCreditsResponse | null
+  /** Em Meus pagamentos: fecha o modal e delega o resultado ao card pendente na página. */
+  showPaymentResultOnPage?: boolean
+  onPaymentCreated?: (payment: CreatePaymentForCreditsResponse) => void
 }
 
 export default function BuyCreditsModal({
@@ -118,6 +121,8 @@ export default function BuyCreditsModal({
   suggestedCredits,
   onAfterPaymentCreated,
   resumePayment = null,
+  showPaymentResultOnPage = false,
+  onPaymentCreated,
 }: BuyCreditsModalProps) {
   const { user, isAdm, refreshUser } = useAuth()
   const { refreshCredits } = useCredits()
@@ -148,6 +153,22 @@ export default function BuyCreditsModal({
     const id = createdPayment?.paymentId
     if (id) registerPendingPaymentWatch(id)
   }, [createdPayment?.paymentId, registerPendingPaymentWatch])
+
+  const deliverPaymentToParent = useCallback(
+    async (p: CreatePaymentForCreditsResponse) => {
+      if (showPaymentResultOnPage) {
+        createdPaymentRef.current = null
+        setCreatedPayment(null)
+        setPixQrDataUrl(null)
+        onPaymentCreated?.(p)
+        onClose()
+        await Promise.resolve(onAfterPaymentCreated?.()).catch(() => {})
+        return true
+      }
+      return false
+    },
+    [showPaymentResultOnPage, onPaymentCreated, onClose, onAfterPaymentCreated]
+  )
 
   useEffect(() => {
     if (!open) {
@@ -235,6 +256,7 @@ export default function BuyCreditsModal({
           buyBillingType,
           Object.keys(apiOpts).length > 0 ? apiOpts : undefined
         )
+        if (await deliverPaymentToParent(res)) return
         createdPaymentRef.current = res
         setCreatedPayment(res)
         setCpfModalOpen(false)
@@ -251,6 +273,7 @@ export default function BuyCreditsModal({
       } catch (e) {
         if (e instanceof PendingPaymentExistsError) {
           const p = e.payment
+          if (await deliverPaymentToParent(p)) return
           createdPaymentRef.current = p
           setCreatedPayment(p)
           setBuyBillingType(p.billingType === 'BOLETO' ? 'BOLETO' : 'PIX')
@@ -278,7 +301,7 @@ export default function BuyCreditsModal({
         setCreating(false)
       }
     },
-    [buyCredits, buyBillingType, refreshCredits, refreshUser, savedBillingDocument, user]
+    [buyCredits, buyBillingType, refreshCredits, refreshUser, savedBillingDocument, user, deliverPaymentToParent]
   )
 
   const handleGerarPagamentoClick = () => {

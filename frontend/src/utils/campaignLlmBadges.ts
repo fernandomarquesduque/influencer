@@ -1,4 +1,5 @@
 import type { ProfileListItem } from '../api'
+import { snapMainCategoryToTaxonomy } from '@repo/llmMainCategoryTaxonomy'
 import { getLlmQualification } from './mapProfileListToPreviewItems'
 
 export type LlmQualificationBadge = { key: string; text: string; title: string }

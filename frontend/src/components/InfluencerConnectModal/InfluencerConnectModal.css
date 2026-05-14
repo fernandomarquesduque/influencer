@@ -19,7 +19,7 @@
 }
 
 .influencer-connect-modal__eyebrow {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -27,59 +27,132 @@
   margin-bottom: 10px;
 }
 
+.influencer-connect-modal__profile-card {
+  background: color-mix(in srgb, var(--app-primary, #68278f) 6%, var(--app-bg-secondary, #fafafa));
+  border: 1px solid color-mix(in srgb, var(--app-primary, #68278f) 14%, var(--app-border, #eee));
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
 .influencer-connect-modal__head {
   display: flex;
   gap: 16px;
   align-items: flex-start;
-  margin-bottom: 20px;
+  margin-bottom: 0;
+}
+
+.influencer-connect-modal__head--clickable {
+  cursor: pointer;
+  border-radius: 12px;
+  margin: -8px -8px 12px;
+  padding: 8px;
+  transition: background 0.15s ease;
+}
+
+.influencer-connect-modal__head--clickable:hover {
+  background: rgba(104, 39, 143, 0.06);
+}
+
+.influencer-connect-modal__head--clickable:focus-visible {
+  outline: 2px solid rgba(104, 39, 143, 0.35);
+  outline-offset: 2px;
 }
 
 .influencer-connect-modal__avatar-wrap {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 88px;
 }
 
 .influencer-connect-modal__title-block {
   min-width: 0;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.influencer-connect-modal__btn-profile {
+  align-self: flex-start;
+  margin-top: 2px;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+  font-size: 11px !important;
+  height: 28px !important;
+  padding-inline: 10px !important;
+  border-color: color-mix(in srgb, var(--app-primary, #68278f) 28%, var(--app-border, #e8e8e8)) !important;
+  color: var(--app-primary, #68278f) !important;
+  background: var(--app-bg, #fff) !important;
+}
+
+.influencer-connect-modal__btn-profile:hover {
+  border-color: var(--app-primary, #68278f) !important;
+  color: var(--app-primary, #68278f) !important;
+  background: color-mix(in srgb, var(--app-primary, #68278f) 8%, var(--app-bg, #fff)) !important;
 }
 
 .influencer-connect-modal__name {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 1.25rem;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.15;
   color: var(--app-text, #111);
   letter-spacing: -0.02em;
+}
+
+.influencer-connect-modal__llm-desc {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--app-text, #222);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.influencer-connect-modal__llm-desc--muted {
+  color: var(--app-text-secondary, #888);
+  font-style: italic;
 }
 
 .influencer-connect-modal__handle {
   font-size: 13px;
   color: var(--app-text-secondary, #666);
-  margin-bottom: 8px;
+  margin: 0;
+  line-height: 1.2;
 }
 
 .influencer-connect-modal__stats {
-  font-size: 13px;
+  font-size: 11px;
   color: var(--app-text-secondary, #666);
-  line-height: 1.4;
-}
-
-.influencer-connect-modal__tier {
-  margin-top: 8px;
+  line-height: 1.2;
+  margin: 0;
 }
 
 .influencer-connect-modal__hook {
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--app-text, #222);
-  margin: 0 0 22px;
+  margin: 0 0 16px;
   max-width: 36em;
 }
 
-.influencer-connect-modal__actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.influencer-connect-modal__form .ant-form-item {
+  margin-bottom: 12px;
+}
+
+.influencer-connect-modal__form .ant-form-item-label > label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text, #222);
+}
+
+.influencer-connect-modal__form-submit {
+  margin-bottom: 0 !important;
+  margin-top: 4px;
 }
 
 .influencer-connect-modal__btn-primary {
@@ -114,7 +187,7 @@
 
 .influencer-connect-modal__hint {
   margin-top: 14px;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.45;
   color: var(--app-text-secondary, #888);
   text-align: center;

@@ -8,6 +8,7 @@ import type { ProfileListItem, ProfilesSearchQuery, ProfilesSearchFacets } from 
 import { CONTENT_TYPE_LABELS } from '../../constants/contentTypes'
 import InfluencerPreviewTable from '../InfluencerPreviewTable/InfluencerPreviewTable'
 import { formatCampaignExpiresLong } from '../../utils/campaignExpires'
+import { formatFacetLabel } from '../../utils/facetLabels'
 import './CampaignPaymentCart.css'
 
 function buildActiveFilters(
@@ -28,13 +29,13 @@ function buildActiveFilters(
     out.push({ id: `account-${value}`, label, onRemove: () => onFilter({ accountTypeFilter: query.accountTypeFilter?.filter((v) => v !== value).length ? query.accountTypeFilter!.filter((v) => v !== value) : undefined }) })
   })
   query.contentTypes?.forEach((name) => {
-    out.push({ id: `content-${name}`, label: CONTENT_TYPE_LABELS[name] ?? name, onRemove: () => onFilter({ contentTypes: query.contentTypes?.filter((c) => c !== name).length ? query.contentTypes!.filter((c) => c !== name) : undefined }) })
+    out.push({ id: `content-${name}`, label: formatFacetLabel(CONTENT_TYPE_LABELS[name] ?? name), onRemove: () => onFilter({ contentTypes: query.contentTypes?.filter((c) => c !== name).length ? query.contentTypes!.filter((c) => c !== name) : undefined }) })
   })
   query.cities?.forEach((name) => {
-    out.push({ id: `city-${name}`, label: name, onRemove: () => onFilter({ cities: query.cities?.filter((c) => c !== name).length ? query.cities!.filter((c) => c !== name) : undefined }) })
+    out.push({ id: `city-${name}`, label: formatFacetLabel(name), onRemove: () => onFilter({ cities: query.cities?.filter((c) => c !== name).length ? query.cities!.filter((c) => c !== name) : undefined }) })
   })
   query.states?.forEach((name) => {
-    out.push({ id: `state-${name}`, label: name, onRemove: () => onFilter({ states: query.states?.filter((s) => s !== name).length ? query.states!.filter((s) => s !== name) : undefined }) })
+    out.push({ id: `state-${name}`, label: formatFacetLabel(name), onRemove: () => onFilter({ states: query.states?.filter((s) => s !== name).length ? query.states!.filter((s) => s !== name) : undefined }) })
   })
   query.socialNetworks?.forEach((net) => {
     out.push({ id: `social-${net}`, label: net, onRemove: () => onFilter({ socialNetworks: query.socialNetworks?.filter((n) => n !== net).length ? query.socialNetworks!.filter((n) => n !== net) : undefined }) })
@@ -53,12 +54,10 @@ function buildActiveFilters(
       })
     })
   }
-  pushLlmArr('llmProfileType', 'llm-pt', (v) => `Perfil: ${v}`)
-  pushLlmArr('llmMainCategory', 'llm-cat', (v) => `Categoria: ${v}`)
-  pushLlmArr('llmGender', 'llm-gen', (v) => `Gênero: ${v}`)
-  pushLlmArr('llmSubCategories', 'llm-sub', (v) => `Sub: ${v}`)
-  pushLlmArr('llmContentPillars', 'llm-pillar', (v) => `Pilar: ${v}`)
-  pushLlmArr('llmAudienceType', 'llm-aud', (v) => `Público: ${v}`)
+  pushLlmArr('llmProfileType', 'llm-pt', (v) => `Perfil: ${formatFacetLabel(v)}`)
+  pushLlmArr('llmMainCategory', 'llm-cat', (v) => `Categoria: ${formatFacetLabel(v)}`)
+  pushLlmArr('llmGender', 'llm-gen', (v) => `Gênero: ${formatFacetLabel(v)}`)
+  pushLlmArr('llmAudienceType', 'llm-aud', (v) => `Público: ${formatFacetLabel(v)}`)
   if (query.q?.trim()) {
     out.push({ id: 'q', label: `Busca: "${query.q.trim().slice(0, 20)}${query.q!.trim().length > 20 ? '…' : ''}"`, onRemove: () => onFilter({ q: undefined }) })
   }

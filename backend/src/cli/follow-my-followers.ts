@@ -23,8 +23,8 @@ import { rateLimitBackoff } from '../utils/delay.js';
 import { logTimestamp } from '../utils/logTimestamp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CRAWL_ROOT = path.resolve(__dirname, '../..');
-const DEFAULT_AUTH_PATH = path.join(CRAWL_ROOT, 'data', 'instagram-auth.json');
+const BACKEND_ROOT = path.resolve(__dirname, '../..');
+const DEFAULT_AUTH_PATH = path.join(BACKEND_ROOT, 'data', 'instagram-auth.json');
 
 /** Delay entre um follow e o próximo (ms). Padrão até 1 min (15–60 s). Use --delay-min/--delay-max para cadência mais lenta. */
 const DEFAULT_DELAY_MIN_MS = 15 * 1000;  // 15 s
@@ -119,7 +119,7 @@ async function main(): Promise<void> {
   const authPath = process.env.AUTH_STATE_PATH
     ? path.isAbsolute(process.env.AUTH_STATE_PATH)
       ? process.env.AUTH_STATE_PATH
-      : path.resolve(CRAWL_ROOT, process.env.AUTH_STATE_PATH)
+      : path.resolve(BACKEND_ROOT, process.env.AUTH_STATE_PATH)
     : DEFAULT_AUTH_PATH;
 
   const { limit, dryRun, delayMinMs, delayMaxMs, maxScrolls, fast } = parseArgs();

@@ -1,12 +1,12 @@
-/**
+﻿/**
  * Listagem de influenciadores de uma campanha.
- * Rota: /app/campaigns/:campaignId — filtros baseados nos facets (retorno da API), igual InfluencerList.
+ * Rota: /app/campaigns/:campaignId â€” filtros baseados nos facets (retorno da API), igual InfluencerList.
  */
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, message, Segmented, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined, ArrowLeftOutlined, UserOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
   fetchCampaignProfiles,
@@ -32,10 +32,20 @@ import {
   type CampaignInfo,
   type CreatePaymentForCreditsResponse,
   type MediaKind,
+  type PostItem,
   profileFiltersForCampaignPostApis,
 } from '../api'
 import { useCreditsOptional } from '../contexts/CreditsContext'
-import { filterAndSortCampaignItems, computeFacetsFromItems } from '../utils/campaignFilterClient'
+import {
+  filterAndSortCampaignItems,
+  computeFacetsFromItems,
+  filterFacetsForDisplay,
+  pruneInvalidCampaignFacetBoost,
+  profileListItemsFromOriginPosts,
+  campaignContextFetchQueryKey,
+  isCampaignFacetBoostOnlyPatch,
+  stripCampaignFacetBoostFromQuery,
+} from '../utils/campaignFilterClient'
 import { getLlmDescriptionLine } from '../utils/mapProfileListToPreviewItems'
 import { campaignLlmBadgeStyles, getLlmContentPillarLabels, getLlmGenderBadge, getLlmMainCategoryLabel, getLlmProfileTypeBadge } from '../utils/campaignLlmBadges'
 import InfluencerTierPill from '../components/InfluencerTierPill'
@@ -123,13 +133,13 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
   }
 }
 
-/** Números inteiros completos na coluna de métricas da lista (sem k/M). */
+/** NÃºmeros inteiros completos na coluna de mÃ©tricas da lista (sem k/M). */
 function formatCampaignListMetricInt(n: number | undefined | null): string {
   if (n == null || !Number.isFinite(n)) return '0'
   return Math.round(n).toLocaleString('pt-BR')
 }
 
-/** Média de likes/post com separador pt-BR, sem abreviar. */
+/** MÃ©dia de likes/post com separador pt-BR, sem abreviar. */
 function formatCampaignListAvgLikes(n: number | undefined | null): string {
   if (n == null || !Number.isFinite(n)) return '0'
   const x = Math.round(n * 100) / 100
@@ -169,7 +179,7 @@ function isCampaignListMetricSort(s: ProfilesSort): boolean {
   return CAMPAIGN_LIST_METRIC_SORT_KEYS.has(s)
 }
 
-/** Menu suspenso: escolher critério e direção da ordenação das métricas na lista. */
+/** Menu suspenso: escolher critÃ©rio e direÃ§Ã£o da ordenaÃ§Ã£o das mÃ©tricas na lista. */
 const CAMPAIGN_LIST_METRICS_SORT_MENU_ITEMS: MenuProps['items'] = [
   {
     key: 'grp-seg',
@@ -200,7 +210,7 @@ const CAMPAIGN_LIST_METRICS_SORT_MENU_ITEMS: MenuProps['items'] = [
   },
   {
     key: 'grp-com',
-    label: 'Comentários',
+    label: 'ComentÃ¡rios',
     type: 'group',
     children: [
       { key: 'total_comments_desc', label: 'Maior primeiro' },
@@ -209,7 +219,7 @@ const CAMPAIGN_LIST_METRICS_SORT_MENU_ITEMS: MenuProps['items'] = [
   },
   {
     key: 'grp-post',
-    label: 'Média likes / post',
+    label: 'MÃ©dia likes / post',
     type: 'group',
     children: [
       { key: 'avg_likes_desc', label: 'Maior primeiro' },
@@ -226,12 +236,12 @@ function campaignListMetricSortSummary(sort: ProfilesSort): string {
     engagement_asc: 'Engajamento, menor primeiro',
     total_likes_desc: 'Curtidas, maior primeiro',
     total_likes_asc: 'Curtidas, menor primeiro',
-    total_comments_desc: 'Comentários, maior primeiro',
-    total_comments_asc: 'Comentários, menor primeiro',
-    avg_likes_desc: 'Média likes por post, maior primeiro',
-    avg_likes_asc: 'Média likes por post, menor primeiro',
+    total_comments_desc: 'ComentÃ¡rios, maior primeiro',
+    total_comments_asc: 'ComentÃ¡rios, menor primeiro',
+    avg_likes_desc: 'MÃ©dia likes por post, maior primeiro',
+    avg_likes_asc: 'MÃ©dia likes por post, menor primeiro',
   }
-  return map[sort] ?? 'Escolher ordenação'
+  return map[sort] ?? 'Escolher ordenaÃ§Ã£o'
 }
 
 function campaignListEngagementColor(rate: number): string {
@@ -240,7 +250,7 @@ function campaignListEngagementColor(rate: number): string {
   return 'var(--app-rate-low)'
 }
 
-/** Uma linha compacta (modo lista tipo tabela) com dados de ativação. */
+/** Uma linha compacta (modo lista tipo tabela) com dados de ativaÃ§Ã£o. */
 function CampaignListRow({
   item,
   onClick,
@@ -458,7 +468,7 @@ function CampaignListRow({
                   </Tooltip>
                 ) : null}
                 {pillarLabels.map((pillar) => (
-                  <Tooltip key={pillar} title="Pilar de conteúdo">
+                  <Tooltip key={pillar} title="Pilar de conteÃºdo">
                     <span className="campaign-list-llm-badge" style={campaignLlmBadgeStyles(pillar)}>
                       {pillar}
                     </span>
@@ -505,7 +515,7 @@ function CampaignListRow({
               <span className="campaign-list-metrics-value">{formatCampaignListMetricInt(totalLikes)}</span>
             </div>
             <div className="campaign-list-metrics-row">
-              <span className="campaign-list-metrics-label">Comentários</span>
+              <span className="campaign-list-metrics-label">ComentÃ¡rios</span>
               <span className="campaign-list-metrics-value campaign-list-metrics-value--muted">{formatCampaignListMetricInt(totalComments)}</span>
             </div>
             <div className="campaign-list-metrics-row">
@@ -536,9 +546,12 @@ const POST_CAPTION_SEARCH_DEBOUNCE_MS = 280
 
 export default function CampaignInfluencers() {
   const { campaignId: campaignIdParam } = useParams<{ campaignId: string }>()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
+  const isSearchRoute = location.pathname === '/search' || location.pathname.startsWith('/search/')
   const isAllCampaignsView =
-    campaignIdParam != null && campaignIdParam.trim().toLowerCase() === ALL_CAMPAIGNS_SLUG
+    isSearchRoute ||
+    (campaignIdParam != null && campaignIdParam.trim().toLowerCase() === ALL_CAMPAIGNS_SLUG)
   const campaignId = isAllCampaignsView
     ? ALL_CAMPAIGNS_SLUG
     : campaignIdParam != null && CAMPAIGN_ID_GUID_REGEX.test(campaignIdParam.trim())
@@ -557,12 +570,17 @@ export default function CampaignInfluencers() {
     ...defaultQuery,
     ...urlParamsToCampaignQuery(searchParams),
   }))
-  /** Filtros de perfil na URL (exceto `q` de legenda) para post-matches e handles de legenda. */
-  const postMatchProfileFilters = useMemo(
-    () => profileFiltersForCampaignPostApis({ ...defaultQuery, ...urlParamsToCampaignQuery(searchParams) }),
-    [searchParams.toString()]
-  )
+  /** Filtros de perfil estÃ¡veis (sem prioridade de facet na URL) â€” legenda nÃ£o estreita por porte/LLM. */
+  const postMatchProfileFiltersKey = useMemo(() => {
+    const stripped = stripCampaignFacetBoostFromQuery({
+      ...defaultQuery,
+      ...urlParamsToCampaignQuery(searchParams),
+    })
+    return JSON.stringify(profileFiltersForCampaignPostApis(stripped))
+  }, [searchParams.toString()])
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
+  /** Facets sÃ³ dos posts carregados na busca por legenda (aba Origem). */
+  const [searchFacets, setSearchFacets] = useState<ProfilesSearchFacets | null>(null)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [contextItems, setContextItems] = useState<ProfileListItem[] | null>(null)
@@ -585,7 +603,7 @@ export default function CampaignInfluencers() {
   const [payingWithCredits, setPayingWithCredits] = useState(false)
   const [deletingCampaign, setDeletingCampaign] = useState(false)
   const [filteredList, setFilteredList] = useState<ProfileListItem[]>([])
-  /** Com `q` preenchido: handles com post que casa com o termo (API post-matches), alinhado à aba Origem. */
+  /** Com `q` preenchido: handles com post que casa com o termo (API post-matches), alinhado Ã  aba Origem. */
   const [postCaptionSearch, setPostCaptionSearch] = useState<{
     qKey: string
     handles: Set<string>
@@ -601,9 +619,9 @@ export default function CampaignInfluencers() {
     }
     return tab === 'origin' ? 'origin' : 'influencers'
   })
-  /** Aba Posts com termo: esconder coluna de filtros enquanto a galeria carrega a primeira página. */
+  /** Aba Posts com termo: esconder coluna de filtros enquanto a galeria carrega a primeira pÃ¡gina. */
   const [originGallerySearchLoading, setOriginGallerySearchLoading] = useState(false)
-  /** Aba Posts com termo: após carregar, sem posts — esconder painel BI à esquerda. */
+  /** Aba Posts com termo: apÃ³s carregar, sem posts â€” esconder painel BI Ã  esquerda. */
   const [originSearchSettledEmpty, setOriginSearchSettledEmpty] = useState(false)
   const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '')
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
@@ -618,7 +636,21 @@ export default function CampaignInfluencers() {
   }, [data])
   const queryRef = useRef(query)
   queryRef.current = query
+  const campaignMainTabRef = useRef(campaignMainTab)
+  campaignMainTabRef.current = campaignMainTab
   const pendingLoadFromFilterRef = useRef(false)
+  const contextFetchQueryKey = useMemo(
+    () =>
+      campaignContextFetchQueryKey({
+        ...defaultQuery,
+        ...urlParamsToCampaignQuery(searchParams),
+      }),
+    [searchParams.toString()]
+  )
+  const captionSearchQ = searchParams.get('q')?.trim() ?? ''
+  const hasActiveSearchQ = captionSearchQ.length > 0
+  /** Na busca por legenda: sÃ³ facets dos posts carregados â€” nunca os da campanha inteira. */
+  const displayFacets = hasActiveSearchQ ? searchFacets : facets
   const buildCampaignUrlParams = useCallback(
     (nextQuery: Partial<ProfilesSearchQuery>, tab: 'influencers' | 'origin' = campaignMainTab) => {
       const params = campaignQueryToUrlParams(nextQuery)
@@ -659,7 +691,7 @@ export default function CampaignInfluencers() {
           setFavoriteHandles(new Set((res.handles ?? []).map(norm)))
           return
         }
-        // Na tela de campanha, considerar só favoritos desta campanha para o estado "selecionado"
+        // Na tela de campanha, considerar sÃ³ favoritos desta campanha para o estado "selecionado"
         if (campaignId && (res.favorites?.length ?? 0) > 0) {
           const forCampaign = (res.favorites ?? []).filter((f) => f.campaignId === campaignId).map((f) => norm(f.handle))
           setFavoriteHandles(new Set(forCampaign))
@@ -705,12 +737,47 @@ export default function CampaignInfluencers() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  const applySearchFacets = useCallback(
+    (next: ProfilesSearchFacets | null) => {
+      setSearchFacets(next)
+      const pruned = next ? pruneInvalidCampaignFacetBoost(queryRef.current, next) : null
+      if (pruned) {
+        setQuery(pruned)
+        setSearchParams(
+          buildCampaignUrlParams(pruned, campaignMainTabRef.current),
+          { replace: true }
+        )
+      }
+    },
+    [setSearchParams, buildCampaignUrlParams]
+  )
+
+  const handleOriginPostsForFacets = useCallback(
+    (posts: PostItem[]) => {
+      if (!searchParams.get('q')?.trim()) return
+      const items = profileListItemsFromOriginPosts(posts)
+      applySearchFacets(filterFacetsForDisplay(computeFacetsFromItems(items)))
+    },
+    [applySearchFacets, searchParams]
+  )
+
+  useEffect(() => {
+    if (!hasActiveSearchQ || !searchFacets) return
+    const pruned = pruneInvalidCampaignFacetBoost(queryRef.current, searchFacets)
+    if (pruned) {
+      setQuery(pruned)
+      setSearchParams(buildCampaignUrlParams(pruned, campaignMainTabRef.current), { replace: true })
+    }
+  }, [searchFacets, hasActiveSearchQ, setSearchParams, buildCampaignUrlParams])
+
   const applyContextFilters = useCallback((requestQuery: Partial<ProfilesSearchQuery>) => {
     if (contextItems == null) return
+    const skipCampaignFacets =
+      !!(requestQuery.q ?? '').trim() && campaignMainTabRef.current === 'origin'
     if (contextItems.length === 0) {
       setFilteredList([])
       setTotal(0)
-      setFacets(computeFacetsFromItems([]))
+      if (!skipCampaignFacets) setFacets(computeFacetsFromItems([]))
       setDisplayedCount(DISPLAY_PAGE_SIZE)
       return
     }
@@ -721,7 +788,7 @@ export default function CampaignInfluencers() {
       if (!captionAligned) {
         const queryWithoutProfileQ = { ...requestQuery, q: undefined }
         const sortedForFacets = filterAndSortCampaignItems(contextItems, queryWithoutProfileQ, { favoriteHandles })
-        setFacets(computeFacetsFromItems(sortedForFacets))
+        if (!skipCampaignFacets) setFacets(computeFacetsFromItems(sortedForFacets))
         setFilteredList([])
         setTotal(0)
         setDisplayedCount(DISPLAY_PAGE_SIZE)
@@ -734,7 +801,7 @@ export default function CampaignInfluencers() {
       })
       setFilteredList(sorted)
       setTotal(sorted.length)
-      setFacets(computeFacetsFromItems(sorted))
+      if (!skipCampaignFacets) setFacets(computeFacetsFromItems(sorted))
       setDisplayedCount(DISPLAY_PAGE_SIZE)
       return
     }
@@ -826,31 +893,34 @@ export default function CampaignInfluencers() {
   }, [])
 
   const pendingPayment = !!campaignInfo?.pendingPayment
+  const mapFacetsFromApi = (facetsFromApi: ProfilesSearchFacets | null): ProfilesSearchFacets | null => {
+    if (facetsFromApi == null) return null
+    if (facetsFromApi.followers_buckets && !('size_buckets' in facetsFromApi)) {
+      return {
+        ...facetsFromApi,
+        size_buckets: facetsFromApi.followers_buckets.map((b: { key: string; label: string; count: number }) => ({
+          key: b.key === 'medio' ? 'mid' : b.key,
+          label: b.label,
+          count: b.count,
+        })),
+      }
+    }
+    return facetsFromApi
+  }
   const loadContext = useCallback(
     (signal?: AbortSignal, queryOverride?: Partial<ProfilesSearchQuery>) => {
       if (campaignId == null) return
       setLoading(true)
       const baseQuery = queryOverride ?? query
-      /** `q` aqui é só busca em legendas/posts (post-matches + cliente); não enviar para /profiles — senão o backend filtra nome/bio e zera a lista (ex.: "marcado" só em posts marcados). */
+      const hasWordSearch = !!(baseQuery.q?.trim())
+      /** `q` aqui Ã© sÃ³ busca em legendas/posts (post-matches + cliente); nÃ£o enviar para /profiles â€” senÃ£o o backend filtra nome/bio e zera a lista (ex.: "marcado" sÃ³ em posts marcados). */
       const { q: _wordSearchOmit, ...baseWithoutWordSearch } = baseQuery
-      if (!pendingPayment && isAllCampaignsView) {
+      if (!pendingPayment && isAllCampaignsView && !hasWordSearch) {
         const quickQuery = { ...defaultQuery, ...baseWithoutWordSearch, limit: 1, offset: 0 }
         fetchCampaignProfiles(campaignId, quickQuery, { signal })
           .then((res) => {
             if (signal?.aborted) return
-            const facetsFromApi = res.facets ?? null
-            setFacets(
-              facetsFromApi != null && facetsFromApi.followers_buckets && !('size_buckets' in facetsFromApi)
-                ? {
-                  ...facetsFromApi,
-                  size_buckets: facetsFromApi.followers_buckets.map((b: { key: string; label: string; count: number }) => ({
-                    key: b.key === 'medio' ? 'mid' : b.key,
-                    label: b.label,
-                    count: b.count,
-                  })),
-                }
-                : facetsFromApi
-            )
+            setFacets(mapFacetsFromApi(res.facets ?? null))
             setTotal(res.total ?? 0)
           })
           .catch(() => { })
@@ -862,17 +932,11 @@ export default function CampaignInfluencers() {
         .then((res) => {
           if (signal?.aborted) return
           if (pendingPayment) {
-            const facetsFromApi = res.facets ?? null
-            setFacets(facetsFromApi != null && facetsFromApi.followers_buckets && !('size_buckets' in facetsFromApi)
-              ? { ...facetsFromApi, size_buckets: facetsFromApi.followers_buckets.map((b: { key: string; label: string; count: number }) => ({ key: b.key === 'medio' ? 'mid' : b.key, label: b.label, count: b.count })) }
-              : facetsFromApi)
+            setFacets(mapFacetsFromApi(res.facets ?? null))
             setPricePreview(res.pricePreview ?? null)
             setContextItems(res.items ?? [])
           } else {
-            const facetsFromApi = res.facets ?? null
-            setFacets(facetsFromApi != null && facetsFromApi.followers_buckets && !('size_buckets' in facetsFromApi)
-              ? { ...facetsFromApi, size_buckets: facetsFromApi.followers_buckets.map((b: { key: string; label: string; count: number }) => ({ key: b.key === 'medio' ? 'mid' : b.key, label: b.label, count: b.count })) }
-              : facetsFromApi)
+            if (!hasWordSearch) setFacets(mapFacetsFromApi(res.facets ?? null))
             setTotal(res.total ?? 0)
             setContextItems(res.items ?? [])
             setPricePreview(null)
@@ -893,15 +957,24 @@ export default function CampaignInfluencers() {
 
   const updateFilter = useCallback(
     (overrides: Partial<ProfilesSearchQuery>) => {
+      if (isCampaignFacetBoostOnlyPatch(overrides)) {
+        const newQuery = { ...query, ...overrides, offset: 0 }
+        setQuery(newQuery)
+        setSearchParams(buildCampaignUrlParams(newQuery, campaignMainTab), { replace: true })
+        return
+      }
       const qFromOverride = overrides.q
       const explicitQ = 'q' in overrides
       const qTrim = typeof qFromOverride === 'string' ? qFromOverride.trim() : ''
       const wordSearchApplied = explicitQ && qTrim.length > 0
-      /** Buscar por legenda: URL só com `q` (remove LLM, geo, tipo de mídia na origem, etc.). */
+      /** Buscar por legenda: URL sÃ³ com `q` (remove LLM, geo, tipo de mÃ­dia na origem, etc.). */
       const newQuery = wordSearchApplied
         ? { ...defaultQuery, q: qTrim, offset: 0 }
         : { ...query, ...overrides, offset: 0 }
-      if (wordSearchApplied) setCampaignMainTab('origin')
+      if (wordSearchApplied) {
+        setSearchFacets(null)
+        setCampaignMainTab('origin')
+      }
       const tab: 'influencers' | 'origin' = wordSearchApplied ? 'origin' : campaignMainTab
       setQuery(newQuery)
       if (wordSearchApplied) {
@@ -934,6 +1007,7 @@ export default function CampaignInfluencers() {
   const clearFilters = useCallback(() => {
     const newQuery = { ...defaultQuery, offset: 0 }
     setQuery(newQuery)
+    setSearchFacets(null)
     setSearchParams(buildCampaignUrlParams(newQuery), { replace: true })
     if (!pendingPayment && contextItems != null) applyContextFilters(newQuery)
   }, [contextItems, applyContextFilters, setSearchParams, pendingPayment, buildCampaignUrlParams])
@@ -972,6 +1046,7 @@ export default function CampaignInfluencers() {
   useEffect(() => {
     if (campaignId == null) return
     if (!user && !isAllCampaignsView) return
+    if (campaignMainTab === 'origin' && query.q?.trim()) return
     if (pendingPayment && pendingLoadFromFilterRef.current) {
       pendingLoadFromFilterRef.current = false
       return
@@ -979,7 +1054,7 @@ export default function CampaignInfluencers() {
     const controller = new AbortController()
     loadContext(controller.signal)
     return () => controller.abort()
-  }, [campaignId, user?.id, loadContext, pendingPayment, isAllCampaignsView])
+  }, [campaignId, user?.id, loadContext, pendingPayment, isAllCampaignsView, campaignMainTab, contextFetchQueryKey, query.q])
 
   const originMediaKindsKey =
     query.originMediaKinds?.length ? [...query.originMediaKinds].sort().join(',') : ''
@@ -1015,7 +1090,7 @@ export default function CampaignInfluencers() {
       void fetchCampaignPostSearchHandles(
         campaignId,
         { q, mediaKinds: kinds?.length ? kinds : undefined },
-        { signal: ac.signal, profileFilters: postMatchProfileFilters }
+        { signal: ac.signal }
       )
         .then((res) => {
           if (ac.signal.aborted) return
@@ -1036,7 +1111,7 @@ export default function CampaignInfluencers() {
       ac.abort()
       window.clearTimeout(tid)
     }
-  }, [campaignId, query.q, originMediaKindsKey, postMatchProfileFilters])
+  }, [campaignId, query.q, originMediaKindsKey, postMatchProfileFiltersKey])
 
   useEffect(() => {
     if (campaignId == null) return
@@ -1144,7 +1219,7 @@ export default function CampaignInfluencers() {
     setDeletingCampaign(true)
     return deleteCampaign(campaignId)
       .then(() => {
-        message.success('Campanha excluída.')
+        message.success('Campanha excluÃ­da.')
         navigate('/app/campaigns', { replace: true })
       })
       .catch((err) => {
@@ -1179,11 +1254,11 @@ export default function CampaignInfluencers() {
         campaignId,
         freeUnlock || payFullCampaignBillable ? undefined : creditsToApply > 0 ? creditsToApply : undefined
       )
-      message.success('Pagamento com créditos concluído. Relatório liberado!')
+      message.success('Pagamento com crÃ©ditos concluÃ­do. RelatÃ³rio liberado!')
       refreshCampaign()
       void creditsContext?.refreshCredits()
     } catch (err) {
-      message.error(err instanceof Error ? err.message : 'Falha ao pagar com créditos')
+      message.error(err instanceof Error ? err.message : 'Falha ao pagar com crÃ©ditos')
     } finally {
       setPayingWithCredits(false)
     }
@@ -1200,17 +1275,12 @@ export default function CampaignInfluencers() {
 
   const openInfluencerConnect = useCallback(
     (handleOrKey: string, snapshot?: InfluencerConnectSnapshot) => {
-      if (authLoading) return
-      if (!user) {
-        setSignupGateModalOpen(true)
-        return
-      }
       if (!campaignId) return
       const h = normalizeCampaignListHandle(handleOrKey)
       if (!h) return
       setConnectModal({ handle: h, snapshot })
     },
-    [authLoading, user, campaignId]
+    [campaignId]
   )
 
   const currentSort = query.sort ?? 'engagement_desc'
@@ -1241,14 +1311,18 @@ export default function CampaignInfluencers() {
   const selectedOriginMediaKinds = (query.originMediaKinds ?? []) as MediaKind[]
   const hasOriginSearchTerm = (query.q?.trim().length ?? 0) > 0
   const captionQNormalized = query.q?.trim() ?? ''
-  /** Evita post-matches em paralelo com handlesOnly: galeria só busca posts após handles alinhados ao `q` atual. */
+  /** Evita post-matches em paralelo com handlesOnly: galeria sÃ³ busca posts apÃ³s handles alinhados ao `q` atual. */
   const originCaptionPostMatchesReady =
     !captionQNormalized ||
     (!!postCaptionSearch &&
       !postCaptionSearchLoading &&
       postCaptionSearch.qKey === captionQNormalized)
   const showOriginSearchOnly = campaignMainTab === 'origin' && !hasOriginSearchTerm
-  /** Na aba Posts com termo: esconde abas + BI (base completa mantém só o logo). Mesmo padrão na aba Perfis enquanto busca handles por legenda ou quando a API não devolve nenhum. */
+  /** Base completa: logo + busca fixos no topo ao rolar (aba com termo ou Perfis). */
+  const showAllCampaignsFixedChrome = isAllCampaignsView && !pendingPayment && !showOriginSearchOnly
+  const showCampaignSearchToolbar =
+    !pendingPayment && !(campaignMainTab === 'origin' && !hasOriginSearchTerm)
+  /** Na aba Posts com termo: esconde abas + BI (base completa mantÃ©m sÃ³ o logo). Mesmo padrÃ£o na aba Perfis enquanto busca handles por legenda ou quando a API nÃ£o devolve nenhum. */
   const originCaptionSearchHidesBIPanel =
     campaignMainTab === 'origin' &&
     !!query.q?.trim() &&
@@ -1265,7 +1339,7 @@ export default function CampaignInfluencers() {
   const showCampaignLeftColumn =
     !isMobile &&
     ((isAllCampaignsView && !pendingPayment) || !campaignHidesBIPanel)
-  /** Com só o logo à esquerda, o conteúdo da coluna principal fica deslocado à direita do centro da viewport. */
+  /** Com sÃ³ o logo Ã  esquerda, o conteÃºdo da coluna principal fica deslocado Ã  direita do centro da viewport. */
   const originGalleryViewportShiftX =
     !isMobile &&
     isAllCampaignsView &&
@@ -1284,6 +1358,105 @@ export default function CampaignInfluencers() {
     selectedSizeFilter.length > 0 ||
     (query.accountTypeFilter?.length ?? 0) > 0
 
+  const renderCampaignViewToggle = (fullWidth = false) => {
+    if (isMobile) return null
+    if (campaignMainTab !== 'influencers' && campaignMainTab !== 'origin') return null
+    const activeMode = campaignMainTab === 'influencers' ? viewMode : originViewMode
+    return (
+      <div
+        className={`campaign-instagram-view-toggle${fullWidth ? ' campaign-instagram-view-toggle--full' : ''}`}
+        role="group"
+        aria-label="Lista ou foto"
+      >
+        <button
+          type="button"
+          className={`campaign-instagram-view-toggle-btn${activeMode === 'list' ? ' is-active' : ''}`}
+          onClick={() =>
+            campaignMainTab === 'influencers' ? setViewMode('list') : setOriginViewMode('list')
+          }
+        >
+          <UnorderedListOutlined />
+          <span>lista</span>
+        </button>
+        <button
+          type="button"
+          className={`campaign-instagram-view-toggle-btn${activeMode === 'grid' ? ' is-active' : ''}`}
+          onClick={() =>
+            campaignMainTab === 'influencers' ? setViewMode('grid') : setOriginViewMode('grid')
+          }
+        >
+          <AppstoreOutlined />
+          <span>foto</span>
+        </button>
+      </div>
+    )
+  }
+
+  const renderCampaignHeaderAccountMenu = () => {
+    const menuItems: MenuProps['items'] = [
+      {
+        key: 'cadastro',
+        label: 'Cadastro',
+        onClick: () => navigate('/agencia/login'),
+      },
+      {
+        key: 'quem-somos',
+        label: 'Quem somos',
+        onClick: () => {
+          window.location.href = '/landing/search/'
+        },
+      },
+      {
+        key: 'blog',
+        label: 'Blog',
+        onClick: () => {
+          window.location.href = '/blog/artigos.html'
+        },
+      },
+    ]
+    return (
+      <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
+        <button
+          type="button"
+          className="campaign-top-header-account-btn"
+          aria-label="Abrir menu"
+        >
+          <UserOutlined className="campaign-top-header-account-btn__user" />
+          <DownOutlined className="campaign-top-header-account-btn__chevron" />
+        </button>
+      </Dropdown>
+    )
+  }
+
+  const renderCampaignSearchToolbar = (options?: { withViewToggle?: boolean }) => {
+    const withViewToggle = options?.withViewToggle ?? !showAllCampaignsFixedChrome
+    return (
+    <>
+      <Space.Compact style={{ flex: 1, minWidth: 0 }}>
+        <Input
+          placeholder="Digite uma palavra"
+          prefix={<SearchOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 16 }} />}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          allowClear
+          size="large"
+          style={{ flex: 1 }}
+        />
+        <Button
+          type="primary"
+          size="large"
+          icon={<SearchOutlined />}
+          onClick={() => updateFilter({ q: searchInput.trim() || undefined })}
+        >
+          Buscar
+        </Button>
+      </Space.Compact>
+      {showAllCampaignsFixedChrome ? renderCampaignHeaderAccountMenu() : null}
+      {withViewToggle ? renderCampaignViewToggle() : null}
+    </>
+    )
+  }
+
   const allCampaignsLogoImg = (
     <img
       src="/images/logo.svg"
@@ -1293,7 +1466,7 @@ export default function CampaignInfluencers() {
   )
 
   const renderCampaignMainTabs = () =>
-    !pendingPayment ? (
+    !pendingPayment && !isAllCampaignsView ? (
       <Segmented
         className="campaign-main-tabs campaign-main-tabs--full-width"
         value={campaignMainTab}
@@ -1327,7 +1500,7 @@ export default function CampaignInfluencers() {
       {renderCampaignMainTabs()}
       {!isAllCampaignsView && campaignCredits != null ? (
         <Typography.Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 6 }}>
-          {campaignCredits.toLocaleString('pt-BR')} créditos
+          {campaignCredits.toLocaleString('pt-BR')} crÃ©ditos
         </Typography.Text>
       ) : null}
     </>
@@ -1344,9 +1517,9 @@ export default function CampaignInfluencers() {
   if (campaignId == null) {
     return (
       <div style={{ padding: '24px 0' }}>
-        <Empty description="Campanha não encontrada." />
+        <Empty description="Campanha nÃ£o encontrada." />
         <Button type="primary" onClick={() => navigate('/app/campaigns')} style={{ marginTop: 16 }}>
-          Voltar às campanhas
+          Voltar Ã s campanhas
         </Button>
       </div>
     )
@@ -1361,7 +1534,14 @@ export default function CampaignInfluencers() {
   }
 
   return (
-    <div style={{ overflowX: 'hidden' }}>
+    <div
+      className={
+        showAllCampaignsFixedChrome
+          ? 'campaign-page campaign-page--all campaign-page--with-top-header'
+          : undefined
+      }
+      style={{ overflowX: 'hidden' }}
+    >
       <Modal
         title={campaignHasName ? 'Editar nome da campanha' : 'Informe o nome da campanha'}
         open={nameModalOpen}
@@ -1370,7 +1550,7 @@ export default function CampaignInfluencers() {
         destroyOnHidden
       >
         <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-          {campaignHasName ? 'Altere o nome para organizar melhor em Minhas campanhas.' : 'Assim fica mais fácil organizar e encontrar seus relatórios.'}
+          {campaignHasName ? 'Altere o nome para organizar melhor em Minhas campanhas.' : 'Assim fica mais fÃ¡cil organizar e encontrar seus relatÃ³rios.'}
         </Typography.Paragraph>
         <Space.Compact style={{ width: '100%' }}>
           <Input
@@ -1395,7 +1575,7 @@ export default function CampaignInfluencers() {
               onClick={() => {
                 Modal.confirm({
                   title: 'Excluir esta campanha?',
-                  content: 'Ela sai da sua lista. Não dá pra desfazer.',
+                  content: 'Ela sai da sua lista. NÃ£o dÃ¡ pra desfazer.',
                   okText: 'Excluir',
                   okType: 'danger',
                   cancelText: 'Cancelar',
@@ -1425,37 +1605,17 @@ export default function CampaignInfluencers() {
         onClose={() => setConnectModal(null)}
         handle={connectModal?.handle ?? ''}
         snapshot={connectModal?.snapshot}
-        canUseSystemDm={isAdm}
-        onViewProfile={() => {
-          if (!connectModal || !campaignId) return
-          const path = `/app/campaigns/${campaignId}/influencer/${encodeURIComponent(connectModal.handle)}`
-          const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
-          window.open(url, '_blank', 'noopener,noreferrer')
-          setConnectModal(null)
-        }}
-        onSendProposal={() => {
-          if (!connectModal) return
-          const h = connectModal.handle
-          if (isAdm) {
-            const path = `/app/influencer/${encodeURIComponent(h)}/send-message`
-            const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
-            window.open(url, '_blank', 'noopener,noreferrer')
-          } else {
-            window.open(`https://ig.me/m/${encodeURIComponent(h)}`, '_blank', 'noopener,noreferrer')
-          }
-          setConnectModal(null)
-        }}
       />
 
       <Modal
-        title="Cadastro necessário"
+        title="Cadastro necessÃ¡rio"
         open={signupGateModalOpen}
         onCancel={() => setSignupGateModalOpen(false)}
         footer={null}
         destroyOnHidden
       >
         <Typography.Paragraph style={{ marginBottom: 16 }}>
-          Para ver os dados completos do influenciador neste relatório, acesse a área da agência: faça login ou cadastro na mesma página.
+          Para ver os dados completos do influenciador neste relatÃ³rio, acesse a Ã¡rea da agÃªncia: faÃ§a login ou cadastro na mesma pÃ¡gina.
         </Typography.Paragraph>
         <Button
           type="primary"
@@ -1469,6 +1629,16 @@ export default function CampaignInfluencers() {
           Entrar ou cadastrar
         </Button>
       </Modal>
+
+      {showAllCampaignsFixedChrome && showCampaignSearchToolbar ? (
+        <>
+          <header className="campaign-top-header">
+            <div className="campaign-top-header__brand">{allCampaignsLogoImg}</div>
+            <div className="campaign-top-header__search">{renderCampaignSearchToolbar()}</div>
+          </header>
+          <div className="campaign-top-header-spacer" aria-hidden />
+        </>
+      ) : null}
 
       {!showOriginSearchOnly && (!isAllCampaignsView || isMobile || pendingPayment) && (
         <div
@@ -1582,15 +1752,15 @@ export default function CampaignInfluencers() {
             </Space.Compact>
           </div>
         </div>
-      ) : facets == null && loading ? (
+      ) : !hasActiveSearchQ && facets == null && loading ? (
         <OriginGalleryLoadingState railShiftX={0} />
-      ) : facets == null && !loading && !campaignInfo?.pendingPayment ? (
+      ) : !hasActiveSearchQ && facets == null && !loading && !campaignInfo?.pendingPayment ? (
         <div className="campaign-origin-search-loader">
           <div className="campaign-origin-search-loader__inner">
             <Empty description="Nenhum perfil nesta campanha." />
           </div>
         </div>
-      ) : facets == null && !loading && campaignInfo?.pendingPayment ? (
+      ) : !hasActiveSearchQ && facets == null && !loading && campaignInfo?.pendingPayment ? (
         <div className="campaign-origin-search-loader">
           <div className="campaign-origin-search-loader__inner" style={{ textAlign: 'center' }}>
             <Spin size="small" />
@@ -1598,22 +1768,45 @@ export default function CampaignInfluencers() {
           </div>
         </div>
       ) : (
-        <div style={{ display: 'flex', gap: CAMPAIGN_MAIN_COLUMN_GAP_PX, alignItems: 'flex-start', minWidth: 0 }}>
+        <div
+          className={showAllCampaignsFixedChrome ? 'campaign-split-layout' : undefined}
+          style={{
+            display: 'flex',
+            gap: showAllCampaignsFixedChrome ? 0 : CAMPAIGN_MAIN_COLUMN_GAP_PX,
+            alignItems: 'flex-start',
+            minWidth: 0,
+          }}
+        >
+          {showAllCampaignsFixedChrome ? (
+            <div className="campaign-split-layout__rail-spacer" aria-hidden />
+          ) : null}
           {showCampaignLeftColumn ? (
-            <div style={{ flexShrink: 0, width: CAMPAIGN_BI_PANEL_WIDTH_PX, minWidth: 0 }}>
-              {isAllCampaignsView && !pendingPayment ? (
+            <div
+              className={showAllCampaignsFixedChrome ? 'campaign-split-layout__rail' : undefined}
+              style={
+                showAllCampaignsFixedChrome
+                  ? { minWidth: 0 }
+                  : { flexShrink: 0, width: CAMPAIGN_BI_PANEL_WIDTH_PX, minWidth: 0 }
+              }
+            >
+              {isAllCampaignsView && !pendingPayment && !showAllCampaignsFixedChrome ? (
                 <div style={{ marginBottom: 10 }}>
                   <Typography.Title level={4} style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     {allCampaignsLogoImg}
                   </Typography.Title>
                 </div>
               ) : null}
-              {isAllCampaignsView && !pendingPayment && !campaignHidesBIPanel ? (
+              {!isAllCampaignsView && !pendingPayment && !campaignHidesBIPanel ? (
                 <div style={{ marginBottom: 10 }}>{renderCampaignMainTabs()}</div>
+              ) : null}
+              {showAllCampaignsFixedChrome && !campaignHidesBIPanel ? (
+                <div className="campaign-rail-view-toggle" style={{ marginBottom: 10 }}>
+                  {renderCampaignViewToggle(true)}
+                </div>
               ) : null}
               {!campaignHidesBIPanel ? (
                 <CampaignBIPanel
-                  facets={facets}
+                  facets={displayFacets}
                   query={query}
                   onFilter={updateFilter}
                   description={campaignInfo?.description ?? null}
@@ -1628,7 +1821,7 @@ export default function CampaignInfluencers() {
             {pendingPayment ? (
               <CampaignPaymentCart
                 query={query}
-                facets={facets}
+                facets={displayFacets}
                 onFilter={updateFilter}
                 valueTotal={(() => {
                   const baseValue = (pricePreview?.valueBrl ?? campaignInfo?.pendingPayment?.valueBrl) ?? 0
@@ -1661,61 +1854,13 @@ export default function CampaignInfluencers() {
               />
             ) : (
               <>
-                {!(campaignMainTab === 'origin' && !hasOriginSearchTerm) && (
+                {showCampaignSearchToolbar && !showAllCampaignsFixedChrome ? (
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, width: '100%', minWidth: 0 }}>
-                      <Space.Compact style={{ flex: 1, minWidth: 0 }}>
-                        <Input
-                          placeholder="Digite uma palavra"
-                          prefix={<SearchOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 16 }} />}
-                          value={searchInput}
-                          onChange={(e) => setSearchInput(e.target.value)}
-                          allowClear
-                          size="large"
-                          style={{ flex: 1 }}
-                        />
-                        <Button
-                          type="primary"
-                          size="large"
-                          icon={<SearchOutlined />}
-                          onClick={() => updateFilter({ q: searchInput.trim() || undefined })}
-                        >
-                          Buscar
-                        </Button>
-                      </Space.Compact>
-                      {!isMobile && (campaignMainTab === 'influencers' || campaignMainTab === 'origin') && (
-                        <div
-                          className="campaign-instagram-view-toggle"
-                          role="group"
-                          aria-label="Lista ou grade"
-                        >
-                          <Tooltip title="Lista">
-                            <button
-                              type="button"
-                              className={`campaign-instagram-view-toggle-btn${(campaignMainTab === 'influencers' ? viewMode : originViewMode) === 'list' ? ' is-active' : ''}`}
-                              onClick={() =>
-                                campaignMainTab === 'influencers' ? setViewMode('list') : setOriginViewMode('list')
-                              }
-                            >
-                              <UnorderedListOutlined />
-                            </button>
-                          </Tooltip>
-                          <Tooltip title="Grade (como no Instagram)">
-                            <button
-                              type="button"
-                              className={`campaign-instagram-view-toggle-btn${(campaignMainTab === 'influencers' ? viewMode : originViewMode) === 'grid' ? ' is-active' : ''}`}
-                              onClick={() =>
-                                campaignMainTab === 'influencers' ? setViewMode('grid') : setOriginViewMode('grid')
-                              }
-                            >
-                              <AppstoreOutlined />
-                            </button>
-                          </Tooltip>
-                        </div>
-                      )}
+                      {renderCampaignSearchToolbar()}
                     </div>
                   </div>
-                )}
+                ) : null}
                 {campaignMainTab === 'origin' && campaignId ? (
                   hasOriginSearchTerm ? (
                     <CampaignOriginGallery
@@ -1726,14 +1871,15 @@ export default function CampaignInfluencers() {
                       onLoadingChange={setOriginGallerySearchLoading}
                       onOriginSearchSettled={({ empty }) => setOriginSearchSettledEmpty(empty)}
                       viewportCenterShiftX={originGalleryViewportShiftX}
-                      profileFilters={postMatchProfileFilters}
+                      facetBoostQuery={query}
+                      onLoadedPostsForFacets={handleOriginPostsForFacets}
                       onOpenInfluencerDetail={openInfluencerConnect}
                       captionFilterReady={originCaptionPostMatchesReady}
                     />
                   ) : null
                 ) : (
                   <>
-                    {isMobile && facets != null && (
+                    {isMobile && displayFacets != null && (
                       <div
                         style={{
                           display: 'flex',
@@ -1746,14 +1892,14 @@ export default function CampaignInfluencers() {
                         }}
                       >
                         <FilterOutlined style={{ fontSize: 12, color: 'var(--app-text-secondary)', marginRight: 2 }} />
-                        {facets?.size_buckets && facets.size_buckets.length > 0 && (
+                        {displayFacets?.size_buckets && displayFacets.size_buckets.length > 0 && (
                           <Select
                             mode="multiple"
                             size="small"
                             placeholder="Tamanho"
                             allowClear
                             value={selectedSizeFilter.length ? selectedSizeFilter : undefined}
-                            options={facets.size_buckets.map(({ key, label, count }) => ({
+                            options={displayFacets.size_buckets.map(({ key, label, count }) => ({
                               value: key,
                               label: `${label} (${count})`,
                             }))}
@@ -1762,16 +1908,16 @@ export default function CampaignInfluencers() {
                             maxTagCount={1}
                           />
                         )}
-                        {facets?.content_type && facets.content_type.filter((x) => x.count > 0).length > 0 && (
+                        {displayFacets?.content_type && displayFacets.content_type.filter((x) => x.count > 0).length > 0 && (
                           <Select
                             mode="multiple"
                             size="small"
-                            placeholder="Conteúdo"
+                            placeholder="ConteÃºdo"
                             allowClear
                             showSearch
                             optionFilterProp="label"
                             value={selectedContentTypes.length ? selectedContentTypes : undefined}
-                            options={facets.content_type
+                            options={displayFacets.content_type
                               .filter((x) => x.count > 0)
                               .map(({ name, count }) => ({
                                 value: name,
@@ -1782,7 +1928,7 @@ export default function CampaignInfluencers() {
                             maxTagCount={1}
                           />
                         )}
-                        {facets?.social && (facets.social.whatsapp > 0 || facets.social.tiktok > 0 || facets.social.facebook > 0 || facets.social.linkedin > 0 || facets.social.twitter > 0) && (
+                        {displayFacets?.social && (displayFacets.social.whatsapp > 0 || displayFacets.social.tiktok > 0 || displayFacets.social.facebook > 0 || displayFacets.social.linkedin > 0 || displayFacets.social.twitter > 0) && (
                           <Select
                             mode="multiple"
                             size="small"
@@ -1790,18 +1936,18 @@ export default function CampaignInfluencers() {
                             allowClear
                             value={selectedSocial.length ? selectedSocial : undefined}
                             options={[
-                              facets.social.whatsapp > 0 && { value: 'whatsapp', label: `WA (${facets.social.whatsapp})` },
-                              facets.social.tiktok > 0 && { value: 'tiktok', label: `TikTok (${facets.social.tiktok})` },
-                              facets.social.facebook > 0 && { value: 'facebook', label: `FB (${facets.social.facebook})` },
-                              facets.social.linkedin > 0 && { value: 'linkedin', label: `LI (${facets.social.linkedin})` },
-                              facets.social.twitter > 0 && { value: 'twitter', label: `X (${facets.social.twitter})` },
+                              displayFacets.social.whatsapp > 0 && { value: 'whatsapp', label: `WA (${displayFacets.social.whatsapp})` },
+                              displayFacets.social.tiktok > 0 && { value: 'tiktok', label: `TikTok (${displayFacets.social.tiktok})` },
+                              displayFacets.social.facebook > 0 && { value: 'facebook', label: `FB (${displayFacets.social.facebook})` },
+                              displayFacets.social.linkedin > 0 && { value: 'linkedin', label: `LI (${displayFacets.social.linkedin})` },
+                              displayFacets.social.twitter > 0 && { value: 'twitter', label: `X (${displayFacets.social.twitter})` },
                             ].filter(Boolean) as { value: string; label: string }[]}
                             onChange={(vals) => updateFilter({ socialNetworks: vals?.length ? vals : undefined })}
                             style={{ width: 110 }}
                             maxTagCount={1}
                           />
                         )}
-                        {facets?.cities && facets.cities.length > 0 && (
+                        {displayFacets?.cities && displayFacets.cities.length > 0 && (
                           <Select
                             mode="multiple"
                             size="small"
@@ -1810,13 +1956,13 @@ export default function CampaignInfluencers() {
                             showSearch={false}
                             optionFilterProp="label"
                             value={selectedCities.length ? selectedCities : undefined}
-                            options={facets.cities.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                            options={displayFacets.cities.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
                             onChange={(vals) => updateFilter({ cities: vals?.length ? vals : undefined })}
                             style={{ width: 120 }}
                             maxTagCount={1}
                           />
                         )}
-                        {facets?.states && facets.states.length > 0 && (
+                        {displayFacets?.states && displayFacets.states.length > 0 && (
                           <Select
                             mode="multiple"
                             size="small"
@@ -1825,7 +1971,7 @@ export default function CampaignInfluencers() {
                             showSearch={false}
                             optionFilterProp="label"
                             value={selectedStates.length ? selectedStates : undefined}
-                            options={facets.states.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                            options={displayFacets.states.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
                             onChange={(vals) => updateFilter({ states: vals?.length ? vals : undefined })}
                             style={{ width: 110 }}
                             maxTagCount={1}
@@ -1925,13 +2071,13 @@ export default function CampaignInfluencers() {
                                     trigger={['click']}
                                     placement="bottomRight"
                                   >
-                                    <button type="button" className="campaign-list-metrics-sort-btn" aria-label="Ordenar por métrica">
+                                    <button type="button" className="campaign-list-metrics-sort-btn" aria-label="Ordenar por mÃ©trica">
                                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
-                                        Métricas
+                                        MÃ©tricas
                                         <DownOutlined style={{ fontSize: 9, opacity: 0.85 }} />
                                       </span>
                                       <span style={{ fontSize: 9, fontWeight: 500, opacity: 0.8, lineHeight: 1.2, whiteSpace: 'nowrap' }}>
-                                        {isCampaignListMetricSort(currentSort) ? campaignListMetricSortSummary(currentSort) : 'Escolher ordenação'}
+                                        {isCampaignListMetricSort(currentSort) ? campaignListMetricSortSummary(currentSort) : 'Escolher ordenaÃ§Ã£o'}
                                       </span>
                                     </button>
                                   </Dropdown>

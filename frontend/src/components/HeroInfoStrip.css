@@ -1,0 +1,69 @@
+.hero-info-strip--inline .hero-info-strip-row {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  border: 1px solid rgba(104, 39, 143, 0.08);
+  box-shadow: 0 1px 4px rgba(104, 39, 143, 0.06);
+  overflow: hidden;
+}
+
+.hero-info-strip--inline.hero-info-strip--compact .hero-info-strip-row {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 10px;
+}
+
+.hero-info-strip--inline.hero-info-strip--compact .hero-info-strip-cell {
+  flex: 0 0 auto;
+  min-width: auto;
+  white-space: nowrap;
+}
+
+.hero-info-strip-cell {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.hero-info-strip-divider {
+  width: 1px;
+  align-self: stretch;
+  background: rgba(104, 39, 143, 0.1);
+  flex-shrink: 0;
+}
+
+.hero-info-strip--compact .hero-info-strip-divider {
+  margin: 6px 0;
+}
+
+.hero-info-strip-grid {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.hero-info-strip-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hero-info-strip-stat-icon {
+  border-radius: 50%;
+}
+
+.hero-info-strip-stat-value {
+  color: var(--app-text, #1f1f1f);
+  line-height: 1.2;
+}
+
+.hero-info-strip-stat-label {
+  color: var(--app-text-secondary, #6b7280);
+  line-height: 1.2;
+}

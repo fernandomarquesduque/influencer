@@ -1,6 +1,6 @@
 # Cria ou atualiza o usuário admin no servidor (usa o mesmo DB da API).
 # Uso no servidor (PowerShell):
-#   cd C:\Publish\influencer\crawl   (ou o caminho da pasta crawl no servidor)
+#   cd C:\Publish\influencer\backend   (ou o caminho da pasta backend no servidor)
 #   .\scripts\create-admin.ps1
 #   .\scripts\create-admin.ps1 -Password "MinhaS3nha"
 #   .\scripts\create-admin.ps1 -Username admin -Password "OutraS3nha"

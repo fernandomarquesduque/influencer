@@ -5,15 +5,18 @@
 
 import type { CompositeStorage } from '../storage/compositeStorage.js';
 import { logMemorySnapshot } from '../utils/memoryDiag.js';
-import type { ProfileActivationData } from '../storage/sqliteSync.js';
+import type { ProfileActivationData, AuxNumericFacetAggregate, GlobalAuxSqlLlmFilter, GlobalAuxSqlFilter } from '../storage/sqliteSync.js';
+import { SqliteSync } from '../storage/sqliteSync.js';
 import { computeInstagramBi, type InstagramBi, type PostForBi } from '../utils/instagramBi.js';
 import { getCostTierFromPricing, getSuggestedPricingFromFollowers, type CostTier } from '../utils/suggestedPricing.js';
 import {
   followersCountToSizeKey,
   createEmptyFollowersBucketsForFacets,
   incrementFollowersBucketCount,
+  FOLLOWERS_SIZE_BUCKETS,
 } from './followersSizeBuckets.js';
 import { snapMainCategoryToTaxonomy } from '../lib/mainCategoryTaxonomy.js';
+import { searchHandlesViaMeilisearch, buildMeilisearchFilterExpr } from '../search/meilisearchProfile.js';
 
 /**
  * Cache em memória só dos perfis (RocksDB). Posts não entram no heap: engajamento/hashtags vêm do SQLite
@@ -301,8 +304,6 @@ interface LlmFacetMaps {
   mainCategory: Map<string, number>;
   gender: Map<string, number>;
   language: Map<string, number>;
-  subCategories: Map<string, number>;
-  contentPillars: Map<string, number>;
   audienceType: Map<string, number>;
   toneOfVoice: Map<string, number>;
   brandSafetyLevel: Map<string, number>;
@@ -314,8 +315,6 @@ function createEmptyLlmFacetMaps(): LlmFacetMaps {
     mainCategory: new Map(),
     gender: new Map(),
     language: new Map(),
-    subCategories: new Map(),
-    contentPillars: new Map(),
     audienceType: new Map(),
     toneOfVoice: new Map(),
     brandSafetyLevel: new Map(),
@@ -329,7 +328,7 @@ function mapToNameCountDesc(m: Map<string, number>): { name: string; count: numb
     .sort((a, b) => b.count - a.count);
 }
 
-function normalizeBrandSafetyLevel(brandSafety: unknown): 'adulto' | 'sensivel' | 'familia' | null {
+export function normalizeBrandSafetyLevel(brandSafety: unknown): 'adulto' | 'sensivel' | 'familia' | null {
   if (typeof brandSafety === 'string') {
     const v = brandSafety.trim().toLowerCase();
     if (v === 'adulto' || v === 'sensivel' || v === 'familia') return v;
@@ -353,8 +352,6 @@ function accumulateLlmFacetsFromItem(item: ProfileListItem, maps: LlmFacetMaps):
   bumpFacetMainCategory(maps.mainCategory, String(q.mainCategory ?? ''));
   bumpFacetString(maps.gender, String(q.gender ?? ''));
   bumpFacetString(maps.language, String(q.language ?? ''));
-  bumpFacetStringArray(maps.subCategories, q.subCategories);
-  bumpFacetStringArray(maps.contentPillars, q.contentPillars);
   bumpFacetStringArray(maps.audienceType, q.audienceType);
   bumpFacetStringArray(maps.toneOfVoice, q.toneOfVoice);
   const brandSafetyLevel = normalizeBrandSafetyLevel(q.brandSafety);
@@ -367,8 +364,6 @@ function mapsToLlmSearchFacets(maps: LlmFacetMaps): LlmSearchFacets {
     mainCategory: mapToNameCountDesc(maps.mainCategory),
     gender: mapToNameCountDesc(maps.gender),
     language: mapToNameCountDesc(maps.language),
-    subCategories: mapToNameCountDesc(maps.subCategories),
-    contentPillars: mapToNameCountDesc(maps.contentPillars),
     audienceType: mapToNameCountDesc(maps.audienceType),
     toneOfVoice: mapToNameCountDesc(maps.toneOfVoice),
     brandSafety: {
@@ -389,7 +384,7 @@ function addLlmQualificationSearchParts(record: Record<string, unknown>, parts: 
     const v = q[key];
     if (typeof v === 'string' && v.trim()) parts.push(v.trim());
   }
-  for (const key of ['subCategories', 'contentPillars', 'audienceType', 'toneOfVoice'] as const) {
+  for (const key of ['audienceType', 'toneOfVoice'] as const) {
     const arr = q[key];
     if (!Array.isArray(arr)) continue;
     for (const x of arr) {
@@ -691,8 +686,6 @@ export interface LlmSearchFacets {
   gender: { name: string; count: number }[];
   /** Idioma provável do conteúdo (`qualification.language`, ex. BCP-47). */
   language: { name: string; count: number }[];
-  subCategories: { name: string; count: number }[];
-  contentPillars: { name: string; count: number }[];
   audienceType: { name: string; count: number }[];
   toneOfVoice: { name: string; count: number }[];
   /** Categoria única do prompt qualify: familia | sensivel | adulto. */
@@ -807,8 +800,6 @@ export interface ProfilesSearchQuery {
   llmMainCategory?: string | string[];
   llmGender?: string | string[];
   llmLanguage?: string | string[];
-  llmSubCategories?: string | string[];
-  llmContentPillars?: string | string[];
   llmAudienceType?: string | string[];
   llmToneOfVoice?: string | string[];
   llmRiskLevel?: string | string[];
@@ -847,6 +838,86 @@ function qualificationArrayMatchesOr(q: Record<string, unknown>, key: string, se
   return arr.some((x) => typeof x === 'string' && set.has(x.trim().toLowerCase()));
 }
 
+const CAMPAIGN_FACET_BOOST_QUERY_KEYS = [
+  'sizeFilter',
+  'accountTypeFilter',
+  'contentTypes',
+  'cities',
+  'states',
+  'neighborhoods',
+  'socialNetworks',
+  'engagementRateBuckets',
+  'avgLikesBuckets',
+  'postsCountBuckets',
+  'llmProfileType',
+  'llmMainCategory',
+  'llmGender',
+  'llmAudienceType',
+] as const satisfies readonly (keyof ProfilesSearchQuery)[];
+
+export function stripCampaignFacetBoostFromProfilesQuery(query: ProfilesSearchQuery): ProfilesSearchQuery {
+  const out = { ...query } as ProfilesSearchQuery;
+  for (const k of CAMPAIGN_FACET_BOOST_QUERY_KEYS) {
+    delete (out as Record<string, unknown>)[k];
+  }
+  return out;
+}
+
+export function hasCampaignFacetBoostInQuery(query: ProfilesSearchQuery): boolean {
+  return CAMPAIGN_FACET_BOOST_QUERY_KEYS.some((k) => {
+    const v = query[k];
+    return Array.isArray(v) && v.length > 0;
+  });
+}
+
+function normalizeSizeBoostKey(s: string): string {
+  const x = s.toLowerCase().trim();
+  if (x === 'mid') return 'medio';
+  if (x === 'subnano') return 'nano';
+  return x;
+}
+
+/** Pontuação para ordenar resultados (facets do painel BI = prioridade, não filtro). */
+export function computeCampaignFacetBoostScore(
+  profile: Record<string, unknown> | null,
+  query: ProfilesSearchQuery,
+  followersCount?: number
+): number {
+  let score = 0;
+  const fc =
+    followersCount ??
+    (profile != null && typeof profile.followers_count === 'number' ? profile.followers_count : undefined);
+  const sizeSel = parseStringArray(query.sizeFilter).map(normalizeSizeBoostKey);
+  if (sizeSel.length > 0 && fc != null && Number.isFinite(fc)) {
+    const size = followersCountToSizeKey(fc);
+    if (sizeSel.includes(size)) score++;
+  }
+  const record = profile ?? {};
+  const qual = getLlmQualification(record);
+  if (qual) {
+    const orScalar = (field: string, selected: string[]): boolean => {
+      if (selected.length === 0) return false;
+      const set = new Set(selected.map((s) => s.trim().toLowerCase()).filter(Boolean));
+      const v = String(qual[field] ?? '').trim().toLowerCase();
+      return set.has(v);
+    };
+    if (orScalar('profileType', parseStringArray(query.llmProfileType))) score++;
+    const mainCatSel = parseStringArray(query.llmMainCategory);
+    if (mainCatSel.length > 0) {
+      const set = new Set(
+        mainCatSel
+          .map((s) => snapMainCategoryToTaxonomy(s.trim())?.toLowerCase())
+          .filter((x): x is string => Boolean(x))
+      );
+      const stored = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim())?.toLowerCase();
+      if (stored && set.has(stored)) score++;
+    }
+    if (orScalar('gender', parseStringArray(query.llmGender))) score++;
+    if (qualificationArrayMatchesOr(qual, 'audienceType', parseStringArray(query.llmAudienceType))) score++;
+  }
+  return score;
+}
+
 /** Filtro por campos de `llm.qualification` (multiselect = OR dentro do mesmo campo). */
 export function matchesLlmQualificationFilters(record: Record<string, unknown>, query: ProfilesSearchQuery): boolean {
   const qual = getLlmQualification(record);
@@ -873,8 +944,6 @@ export function matchesLlmQualificationFilters(record: Record<string, unknown>, 
   if (!orScalar('gender', parseStringArray(query.llmGender))) return false;
   if (!orScalar('language', parseStringArray(query.llmLanguage))) return false;
 
-  if (!qualificationArrayMatchesOr(qual, 'subCategories', parseStringArray(query.llmSubCategories))) return false;
-  if (!qualificationArrayMatchesOr(qual, 'contentPillars', parseStringArray(query.llmContentPillars))) return false;
   if (!qualificationArrayMatchesOr(qual, 'audienceType', parseStringArray(query.llmAudienceType))) return false;
   if (!qualificationArrayMatchesOr(qual, 'toneOfVoice', parseStringArray(query.llmToneOfVoice))) return false;
 
@@ -930,6 +999,25 @@ function matchesPostsCountBuckets(postsCount: number, selected: number[]): boole
   return false;
 }
 
+/** Média de posts por semana a partir das datas dos posts analisados. */
+export function computePostsPerWeek(posts: Record<string, unknown>[]): number {
+  const n = posts.length;
+  if (n <= 0) return 0;
+  const timestamps: number[] = [];
+  for (const p of posts) {
+    const ts = getPostTimestamp(p);
+    if (ts != null) timestamps.push(ts);
+  }
+  if (timestamps.length >= 2) {
+    const minTs = Math.min(...timestamps);
+    const maxTs = Math.max(...timestamps);
+    const observedWeeks = (maxTs - minTs) / SECONDS_PER_WEEK;
+    const weeks = Math.max(observedWeeks, MIN_WEEKS_FOR_RATE);
+    return weeks > 0 ? Math.round((n / weeks) * 100) / 100 : n;
+  }
+  return n;
+}
+
 /** Extrai timestamp Unix (segundos) do post. */
 export function getPostTimestamp(p: Record<string, unknown>): number | null {
   const post = p.post as Record<string, unknown> | undefined;
@@ -969,16 +1057,7 @@ function computeEngagement(posts: Record<string, unknown>[], followersCount: num
       ? (avgInteractionsPerPost / followersCount) * 100
       : 0;
 
-  let posts_per_week: number;
-  if (timestamps.length >= 2) {
-    const minTs = Math.min(...timestamps);
-    const maxTs = Math.max(...timestamps);
-    const observedWeeks = (maxTs - minTs) / SECONDS_PER_WEEK;
-    const weeks = Math.max(observedWeeks, MIN_WEEKS_FOR_RATE);
-    posts_per_week = weeks > 0 ? Math.round((n / weeks) * 100) / 100 : n;
-  } else {
-    posts_per_week = n > 0 ? n : 0;
-  }
+  const posts_per_week = computePostsPerWeek(posts);
 
   const avgViews = n > 0 ? totalViews / n : 0;
   const reach_ratio = followersCount > 0 ? avgViews / followersCount : 0;
@@ -1009,6 +1088,16 @@ export interface ProfileSearchIndexPayload {
   engagementJson: string;
   hashtagsJson: string;
   searchBlob: string;
+  /** Denormalizado em `profile_search_aux` para filtros/índice sem parsear JSON. */
+  followersCount: number;
+  engagementRate: number;
+  avgLikes: number;
+  postsCount: number;
+  accountType: number | null;
+  isPrivate: boolean;
+  categoriesJson: string;
+  llmQualificationJson: string | null;
+  llmBrandLevel: string | null;
 }
 
 export function buildProfileSearchIndexPayload(
@@ -1024,13 +1113,37 @@ export function buildProfileSearchIndexPayload(
   );
   const categories = [...categoriesSet].sort();
   const ftsText = getSearchableText(profile, key, fullName, categories, posts);
-  const engagement = computeEngagement(posts, getFollowers(profile));
+  const followersCount = getFollowers(profile);
+  const engagement = computeEngagement(posts, followersCount);
   const hashtags = getAllHashtagsFromPosts(posts);
+  const accountType = getAccountType(profile);
+  const categoriesJson = JSON.stringify(categories);
+  const isPrivate = getIsPrivate(profile);
+  const qual = getLlmQualification(profile);
+  let llmQualificationJson: string | null = null;
+  let llmBrandLevel: string | null = null;
+  if (qual) {
+    const mc = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim());
+    llmQualificationJson = JSON.stringify({
+      ...qual,
+      mainCategoryCanonical: mc ?? null,
+    });
+    llmBrandLevel = normalizeBrandSafetyLevel(qual.brandSafety);
+  }
   return {
     ftsText,
     engagementJson: JSON.stringify(engagement),
     hashtagsJson: JSON.stringify(hashtags),
     searchBlob: ftsText,
+    followersCount,
+    engagementRate: engagement.engagement_rate,
+    avgLikes: engagement.avg_likes,
+    postsCount: engagement.posts_count,
+    accountType: accountType ?? null,
+    isPrivate,
+    categoriesJson,
+    llmQualificationJson,
+    llmBrandLevel,
   };
 }
 
@@ -1046,6 +1159,195 @@ export function userQueryToFtsMatchExpression(q: string): string | null {
     return `content:"${esc}"*`;
   });
   return parts.join(' AND ');
+}
+
+/** Monta filtro LLM para o atalho SQL (`llm_qualification_json` + `llm_brand_level`). */
+function buildGlobalAuxLlmSqlFromQuery(query: ProfilesSearchQuery): GlobalAuxSqlLlmFilter | null {
+  const profileTypes = parseStringArray(query.llmProfileType)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const mainCategoriesCanonical = parseStringArray(query.llmMainCategory)
+    .map((s) => snapMainCategoryToTaxonomy(s.trim())?.toLowerCase())
+    .filter((x): x is string => Boolean(x));
+  const genders = parseStringArray(query.llmGender)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const languages = parseStringArray(query.llmLanguage)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const audienceTypes = parseStringArray(query.llmAudienceType)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const toneOfVoices = parseStringArray(query.llmToneOfVoice)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const riskSel = parseStringArray(query.llmRiskLevel);
+  const brandSafetyLevels = riskSel
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .map((s) => (s === 'low' ? 'familia' : s === 'medium' ? 'sensivel' : s === 'high' ? 'adulto' : s))
+    .filter((s): s is 'familia' | 'sensivel' | 'adulto' => s === 'familia' || s === 'sensivel' || s === 'adulto');
+  let isFamilySafe: boolean | undefined;
+  if (query.llmIsFamilySafe === true) isFamilySafe = true;
+  else if (query.llmIsFamilySafe === false) isFamilySafe = false;
+  let isAdultContent: boolean | undefined;
+  if (query.llmIsAdultContent === true) isAdultContent = true;
+  else if (query.llmIsAdultContent === false) isAdultContent = false;
+  if (
+    profileTypes.length === 0 &&
+    mainCategoriesCanonical.length === 0 &&
+    genders.length === 0 &&
+    languages.length === 0 &&
+    audienceTypes.length === 0 &&
+    toneOfVoices.length === 0 &&
+    brandSafetyLevels.length === 0 &&
+    isFamilySafe === undefined &&
+    isAdultContent === undefined
+  ) {
+    return null;
+  }
+  return {
+    profileTypes,
+    mainCategoriesCanonical,
+    genders,
+    languages,
+    audienceTypes,
+    toneOfVoices,
+    brandSafetyLevels: [...brandSafetyLevels],
+    isFamilySafe,
+    isAdultContent,
+  };
+}
+
+/** Filtro rápido de handles (SQLite `globalAuxSearchHandles`) — post-matches / campanha; evita `searchProfiles` no RocksDB. */
+export function narrowHandlesByProfilesQuery(
+  db: CompositeStorage,
+  handlesInOrder: string[],
+  query: ProfilesSearchQuery
+): string[] {
+  if (handlesInOrder.length === 0) return handlesInOrder;
+
+  const minFollowers = query.minFollowers != null ? Number(query.minFollowers) : undefined;
+  const maxFollowers = query.maxFollowers != null ? Number(query.maxFollowers) : undefined;
+  const minEngagementRate = query.minEngagementRate != null ? Number(query.minEngagementRate) : undefined;
+  const minAvgLikes = query.minAvgLikes != null ? Number(query.minAvgLikes) : undefined;
+  const minPostsCount = query.minPostsCount != null ? Number(query.minPostsCount) : undefined;
+  const engagementRateBucketsFilter = parseNumArray(query.engagementRateBuckets);
+  const avgLikesBucketsFilter = parseNumArray(query.avgLikesBuckets);
+  const postsCountBucketsFilter = parseNumArray(query.postsCountBuckets);
+  const activationFilter = parseStringArray(query.activationFilter);
+  const citiesFilter = parseStringArray(query.cities).map((s) => s.toLowerCase());
+  const statesFilter = parseStringArray(query.states).map((s) => s.toLowerCase());
+  const neighborhoodsFilter = parseStringArray(query.neighborhoods).map((s) => s.toLowerCase());
+  const socialNetworksFilter = parseStringArray(query.socialNetworks).map((s) => s.toLowerCase());
+  const excludePrivate = query.excludePrivate === true;
+  const accountTypeFilter = parseNumArray(query.accountTypeFilter).filter((n) => [1, 2, 3].includes(n));
+  let categoriesFilter: string[] = [];
+  if (query.categories != null) {
+    categoriesFilter = Array.isArray(query.categories)
+      ? query.categories.map((c) => String(c).trim().toLowerCase()).filter(Boolean)
+      : String(query.categories)
+        .split(',')
+        .map((c) => c.trim().toLowerCase())
+        .filter(Boolean);
+  }
+  const contentTypesFilter = parseStringArray(query.contentTypes).map((s) => s.toLowerCase());
+  const pricingFilters: Record<string, number[]> = {};
+  const pricingKeys = ['pricingFeed', 'pricingReels', 'pricingStory', 'pricingDestaque'] as const;
+  const pricingActivationKeys = ['feed', 'reels', 'story', 'destaque'] as const;
+  for (let i = 0; i < pricingKeys.length; i++) {
+    const arr = parseNumArray((query as Record<string, unknown>)[pricingKeys[i]]);
+    if (arr.length > 0) pricingFilters[pricingActivationKeys[i]] = arr;
+  }
+  const costTierFilterRaw = parseStringArray(query.costTierFilter).map((s) => s.toLowerCase());
+  const costTierFilter = costTierFilterRaw.filter((s): s is CostTier =>
+    (['low', 'medium', 'high', 'very_high'] as const).includes(s as CostTier)
+  ) as CostTier[];
+  const sizeFilterRaw = parseStringArray(query.sizeFilter).map((s) => s.toLowerCase());
+  const sizeFilterSet =
+    sizeFilterRaw.length > 0
+      ? new Set(sizeFilterRaw.map((s) => (s === 'mid' ? 'medio' : s === 'subnano' ? 'nano' : s)))
+      : null;
+
+  let followerRanges: { min: number; maxExclusive: number | null }[] | undefined;
+  if (sizeFilterSet != null && sizeFilterSet.size > 0) {
+    followerRanges = [];
+    for (const sk of sizeFilterSet) {
+      const b = FOLLOWERS_SIZE_BUCKETS.find((x) => x.key === sk);
+      if (b) followerRanges.push({ min: b.min, maxExclusive: b.max ?? null });
+    }
+  }
+
+  let activationMode: 'activated' | 'not' | null = null;
+  if (activationFilter.length === 1) {
+    const v = activationFilter[0]!.toLowerCase();
+    if (v === 'activated') activationMode = 'activated';
+    else if (v === 'not_activated' || v === 'not activated') activationMode = 'not';
+  }
+
+  const withNoPerfilCat = categoriesFilter.includes('no_perfil');
+  const filterCategoriesSql = categoriesFilter.filter((c) => c !== 'no_perfil');
+  const categoriesAny =
+    withNoPerfilCat || filterCategoriesSql.length === 0 ? null : filterCategoriesSql;
+
+  const baseFilter: Omit<GlobalAuxSqlFilter, 'restrictHandles'> = {
+    ftsMatchExpr: null,
+    minFollowers,
+    maxFollowers,
+    minEngagementRate,
+    minAvgLikes,
+    minPostsCount,
+    engagementRateBuckets: engagementRateBucketsFilter,
+    avgLikesBuckets: avgLikesBucketsFilter,
+    postsCountBuckets: postsCountBucketsFilter,
+    accountTypeFilter,
+    followerRanges,
+    sort: 'engagement_desc',
+    excludePrivate,
+    categoriesAny,
+    requireIndexedLlm: false,
+    activationMode,
+    citiesLower: citiesFilter.length > 0 ? citiesFilter : null,
+    statesLower: statesFilter.length > 0 ? statesFilter : null,
+    neighborhoodsLower: neighborhoodsFilter.length > 0 ? neighborhoodsFilter : null,
+    socialNetworksLower: socialNetworksFilter.length > 0 ? socialNetworksFilter : null,
+    contentTypesLower: contentTypesFilter.length > 0 ? contentTypesFilter : null,
+    pricingFeedValues: pricingFilters.feed?.length ? pricingFilters.feed : null,
+    pricingReelsValues: pricingFilters.reels?.length ? pricingFilters.reels : null,
+    pricingStoryValues: pricingFilters.story?.length ? pricingFilters.story : null,
+    pricingDestaqueValues: pricingFilters.destaque?.length ? pricingFilters.destaque : null,
+    costTiers: costTierFilter.length > 0 ? costTierFilter.map((s) => String(s).toLowerCase()) : null,
+    llm: buildGlobalAuxLlmSqlFromQuery(query),
+  };
+
+  const CHUNK = 400;
+  const allowed = new Set<string>();
+  for (let i = 0; i < handlesInOrder.length; i += CHUNK) {
+    const chunk = handlesInOrder.slice(i, i + CHUNK);
+    const r = db.globalAuxSearchHandles({ ...baseFilter, restrictHandles: chunk });
+    for (const h of r.handles) {
+      allowed.add(String(h).toLowerCase().replace(/^@/, ''));
+    }
+  }
+  return handlesInOrder.filter((h) => {
+    const n = String(h).toLowerCase().replace(/^@/, '');
+    return n && allowed.has(n);
+  });
+}
+
+function costTierForSearchIndexUpsert(
+  db: CompositeStorage,
+  handle: string,
+  payload: ProfileSearchIndexPayload
+): string | null {
+  const act = db.getActivation(handle);
+  let tier = getCostTierFromPricing(act?.pricing as Record<string, unknown> | undefined);
+  if (!tier) {
+    tier = getCostTierFromPricing(
+      getSuggestedPricingFromFollowers(payload.followersCount) as unknown as Record<string, unknown>
+    );
+  }
+  return tier;
 }
 
 /** Normaliza URL da foto do perfil. */
@@ -1083,10 +1385,22 @@ export interface SearchProfilesOptions {
    */
   skipSort?: boolean;
   /**
-   * Quando true, não tenta reconstruir índice auxiliar (engagement/hashtags/search_blob) para handles
-   * sem linha em `profile_search_aux`; evita leituras pesadas de posts no primeiro hit.
+   * Quando true e não há linha em `profile_search_aux`, monta texto de busca só a partir do perfil
+   * (sem ler posts no RocksDB) e usa engagement vazio — não persiste no SQLite.
+   * Uso interno (ex.: filtrar handles antes de post-matches) sem custo de I/O; não use em listagens
+   * globais se quiser o comportamento padrão de “só índice pronto”.
    */
   skipAuxBackfill?: boolean;
+  /**
+   * Quando true, reativa o caminho legado: lê posts no RocksDB e grava `profile_search_aux`/FTS durante a busca.
+   * Reservado a scripts/reparo admin — não usar em rotas HTTP de tráfego normal.
+   */
+  allowAuxBackfill?: boolean;
+  /**
+   * Base completa / campanha: incluir perfis sem qualificação LLM concluída (post-matches e relatórios
+   * usam todos os handles no storage; a busca global pública filtra só LLM pronta).
+   */
+  includeProfilesWithoutLlm?: boolean;
 }
 
 /** Filtra e ordena perfis; retorna lista com engajamento e facets para sumarização. */
@@ -1098,6 +1412,9 @@ export async function searchProfiles(
   const restrictToHandles = options?.restrictToHandles?.length
     ? new Set(options.restrictToHandles.map((h) => String(h).toLowerCase().replace(/^@/, '')))
     : null;
+  /** SQLite costuma limitar ~999 variáveis por query; acima disso o atalho IN (…) quebra. */
+  const restrictWithinSqlInLimit = restrictToHandles == null || restrictToHandles.size <= 800;
+
   const isCampaignScope = !!(options?.restrictToHandles?.length || options?.initialItems?.length);
   const limitCap = options?.allowLargeLimit ? 10000 : isCampaignScope ? 10000 : 200;
   const limit = Math.min(Math.max(0, Number(query.limit) || 50), limitCap);
@@ -1117,6 +1434,8 @@ export async function searchProfiles(
   const neighborhoodsFilter = parseStringArray(query.neighborhoods).map((s) => s.toLowerCase());
   const socialNetworksFilter = parseStringArray(query.socialNetworks).map((s) => s.toLowerCase());
   const q = (query.q || '').trim().toLowerCase();
+  /** Expressão FTS5 para o atalho SQL global com texto (`q`); null se `q` vazio ou só tokens curtos demais. */
+  const ftsExprForGlobalSql = q ? userQueryToFtsMatchExpression(q) : null;
   const excludePrivate = query.excludePrivate === true;
   const accountTypeFilter = parseNumArray(query.accountTypeFilter).filter((n) => [1, 2, 3].includes(n));
   let categoriesFilter: string[] = [];
@@ -1148,15 +1467,40 @@ export async function searchProfiles(
     : null;
   const includeFacets = query.includeFacets !== false;
 
+  const searchTiming = process.env.SEARCH_PROFILE_TIMING === '1';
+  const searchT0 = Date.now();
+  const searchMark = (label: string): void => {
+    if (searchTiming) console.log(`[search-timing] ${label} +${Date.now() - searchT0}ms`);
+  };
+
   const useInitialItems = options?.initialItems != null && options.initialItems.length > 0;
+
+  /** Meili antes do atalho SQL: com hits do Meili não usamos `globalAuxSearchHandles`+FTS (mantém caminho legado + `ftsNarrowSet`). */
+  let meiliHits: Awaited<ReturnType<typeof searchHandlesViaMeilisearch>> | null = null;
+  if (!useInitialItems && q && restrictToHandles == null) {
+    meiliHits = await searchHandlesViaMeilisearch(
+      q,
+      50_000,
+      buildMeilisearchFilterExpr({
+        excludePrivate,
+        minFollowers,
+        maxFollowers,
+        minEngagementRate,
+        minAvgLikes,
+        minPostsCount,
+        accountTypeFilter,
+        costTiers: costTierFilter.length > 0 ? costTierFilter.map((s) => String(s).toLowerCase()) : undefined,
+      })
+    );
+    searchMark('meili-text');
+  }
+  const meiliHitsNonEmpty = !!(meiliHits && meiliHits.length > 0);
 
   const hasAnyLlmFilterInQuery =
     parseStringArray(query.llmProfileType).length > 0 ||
     parseStringArray(query.llmMainCategory).length > 0 ||
     parseStringArray(query.llmGender).length > 0 ||
     parseStringArray(query.llmLanguage).length > 0 ||
-    parseStringArray(query.llmSubCategories).length > 0 ||
-    parseStringArray(query.llmContentPillars).length > 0 ||
     parseStringArray(query.llmAudienceType).length > 0 ||
     parseStringArray(query.llmToneOfVoice).length > 0 ||
     parseStringArray(query.llmRiskLevel).length > 0 ||
@@ -1166,6 +1510,90 @@ export async function searchProfiles(
     query.llmIsAdultContent === false;
 
   const pricingFiltersActive = pricingActivationKeys.some((k) => (pricingFilters[k]?.length ?? 0) > 0);
+
+  let followerRanges: { min: number; maxExclusive: number | null }[] | undefined;
+  if (sizeFilterSet != null && sizeFilterSet.size > 0) {
+    followerRanges = [];
+    for (const sk of sizeFilterSet) {
+      const b = FOLLOWERS_SIZE_BUCKETS.find((x) => x.key === sk);
+      if (b) followerRanges.push({ min: b.min, maxExclusive: b.max ?? null });
+    }
+  }
+
+  const sqlSupportsRelevanceInGlobalSql = Boolean(q && ftsExprForGlobalSql && !meiliHitsNonEmpty);
+  const sqlSortUnsupported = sort === 'relevance_desc' && !sqlSupportsRelevanceInGlobalSql;
+
+  const globalSqlTextPathOk = !q || (ftsExprForGlobalSql != null && !meiliHitsNonEmpty);
+  const globalSqlEligible =
+    globalSqlTextPathOk &&
+    !useInitialItems &&
+    !options?.allowAuxBackfill &&
+    !meiliHitsNonEmpty &&
+    !sqlSortUnsupported &&
+    restrictWithinSqlInLimit &&
+    options?.includeProfilesWithoutLlm !== true;
+
+  const withNoPerfilCat = categoriesFilter.includes('no_perfil');
+  const filterCategoriesSql = categoriesFilter.filter((c) => c !== 'no_perfil');
+  const categoriesAny =
+    withNoPerfilCat || filterCategoriesSql.length === 0 ? null : filterCategoriesSql;
+
+  let activationMode: 'activated' | 'not' | null = null;
+  if (activationFilter.length === 1) {
+    const v = activationFilter[0]!.toLowerCase();
+    if (v === 'activated') activationMode = 'activated';
+    else if (v === 'not_activated' || v === 'not activated') activationMode = 'not';
+  }
+
+  const globalAuxLlm = buildGlobalAuxLlmSqlFromQuery(query);
+
+  let useGlobalSqlPath = false;
+  let globalSqlHandles: string[] = [];
+  let ftsNarrowSet: Set<string> | null = null;
+  let ftsRankByHandle: Map<string, number> | null = null;
+  if (globalSqlEligible) {
+    const ftsMatchExpr = ftsExprForGlobalSql && !meiliHitsNonEmpty ? ftsExprForGlobalSql : null;
+    const r = db.globalAuxSearchHandles({
+      ftsMatchExpr,
+      minFollowers,
+      maxFollowers,
+      minEngagementRate,
+      minAvgLikes,
+      minPostsCount,
+      engagementRateBuckets: engagementRateBucketsFilter,
+      avgLikesBuckets: avgLikesBucketsFilter,
+      postsCountBuckets: postsCountBucketsFilter,
+      accountTypeFilter,
+      followerRanges,
+      sort,
+      restrictHandles: restrictToHandles && restrictToHandles.size > 0 ? [...restrictToHandles] : null,
+      excludePrivate,
+      categoriesAny,
+      requireIndexedLlm: restrictToHandles == null && options?.includeProfilesWithoutLlm !== true,
+      activationMode,
+      citiesLower: citiesFilter.length > 0 ? citiesFilter : null,
+      statesLower: statesFilter.length > 0 ? statesFilter : null,
+      neighborhoodsLower: neighborhoodsFilter.length > 0 ? neighborhoodsFilter : null,
+      socialNetworksLower: socialNetworksFilter.length > 0 ? socialNetworksFilter : null,
+      contentTypesLower: contentTypesFilter.length > 0 ? contentTypesFilter : null,
+      pricingFeedValues: pricingFilters.feed?.length ? pricingFilters.feed : null,
+      pricingReelsValues: pricingFilters.reels?.length ? pricingFilters.reels : null,
+      pricingStoryValues: pricingFilters.story?.length ? pricingFilters.story : null,
+      pricingDestaqueValues: pricingFilters.destaque?.length ? pricingFilters.destaque : null,
+      costTiers: costTierFilter.length > 0 ? costTierFilter.map((s) => String(s).toLowerCase()) : null,
+      llm: globalAuxLlm,
+    });
+    globalSqlHandles = r.handles;
+    useGlobalSqlPath = true;
+    if (ftsMatchExpr) {
+      ftsRankByHandle = new Map();
+      for (let gi = 0; gi < globalSqlHandles.length; gi++) {
+        const h = globalSqlHandles[gi]!.toLowerCase().replace(/^@/, '');
+        ftsRankByHandle.set(h, globalSqlHandles.length - gi);
+      }
+    }
+    searchMark('sql-global-candidates');
+  }
 
   /** Lista de campanha em cache + mesma query sem filtros: permite reutilizar facetas e pular re-sort. */
   const campaignNoFilters =
@@ -1194,7 +1622,9 @@ export async function searchProfiles(
 
   let profilesRaw: { key: string; value: Record<string, unknown> }[];
   if (!useInitialItems) {
-    if (searchDataCache) {
+    if (useGlobalSqlPath) {
+      profilesRaw = [];
+    } else if (searchDataCache) {
       profilesRaw = searchDataCache.profilesRaw;
     } else {
       logMemorySnapshot('search: cache vazio — lendo só perfis do disco nesta requisição');
@@ -1208,21 +1638,44 @@ export async function searchProfiles(
     profilesRaw = [];
   }
 
-  const auxRows = !useInitialItems ? db.getAllProfileSearchAuxRows() : [];
+  const auxRows = !useInitialItems
+    ? useGlobalSqlPath
+      ? db.getProfileSearchAuxRowsForHandles(globalSqlHandles)
+      : db.getAllProfileSearchAuxRows()
+    : [];
   const auxByHandle = new Map<
     string,
-    { engagement_json: string; hashtags_json: string; search_blob: string }
+    {
+      engagement_json: string;
+      hashtags_json: string;
+      search_blob: string;
+      followers_count: number;
+      engagement_rate: number;
+      avg_likes: number;
+      posts_count: number;
+      account_type: number | null;
+    }
   >();
   for (const r of auxRows) {
     auxByHandle.set(r.handle, {
       engagement_json: r.engagement_json,
       hashtags_json: r.hashtags_json,
       search_blob: r.search_blob,
+      followers_count: r.followers_count,
+      engagement_rate: r.engagement_rate,
+      avg_likes: r.avg_likes,
+      posts_count: r.posts_count,
+      account_type: r.account_type,
     });
   }
 
-  /** Campanha: muitos handles sem linha aux — preenche em paralelo (evita N× await sequencial no loop). */
-  if (!options?.skipAuxBackfill && !useInitialItems && restrictToHandles != null && restrictToHandles.size > 0) {
+  searchMark('aux-map');
+
+  /**
+   * Backfill de índice durante a busca só com `allowAuxBackfill` (reparo/script).
+   * Tráfego normal mantém índice via `syncProfileSearchIndexForHandle` na ingestão + `npm run rebuild-search-index` em massa.
+   */
+  if (!useGlobalSqlPath && options?.allowAuxBackfill === true && !useInitialItems && restrictToHandles != null && restrictToHandles.size > 0) {
     const missingAux = [...restrictToHandles].filter((h) => !auxByHandle.has(h));
     const AUX_BATCH = 20;
     for (let ai = 0; ai < missingAux.length; ai += AUX_BATCH) {
@@ -1235,22 +1688,31 @@ export async function searchProfiles(
           const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
           const postsOne = postsRawOne.map(({ value: pv }) => pv);
           const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
-          db.upsertProfileSearchIndexFromPayload(handle, payload);
+          db.upsertProfileSearchIndexFromPayload(handle, {
+            ...payload,
+            costTier: costTierForSearchIndexUpsert(db, handle, payload),
+          });
           auxByHandle.set(handle, {
             engagement_json: payload.engagementJson,
             hashtags_json: payload.hashtagsJson,
             search_blob: payload.searchBlob,
+            followers_count: payload.followersCount,
+            engagement_rate: payload.engagementRate,
+            avg_likes: payload.avgLikes,
+            posts_count: payload.postsCount,
+            account_type: payload.accountType,
           });
         })
       );
     }
   } else if (
-    !options?.skipAuxBackfill &&
+    !useGlobalSqlPath &&
+    options?.allowAuxBackfill === true &&
     !useInitialItems &&
     profilesRaw.length > 0 &&
     (restrictToHandles == null || restrictToHandles.size === 0)
   ) {
-    /** Busca global: perfis com LLM sem linha aux — mesmo padrão em lote que campanha. */
+    /** Busca global + allowAuxBackfill: perfis LLM sem linha aux. */
     const rowsNeedingAux: { key: string; value: Record<string, unknown> }[] = [];
     const seenNeed = new Set<string>();
     for (const row of profilesRaw) {
@@ -1272,32 +1734,48 @@ export async function searchProfiles(
           const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
           const postsOne = postsRawOne.map(({ value: pv }) => pv);
           const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
-          db.upsertProfileSearchIndexFromPayload(handle, payload);
+          db.upsertProfileSearchIndexFromPayload(handle, {
+            ...payload,
+            costTier: costTierForSearchIndexUpsert(db, handle, payload),
+          });
           auxByHandle.set(handle, {
             engagement_json: payload.engagementJson,
             hashtags_json: payload.hashtagsJson,
             search_blob: payload.searchBlob,
+            followers_count: payload.followersCount,
+            engagement_rate: payload.engagementRate,
+            avg_likes: payload.avgLikes,
+            posts_count: payload.postsCount,
+            account_type: payload.accountType,
           });
         })
       );
     }
   }
 
-  let ftsNarrowSet: Set<string> | null = null;
-  let ftsRankByHandle: Map<string, number> | null = null;
-  if (!useInitialItems && q && !restrictToHandles) {
-    const expr = userQueryToFtsMatchExpression(q);
-    if (expr) {
-      const ftsRows = db.searchProfileHandlesFts(expr, 50_000);
-      if (ftsRows.length > 0) {
-        ftsNarrowSet = new Set(ftsRows.map((r) => r.handle));
-        ftsRankByHandle = new Map();
-        for (let fi = 0; fi < ftsRows.length; fi++) {
-          ftsRankByHandle.set(ftsRows[fi]!.handle, ftsRows.length - fi);
+  let excludedForMissingAux = 0;
+
+  if (!useInitialItems && q && restrictToHandles == null) {
+    if (meiliHitsNonEmpty && meiliHits) {
+      ftsNarrowSet = new Set(meiliHits.map((r) => r.handle));
+      ftsRankByHandle = new Map();
+      for (const r of meiliHits) ftsRankByHandle.set(r.handle, r.rank);
+    } else if (!useGlobalSqlPath) {
+      const expr = ftsExprForGlobalSql;
+      if (expr) {
+        const ftsRows = db.searchProfileHandlesFts(expr, 50_000);
+        if (ftsRows.length > 0) {
+          ftsNarrowSet = new Set(ftsRows.map((r) => r.handle));
+          ftsRankByHandle = new Map();
+          for (let fi = 0; fi < ftsRows.length; fi++) {
+            ftsRankByHandle.set(ftsRows[fi]!.handle, ftsRows.length - fi);
+          }
         }
       }
     }
   }
+
+  searchMark('text-narrow');
 
   const emptyEngagement: EngagementStats = {
     posts_count: 0,
@@ -1322,7 +1800,27 @@ export async function searchProfiles(
       restrictToHandles.size * 2 < profilesRaw.length;
 
     let profileRowsForSearch: { key: string; value: Record<string, unknown> }[];
-    if (restrictSparse) {
+    if (useGlobalSqlPath) {
+      profileRowsForSearch = [];
+      const byHandleFromCache = new Map<string, { key: string; value: Record<string, unknown> }>();
+      if (searchDataCache?.profilesRaw) {
+        for (const row of searchDataCache.profilesRaw) {
+          const v = row.value as Record<string, unknown>;
+          const h = getHandle(v, row.key).toLowerCase().replace(/^@/, '');
+          if (!byHandleFromCache.has(h)) byHandleFromCache.set(h, row);
+        }
+      }
+      for (const handleRaw of globalSqlHandles) {
+        const handle = handleRaw.toLowerCase().replace(/^@/, '');
+        const cached = byHandleFromCache.get(handle);
+        if (cached) {
+          profileRowsForSearch.push(cached);
+        } else {
+          const p = await db.get<Record<string, unknown>>('profile', handle);
+          if (p) profileRowsForSearch.push({ key: handle, value: p });
+        }
+      }
+    } else if (restrictSparse) {
       const byHandle = new Map<string, { key: string; value: Record<string, unknown> }>();
       for (const row of profilesRaw) {
         const v = row.value as Record<string, unknown>;
@@ -1342,8 +1840,14 @@ export async function searchProfiles(
       const profile = value as Record<string, unknown>;
       const handle = getHandle(profile, key).toLowerCase().replace(/^@/, '');
       if (!restrictSparse && restrictToHandles && !restrictToHandles.has(handle)) continue;
-      // Busca geral: só perfis com qualificação LLM pronta. Campanha: todos os handles presentes no DB.
-      if (!restrictToHandles && !hasCompletedLlmProfile(profile)) continue;
+      // Busca geral: só perfis com qualificação LLM pronta. Campanha / base completa: todos no escopo.
+      if (
+        !restrictToHandles &&
+        options?.includeProfilesWithoutLlm !== true &&
+        !hasCompletedLlmProfile(profile)
+      ) {
+        continue;
+      }
 
       if (q && ftsNarrowSet !== null && !ftsNarrowSet.has(handle)) continue;
 
@@ -1351,25 +1855,42 @@ export async function searchProfiles(
       const baseCategories = getCategories(profile);
       let aux = auxByHandle.get(handle);
       if (!aux) {
-        if (options?.skipAuxBackfill) {
+        if (options?.allowAuxBackfill) {
+          const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
+          const postsOne = postsRawOne.map(({ value: pv }) => pv);
+          const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
+          db.upsertProfileSearchIndexFromPayload(handle, {
+            ...payload,
+            costTier: costTierForSearchIndexUpsert(db, handle, payload),
+          });
+          aux = {
+            engagement_json: payload.engagementJson,
+            hashtags_json: payload.hashtagsJson,
+            search_blob: payload.searchBlob,
+            followers_count: payload.followersCount,
+            engagement_rate: payload.engagementRate,
+            avg_likes: payload.avgLikes,
+            posts_count: payload.postsCount,
+            account_type: payload.accountType,
+          };
+          auxByHandle.set(handle, aux);
+        } else if (options?.skipAuxBackfill) {
           const searchBlob = getSearchableTextProfileOnly(profile, key, fullName, baseCategories);
           aux = {
             engagement_json: JSON.stringify(emptyEngagement),
             hashtags_json: '[]',
             search_blob: searchBlob,
+            followers_count: 0,
+            engagement_rate: 0,
+            avg_likes: 0,
+            posts_count: 0,
+            account_type: null,
           };
+          auxByHandle.set(handle, aux);
         } else {
-          const postsRawOne = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`);
-          const postsOne = postsRawOne.map(({ value: pv }) => pv);
-          const payload = buildProfileSearchIndexPayload(profile, key, postsOne);
-          db.upsertProfileSearchIndexFromPayload(handle, payload);
-          aux = {
-            engagement_json: payload.engagementJson,
-            hashtags_json: payload.hashtagsJson,
-            search_blob: payload.searchBlob,
-          };
+          excludedForMissingAux++;
+          continue;
         }
-        auxByHandle.set(handle, aux);
       }
 
       let engagement: EngagementStats;
@@ -1643,7 +2164,8 @@ export async function searchProfiles(
   if (!options?.skipSort) {
     if (order === 'relevance_desc') {
       items.sort(sortByOrder);
-    } else if (q) {
+    } else if (q && ftsNarrowSet != null) {
+      /** Caminho legado com `ftsNarrowSet` (Meili ou FTS isolado): relevância textual primeiro. Com atalho SQL+FTS, `ftsNarrowSet` fica null e preserva a ordem SQL + `sortByOrder`. */
       items.sort((a, b) => {
         const relA = a.search_relevance ?? 0;
         const relB = b.search_relevance ?? 0;
@@ -1695,6 +2217,37 @@ export async function searchProfiles(
       { key: 'media', label: 'Média', min: 25, count: 0 },
       { key: 'alta', label: 'Alta', min: 50, count: 0 },
     ];
+
+    const handlesForNumericFacetSql = [...new Set(items.map((i) => String(i.handle).toLowerCase().replace(/^@/, '')))];
+    let sqlNumericAgg: AuxNumericFacetAggregate | null = null;
+    if (
+      handlesForNumericFacetSql.length > 0 &&
+      handlesForNumericFacetSql.length <= SqliteSync.GLOBAL_AUX_SQL_HANDLE_CAP
+    ) {
+      const agg = db.aggregateAuxNumericFacetsForHandles(handlesForNumericFacetSql);
+      if (agg && agg.auxRowCount === handlesForNumericFacetSql.length) {
+        sqlNumericAgg = agg;
+        const s = agg.sums;
+        engagementRateBuckets[0]!.count = s.engagement_baixa;
+        engagementRateBuckets[1]!.count = s.engagement_media;
+        engagementRateBuckets[2]!.count = s.engagement_alta;
+        followersBuckets[0]!.count = s.followers_nano;
+        followersBuckets[1]!.count = s.followers_micro;
+        followersBuckets[2]!.count = s.followers_medio;
+        followersBuckets[3]!.count = s.followers_macro;
+        followersBuckets[4]!.count = s.followers_elite;
+        followersBuckets[5]!.count = s.followers_celebridade;
+        accountTypeBuckets[0]!.count = s.account_pessoal;
+        accountTypeBuckets[1]!.count = s.account_criador;
+        accountTypeBuckets[2]!.count = s.account_empresa;
+        avgLikesBuckets[0]!.count = s.avg_likes_baixa;
+        avgLikesBuckets[1]!.count = s.avg_likes_media;
+        avgLikesBuckets[2]!.count = s.avg_likes_alta;
+        postsCountBuckets[0]!.count = s.posts_baixa;
+        postsCountBuckets[1]!.count = s.posts_media;
+        postsCountBuckets[2]!.count = s.posts_alta;
+      }
+    }
 
     const pricingCounts: Record<(typeof pricingActivationKeys)[number], Map<number, number>> = {
       feed: new Map(),
@@ -1757,23 +2310,25 @@ export async function searchProfiles(
           if (key) categoryCount.set(key, (categoryCount.get(key) ?? 0) + 1);
         }
       }
-      const rate = item.engagement?.engagement_rate ?? 0;
-      const avgLikes = item.engagement?.avg_likes ?? 0;
-      const postsCount = item.engagement?.posts_count ?? 0;
-      if (rate < 1) engagementRateBuckets[0]!.count++;
-      else if (rate < 5) engagementRateBuckets[1]!.count++;
-      else engagementRateBuckets[2]!.count++;
-      incrementFollowersBucketCount(followersBuckets, item.followers_count);
-      const at = (item as ProfileListItem & { account_type?: number }).account_type;
-      if (at === 1) accountTypeBuckets[0]!.count++;
-      else if (at === 2) accountTypeBuckets[1]!.count++;
-      else if (at === 3) accountTypeBuckets[2]!.count++;
-      if (avgLikes < 500) avgLikesBuckets[0]!.count++;
-      else if (avgLikes < 5000) avgLikesBuckets[1]!.count++;
-      else avgLikesBuckets[2]!.count++;
-      if (postsCount < 25) postsCountBuckets[0]!.count++;
-      else if (postsCount < 50) postsCountBuckets[1]!.count++;
-      else postsCountBuckets[2]!.count++;
+      if (!sqlNumericAgg) {
+        const rate = item.engagement?.engagement_rate ?? 0;
+        const avgLikes = item.engagement?.avg_likes ?? 0;
+        const postsCount = item.engagement?.posts_count ?? 0;
+        if (rate < 1) engagementRateBuckets[0]!.count++;
+        else if (rate < 5) engagementRateBuckets[1]!.count++;
+        else engagementRateBuckets[2]!.count++;
+        incrementFollowersBucketCount(followersBuckets, item.followers_count);
+        const at = (item as ProfileListItem & { account_type?: number }).account_type;
+        if (at === 1) accountTypeBuckets[0]!.count++;
+        else if (at === 2) accountTypeBuckets[1]!.count++;
+        else if (at === 3) accountTypeBuckets[2]!.count++;
+        if (avgLikes < 500) avgLikesBuckets[0]!.count++;
+        else if (avgLikes < 5000) avgLikesBuckets[1]!.count++;
+        else avgLikesBuckets[2]!.count++;
+        if (postsCount < 25) postsCountBuckets[0]!.count++;
+        else if (postsCount < 50) postsCountBuckets[1]!.count++;
+        else postsCountBuckets[2]!.count++;
+      }
 
       accumulateLlmFacetsFromItem(item, llmFacetMaps);
     }
@@ -1876,6 +2431,15 @@ export async function searchProfiles(
       );
     }
   }
+
+  if (!useInitialItems && excludedForMissingAux > 0) {
+    console.warn(
+      `[profiles-search] ${excludedForMissingAux} perfil(is) omitidos: sem linha em profile_search_aux (índice de busca). ` +
+        'O índice é atualizado na ingestão (save/savePosts/saveMedia); após importação em massa rode na pasta backend: npm run rebuild-search-index',
+    );
+  }
+
+  searchMark('return');
   return { total, items: slice, facets };
 }
 

@@ -24,8 +24,8 @@
 
     "baseUrl": ".",
     "paths": {
-      "@repo/followersSizeBuckets": ["../crawl/src/api/followersSizeBuckets.ts"],
-      "@repo/llmMainCategoryTaxonomy": ["../crawl/src/lib/mainCategoryTaxonomy.ts"]
+      "@repo/followersSizeBuckets": ["../backend/src/api/followersSizeBuckets.ts"],
+      "@repo/llmMainCategoryTaxonomy": ["../backend/src/lib/mainCategoryTaxonomy.ts"]
     }
   },
   "include": ["src"]

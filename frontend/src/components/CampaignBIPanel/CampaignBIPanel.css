@@ -1,26 +1,5 @@
 .campaign-bi-panel {
-  position: sticky;
-  top: 80px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
-}
-
-.campaign-bi-panel::-webkit-scrollbar {
-  width: 6px;
-}
-
-.campaign-bi-panel::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.campaign-bi-panel::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 3px;
-}
-
-.campaign-bi-panel::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
+  width: 100%;
 }
 
 .campaign-bi-card {

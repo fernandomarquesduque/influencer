@@ -13,9 +13,9 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      /** Patamares nano→celebridade: mesma fonte que o crawl (`followersSizeBuckets.ts`). */
-      '@repo/followersSizeBuckets': path.resolve(__dirname, '../crawl/src/api/followersSizeBuckets.ts'),
-      '@repo/llmMainCategoryTaxonomy': path.resolve(__dirname, '../crawl/src/lib/mainCategoryTaxonomy.ts'),
+      /** Patamares nano→celebridade: mesma fonte que o backend (`followersSizeBuckets.ts`). */
+      '@repo/followersSizeBuckets': path.resolve(__dirname, '../backend/src/api/followersSizeBuckets.ts'),
+      '@repo/llmMainCategoryTaxonomy': path.resolve(__dirname, '../backend/src/lib/mainCategoryTaxonomy.ts'),
     },
   },
   server: {

@@ -83,7 +83,7 @@ function isS3Configured(): boolean {
 }
 
 /** Uma linha ao subir a API: confirma se o .env do crawl carregou as credenciais. */
-export function logS3StartupStatus(opts: { envPath: string; crawlRoot: string }): void {
+export function logS3StartupStatus(opts: { envPath: string; backendRoot: string }): void {
   if (isS3Configured()) {
     const bucket = getBucket();
     logInfo('S3 habilitado nesta API', {
@@ -102,9 +102,9 @@ export function logS3StartupStatus(opts: { envPath: string; crawlRoot: string })
     `${LOG} S3 desligado: sem AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (ou AWS_ACCESS_KEY + AWS_SECRET_KEY).`,
   );
   console.warn(
-    `${LOG} Coloque as chaves em: ${opts.envPath} (${existsSync(opts.envPath) ? 'arquivo existe' : 'arquivo não existe'}) · crawlRoot=${opts.crawlRoot}`,
+    `${LOG} Coloque as chaves em: ${opts.envPath} (${existsSync(opts.envPath) ? 'arquivo existe' : 'arquivo não existe'}) · backendRoot=${opts.backendRoot}`,
   );
-  console.warn(`${LOG} Dica: o depurador pode usar cwd diferente; o servidor agora lê o .env pela pasta crawl, não pelo cwd.`);
+  console.warn(`${LOG} Dica: o depurador pode usar cwd diferente; o servidor agora lê o .env pela pasta backend, não pelo cwd.`);
 }
 
 function getBucket(): string {
@@ -205,7 +205,7 @@ async function ensureBucketExists(bucket: string): Promise<void> {
       if (cn === 'BucketAlreadyExists') {
         throw new Error(
           `${LOG} O nome "${bucket}" já está registrado na AWS por outra conta (bucket é global). ` +
-            `Crie um bucket com nome único no console S3 e defina no crawl/.env: AWS_S3_BUCKET=meu-nome-unico (ou AWS_BUCKET_NAME). ` +
+            `Crie um bucket com nome único no console S3 e defina no backend/.env: AWS_S3_BUCKET=meu-nome-unico (ou AWS_BUCKET_NAME). ` +
             `O padrão "influencer" quase sempre está indisponível.`,
         );
       }
@@ -310,7 +310,7 @@ async function putPublicObject(opts: { key: string; body: Buffer; contentType: s
         if (!loggedS3AclUnsupportedHint) {
           loggedS3AclUnsupportedHint = true;
           logInfo(
-            'Bucket sem ACLs (Object Ownership enforced). Próximos uploads sem ACL — remova AWS_S3_OBJECT_ACL do crawl/.env ou use política de bucket para leitura pública.',
+            'Bucket sem ACLs (Object Ownership enforced). Próximos uploads sem ACL — remova AWS_S3_OBJECT_ACL do backend/.env ou use política de bucket para leitura pública.',
           );
         }
         await client.send(new PutObjectCommand({ ...putBase }));

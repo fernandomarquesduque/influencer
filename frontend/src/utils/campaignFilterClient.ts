@@ -2,7 +2,7 @@
  * Filtro, ordenação e facets no cliente para a listagem de campanha.
  * Usado quando temos o contexto completo em cache para evitar chamadas à API a cada mudança de filtro.
  */
-import type { ProfileListItem, ProfilesSearchQuery, ProfilesSearchFacets, LlmSearchFacets } from '../api'
+import type { ProfileListItem, ProfilesSearchQuery, ProfilesSearchFacets, LlmSearchFacets, PostItem } from '../api'
 import type { ProfilesSort } from '../api'
 import { FOLLOWERS_SIZE_BUCKETS, followersCountToSizeKey } from '@repo/followersSizeBuckets'
 import { getCostTier } from './pricing'
@@ -53,8 +53,6 @@ interface LlmFacetMaps {
   profileType: Map<string, number>
   mainCategory: Map<string, number>
   gender: Map<string, number>
-  subCategories: Map<string, number>
-  contentPillars: Map<string, number>
   audienceType: Map<string, number>
 }
 
@@ -63,8 +61,6 @@ function createEmptyLlmFacetMaps(): LlmFacetMaps {
     profileType: new Map(),
     mainCategory: new Map(),
     gender: new Map(),
-    subCategories: new Map(),
-    contentPillars: new Map(),
     audienceType: new Map(),
   }
 }
@@ -75,8 +71,6 @@ function accumulateLlmFacetsFromItem(item: ProfileListItem, maps: LlmFacetMaps):
   bumpFacetString(maps.profileType, String(q.profileType ?? ''))
   bumpFacetMainCategory(maps.mainCategory, String(q.mainCategory ?? ''))
   bumpFacetString(maps.gender, String(q.gender ?? ''))
-  bumpFacetStringArray(maps.subCategories, q.subCategories)
-  bumpFacetStringArray(maps.contentPillars, q.contentPillars)
   bumpFacetStringArray(maps.audienceType, q.audienceType)
 }
 
@@ -86,8 +80,6 @@ function mapsToLlmSearchFacets(maps: LlmFacetMaps): LlmSearchFacets {
     mainCategory: mapToNameCountDesc(maps.mainCategory),
     gender: mapToNameCountDesc(maps.gender),
     language: [],
-    subCategories: mapToNameCountDesc(maps.subCategories),
-    contentPillars: mapToNameCountDesc(maps.contentPillars),
     audienceType: mapToNameCountDesc(maps.audienceType),
     toneOfVoice: [],
     brandSafety: {
@@ -110,18 +102,176 @@ function qualificationArrayMatchesOr(q: Record<string, unknown>, key: string, se
   return arr.some((x) => typeof x === 'string' && set.has(x.trim().toLowerCase()))
 }
 
-function matchesLlmQualificationFilters(record: Record<string, unknown>, query: Partial<ProfilesSearchQuery>): boolean {
+/** Campos do painel BI: priorizam na ordenação, não reduzem o conjunto de resultados. */
+const CAMPAIGN_FACET_BOOST_KEYS = [
+  'sizeFilter',
+  'accountTypeFilter',
+  'contentTypes',
+  'cities',
+  'states',
+  'neighborhoods',
+  'socialNetworks',
+  'engagementRateBuckets',
+  'avgLikesBuckets',
+  'postsCountBuckets',
+  'llmProfileType',
+  'llmMainCategory',
+  'llmGender',
+  'llmAudienceType',
+] as const satisfies readonly (keyof ProfilesSearchQuery)[]
+
+export function stripCampaignFacetBoostFromQuery(
+  query: Partial<ProfilesSearchQuery>
+): Partial<ProfilesSearchQuery> {
+  const out = { ...query }
+  for (const k of CAMPAIGN_FACET_BOOST_KEYS) {
+    delete out[k]
+  }
+  return out
+}
+
+export function pickCampaignFacetBoostFromQuery(
+  query: Partial<ProfilesSearchQuery>
+): Partial<ProfilesSearchQuery> {
+  const out: Partial<ProfilesSearchQuery> = {}
+  for (const k of CAMPAIGN_FACET_BOOST_KEYS) {
+    const v = query[k]
+    if (Array.isArray(v) && v.length > 0) {
+      ;(out as Record<string, unknown>)[k] = [...v]
+    }
+  }
+  return out
+}
+
+/** Chave estável para não refazer fetch de contexto quando só muda prioridade de facet. */
+export function campaignContextFetchQueryKey(query: Partial<ProfilesSearchQuery>): string {
+  return JSON.stringify(stripCampaignFacetBoostFromQuery(query))
+}
+
+export function isCampaignFacetBoostOnlyPatch(patch: Partial<ProfilesSearchQuery>): boolean {
+  const keys = Object.keys(patch).filter((k) => k !== 'offset')
+  if (keys.length === 0) return false
+  return keys.every((k) => (CAMPAIGN_FACET_BOOST_KEYS as readonly string[]).includes(k))
+}
+
+export function hasCampaignFacetBoost(query: Partial<ProfilesSearchQuery>): boolean {
+  return CAMPAIGN_FACET_BOOST_KEYS.some((k) => {
+    const v = query[k]
+    if (Array.isArray(v)) return v.length > 0
+    return false
+  })
+}
+
+/** Só opções com contagem > 0 (facets estritamente dos resultados atuais). */
+export function filterFacetsForDisplay(facets: ProfilesSearchFacets): ProfilesSearchFacets {
+  const nameCountPositive = (rows: { name: string; count: number }[]) =>
+    rows.filter((r) => (r.count ?? 0) > 0)
+  const llm = facets.llm
+  return {
+    ...facets,
+    categories: nameCountPositive(facets.categories ?? []),
+    content_type: nameCountPositive(facets.content_type ?? []),
+    cities: nameCountPositive(facets.cities ?? []),
+    states: nameCountPositive(facets.states ?? []),
+    neighborhoods: nameCountPositive(facets.neighborhoods ?? []),
+    engagement_rate: (facets.engagement_rate ?? []).filter((b) => (b.count ?? 0) > 0),
+    avg_likes: (facets.avg_likes ?? []).filter((b) => (b.count ?? 0) > 0),
+    posts_count: (facets.posts_count ?? []).filter((b) => (b.count ?? 0) > 0),
+    size_buckets: (facets.size_buckets ?? []).filter((b) => (b.count ?? 0) > 0),
+    account_type: (facets.account_type ?? []).filter((b) => (b.count ?? 0) > 0),
+    llm: llm
+      ? {
+          profileType: nameCountPositive(llm.profileType ?? []),
+          mainCategory: nameCountPositive(llm.mainCategory ?? []),
+          gender: nameCountPositive(llm.gender ?? []),
+          language: nameCountPositive(llm.language ?? []),
+          audienceType: nameCountPositive(llm.audienceType ?? []),
+          toneOfVoice: nameCountPositive(llm.toneOfVoice ?? []),
+          brandSafety: { level: nameCountPositive(llm.brandSafety?.level ?? []) },
+        }
+      : facets.llm,
+  }
+}
+
+function facetAllowsSizeKey(facets: ProfilesSearchFacets, filterKey: string): boolean {
+  const norm = normalizeSizeFilterQueryKey(filterKey)
+  return (facets.size_buckets ?? []).some((b) => {
+    if ((b.count ?? 0) <= 0) return false
+    const bk = normalizeSizeFilterQueryKey(b.key)
+    return bk === norm || b.key === filterKey
+  })
+}
+
+function facetAllowsLlmName(facets: ProfilesSearchFacets, field: keyof LlmSearchFacets, raw: string): boolean {
+  const llm = facets.llm
+  if (!llm) return false
+  const list = llm[field]
+  if (!Array.isArray(list)) return false
+  const n = raw.trim().toLowerCase()
+  return list.some((x) => (x.count ?? 0) > 0 && String(x.name ?? '').trim().toLowerCase() === n)
+}
+
+/** Remove prioridades de facet que não existem no conjunto atual de resultados. */
+export function pruneInvalidCampaignFacetBoost(
+  query: Partial<ProfilesSearchQuery>,
+  facets: ProfilesSearchFacets | null
+): Partial<ProfilesSearchQuery> | null {
+  if (!facets || !hasCampaignFacetBoost(query)) return null
+  const next: Partial<ProfilesSearchQuery> = { ...query }
+  let changed = false
+
+  if (next.sizeFilter?.length) {
+    const valid = next.sizeFilter.filter((k) => facetAllowsSizeKey(facets, k))
+    if (valid.length !== next.sizeFilter.length) {
+      next.sizeFilter = valid.length ? valid : undefined
+      changed = true
+    }
+  }
+  const pruneLlmArr = (key: 'llmProfileType' | 'llmMainCategory' | 'llmGender' | 'llmAudienceType', facetKey: keyof LlmSearchFacets) => {
+    const arr = next[key] as string[] | undefined
+    if (!arr?.length) return
+    const valid = arr.filter((v) => facetAllowsLlmName(facets, facetKey, v))
+    if (valid.length !== arr.length) {
+      ;(next as Record<string, unknown>)[key] = valid.length ? valid : undefined
+      changed = true
+    }
+  }
+  pruneLlmArr('llmProfileType', 'profileType')
+  pruneLlmArr('llmMainCategory', 'mainCategory')
+  pruneLlmArr('llmGender', 'gender')
+  pruneLlmArr('llmAudienceType', 'audienceType')
+
+  const pruneMetric = (key: 'engagementRateBuckets' | 'avgLikesBuckets', facetList: { min?: number; count: number }[]) => {
+    const arr = next[key] as number[] | undefined
+    if (!arr?.length) return
+    const allowed = new Set(
+      facetList.filter((b) => (b.count ?? 0) > 0).map((b) => b.min ?? 0)
+    )
+    const valid = arr.filter((n) => allowed.has(n))
+    if (valid.length !== arr.length) {
+      ;(next as Record<string, unknown>)[key] = valid.length ? valid : undefined
+      changed = true
+    }
+  }
+  pruneMetric('engagementRateBuckets', facets.engagement_rate ?? [])
+  pruneMetric('avgLikesBuckets', facets.avg_likes ?? [])
+
+  return changed ? next : null
+}
+
+function llmDimensionBoostScore(record: Record<string, unknown>, query: Partial<ProfilesSearchQuery>): number {
   const qual = getLlmQualification(record)
-  if (!qual) return false
+  if (!qual) return 0
+  let score = 0
 
   const orScalar = (field: string, selected: string[]): boolean => {
-    if (selected.length === 0) return true
+    if (selected.length === 0) return false
     const set = new Set(selected.map((s) => s.trim().toLowerCase()).filter(Boolean))
     const v = String(qual[field] ?? '').trim().toLowerCase()
     return set.has(v)
   }
 
-  if (!orScalar('profileType', parseStringArrayForLlm(query.llmProfileType))) return false
+  if (orScalar('profileType', parseStringArrayForLlm(query.llmProfileType))) score++
   const mainCatSel = parseStringArrayForLlm(query.llmMainCategory)
   if (mainCatSel.length > 0) {
     const set = new Set(
@@ -130,26 +280,115 @@ function matchesLlmQualificationFilters(record: Record<string, unknown>, query: 
         .filter((x): x is string => Boolean(x))
     )
     const stored = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim())?.toLowerCase()
-    if (!stored || !set.has(stored)) return false
+    if (stored && set.has(stored)) score++
   }
-  if (!orScalar('gender', parseStringArrayForLlm(query.llmGender))) return false
+  if (orScalar('gender', parseStringArrayForLlm(query.llmGender))) score++
+  if (qualificationArrayMatchesOr(qual, 'audienceType', parseStringArrayForLlm(query.llmAudienceType))) score++
 
-  if (!qualificationArrayMatchesOr(qual, 'subCategories', parseStringArrayForLlm(query.llmSubCategories))) return false
-  if (!qualificationArrayMatchesOr(qual, 'contentPillars', parseStringArrayForLlm(query.llmContentPillars))) return false
-  if (!qualificationArrayMatchesOr(qual, 'audienceType', parseStringArrayForLlm(query.llmAudienceType))) return false
-
-  return true
+  return score
 }
 
-function hasAnyLlmFilter(query: Partial<ProfilesSearchQuery>): boolean {
-  return (
-    (query.llmProfileType?.length ?? 0) > 0 ||
-    (query.llmMainCategory?.length ?? 0) > 0 ||
-    (query.llmGender?.length ?? 0) > 0 ||
-    (query.llmSubCategories?.length ?? 0) > 0 ||
-    (query.llmContentPillars?.length ?? 0) > 0 ||
-    (query.llmAudienceType?.length ?? 0) > 0
-  )
+function computeFacetBoostScore(item: ProfileListItem, query: Partial<ProfilesSearchQuery>): number {
+  let score = 0
+  const sizeFilter = (query.sizeFilter ?? []).map((s) => normalizeSizeFilterQueryKey(String(s)))
+  if (sizeFilter.length > 0) {
+    const size = getSizeFromItem(item)
+    if (size != null && sizeFilter.includes(normalizeSizeFilterQueryKey(size))) score++
+  }
+  const accountTypeFilter = query.accountTypeFilter ?? []
+  if (accountTypeFilter.length > 0) {
+    const at = (item as { account_type?: number }).account_type
+    if (at != null && accountTypeFilter.includes(at)) score++
+  }
+  const contentTypesFilter = (query.contentTypes ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean)
+  if (contentTypesFilter.length > 0) {
+    const ct = item.activation?.content_type
+    if (Array.isArray(ct)) {
+      const ctLower = ct.map((c) => String(c).trim().toLowerCase()).filter(Boolean)
+      if (contentTypesFilter.some((fc) => ctLower.includes(fc))) score++
+    }
+  }
+  const citiesFilter = (query.cities ?? []).map((s) => s.toLowerCase())
+  if (citiesFilter.length > 0) {
+    const city = item.activation?.city?.trim().toLowerCase()
+    if (city && citiesFilter.includes(city)) score++
+  }
+  const statesFilter = (query.states ?? []).map((s) => s.toLowerCase())
+  if (statesFilter.length > 0) {
+    const state = item.activation?.state?.trim().toLowerCase()
+    if (state && statesFilter.includes(state)) score++
+  }
+  const neighborhoodsFilter = (query.neighborhoods ?? []).map((s) => s.toLowerCase())
+  if (neighborhoodsFilter.length > 0) {
+    const raw = item.activation?.neighborhood?.trim()
+    if (raw) {
+      const parts = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+      if (parts.some((p) => neighborhoodsFilter.includes(p))) score++
+    }
+  }
+  const socialFilter = (query.socialNetworks ?? []).map((s) => s.toLowerCase())
+  if (socialFilter.length > 0 && item.activation) {
+    if (socialFilter.some((net) => hasSocial(item.activation!, net))) score++
+  }
+  const engagementRateBucketsFilter = (query.engagementRateBuckets ?? []).filter((n) => Number.isFinite(n))
+  if (
+    engagementRateBucketsFilter.length > 0 &&
+    matchesEngagementRateBuckets(item.engagement?.engagement_rate ?? 0, engagementRateBucketsFilter)
+  ) {
+    score++
+  }
+  const avgLikesBucketsFilter = (query.avgLikesBuckets ?? []).filter((n) => Number.isFinite(n))
+  if (
+    avgLikesBucketsFilter.length > 0 &&
+    matchesAvgLikesBuckets(item.engagement?.avg_likes ?? 0, avgLikesBucketsFilter)
+  ) {
+    score++
+  }
+  score += llmDimensionBoostScore(item as unknown as Record<string, unknown>, query)
+  return score
+}
+
+function postToProfileListItemForBoost(post: PostItem): ProfileListItem {
+  const inf = post.influencer
+  const handle = String(post.profile_handle ?? inf?.username ?? '')
+    .replace(/^@/, '')
+    .trim()
+  const fc = inf?.followers_count
+  return {
+    key: handle,
+    handle,
+    followers_count: typeof fc === 'number' && Number.isFinite(fc) ? fc : 0,
+    llm: inf?.llm as ProfileListItem['llm'],
+    engagement: {
+      avg_likes: typeof post.metrics?.likes === 'number' ? post.metrics.likes : undefined,
+    },
+    categories: [],
+  } as ProfileListItem
+}
+
+/** Ordena posts da galeria Origem: quem casa com os facets selecionados sobe (sem remover itens). */
+export function sortPostsByCampaignFacetBoost(
+  posts: PostItem[],
+  query: Partial<ProfilesSearchQuery>
+): PostItem[] {
+  if (!hasCampaignFacetBoost(query)) return posts
+  return [...posts]
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const pa = postToProfileListItemForBoost(a.item)
+      const pb = postToProfileListItemForBoost(b.item)
+      const sa = computeFacetBoostScore(pa, query)
+      const sb = computeFacetBoostScore(pb, query)
+      if (sb !== sa) return sb - sa
+      const sizeBoost = (query.sizeFilter ?? []).length > 0
+      if (sizeBoost) {
+        const fcA = pa.followers_count ?? 0
+        const fcB = pb.followers_count ?? 0
+        if (fcB !== fcA) return fcB - fcA
+      }
+      return a.index - b.index
+    })
+    .map(({ item }) => item)
 }
 
 function getSearchableTextFromItem(item: ProfileListItem): string {
@@ -204,6 +443,26 @@ function getCostTierFromItem(item: ProfileListItem): CostTier | null {
   return null
 }
 
+function matchesAvgLikesBuckets(avgLikes: number, selected: number[]): boolean {
+  if (selected.length === 0) return true
+  if (selected.includes(0) && avgLikes < 500) return true
+  if (selected.includes(500) && avgLikes >= 500 && avgLikes < 5000) return true
+  if (selected.includes(5000) && avgLikes >= 5000) return true
+  return false
+}
+
+function matchesEngagementRateBuckets(rate: number, selected: number[]): boolean {
+  if (selected.length === 0) return true
+  if (selected.includes(0) && rate < 1) return true
+  if (selected.includes(1) && rate >= 1 && rate < 5) return true
+  if (selected.includes(5) && rate >= 5) return true
+  return false
+}
+
+export function facetBucketFilterMin(bucket: { min?: number }): number {
+  return bucket.min ?? 0
+}
+
 function hasSocial(act: { whatsapp?: string; tiktok?: string; facebook?: string; linkedin?: string; twitter?: string }, net: string): boolean {
   const n = net.toLowerCase()
   if (n === 'whatsapp') return !!(act.whatsapp?.trim())
@@ -231,62 +490,6 @@ export function filterAndSortCampaignItems(
 ): ProfileListItem[] {
   let list = [...items]
   const q = (query.q ?? '').trim().toLowerCase()
-  const sizeFilter = (query.sizeFilter ?? []).map((s) => normalizeSizeFilterQueryKey(String(s)))
-  const accountTypeFilter = (query.accountTypeFilter ?? [])
-  const contentTypesFilter = (query.contentTypes ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean)
-  const citiesFilter = (query.cities ?? []).map((s) => s.toLowerCase())
-  const statesFilter = (query.states ?? []).map((s) => s.toLowerCase())
-  const neighborhoodsFilter = (query.neighborhoods ?? []).map((s) => s.toLowerCase())
-  const socialFilter = (query.socialNetworks ?? []).map((s) => s.toLowerCase())
-
-  if (citiesFilter.length > 0) {
-    list = list.filter(
-      (i) => i.activation?.city?.trim() && citiesFilter.includes(i.activation.city.trim().toLowerCase())
-    )
-  }
-  if (statesFilter.length > 0) {
-    list = list.filter(
-      (i) => i.activation?.state?.trim() && statesFilter.includes(i.activation.state.trim().toLowerCase())
-    )
-  }
-  if (neighborhoodsFilter.length > 0) {
-    list = list.filter((i) => {
-      const raw = i.activation?.neighborhood?.trim()
-      if (!raw) return false
-      const parts = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
-      return parts.some((p) => neighborhoodsFilter.includes(p))
-    })
-  }
-  if (socialFilter.length > 0) {
-    list = list.filter(
-      (i) => i.activation && socialFilter.some((net) => hasSocial(i.activation!, net))
-    )
-  }
-  if (contentTypesFilter.length > 0) {
-    list = list.filter((i) => {
-      const ct = i.activation?.content_type
-      if (!ct || !Array.isArray(ct)) return false
-      const ctLower = ct.map((c) => String(c).trim().toLowerCase()).filter(Boolean)
-      return contentTypesFilter.some((fc) => ctLower.includes(fc))
-    })
-  }
-  if (sizeFilter.length > 0) {
-    const sizeSet = new Set(sizeFilter)
-    list = list.filter((i) => {
-      const size = getSizeFromItem(i)
-      return size != null && sizeSet.has(size)
-    })
-  }
-  if (accountTypeFilter.length > 0) {
-    const typeSet = new Set(accountTypeFilter)
-    list = list.filter((i) => {
-      const at = (i as { account_type?: number }).account_type
-      return at != null && typeSet.has(at)
-    })
-  }
-  if (hasAnyLlmFilter(query)) {
-    list = list.filter((i) => matchesLlmQualificationFilters(i as unknown as Record<string, unknown>, query))
-  }
   const postHandles = options?.postCaptionMatchHandles
   if (postHandles != null) {
     list = list.filter((i) => {
@@ -321,6 +524,9 @@ export function filterAndSortCampaignItems(
   }
   const order = (query.sort ?? 'engagement_desc') as ProfilesSort
   const sortFn = (a: ProfileListItem, b: ProfileListItem): number => {
+    const boostA = computeFacetBoostScore(a, query)
+    const boostB = computeFacetBoostScore(b, query)
+    if (boostB !== boostA) return boostB - boostA
     if (order === 'relevance_desc' && q) {
       const relA = (a as ProfileListItem & { search_relevance?: number }).search_relevance ?? 0
       const relB = (b as ProfileListItem & { search_relevance?: number }).search_relevance ?? 0
@@ -358,6 +564,25 @@ export function filterAndSortCampaignItems(
   }
   list.sort(sortFn)
   return list
+}
+
+/** Um perfil por handle a partir dos posts da galeria Origem (facets da busca por legenda). */
+export function profileListItemsFromOriginPosts(posts: PostItem[]): ProfileListItem[] {
+  const byHandle = new Map<string, ProfileListItem>()
+  for (const post of posts) {
+    const raw = post.influencer?.username ?? post.profile_handle ?? ''
+    const handle = String(raw).replace(/^@/, '').trim().toLowerCase()
+    if (!handle || byHandle.has(handle)) continue
+    const inf = post.influencer
+    byHandle.set(handle, {
+      key: handle,
+      handle,
+      full_name: inf?.full_name,
+      followers_count: inf?.followers_count ?? 0,
+      llm: inf?.llm as ProfileListItem['llm'],
+    })
+  }
+  return [...byHandle.values()]
 }
 
 export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearchFacets {

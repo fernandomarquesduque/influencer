@@ -594,7 +594,7 @@ export function getOportunidades(profile: ProfileItem | null, posts: PostItem[])
 }
 
 /**
- * Benchmark por faixa de seguidores — alinhado a `crawl/src/api/followersSizeBuckets.ts`
+ * Benchmark por faixa de seguidores — alinhado a `backend/src/api/followersSizeBuckets.ts`
  * (nano até 30k; … elite até 1M; celebridade 1M+). Percentil estimado.
  */
 const BENCHMARKS: { min: number; max: number; label: string; erMin: number; erMid: number; erMax: number }[] = [

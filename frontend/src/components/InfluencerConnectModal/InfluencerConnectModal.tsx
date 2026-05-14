@@ -1,11 +1,14 @@
 /**
- * Modal minimalista ao escolher um criador: abrir relatório ou enviar proposta (DM).
+ * Modal ao escolher um criador: formulário de solicitação de contratação via WhatsApp da agência.
  */
-import { Modal, Button } from 'antd'
-import { InstagramOutlined, FundProjectionScreenOutlined } from '@ant-design/icons'
+import { useEffect, useState } from 'react'
+import { Modal, Button, Form, Input } from 'antd'
+import { WhatsAppOutlined, UserOutlined } from '@ant-design/icons'
 import ProfileAvatar from '../ProfileAvatar'
-import InfluencerTierPill from '../InfluencerTierPill'
+import BuscaInfluencerPlansModal from '../BuscaInfluencerPlansModal/BuscaInfluencerPlansModal'
 import { proxyImageUrl } from '../../api'
+import { AGENCY_WHATSAPP_DIGITS } from '../../constants/agencyContact'
+import { useLockPageScroll } from '../../utils/useLockPageScroll'
 import './InfluencerConnectModal.css'
 
 export type InfluencerConnectSnapshot = {
@@ -13,8 +16,20 @@ export type InfluencerConnectSnapshot = {
   profilePicUrl?: string
   stableProfilePicUrl?: string
   followersCount?: number
-  engagementRatePercent?: number
+  postsPerWeek?: number
+  /** Resumo / descrição gerada pela classificação LLM. */
+  llmDescription?: string
+  /** Texto completo quando `llmDescription` está truncado na origem. */
+  llmDescriptionTooltip?: string
 }
+
+type HireFormValues = {
+  brandName: string
+  brandWhatsapp: string
+  jobDescription: string
+}
+
+const PROFILE_AVATAR_SIZE = 88
 
 function formatFollowersShort(n: number | undefined | null): string | null {
   if (n == null || !Number.isFinite(n) || n <= 0) return null
@@ -23,15 +38,54 @@ function formatFollowersShort(n: number | undefined | null): string | null {
   return `${n.toLocaleString('pt-BR')} seguidores`
 }
 
+function formatPostsPerWeekShort(n: number | undefined | null): string | null {
+  if (n == null || !Number.isFinite(n)) return null
+  const rounded = Math.round(n * 10) / 10
+  return rounded.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: rounded % 1 === 0 ? 0 : 1 })
+}
+
+function parseWhatsAppDigits(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  return value.replace(/\D/g, '')
+}
+
+function formatWhatsAppInput(value: string | undefined): string {
+  if (!value || typeof value !== 'string') return ''
+  const digits = value.replace(/\D/g, '')
+  if (digits.length <= 2) return digits ? `+${digits}` : ''
+  if (digits.length <= 4) return `+${digits.slice(0, 2)} (${digits.slice(2)}`
+  if (digits.length <= 9) return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4)}`
+  return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9, 13)}`
+}
+
+function buildAgencyHireWhatsAppUrl(
+  handle: string,
+  displayName: string | undefined,
+  { brandName, brandWhatsapp, jobDescription }: HireFormValues,
+): string {
+  const cleanHandle = handle.replace(/^@/, '')
+  const brandDigits = parseWhatsAppDigits(brandWhatsapp)
+  const creatorLabel = displayName?.trim() && displayName.trim() !== cleanHandle
+    ? `${displayName.trim()} (@${cleanHandle})`
+    : `@${cleanHandle}`
+  const lines = [
+    'Olá! Quero contratar um criador pela Busca Influencer.',
+    '',
+    `Criador: ${creatorLabel}`,
+    `Marca: ${brandName.trim()}`,
+    brandDigits ? `Meu WhatsApp: +${brandDigits}` : '',
+    '',
+    'Job:',
+    jobDescription.trim(),
+  ].filter(Boolean)
+  return `https://wa.me/${AGENCY_WHATSAPP_DIGITS}?text=${encodeURIComponent(lines.join('\n'))}`
+}
+
 export type InfluencerConnectModalProps = {
   open: boolean
   onClose: () => void
   handle: string
   snapshot?: InfluencerConnectSnapshot | null
-  /** Se true, segunda ação abre o fluxo de mensagem pelo sistema (admin). */
-  canUseSystemDm: boolean
-  onViewProfile: () => void
-  onSendProposal: () => void
 }
 
 export default function InfluencerConnectModal({
@@ -39,22 +93,35 @@ export default function InfluencerConnectModal({
   onClose,
   handle,
   snapshot,
-  canUseSystemDm,
-  onViewProfile,
-  onSendProposal,
 }: InfluencerConnectModalProps) {
-  const display = (snapshot?.displayName?.trim() || `@${handle}`).replace(/\s+/g, ' ')
+  const [form] = Form.useForm<HireFormValues>()
+  const [plansModalOpen, setPlansModalOpen] = useState(false)
+  useLockPageScroll(open)
+
+  useEffect(() => {
+    if (!open) {
+      form.resetFields()
+      setPlansModalOpen(false)
+    }
+  }, [open, form])
+
+  const llmDescription = snapshot?.llmDescription?.trim() ?? ''
+  const llmDescriptionTooltip = snapshot?.llmDescriptionTooltip?.trim()
   const rawPic = snapshot?.profilePicUrl
   const pic = rawPic ? (proxyImageUrl(rawPic) ?? rawPic) : undefined
   const followersLine = formatFollowersShort(snapshot?.followersCount)
-  const er = snapshot?.engagementRatePercent
-  const erLine =
-    typeof er === 'number' && Number.isFinite(er)
-      ? `${er.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% eng.`
+  const ppw = snapshot?.postsPerWeek
+  const postsLine =
+    typeof ppw === 'number' && Number.isFinite(ppw)
+      ? `${formatPostsPerWeekShort(ppw)} posts/sem`
       : null
-  const statsBits = [followersLine, erLine].filter(Boolean)
+  const statsBits = [followersLine, postsLine].filter(Boolean)
   const statsLine = statsBits.length ? statsBits.join(' · ') : null
-  const fc = snapshot?.followersCount
+  const onSubmit = (values: HireFormValues) => {
+    const url = buildAgencyHireWhatsAppUrl(handle, snapshot?.displayName, values)
+    window.open(url, '_blank', 'noopener,noreferrer')
+    onClose()
+  }
 
   return (
     <Modal
@@ -62,71 +129,125 @@ export default function InfluencerConnectModal({
       onCancel={onClose}
       footer={null}
       centered
-      width={Math.min(420, typeof window !== 'undefined' ? window.innerWidth - 32 : 420)}
+      width={Math.min(440, typeof window !== 'undefined' ? window.innerWidth - 32 : 440)}
       destroyOnHidden
       wrapClassName="influencer-connect-modal"
       maskStyle={{ backdropFilter: 'blur(4px)' }}
     >
       <div className="influencer-connect-modal__body">
-        <div className="influencer-connect-modal__eyebrow">Conectar com o criador</div>
+        <div className="influencer-connect-modal__eyebrow">Contratar criador</div>
 
-        <div className="influencer-connect-modal__head">
-          <div className="influencer-connect-modal__avatar-wrap">
-            <ProfileAvatar
-              src={pic}
-              stableBackgroundUrl={snapshot?.stableProfilePicUrl}
-              handle={handle}
-              size={64}
-              border="2px solid rgba(104, 39, 143, 0.12)"
-              shadow="0 4px 16px rgba(0,0,0,0.08)"
-              fallbackIconSize={28}
-              queueOnError={false}
-            />
-          </div>
-          <div className="influencer-connect-modal__title-block">
-            <h2 className="influencer-connect-modal__name">{display}</h2>
-            <div className="influencer-connect-modal__handle">@{handle}</div>
-            {statsLine ? <div className="influencer-connect-modal__stats">{statsLine}</div> : null}
-            {typeof fc === 'number' && fc > 0 ? (
-              <div className="influencer-connect-modal__tier">
-                <InfluencerTierPill followers={fc} />
-              </div>
-            ) : null}
+        <div className="influencer-connect-modal__profile-card">
+          <div className="influencer-connect-modal__head">
+            <div className="influencer-connect-modal__avatar-wrap">
+              <ProfileAvatar
+                src={pic}
+                stableBackgroundUrl={snapshot?.stableProfilePicUrl}
+                handle={handle}
+                size={PROFILE_AVATAR_SIZE}
+                border="2px solid rgba(104, 39, 143, 0.12)"
+                shadow="0 4px 16px rgba(0,0,0,0.08)"
+                fallbackIconSize={36}
+                queueOnError={false}
+              />
+            </div>
+            <div className="influencer-connect-modal__title-block">
+              {llmDescription ? (
+                <p
+                  className="influencer-connect-modal__llm-desc"
+                  title={llmDescriptionTooltip && llmDescriptionTooltip !== llmDescription ? llmDescriptionTooltip : undefined}
+                >
+                  {llmDescription}
+                </p>
+              ) : (
+                <p className="influencer-connect-modal__llm-desc influencer-connect-modal__llm-desc--muted">
+                  Análise automática deste perfil ainda não disponível.
+                </p>
+              )}
+              {statsLine ? <div className="influencer-connect-modal__stats">{statsLine}</div> : null}
+              <Button
+                type="default"
+                size="small"
+                icon={<UserOutlined />}
+                className="influencer-connect-modal__btn-profile"
+                onClick={() => setPlansModalOpen(true)}
+              >
+                Ver perfil completo
+              </Button>
+            </div>
           </div>
         </div>
 
         <p className="influencer-connect-modal__hook">
-          Uma boa parceria começa com contexto — veja o relatório completo ou leve sua proposta direto ao Direct.
+          Preencha os dados da sua marca e descreva o job. Abrimos o WhatsApp da Busca Influencer para você finalizar a contratação com nosso time.
         </p>
 
-        <div className="influencer-connect-modal__actions">
-          <Button
-            type="primary"
-            size="large"
-            block
-            className="influencer-connect-modal__btn-primary"
-            icon={<FundProjectionScreenOutlined />}
-            onClick={onViewProfile}
+        <Form
+          form={form}
+          layout="vertical"
+          requiredMark={false}
+          className="influencer-connect-modal__form"
+          onFinish={onSubmit}
+        >
+          <Form.Item
+            name="brandName"
+            label="Nome"
+            rules={[
+              { required: true, message: 'Informe seu nome ou da marca.' },
+              { min: 2, message: 'Nome muito curto.' },
+            ]}
           >
-            Ver relatório completo
-          </Button>
-          <Button
-            size="large"
-            block
-            className="influencer-connect-modal__btn-secondary"
-            icon={<InstagramOutlined />}
-            onClick={onSendProposal}
+            <Input placeholder="Nome ou marca" size="large" autoComplete="name" />
+          </Form.Item>
+          <Form.Item
+            name="brandWhatsapp"
+            label="WhatsApp"
+            rules={[
+              { required: true, message: 'Informe seu WhatsApp.' },
+              {
+                validator: (_, v) => {
+                  const digits = parseWhatsAppDigits(v)
+                  if (digits.length >= 10 && digits.length <= 13) return Promise.resolve()
+                  return Promise.reject(new Error('WhatsApp: 10 a 13 números com DDI.'))
+                },
+              },
+            ]}
+            normalize={(v) => (v ? formatWhatsAppInput(v) : v)}
           >
-            {canUseSystemDm ? 'Mensagem pelo sistema (Direct)' : 'Proposta no Instagram (Direct)'}
-          </Button>
-        </div>
+            <Input placeholder="+55 (11) 99999-9999" size="large" inputMode="tel" autoComplete="tel" />
+          </Form.Item>
+          <Form.Item
+            name="jobDescription"
+            label="Descrição do job"
+            rules={[
+              { required: true, message: 'Descreva o job ou a parceria.' },
+              { min: 10, message: 'Descreva com um pouco mais de detalhe (mín. 10 caracteres).' },
+            ]}
+          >
+            <Input.TextArea
+              placeholder="Ex.: Reels sobre lançamento de skincare, entrega em 2 semanas, uso de produto enviado."
+              autoSize={{ minRows: 3, maxRows: 6 }}
+            />
+          </Form.Item>
+          <Form.Item className="influencer-connect-modal__form-submit">
+            <Button
+              type="primary"
+              htmlType="submit"
+              size="large"
+              block
+              className="influencer-connect-modal__btn-primary"
+              icon={<WhatsAppOutlined />}
+            >
+              Iniciar contratação no WhatsApp
+            </Button>
+          </Form.Item>
+        </Form>
 
         <p className="influencer-connect-modal__hint">
-          {canUseSystemDm
-            ? 'A mensagem pelo sistema usa a conta oficial da plataforma no Instagram.'
-            : 'Abre o Instagram para você enviar sua mensagem com a identidade da sua marca.'}
+          Você será redirecionado ao WhatsApp da Busca Influencer. Após o pagamento, cuidamos da qualificação e da contratação do criador.
         </p>
       </div>
+      <BuscaInfluencerPlansModal open={plansModalOpen} onClose={() => setPlansModalOpen(false)} />
     </Modal>
   )
 }

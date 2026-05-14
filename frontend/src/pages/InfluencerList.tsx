@@ -32,6 +32,7 @@ import { expiresAtIsoFromDurationDays, FALLBACK_CAMPAIGN_ACCESS_DAYS } from '../
 import { withDiscoveryDefaultLlmProfileTypeQuery } from '../utils/discoveryLlmProfileType'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
+import { facetOptionLabel } from '../utils/facetLabels'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
 import { useAuth } from '../contexts/AuthContext'
 import { useListCache } from '../contexts/ListCacheContext'
@@ -39,6 +40,7 @@ import SearchWizard, { STEP_QUERY } from '../components/SearchWizard/SearchWizar
 import ReportDashboard from '../components/ReportDashboard/ReportDashboard'
 import InfluencerPreviewTable from '../components/InfluencerPreviewTable/InfluencerPreviewTable'
 import ReportAuthModal from '../components/ReportAuthModal/ReportAuthModal'
+import InfluencerDetailModal from '../components/InfluencerDetailModal/InfluencerDetailModal'
 
 const { Text } = Typography
 
@@ -77,8 +79,6 @@ function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
   if (query.llmMainCategory?.length) params.llmMainCategory = query.llmMainCategory.join(',')
   if (query.llmGender?.length) params.llmGender = query.llmGender.join(',')
   if (query.llmLanguage?.length) params.llmLanguage = query.llmLanguage.join(',')
-  if (query.llmSubCategories?.length) params.llmSubCategories = query.llmSubCategories.join(',')
-  if (query.llmContentPillars?.length) params.llmContentPillars = query.llmContentPillars.join(',')
   if (query.llmAudienceType?.length) params.llmAudienceType = query.llmAudienceType.join(',')
   if (query.llmToneOfVoice?.length) params.llmToneOfVoice = query.llmToneOfVoice.join(',')
   if (query.llmRiskLevel?.length) params.llmRiskLevel = query.llmRiskLevel.join(',')
@@ -145,8 +145,6 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     llmMainCategory: parseStrList(params.get('llmMainCategory')),
     llmGender: parseStrList(params.get('llmGender')),
     llmLanguage: parseStrList(params.get('llmLanguage')),
-    llmSubCategories: parseStrList(params.get('llmSubCategories')),
-    llmContentPillars: parseStrList(params.get('llmContentPillars')),
     llmAudienceType: parseStrList(params.get('llmAudienceType')),
     llmToneOfVoice: parseStrList(params.get('llmToneOfVoice')),
     llmRiskLevel: parseStrList(params.get('llmRiskLevel')),
@@ -326,8 +324,6 @@ export default function InfluencerList() {
       llmMainCategory: parsedUrl.llmMainCategory?.length ? parsedUrl.llmMainCategory : undefined,
       llmGender: parsedUrl.llmGender?.length ? parsedUrl.llmGender : undefined,
       llmLanguage: parsedUrl.llmLanguage?.length ? parsedUrl.llmLanguage : undefined,
-      llmSubCategories: parsedUrl.llmSubCategories?.length ? parsedUrl.llmSubCategories : undefined,
-      llmContentPillars: parsedUrl.llmContentPillars?.length ? parsedUrl.llmContentPillars : undefined,
       llmAudienceType: parsedUrl.llmAudienceType?.length ? parsedUrl.llmAudienceType : undefined,
       llmToneOfVoice: parsedUrl.llmToneOfVoice?.length ? parsedUrl.llmToneOfVoice : undefined,
       llmRiskLevel: parsedUrl.llmRiskLevel?.length ? parsedUrl.llmRiskLevel : undefined,
@@ -352,6 +348,7 @@ export default function InfluencerList() {
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false)
   const [creatingCampaign, setCreatingCampaign] = useState(false)
   const [reportModalOpen, setReportModalOpen] = useState(false)
+  const [profileDetailHandle, setProfileDetailHandle] = useState<string | null>(null)
   const [newCampaignExpiresAt, setNewCampaignExpiresAt] = useState(() =>
     expiresAtIsoFromDurationDays(FALLBACK_CAMPAIGN_ACCESS_DAYS)
   )
@@ -673,9 +670,9 @@ export default function InfluencerList() {
   }
 
   const openDetail = (handleOrKey: string) => {
-    const path = `/app/influencer/${encodeURIComponent(handleOrKey)}`
-    const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
-    window.open(url, '_blank', 'noopener,noreferrer')
+    const h = handleOrKey.trim().replace(/^@/, '')
+    if (!h) return
+    setProfileDetailHandle(h)
   }
 
   const selectedCategories = (query.categories ?? []) as string[]
@@ -705,8 +702,6 @@ export default function InfluencerList() {
     (query.llmMainCategory?.length ?? 0) > 0 ||
     (query.llmGender?.length ?? 0) > 0 ||
     (query.llmLanguage?.length ?? 0) > 0 ||
-    (query.llmSubCategories?.length ?? 0) > 0 ||
-    (query.llmContentPillars?.length ?? 0) > 0 ||
     (query.llmAudienceType?.length ?? 0) > 0 ||
     (query.llmToneOfVoice?.length ?? 0) > 0 ||
     (query.llmRiskLevel?.length ?? 0) > 0 ||
@@ -760,8 +755,6 @@ export default function InfluencerList() {
       llmMainCategory: undefined,
       llmGender: undefined,
       llmLanguage: undefined,
-      llmSubCategories: undefined,
-      llmContentPillars: undefined,
       llmAudienceType: undefined,
       llmToneOfVoice: undefined,
       llmRiskLevel: undefined,
@@ -1078,7 +1071,7 @@ export default function InfluencerList() {
                 value={selectedContentTypes}
                 options={facets.content_type.map(({ name, count }) => ({
                   value: name,
-                  label: `${CONTENT_TYPE_LABELS[name] ?? name} (${count})`,
+                  label: facetOptionLabel(CONTENT_TYPE_LABELS[name] ?? name, count),
                 }))}
                 onChange={(vals) => updateFilter({ contentTypes: vals.length ? vals : undefined })}
                 style={{ width: '100%', marginBottom: 16 }}
@@ -1228,7 +1221,7 @@ export default function InfluencerList() {
                             showSearch
                             optionFilterProp="label"
                             value={selectedCities}
-                            options={facets.cities.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                            options={facets.cities.map(({ name, count }) => ({ value: name, label: facetOptionLabel(name, count) }))}
                             onChange={(vals) => updateFilter({ cities: vals.length ? vals : undefined })}
                             style={{ width: '100%' }}
                             maxTagCount="responsive"
@@ -1248,7 +1241,7 @@ export default function InfluencerList() {
                             showSearch
                             optionFilterProp="label"
                             value={selectedStates}
-                            options={facets.states.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                            options={facets.states.map(({ name, count }) => ({ value: name, label: facetOptionLabel(name, count) }))}
                             onChange={(vals) => updateFilter({ states: vals.length ? vals : undefined })}
                             style={{ width: '100%' }}
                             maxTagCount="responsive"
@@ -1268,7 +1261,7 @@ export default function InfluencerList() {
                             showSearch
                             optionFilterProp="label"
                             value={selectedNeighborhoods}
-                            options={facets.neighborhoods.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
+                            options={facets.neighborhoods.map(({ name, count }) => ({ value: name, label: facetOptionLabel(name, count) }))}
                             onChange={(vals) => updateFilter({ neighborhoods: vals.length ? vals : undefined })}
                             style={{ width: '100%' }}
                             maxTagCount="responsive"
@@ -1343,7 +1336,7 @@ export default function InfluencerList() {
                   showSearch
                   optionFilterProp="label"
                   value={selectedContentTypes}
-                  options={facets.content_type.map(({ name, count }) => ({ value: name, label: `${CONTENT_TYPE_LABELS[name] ?? name} (${count})` }))}
+                  options={facets.content_type.map(({ name, count }) => ({ value: name, label: facetOptionLabel(CONTENT_TYPE_LABELS[name] ?? name, count) }))}
                   onChange={(vals) => updateFilter({ contentTypes: vals.length ? vals : undefined })}
                   style={{ width: '100%' }}
                   maxTagCount="responsive"
@@ -1457,6 +1450,12 @@ export default function InfluencerList() {
           </Typography.Text>
         )}
       </main>
+
+      <InfluencerDetailModal
+        open={profileDetailHandle != null}
+        onClose={() => setProfileDetailHandle(null)}
+        handle={profileDetailHandle ?? ''}
+      />
     </div>
   )
 }

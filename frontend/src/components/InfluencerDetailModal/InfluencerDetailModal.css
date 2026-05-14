@@ -1,0 +1,12 @@
+.influencer-detail-modal .ant-modal-content {
+  padding: 0;
+  overflow: hidden;
+}
+
+.influencer-detail-modal .influencer-detail-modal__content {
+  min-height: 0;
+}
+
+.influencer-detail-modal .influencer-detail--embedded {
+  min-height: 0 !important;
+}

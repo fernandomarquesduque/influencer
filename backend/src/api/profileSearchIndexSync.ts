@@ -3,6 +3,8 @@ import {
   buildProfileSearchIndexPayload,
   hasCompletedLlmProfile,
 } from './profilesSearch.js';
+import { upsertInfluencerToMeilisearch } from '../search/meilisearchProfile.js';
+import { getCostTierFromPricing, getSuggestedPricingFromFollowers } from '../utils/suggestedPricing.js';
 
 /**
  * Atualiza FTS + tabela auxiliar para um handle (lê perfil + posts só deste handle no RocksDB).
@@ -21,7 +23,17 @@ export async function syncProfileSearchIndexForHandle(
   const postsRaw = await db.getByBucket<Record<string, unknown>>('post', `${h}:`);
   const posts = postsRaw.map(({ value }) => value);
   const payload = buildProfileSearchIndexPayload(profile, h, posts);
-  db.upsertProfileSearchIndexFromPayload(h, payload);
+  const act = db.getActivation(h);
+  let costTier = getCostTierFromPricing(act?.pricing as Record<string, unknown> | undefined);
+  if (!costTier) {
+    costTier = getCostTierFromPricing(
+      getSuggestedPricingFromFollowers(payload.followersCount) as unknown as Record<string, unknown>
+    );
+  }
+  db.upsertProfileSearchIndexFromPayload(h, { ...payload, costTier });
+  void upsertInfluencerToMeilisearch(h, profile, payload).catch((e) =>
+    console.warn('[meilisearch] sync:', h, e instanceof Error ? e.message : e)
+  );
 }
 
 /** Reindexa todos os perfis do RocksDB (útil após migração ou reparo). */

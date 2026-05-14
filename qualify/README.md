@@ -1,6 +1,6 @@
 # qualify
 
-Projeto para qualificar influencers com LLM (Ollama) e salvar o resultado no mesmo JSON do perfil no RocksDB via API da nuvem (`crawl`), no campo `llm`.
+Projeto para qualificar influencers com LLM (Ollama) e salvar o resultado no mesmo JSON do perfil no RocksDB via API da nuvem (`backend`), no campo `llm`.
 
 ## Como funciona
 

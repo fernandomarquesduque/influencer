@@ -1,0 +1,35 @@
+.checkout-plan-page {
+  min-height: 100dvh;
+  padding: 20px 16px 48px;
+  box-sizing: border-box;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-primary, #68278f) 6%, var(--app-bg, #fff)) 0%,
+    var(--app-bg, #fff) 220px
+  );
+}
+
+.checkout-plan-page__header {
+  max-width: 920px;
+  margin: 0 auto 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.checkout-plan-page__back {
+  color: var(--app-text-secondary, #666) !important;
+  font-weight: 500;
+}
+
+.checkout-plan-page__main {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.checkout-plan-page__loading {
+  display: flex;
+  justify-content: center;
+  padding: 80px 0;
+}

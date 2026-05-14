@@ -20,7 +20,7 @@ export type PaymentStatus =
   | 'FAILED'
   | 'CANCELLED';
 
-export type PaymentBillingType = 'PIX' | 'BOLETO';
+export type PaymentBillingType = 'PIX' | 'BOLETO' | 'CREDIT_CARD';
 
 export interface PaymentRow {
   id: string;
@@ -42,6 +42,9 @@ export interface PaymentRow {
   report_desired_count?: number | null;
   /** ID da campanha criada no checkout (status pendente até confirmação). */
   campaign_id?: string | null;
+  /** Assinatura de plano Busca Influencer (Asaas). */
+  plan_id?: string | null;
+  asaas_subscription_id?: string | null;
 }
 
 export class PaymentsDb {
@@ -86,6 +89,12 @@ export class PaymentsDb {
     if (cols.length > 0 && !cols.some((c) => c.name === 'campaign_id')) {
       this.db.exec('ALTER TABLE payment ADD COLUMN campaign_id TEXT');
     }
+    if (cols.length > 0 && !cols.some((c) => c.name === 'plan_id')) {
+      this.db.exec('ALTER TABLE payment ADD COLUMN plan_id TEXT');
+    }
+    if (cols.length > 0 && !cols.some((c) => c.name === 'asaas_subscription_id')) {
+      this.db.exec('ALTER TABLE payment ADD COLUMN asaas_subscription_id TEXT');
+    }
     try {
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_payment_campaign_id ON payment(campaign_id)');
     } catch {
@@ -112,6 +121,8 @@ export class PaymentsDb {
     reportQuery?: string | null;
     reportDesiredCount?: number | null;
     campaignId?: string | null;
+    planId?: string | null;
+    asaasSubscriptionId?: string | null;
   }): string {
     const id = crypto.randomUUID();
     const hasReport = params.reportDesiredCount != null && params.reportDesiredCount > 0;
@@ -120,8 +131,8 @@ export class PaymentsDb {
         `INSERT INTO payment (
           id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
           status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
-          report_query, report_desired_count, campaign_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?)`
+          report_query, report_desired_count, campaign_id, plan_id, asaas_subscription_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -137,7 +148,9 @@ export class PaymentsDb {
         params.pixCopyPaste ?? null,
         hasReport ? (params.reportQuery ?? null) : null,
         hasReport ? params.reportDesiredCount : null,
-        params.campaignId ?? null
+        params.campaignId ?? null,
+        params.planId ?? null,
+        params.asaasSubscriptionId ?? null
       );
     return id;
   }
@@ -188,6 +201,34 @@ export class PaymentsDb {
          FROM payment WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
       )
       .all(userId, limit, offset) as PaymentRow[];
+  }
+
+  /** Assinatura de plano com pelo menos uma cobrança confirmada. */
+  hasActivePlanSubscription(userId: number): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS ok FROM payment
+         WHERE user_id = ? AND plan_id IS NOT NULL AND plan_id != ''
+           AND status IN ('CONFIRMED', 'RECEIVED')
+         LIMIT 1`
+      )
+      .get(userId) as { ok?: number } | undefined;
+    return Boolean(row?.ok);
+  }
+
+  /** Última assinatura de plano do usuário (confirmada ou pendente). */
+  getLatestPlanPayment(userId: number): PaymentRow | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
+                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
+                report_query, report_desired_count, campaign_id, plan_id, asaas_subscription_id
+         FROM payment
+         WHERE user_id = ? AND plan_id IS NOT NULL AND plan_id != ''
+         ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(userId) as PaymentRow | undefined;
+    return row ?? null;
   }
 
   /** No máximo uma cobrança pendente por usuário — retorna a mais recente, se houver. */

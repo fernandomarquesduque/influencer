@@ -2,8 +2,8 @@
  * Painel com a classificação LLM do perfil (qualify) na página de detalhe.
  */
 import type { ReactNode } from 'react'
-import { Card, Descriptions, Space, Tag, Typography, Alert } from 'antd'
-import { BulbOutlined } from '@ant-design/icons'
+import { Card, Space, Typography, Alert } from 'antd'
+import { BulbOutlined, UserOutlined, TagOutlined, TeamOutlined } from '@ant-design/icons'
 import type { ProfileItem, ProfileListItem } from '../api'
 import { getLlmQualification } from '../utils/mapProfileListToPreviewItems'
 import {
@@ -14,6 +14,7 @@ import {
   getLlmProfileTypeBadge,
   type LlmQualificationBadge,
 } from '../utils/campaignLlmBadges'
+import { HeroInfoStrip, type HeroInfoStripItem } from './HeroInfoStrip'
 
 const { Text, Paragraph } = Typography
 
@@ -28,19 +29,64 @@ function strList(arr: unknown): string[] {
   return out
 }
 
-function renderLlmBadge(b: LlmQualificationBadge) {
-  const st = campaignLlmBadgeStyles(b.text)
-  return (
-    <span className="profile-llm-panel-badge" title={b.title} style={{ ...st, borderRadius: 6, padding: '2px 8px', fontSize: 12, fontWeight: 600, display: 'inline-block' }}>
-      {b.text}
-    </span>
-  )
+function llmStripItem(
+  key: string,
+  value: string,
+  label: string,
+  icon: ReactNode,
+  tooltip?: string,
+): HeroInfoStripItem {
+  const st = campaignLlmBadgeStyles(value)
+  return {
+    key,
+    value,
+    label,
+    icon,
+    iconBg: st.background,
+    iconFg: st.color,
+    tooltip,
+  }
+}
+
+function buildLlmHeroStripItems(
+  profileTypeBadge: LlmQualificationBadge | null,
+  genderBadge: LlmQualificationBadge | null,
+  mainCatLabel: string | null,
+  pillarLabels: string[],
+  audienceType: string[],
+): HeroInfoStripItem[] {
+  const items: HeroInfoStripItem[] = []
+  if (profileTypeBadge) {
+    items.push(llmStripItem('profileType', profileTypeBadge.text, 'Tipo de perfil', <UserOutlined />, profileTypeBadge.title))
+  }
+  if (genderBadge) {
+    items.push(llmStripItem('gender', genderBadge.text, 'Gênero', <UserOutlined />, genderBadge.title))
+  }
+  if (mainCatLabel) {
+    items.push(llmStripItem('mainCategory', mainCatLabel, 'Categoria', <TagOutlined />, 'Categoria principal'))
+  }
+  for (const p of pillarLabels) {
+    items.push(llmStripItem(`pillar-${p}`, p, 'Pilar', <TagOutlined />, 'Pilar de conteúdo'))
+  }
+  if (audienceType.length > 0) {
+    items.push(
+      llmStripItem(
+        'audience',
+        audienceType.join(', '),
+        'Público-alvo',
+        <TeamOutlined />,
+        'Público-alvo do perfil',
+      ),
+    )
+  }
+  return items
 }
 
 export interface ProfileLlmDetailPanelProps {
   profile: ProfileItem | null | undefined
-  /** Dentro do card do hero: sem Card próprio, só uma faixa com borda superior. */
+  /** Faixa sem Card próprio (ex.: abaixo do hero do perfil). */
   variant?: 'card' | 'embedded'
+  isMobile?: boolean
 }
 
 function LlmPanelFrame({ embedded, children }: { embedded: boolean; children: ReactNode }) {
@@ -50,7 +96,7 @@ function LlmPanelFrame({ embedded, children }: { embedded: boolean; children: Re
         className="profile-llm-detail-panel profile-llm-detail-panel--embedded"
         style={{
           width: '100%',
-          marginTop: 8,
+          marginTop: 0,
         }}
       >
         {children}
@@ -64,7 +110,7 @@ function LlmPanelFrame({ embedded, children }: { embedded: boolean; children: Re
   )
 }
 
-export function ProfileLlmDetailPanel({ profile, variant = 'card' }: ProfileLlmDetailPanelProps) {
+export function ProfileLlmDetailPanel({ profile, variant = 'card', isMobile = false }: ProfileLlmDetailPanelProps) {
   const rec = profile as Record<string, unknown> | undefined
   const llmRaw = rec?.llm
   const embedded = variant === 'embedded'
@@ -108,8 +154,13 @@ export function ProfileLlmDetailPanel({ profile, variant = 'card' }: ProfileLlmD
   const subCategories = q ? strList(q.subCategories) : []
   const audienceType = q ? strList(q.audienceType) : []
 
-  const hasBody =
-    Boolean(doneQual || (q && Object.keys(q).length > 0 && (personaSummary || mainCatLabel || subCategories.length)))
+  const stripItems = buildLlmHeroStripItems(profileTypeBadge, genderBadge, mainCatLabel, pillarLabels, audienceType)
+
+  const hasBody = Boolean(
+    doneQual ||
+      stripItems.length > 0 ||
+      (q && Object.keys(q).length > 0 && (personaSummary || mainCatLabel || subCategories.length)),
+  )
 
   if (!hasBody && (status === 'pending' || status === 'processing' || status === '')) {
     return (
@@ -139,43 +190,38 @@ export function ProfileLlmDetailPanel({ profile, variant = 'card' }: ProfileLlmD
     )
   }
 
+  if (embedded) {
+    return (
+      <LlmPanelFrame embedded>
+        {status === 'insufficient_data' ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Dados insuficientes"
+            description="A classificação foi feita com pouca informação pública (ex.: bio muito vaga). Use os campos abaixo como orientação, não como veredito final."
+            style={{ marginBottom: 8 }}
+          />
+        ) : null}
+        <HeroInfoStrip className="profile-llm-hero-strip" items={stripItems} isMobile={isMobile} />
+      </LlmPanelFrame>
+    )
+  }
+
   return (
-    <LlmPanelFrame embedded={embedded}>
+    <LlmPanelFrame embedded={false}>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-
-
         {status === 'insufficient_data' && (
           <Alert type="warning" showIcon message="Dados insuficientes" description="A classificação foi feita com pouca informação pública (ex.: bio muito vaga). Use os campos abaixo como orientação, não como veredito final." />
         )}
 
-        {profileTypeBadge || genderBadge || mainCatLabel || pillarLabels.length > 0 ? (
-          <Space wrap size={[6, 6]}>
-            {profileTypeBadge ? renderLlmBadge(profileTypeBadge) : null}
-            {genderBadge ? renderLlmBadge(genderBadge) : null}
-            {mainCatLabel ? (
-              <span style={{ ...campaignLlmBadgeStyles(mainCatLabel), borderRadius: 6, padding: '2px 8px', fontSize: 12, fontWeight: 600 }} title="Categoria principal">
-                {mainCatLabel}
-              </span>
-            ) : null}
-            {pillarLabels.map((p) => (
-              <span key={p} style={{ ...campaignLlmBadgeStyles(p), borderRadius: 6, padding: '2px 8px', fontSize: 12, fontWeight: 600 }} title="Pilar de conteúdo">
-                {p}
-              </span>
-            ))}
-          </Space>
+        {stripItems.length > 0 ? (
+          <HeroInfoStrip className="profile-llm-hero-strip" items={stripItems} isMobile={isMobile} />
         ) : null}
 
         {personaSummary ? (
           <div>
-
             <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>{personaSummary}</Paragraph>
           </div>
-        ) : null}
-        {audienceType.length > 0 ? (
-          <Descriptions.Item label="Público-alvo">
-            <Text type="secondary" style={{ marginRight: 12 }}>Público-alvo do perfil</Text>
-            <Space wrap size={[4, 4]}>{audienceType.map((t) => <Tag key={t}>{t}</Tag>)}</Space>
-          </Descriptions.Item>
         ) : null}
       </Space>
     </LlmPanelFrame>

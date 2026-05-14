@@ -1,6 +1,6 @@
 /**
  * Reconstrói profile_search_fts + profile_search_aux a partir do RocksDB.
- * Uso (na pasta crawl): npx tsx src/scripts/rebuild-search-index.ts
+ * Uso (na pasta backend): npm run rebuild-search-index
  */
 import { RocksDBStorage } from '../storage/rocksdb.js';
 import { SqliteSync } from '../storage/sqliteSync.js';

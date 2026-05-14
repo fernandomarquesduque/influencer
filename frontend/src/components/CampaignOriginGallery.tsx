@@ -1,7 +1,7 @@
 /**
  * Galeria estilo Instagram: posts/reels onde o termo de busca aparece (dados atuais do índice).
  */
-import { useEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties, type ReactNode } from 'react'
 import { Typography, Spin, Empty, Tooltip } from 'antd'
 import './CampaignOriginGallery.css'
 import {
@@ -11,8 +11,10 @@ import {
   proxyImageUrl,
   proxyImageUrlForDisplay,
   type PostItem,
+  type PostsResponse,
   type MediaKind,
   type ProfilesSearchQuery,
+  type ProfileListItem,
 } from '../api'
 import { PostPreviewMedia } from './PostPreviewCard'
 import ProfileAvatar from './ProfileAvatar'
@@ -20,11 +22,12 @@ import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { getInfluencerTierShort } from '../utils/influencerTier'
 import InfluencerTierPill from './InfluencerTierPill'
 import {
-  campaignLlmBadgeStyles,
   getLlmTripleBadgesFromLlmRoot,
-  type LlmQualificationBadge,
 } from '../utils/campaignLlmBadges'
 import type { InfluencerConnectSnapshot } from './InfluencerConnectModal/InfluencerConnectModal'
+import { getLlmDescriptionLine, getProfilePersonaSummary } from '../utils/mapProfileListToPreviewItems'
+import { formatFacetLabel } from '../utils/facetLabels'
+import { sortPostsByCampaignFacetBoost, pickCampaignFacetBoostFromQuery, hasCampaignFacetBoost } from '../utils/campaignFilterClient'
 
 const { Text } = Typography
 
@@ -78,7 +81,8 @@ export function OriginGalleryLoadingState({ railShiftX = 0 }: { railShiftX?: num
 }
 
 /** Modo lista: largura da coluna só de mídia (legenda e perfil ficam à direita). */
-const LIST_ORIGIN_MEDIA_COLUMN_PX = 256
+const LIST_ORIGIN_LEFT_COLUMN_FLEX = '0 0 40%'
+const LIST_ORIGIN_RIGHT_COLUMN_FLEX = '0 0 60%'
 
 const MEDIA_KIND_SHORT: Record<MediaKind, string> = {
   post: 'Feed',
@@ -87,32 +91,54 @@ const MEDIA_KIND_SHORT: Record<MediaKind, string> = {
   highlight: 'Destaques',
 }
 
+/** Base do pill de tipo de mídia (topo esquerdo). */
+const originMediaOverlayBase: CSSProperties = {
+  position: 'absolute',
+  top: 8,
+  left: 8,
+  zIndex: 2,
+  fontSize: 10,
+  fontWeight: 700,
+  lineHeight: 1.25,
+  padding: '5px 9px',
+  borderRadius: 999,
+  maxWidth: 'calc(100% - 16px)',
+  boxShadow: '0 1px 6px rgba(0,0,0,0.35)',
+  letterSpacing: '0.02em',
+  pointerEvents: 'auto',
+}
+
+/** Base do pill de categoria no rodapé da mídia. */
+const originMediaCategoryFooterBase: CSSProperties = {
+  position: 'absolute',
+  bottom: 0,
+  left: 0,
+  right: 0,
+  zIndex: 2,
+  fontSize: 10,
+  fontWeight: 700,
+  lineHeight: 1.3,
+  padding: '6px 10px',
+  borderRadius: 0,
+  maxWidth: '100%',
+  boxShadow: '0 -1px 8px rgba(0,0,0,0.28)',
+  letterSpacing: '0.02em',
+  pointerEvents: 'auto',
+  textAlign: 'left',
+}
+
 /** Pill sobre a mídia (topo esquerdo), leitura em foto clara/escura. */
 function originMediaKindOverlayStyle(ct: MediaKind): CSSProperties {
-  const base: CSSProperties = {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    zIndex: 2,
-    fontSize: 10,
-    fontWeight: 700,
-    lineHeight: 1.25,
-    padding: '5px 9px',
-    borderRadius: 999,
-    color: '#fff',
-    pointerEvents: 'none',
-    boxShadow: '0 1px 6px rgba(0,0,0,0.35)',
-    letterSpacing: '0.02em',
-  }
+  const base = originMediaOverlayBase
   switch (ct) {
     case 'reel':
-      return { ...base, background: 'linear-gradient(135deg, #c084fc 0%, #7c3aed 100%)' }
+      return { ...base, color: '#fff', background: 'linear-gradient(135deg, #c084fc 0%, #7c3aed 100%)' }
     case 'tagged':
-      return { ...base, background: 'linear-gradient(135deg, #fb7185 0%, #db2777 100%)' }
+      return { ...base, color: '#fff', background: 'linear-gradient(135deg, #fb7185 0%, #db2777 100%)' }
     case 'highlight':
-      return { ...base, background: 'linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)' }
+      return { ...base, color: '#fff', background: 'linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)' }
     default:
-      return { ...base, background: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)' }
+      return { ...base, color: '#fff', background: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)' }
   }
 }
 
@@ -123,14 +149,33 @@ function formatFollowersShort(n: number | undefined | null): string | null {
   return `${n.toLocaleString('pt-BR')} seguidores`
 }
 
-/** ER do post: (curtidas + comentários) / seguidores. */
-function getPostEngagementRatePercent(post: PostItem): number | null {
-  const fc = post.influencer?.followers_count
-  if (typeof fc !== 'number' || !Number.isFinite(fc) || fc <= 0) return null
-  const likes = typeof post.metrics?.likes === 'number' && Number.isFinite(post.metrics.likes) ? post.metrics.likes : 0
-  const comments =
-    typeof post.metrics?.comments === 'number' && Number.isFinite(post.metrics.comments) ? post.metrics.comments : 0
-  return Math.round(((likes + comments) / fc) * 10000) / 100
+function formatPostsPerWeekShort(n: number | undefined | null): string | null {
+  if (n == null || !Number.isFinite(n)) return null
+  const rounded = Math.round(n * 10) / 10
+  return rounded.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: rounded % 1 === 0 ? 0 : 1 })
+}
+
+function getInfluencerPostsPerWeek(post: PostItem): number | null {
+  const ppw = post.influencer?.posts_per_week
+  return typeof ppw === 'number' && Number.isFinite(ppw) ? ppw : null
+}
+
+function influencerLlmDescriptionText(post: PostItem): string | null {
+  const llm = post.influencer?.llm
+  if (llm == null) return null
+  const rec = { llm } as Record<string, unknown>
+  const summary = getProfilePersonaSummary(rec)
+  if (summary) return summary
+  const row = getLlmDescriptionLine({ llm } as ProfileListItem)
+  if (!row) return null
+  return row.tooltip ?? row.line
+}
+
+function influencerCardHeadline(post: PostItem, bar: ReturnType<typeof influencerBarData>): string {
+  const text = influencerLlmDescriptionText(post)
+  if (text) return text
+  const h = bar.handleKey
+  return h !== '—' ? `@${h}` : '—'
 }
 
 function influencerBarData(post: PostItem): {
@@ -166,13 +211,15 @@ function influencerBarData(post: PostItem): {
 function postToConnectSnapshot(post: PostItem): InfluencerConnectSnapshot {
   const bar = influencerBarData(post)
   const fc = post.influencer?.followers_count
-  const er = getPostEngagementRatePercent(post)
+  const ppw = getInfluencerPostsPerWeek(post)
+  const llmText = influencerLlmDescriptionText(post)
   return {
     displayName: bar.displayName,
     profilePicUrl: bar.avatarSrc,
     stableProfilePicUrl: bar.avatarStable,
     followersCount: typeof fc === 'number' && Number.isFinite(fc) ? fc : undefined,
-    engagementRatePercent: er ?? undefined,
+    postsPerWeek: ppw ?? undefined,
+    llmDescription: llmText ?? undefined,
   }
 }
 
@@ -219,38 +266,48 @@ function highlightKeywordInText(text: string, keyword: string): ReactNode {
   }
 }
 
-/** Tipo, gênero e/ou categoria LLM (dados em `post.influencer.llm`). */
-function OriginInfluencerLlmBadges({
-  inf,
-  subset = 'all',
-}: {
-  inf: PostItem['influencer']
-  /** `categoria`: só categoria principal; `all`: tipo + categoria (sem gênero). */
-  subset?: 'all' | 'categoria'
-}) {
+/** Categoria principal — lê `qualification` mesmo sem `status: done` (como o resumo LLM). */
+function getOriginInfluencerMainCategory(inf: PostItem['influencer']): string | null {
   const rec =
     inf != null && typeof inf === 'object' ? (inf as unknown as Record<string, unknown>) : undefined
-  const { tipo, categoria } = getLlmTripleBadgesFromLlmRoot(rec)
-  const parts = subset === 'categoria' ? [categoria] : [tipo, categoria]
-  const badges: LlmQualificationBadge[] = parts.filter((b): b is LlmQualificationBadge => b != null)
-  if (badges.length === 0) return null
-  return (
-    <div className="campaign-origin-llm-badges">
-      {badges.map((b) => {
-        const st = campaignLlmBadgeStyles(b.text)
-        return (
-          <Tooltip key={b.key} title={b.title}>
-            <span
-              className="campaign-origin-llm-badge"
-              style={{ border: st.border, color: st.color, background: st.background }}
-            >
-              {b.text}
-            </span>
-          </Tooltip>
-        )
-      })}
-    </div>
-  )
+  const strict = getLlmTripleBadgesFromLlmRoot(rec).categoria?.text
+  if (strict) return strict
+  const llm = rec?.llm
+  if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) return null
+  const q = (llm as Record<string, unknown>).qualification
+  if (q == null || typeof q !== 'object' || Array.isArray(q)) return null
+  const mainCategory = String((q as Record<string, unknown>).mainCategory ?? '').trim()
+  if (!mainCategory || mainCategory === '-') return null
+  return mainCategory
+}
+
+function originCategoryMediaPillStyle(label: string): CSSProperties {
+  let h = 0
+  const key = label.trim().toLowerCase()
+  for (let i = 0; i < key.length; i++) h = (Math.imul(31, h) + key.charCodeAt(i)) | 0
+  const hue = Math.abs(h) % 360
+  return {
+    ...originMediaCategoryFooterBase,
+    color: '#fff',
+    border: 'none',
+    background: `linear-gradient(135deg, hsl(${hue}, 52%, 46%) 0%, hsl(${hue}, 52%, 36%) 100%)`,
+  }
+}
+
+/** Categoria LLM no rodapé da mídia (substitui Reels/Feed no topo quando houver categoria). */
+function OriginMediaCategoryPill({ inf, contentType }: { inf: PostItem['influencer']; contentType: MediaKind }) {
+  const raw = getOriginInfluencerMainCategory(inf)
+  if (raw) {
+    const label = formatFacetLabel(raw)
+    return (
+      <Tooltip title="Categoria principal">
+        <span className="campaign-origin-media-pill" style={originCategoryMediaPillStyle(label)}>
+          {label}
+        </span>
+      </Tooltip>
+    )
+  }
+  return <span style={originMediaKindOverlayStyle(contentType)}>{MEDIA_KIND_SHORT[contentType] ?? contentType}</span>
 }
 
 export type OriginGalleryViewMode = 'list' | 'grid'
@@ -262,10 +319,14 @@ export default function CampaignOriginGallery({
   mediaKinds,
   onLoadingChange,
   onOriginSearchSettled,
+  /** Perfis dos posts já carregados (acumulado na paginação) — pai calcula facets no cliente. */
+  onLoadedPostsForFacets,
   /** Base completa com só o logo à esquerda: desloca o loader/empty para o centro da viewport (metade da coluna + gap). */
   viewportCenterShiftX = 0,
   /** Mesmos filtros de perfil da URL (LLM, porte, geo, etc.) — backend restringe handles antes de casar legendas. */
   profileFilters,
+  /** Prioridade dos facets do painel BI (porte, LLM, etc.) — só reordena posts no cliente. */
+  facetBoostQuery,
   /** Se definido, substitui o `window.open` ao abrir o perfil a partir do card (ex.: convidado sem login). */
   onOpenInfluencerDetail,
   captionFilterReady = true,
@@ -281,8 +342,10 @@ export default function CampaignOriginGallery({
   onLoadingChange?: (loading: boolean) => void
   /** Após a primeira página com termo: `empty` se não houver posts (pai pode ocultar o painel lateral). */
   onOriginSearchSettled?: (payload: { empty: boolean }) => void
+  onLoadedPostsForFacets?: (posts: PostItem[]) => void
   viewportCenterShiftX?: number
   profileFilters?: Partial<ProfilesSearchQuery>
+  facetBoostQuery?: Partial<ProfilesSearchQuery>
   onOpenInfluencerDetail?: (handle: string, snapshot?: InfluencerConnectSnapshot) => void
   /**
    * Com termo de busca: só dispara post-matches quando true (ex.: após handlesOnly no pai),
@@ -292,13 +355,36 @@ export default function CampaignOriginGallery({
 }) {
   const [items, setItems] = useState<PostItem[]>([])
   const [total, setTotal] = useState(0)
+  const [scanMeta, setScanMeta] = useState<PostsResponse['scanMeta']>()
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
+  const profileFiltersRef = useRef(profileFilters)
+  profileFiltersRef.current = profileFilters
 
   const kindsKey = mediaKinds?.length ? [...mediaKinds].sort().join(',') : ''
   const hasSearchTerm = textQuery.trim().length > 0
+  const displayItems = useMemo(
+    () => sortPostsByCampaignFacetBoost(items, facetBoostQuery ?? {}),
+    [items, facetBoostQuery]
+  )
+  const facetBoostForApi = useMemo(
+    () =>
+      hasCampaignFacetBoost(facetBoostQuery ?? {})
+        ? pickCampaignFacetBoostFromQuery(facetBoostQuery ?? {})
+        : undefined,
+    [facetBoostQuery]
+  )
+  const facetBoostSortKey = useMemo(
+    () => JSON.stringify(pickCampaignFacetBoostFromQuery(facetBoostQuery ?? {})),
+    [facetBoostQuery]
+  )
+
+  useEffect(() => {
+    if (!hasCampaignFacetBoost(facetBoostQuery ?? {})) return
+    setItems((prev) => sortPostsByCampaignFacetBoost(prev, facetBoostQuery ?? {}))
+  }, [facetBoostSortKey, facetBoostQuery])
 
   const runOpenInfluencerDetail = useCallback(
     (handle: string, snapshot?: InfluencerConnectSnapshot) => {
@@ -319,6 +405,7 @@ export default function CampaignOriginGallery({
       if (!hasSearchTerm) {
         setItems([])
         setTotal(0)
+        setScanMeta(undefined)
         setLoading(false)
         setLoadingMore(false)
         return
@@ -338,21 +425,36 @@ export default function CampaignOriginGallery({
             limit: PAGE,
             offset: 0,
           },
-          { signal, profileFilters }
+          { signal, profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
         )
+        const sorted = sortPostsByCampaignFacetBoost(res.items, facetBoostQuery ?? {})
         if (signal?.aborted) return
-        setItems(res.items)
+        setItems(sorted)
         setTotal(res.total)
+        setScanMeta(res.scanMeta)
+        onLoadedPostsForFacetsRef.current?.(sorted)
       } catch (e) {
         if (signal?.aborted || (e as { name?: string }).name === 'AbortError') return
         setItems([])
         setTotal(0)
+        setScanMeta(undefined)
       } finally {
         if (!signal?.aborted) setLoading(false)
       }
     },
-    [campaignId, textQuery, kindsKey, hasSearchTerm, profileFilters, captionFilterReady]
+    [campaignId, textQuery, kindsKey, hasSearchTerm, captionFilterReady, facetBoostForApi, facetBoostQuery]
   )
+
+  const onLoadedPostsForFacetsRef = useRef(onLoadedPostsForFacets)
+  onLoadedPostsForFacetsRef.current = onLoadedPostsForFacets
+  useEffect(() => {
+    if (!hasSearchTerm) {
+      onLoadedPostsForFacetsRef.current?.([])
+      return
+    }
+    if (loading || items.length === 0) return
+    onLoadedPostsForFacetsRef.current?.(items)
+  }, [items, loading, hasSearchTerm])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -362,7 +464,9 @@ export default function CampaignOriginGallery({
 
   const loadMore = useCallback(async () => {
     if (!hasSearchTerm) return
-    if (items.length >= total || loadingMore || loading) return
+    const partialMore =
+      scanMeta?.partial === true && scanMeta.handlesScanned < scanMeta.handlesTotal
+    if ((items.length >= total && !partialMore) || loadingMore || loading) return
     setLoadingMore(true)
     try {
       const res = await fetchCampaignPostMatches(
@@ -373,21 +477,31 @@ export default function CampaignOriginGallery({
           limit: PAGE,
           offset: items.length,
         },
-        { profileFilters }
+        { profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
       )
-      setItems((prev) => [...prev, ...res.items])
+      setItems((prev) => {
+        const byKey = new Map(prev.map((p) => [p.key, p]))
+        for (const p of res.items) byKey.set(p.key, p)
+        return sortPostsByCampaignFacetBoost([...byKey.values()], facetBoostQuery ?? {})
+      })
+      setTotal((t) => Math.max(t, res.total))
+      setScanMeta(res.scanMeta)
     } catch {
       /* ignore */
     } finally {
       setLoadingMore(false)
     }
-  }, [campaignId, textQuery, kindsKey, items.length, total, loadingMore, loading, hasSearchTerm, profileFilters])
+  }, [campaignId, textQuery, kindsKey, items.length, total, loadingMore, loading, hasSearchTerm, facetBoostForApi, facetBoostQuery, scanMeta])
+
+  const hasMoreItems =
+    items.length < total ||
+    (scanMeta?.partial === true && scanMeta.handlesScanned < scanMeta.handlesTotal)
 
   const onLoadingChangeRef = useRef(onLoadingChange)
   onLoadingChangeRef.current = onLoadingChange
   useEffect(() => {
-    onLoadingChangeRef.current?.(loading)
-  }, [loading])
+    onLoadingChangeRef.current?.(loading && items.length === 0)
+  }, [loading, items.length])
 
   const onOriginSearchSettledRef = useRef(onOriginSearchSettled)
   onOriginSearchSettledRef.current = onOriginSearchSettled
@@ -402,7 +516,7 @@ export default function CampaignOriginGallery({
 
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current
-    if (!sentinel || items.length >= total || total === 0 || loading || loadingMore) return
+    if (!sentinel || !hasMoreItems || total === 0 || loading || loadingMore) return
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) void loadMore()
@@ -411,18 +525,18 @@ export default function CampaignOriginGallery({
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [items.length, total, loadMore, loading, loadingMore])
+  }, [items.length, total, hasMoreItems, loadMore, loading, loadingMore])
 
   const emptyShiftStyle =
     viewportCenterShiftX !== 0 ? ({ transform: `translateX(-${viewportCenterShiftX}px)` } as const) : undefined
 
   return (
     <div style={{ minWidth: 0 }}>
-      {loading ? (
+      {loading && displayItems.length === 0 ? (
         <OriginGalleryLoadingState railShiftX={viewportCenterShiftX} />
       ) : !hasSearchTerm ? (
         <Empty description="Digite uma palavra para iniciar a busca." />
-      ) : items.length === 0 ? (
+      ) : displayItems.length === 0 ? (
         <div style={emptyShiftStyle}>
           <Empty description="Nenhum post encontrado com esse termo." />
         </div>
@@ -438,12 +552,13 @@ export default function CampaignOriginGallery({
                 minWidth: 0,
               }}
             >
-              {items.map((post) => {
+              {displayItems.map((post) => {
                 const stableBg = getPostStablePreviewUrl(post)
                 const displayUrl = getPostCoverDisplayUrl(post)
                 const failed = failedPostImages.has(post.key)
                 const bar = influencerBarData(post)
                 const handle = bar.handleKey
+                const headline = influencerCardHeadline(post, bar)
                 const ct = (post.content_type || 'post') as MediaKind
                 const openInfluencerDetail = () => runOpenInfluencerDetail(handle, postToConnectSnapshot(post))
                 const followersCount = post.influencer?.followers_count
@@ -465,7 +580,7 @@ export default function CampaignOriginGallery({
                     tabIndex={handle !== '—' ? 0 : undefined}
                     onClick={openInfluencerDetail}
                     onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
-                    aria-label={handle !== '—' ? `Ver perfil de ${bar.displayName}` : undefined}
+                    aria-label={handle !== '—' ? `Ver perfil @${handle}` : undefined}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
@@ -486,7 +601,7 @@ export default function CampaignOriginGallery({
                         imageUnavailable={failed || !displayUrl}
                         onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
                       />
-                      <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
+                      <OriginMediaCategoryPill inf={post.influencer} contentType={ct} />
                     </div>
                     <div
                       style={{
@@ -525,18 +640,16 @@ export default function CampaignOriginGallery({
                       <div style={{ minWidth: 0, flex: 1, paddingTop: 2 }}>
                         <div
                           style={{
-                            fontSize: 12,
-                            fontWeight: 600,
-                            lineHeight: 1.25,
+                            fontSize: 10,
+                            fontWeight: 500,
+                            lineHeight: 1.35,
                             color: 'var(--app-text)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
                           }}
                         >
-                          {bar.displayName}
+                          {headline}
                         </div>
-                        <OriginInfluencerLlmBadges inf={post.influencer} />
                       </div>
                     </div>
                   </div>
@@ -545,21 +658,18 @@ export default function CampaignOriginGallery({
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {items.map((post) => {
+              {displayItems.map((post) => {
                 const stableBg = getPostStablePreviewUrl(post)
                 const displayUrl = getPostCoverDisplayUrl(post)
                 const failed = failedPostImages.has(post.key)
                 const bar = influencerBarData(post)
                 const handle = bar.handleKey
+                const headline = influencerCardHeadline(post, bar)
                 const ct = (post.content_type || 'post') as MediaKind
-                const er = getPostEngagementRatePercent(post)
+                const postsPerWeek = getInfluencerPostsPerWeek(post)
                 const fc = post.influencer?.followers_count
                 const followersLabel = formatFollowersShort(fc)
-                const llmInfRecord =
-                  post.influencer != null && typeof post.influencer === 'object'
-                    ? (post.influencer as unknown as Record<string, unknown>)
-                    : undefined
-                const hasLlmCategoriaBadge = getLlmTripleBadgesFromLlmRoot(llmInfRecord).categoria != null
+                const postsPerWeekLabel = postsPerWeek != null ? `${formatPostsPerWeekShort(postsPerWeek)} posts/sem` : null
                 const openInfluencerDetail = () => runOpenInfluencerDetail(handle, postToConnectSnapshot(post))
                 const listMediaShellStyle: CSSProperties = {
                   position: 'relative',
@@ -579,7 +689,7 @@ export default function CampaignOriginGallery({
                     tabIndex={handle !== '—' ? 0 : undefined}
                     onClick={openInfluencerDetail}
                     onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
-                    aria-label={handle !== '—' ? `Ver perfil de ${bar.displayName}` : undefined}
+                    aria-label={handle !== '—' ? `Ver perfil @${handle}` : undefined}
                     style={{
                       borderRadius: 14,
                       overflow: 'hidden',
@@ -601,9 +711,9 @@ export default function CampaignOriginGallery({
                         style={{
                           display: 'flex',
                           flexDirection: 'column',
-                          width: LIST_ORIGIN_MEDIA_COLUMN_PX,
-                          minWidth: LIST_ORIGIN_MEDIA_COLUMN_PX,
-                          flexShrink: 0,
+                          flex: LIST_ORIGIN_LEFT_COLUMN_FLEX,
+                          minWidth: 0,
+                          maxWidth: '40%',
                           textAlign: 'left',
                           overflow: 'hidden',
                           borderRight: '1px solid var(--app-border-light, #f0f0f0)',
@@ -618,7 +728,7 @@ export default function CampaignOriginGallery({
                             imageUnavailable={failed || !displayUrl}
                             onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
                           />
-                          <span style={originMediaKindOverlayStyle(ct)}>{MEDIA_KIND_SHORT[ct] ?? ct}</span>
+                          <OriginMediaCategoryPill inf={post.influencer} contentType={ct} />
                         </div>
                         <div
                           style={{
@@ -648,14 +758,15 @@ export default function CampaignOriginGallery({
                                 flexDirection: 'column',
                                 alignItems: 'center',
                                 flexShrink: 0,
+                                width: 56,
                               }}
                             >
                               <ProfileAvatar
                                 src={bar.avatarSrc}
                                 stableBackgroundUrl={bar.avatarStable}
                                 handle={handle !== '—' ? handle : undefined}
-                                size={40}
-                                fallbackIconSize={18}
+                                size={56}
+                                fallbackIconSize={24}
                                 queueOnError={false}
                               />
                               {getInfluencerTierShort(fc) !== '—' ? (
@@ -674,24 +785,17 @@ export default function CampaignOriginGallery({
                             >
                               <div
                                 style={{
-                                  fontSize: 13,
-                                  fontWeight: 700,
+                                  fontSize: 11,
+                                  fontWeight: 500,
                                   color: 'var(--app-text)',
-                                  lineHeight: 1.3,
-                                  overflow: 'hidden',
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 3,
-                                  WebkitBoxOrient: 'vertical',
+                                  lineHeight: 1.35,
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word',
                                 }}
                               >
-                                {bar.displayName}
+                                {headline}
                               </div>
-                              {hasLlmCategoriaBadge ? (
-                                <div style={{ marginTop: 6, width: '100%', minWidth: 0 }}>
-                                  <OriginInfluencerLlmBadges inf={post.influencer} subset="categoria" />
-                                </div>
-                              ) : null}
-                              {er != null || followersLabel ? (
+                              {postsPerWeekLabel != null || followersLabel ? (
                                 <div
                                   style={{
                                     display: 'flex',
@@ -708,13 +812,13 @@ export default function CampaignOriginGallery({
                                   {followersLabel ? (
                                     <span style={{ fontSize: 10, color: 'var(--app-text-secondary)' }}>{followersLabel}</span>
                                   ) : null}
-                                  {followersLabel && er != null ? (
+                                  {followersLabel && postsPerWeekLabel ? (
                                     <span style={{ fontSize: 10, color: 'var(--app-text-tertiary, #bfbfbf)' }} aria-hidden>
                                       ·
                                     </span>
                                   ) : null}
-                                  {er != null ? (
-                                    <Tooltip title={METRIC_TOOLTIPS.erPost}>
+                                  {postsPerWeekLabel ? (
+                                    <Tooltip title={METRIC_TOOLTIPS.postsPerSemana}>
                                       <span
                                         style={{
                                           fontSize: 10,
@@ -723,7 +827,7 @@ export default function CampaignOriginGallery({
                                           cursor: 'help',
                                         }}
                                       >
-                                        {er.toFixed(1)}% eng.
+                                        {postsPerWeekLabel}
                                       </span>
                                     </Tooltip>
                                   ) : null}
@@ -735,8 +839,9 @@ export default function CampaignOriginGallery({
                       </div>
                       <div
                         style={{
-                          flex: 1,
+                          flex: LIST_ORIGIN_RIGHT_COLUMN_FLEX,
                           minWidth: 0,
+                          maxWidth: '60%',
                           padding: '14px 18px',
                           display: 'flex',
                           flexDirection: 'column',
@@ -767,7 +872,7 @@ export default function CampaignOriginGallery({
               })}
             </div>
           )}
-          {items.length < total && (
+          {hasMoreItems && (
             <div
               ref={loadMoreSentinelRef}
               style={{ minHeight: 1, marginTop: 16 }}
@@ -780,7 +885,9 @@ export default function CampaignOriginGallery({
             </div>
           )}
           <Text style={{ display: 'block', marginTop: 12, fontSize: 12, color: 'var(--app-text-secondary)' }}>
-            {items.length} de {total} {total === 1 ? 'item' : 'itens'}
+            {items.length} de {total}
+            {scanMeta?.partial ? '+' : ''} {total === 1 && !scanMeta?.partial ? 'item' : 'itens'}
+            {scanMeta?.partial ? ' (busca parcial)' : ''}
           </Text>
         </>
       )}

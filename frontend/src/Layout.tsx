@@ -11,6 +11,7 @@ import { fetchProfile, getProfilePicUrl, proxyImageUrl } from './api'
 import Logo from './components/Logo'
 import ProfileAvatar from './components/ProfileAvatar'
 import MissionsBar from './components/MissionsBar/MissionsBar'
+import { RequireActiveSubscription } from './components/RequireActiveSubscription'
 import { Grid } from 'antd'
 import { trackAppUiClick } from './utils/metaPixel'
 
@@ -83,7 +84,9 @@ export default function Layout() {
         path.startsWith(`${base}/campaigns`) ||
         path.startsWith(`${base}/payments`) ||
         path.startsWith(`${base}/profile`) ||
-        path.startsWith(`${base}/missions`)
+        path.startsWith(`${base}/missions`) ||
+        path === '/search' ||
+        path.startsWith('/search/')
       if (!allowed) navigate(base, { replace: true })
     }
   }, [user?.scope, location.pathname, navigate])
@@ -279,7 +282,7 @@ export default function Layout() {
     return location.pathname.startsWith(path)
   }
 
-  const isAllCampaignsRoute = location.pathname === '/app/campaigns/all'
+  const isAllCampaignsRoute = location.pathname === '/search' || location.pathname.startsWith('/search/')
   const showNavbar = !location.pathname.startsWith('/app/create') && !isAllCampaignsRoute
 
   return (
@@ -769,7 +772,9 @@ export default function Layout() {
       >
         {user && showMissionsBar && <MissionsBar />}
         <div className="app-page">
-          <Outlet />
+          <RequireActiveSubscription>
+            <Outlet />
+          </RequireActiveSubscription>
         </div>
       </Content>
     </AntLayout>

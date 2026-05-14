@@ -246,8 +246,6 @@ export interface ProfilesSearchQuery {
   llmMainCategory?: string[]
   llmGender?: string[]
   llmLanguage?: string[]
-  llmSubCategories?: string[]
-  llmContentPillars?: string[]
   llmAudienceType?: string[]
   llmToneOfVoice?: string[]
   llmRiskLevel?: string[]
@@ -278,8 +276,6 @@ export interface LlmSearchFacets {
   mainCategory: { name: string; count: number }[]
   gender: { name: string; count: number }[]
   language: { name: string; count: number }[]
-  subCategories: { name: string; count: number }[]
-  contentPillars: { name: string; count: number }[]
   audienceType: { name: string; count: number }[]
   toneOfVoice: { name: string; count: number }[]
   /** Categoria única do prompt: familia | sensivel | adulto. */
@@ -415,8 +411,6 @@ export function profilesSearchQueryToParams(query: Partial<ProfilesSearchQuery>)
   llmJoin('llmMainCategory', query.llmMainCategory)
   llmJoin('llmGender', query.llmGender)
   llmJoin('llmLanguage', query.llmLanguage)
-  llmJoin('llmSubCategories', query.llmSubCategories)
-  llmJoin('llmContentPillars', query.llmContentPillars)
   llmJoin('llmAudienceType', query.llmAudienceType)
   llmJoin('llmToneOfVoice', query.llmToneOfVoice)
   llmJoin('llmRiskLevel', query.llmRiskLevel)
@@ -438,6 +432,9 @@ export async function fetchProfilesSearch(
   options?: { signal?: AbortSignal; campaignId?: string | null }
 ): Promise<ProfilesSearchResult> {
   const params = profilesSearchQueryToParams(query)
+  if ((query.offset ?? 0) > 0) {
+    params.set('includeFacets', 'false')
+  }
   const res = await fetch(`${API_BASE}/profiles/search?${params.toString()}`, {
     headers: authHeadersWithCampaign(options?.campaignId),
     signal: options?.signal,
@@ -580,6 +577,26 @@ export async function fetchMyPendingPayment(options?: { signal?: AbortSignal }):
   return data.payment ?? null
 }
 
+export interface MySubscriptionStatus {
+  active: boolean
+  planId: string | null
+  subscriptionId: string | null
+  hasPendingPlanPayment: boolean
+}
+
+/** Assinatura de plano aprovada (primeira cobrança confirmada). */
+export async function fetchMySubscription(options?: { signal?: AbortSignal }): Promise<MySubscriptionStatus> {
+  const res = await fetch(`${API_BASE}/me/subscription`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao consultar assinatura')
+  }
+  return res.json() as Promise<MySubscriptionStatus>
+}
+
 export interface CreatePaymentForCreditsResponse {
   paymentId: string
   asaasPaymentId: string | null
@@ -610,7 +627,7 @@ export interface RegisterAndCreatePaymentResponse extends CreatePaymentForCredit
 }
 
 export async function registerAndCreatePayment(
-  params: { email: string; password: string; name?: string; credits: number; billingType: 'PIX' | 'BOLETO' },
+  params: { email: string; password: string; name?: string; cpfCnpj: string; credits: number; billingType: 'PIX' | 'BOLETO' },
   options?: { signal?: AbortSignal }
 ): Promise<RegisterAndCreatePaymentResponse> {
   const res = await fetch(`${API_BASE}/checkout/register-and-pay`, {
@@ -620,6 +637,7 @@ export async function registerAndCreatePayment(
       email: params.email.trim().toLowerCase(),
       password: params.password,
       name: params.name?.trim() || undefined,
+      cpfCnpj: params.cpfCnpj.replace(/\D/g, ''),
       credits: params.credits,
       billingType: params.billingType,
     }),
@@ -630,6 +648,49 @@ export async function registerAndCreatePayment(
     throw new Error((data as { error?: string }).error || 'Falha ao criar conta e pagamento')
   }
   return data as RegisterAndCreatePaymentResponse
+}
+
+export interface SubscribeToPlanResponse extends CreatePaymentForCreditsResponse {
+  subscriptionId: string
+  planId: string
+  token?: string
+  user?: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean }
+}
+
+/** Assinatura mensal de plano (Asaas subscription cartão). Guest ou logado. */
+export async function subscribeToPlan(
+  params: {
+    planId: string
+    cpfCnpj: string
+    email?: string
+    password?: string
+    name?: string
+  },
+  options?: { signal?: AbortSignal }
+): Promise<SubscribeToPlanResponse> {
+  const res = await fetch(`${API_BASE}/checkout/plan-subscribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      planId: params.planId,
+      cpfCnpj: params.cpfCnpj.replace(/\D/g, ''),
+      email: params.email?.trim().toLowerCase(),
+      password: params.password,
+      name: params.name?.trim() || undefined,
+    }),
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    if (res.status === 409 && (data as { payment?: CreatePaymentForCreditsResponse }).payment) {
+      throw new PendingPaymentExistsError(
+        (data as { error?: string }).error || 'Cobrança pendente',
+        (data as { payment: CreatePaymentForCreditsResponse }).payment
+      )
+    }
+    throw new Error((data as { error?: string }).error || 'Falha ao assinar plano')
+  }
+  return data as SubscribeToPlanResponse
 }
 
 /** Pagamento direto do relatório (sem créditos). Logado: query + desiredCount + billingType. Guest: + email, password, name?. */
@@ -1149,8 +1210,6 @@ export async function fetchCampaignProfiles(
   llmJoinCamp('llmProfileType', query.llmProfileType)
   llmJoinCamp('llmMainCategory', query.llmMainCategory)
   llmJoinCamp('llmGender', query.llmGender)
-  llmJoinCamp('llmSubCategories', query.llmSubCategories)
-  llmJoinCamp('llmContentPillars', query.llmContentPillars)
   llmJoinCamp('llmAudienceType', query.llmAudienceType)
   const qs = params.toString()
   const res = await fetch(`${API_BASE}/campaigns/${campaignId}/profiles${qs ? `?${qs}` : ''}`, {
@@ -1195,6 +1254,8 @@ export interface PostItem {
     stable_profile_pic_url?: string
     /** Preenchido em post-matches a partir do perfil indexado (patamar na UI). */
     followers_count?: number
+    /** Média de posts por semana (perfil indexado). */
+    posts_per_week?: number
     /** Qualificação LLM do perfil (post-matches), quando existir no storage. */
     llm?: unknown
   }
@@ -1230,6 +1291,8 @@ export interface PostsResponse {
   items: PostItem[]
   /** Quando `handlesOnly=1` na API: handles com ao menos um post que casa com `q`. */
   profileHandles?: string[]
+  /** Scan limitado por performance: total pode ser subestimado. */
+  scanMeta?: { partial: true; handlesScanned: number; handlesTotal: number }
 }
 
 /** Posts dos perfis da campanha onde `q` bate em legenda/hashtags (dados atuais). */
@@ -1243,7 +1306,12 @@ export async function fetchCampaignPostMatches(
     /** Uma ida: total + handles únicos (sem paginar itens de post). */
     handlesOnly?: boolean
   },
-  options?: { signal?: AbortSignal; profileFilters?: Partial<ProfilesSearchQuery> }
+  options?: {
+    signal?: AbortSignal
+    profileFilters?: Partial<ProfilesSearchQuery>
+    /** Prioridade de facets (só ordenação no back; não estreita handles). */
+    facetBoost?: Partial<ProfilesSearchQuery>
+  }
 ): Promise<PostsResponse & { q?: string; mediaKindCounts?: Partial<Record<MediaKind, number>> }> {
   const p = new URLSearchParams()
   if (params.q?.trim()) p.set('q', params.q.trim())
@@ -1251,7 +1319,15 @@ export async function fetchCampaignPostMatches(
   p.set('limit', String(params.limit ?? 48))
   p.set('offset', String(params.offset ?? 0))
   if (params.handlesOnly) p.set('handlesOnly', '1')
-  const reservedPostKeys = new Set(['q', 'limit', 'offset', 'type', 'handlesOnly', 'handles_only'])
+  const reservedPostKeys = new Set([
+    'q',
+    'limit',
+    'offset',
+    'type',
+    'handlesOnly',
+    'handles_only',
+    'facetBoostSort',
+  ])
   if (options?.profileFilters) {
     const pf = profilesSearchQueryToParams(
       profileFiltersForCampaignPostApis(options.profileFilters)
@@ -1260,6 +1336,16 @@ export async function fetchCampaignPostMatches(
       if (reservedPostKeys.has(key)) return
       p.set(key, value)
     })
+  }
+  if (options?.facetBoost) {
+    const boostParams = profilesSearchQueryToParams(options.facetBoost)
+    let hasBoost = false
+    boostParams.forEach((value, key) => {
+      if (reservedPostKeys.has(key)) return
+      p.set(key, value)
+      hasBoost = true
+    })
+    if (hasBoost) p.set('facetBoostSort', '1')
   }
   const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/post-matches?${p}`, {
     headers: { ...authHeaders() },

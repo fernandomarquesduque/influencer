@@ -2,6 +2,7 @@ import { Card, Typography, Button, Progress } from 'antd'
 import { RocketOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import type { ProfilesSearchQuery, ProfilesSearchFacets } from '../../api'
 import InfluencerPreviewTable from '../InfluencerPreviewTable/InfluencerPreviewTable'
+import { formatFacetLabel } from '../../utils/facetLabels'
 import './ReportDashboard.css'
 
 const { Title, Text } = Typography
@@ -13,12 +14,6 @@ export interface ReportDashboardProps {
   onViewList: () => void
   onBack?: () => void
   loading?: boolean
-}
-
-function prettyLabel(raw: string): string {
-  const s = raw.replace(/[_-]+/g, ' ').trim()
-  if (!s) return raw
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 function formatNumber(n: number): string {
@@ -61,9 +56,7 @@ export default function ReportDashboard({
 }: ReportDashboardProps) {
   const llm = facets?.llm
   const mainCategory = topItems(llm?.mainCategory, 4)
-  const subCategories = topItems(llm?.subCategories, 5)
   const showMainCategories = mainCategory.length > 0
-  const showSubCategories = subCategories.length > 0
   const audiences = topItems(llm?.audienceType, 4)
   const brandSafety = topItems(llm?.brandSafety?.level, 3)
   const familyCount = levelCount(brandSafety, 'familia')
@@ -145,7 +138,7 @@ export default function ReportDashboard({
                           />
                         </div>
                         <div className="rdv2-audience-card-label">
-                          <span>{prettyLabel(item.name)}</span>
+                          <span>{formatFacetLabel(item.name)}</span>
                         </div>
                       </div>
                     )
@@ -154,8 +147,8 @@ export default function ReportDashboard({
               )}
             </div>
 
-            <Card className="rdv2-card rdv2-card--categories" title="Categorias">
-              {!showMainCategories && !showSubCategories && (
+                        <Card className="rdv2-card rdv2-card--categories" title="Categorias">
+              {!showMainCategories && (
                 <Text type="secondary">Sem dados de categorias neste recorte.</Text>
               )}
               {showMainCategories && (
@@ -166,26 +159,7 @@ export default function ReportDashboard({
                     return (
                       <div key={`main-cat-${item.name}`} className="rdv2-row">
                         <div className="rdv2-row-label">
-                          <span>{prettyLabel(item.name)}</span>
-                          <b>{pct}%</b>
-                        </div>
-                        <div className="rdv2-bar">
-                          <i style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              {showSubCategories && (
-                <div className={`rdv2-facet-block${showMainCategories ? ' rdv2-facet-block--after-main' : ''}`}>
-                  <Text className="rdv2-facet-section-title">Subcategorias com maior potencial</Text>
-                  {subCategories.map((item) => {
-                    const pct = asPercent(item.count, total)
-                    return (
-                      <div key={`subcat-${item.name}`} className="rdv2-row">
-                        <div className="rdv2-row-label">
-                          <span>{prettyLabel(item.name)}</span>
+                          <span>{formatFacetLabel(item.name)}</span>
                           <b>{pct}%</b>
                         </div>
                         <div className="rdv2-bar">

@@ -7,7 +7,8 @@
     "collector": "npm run start --prefix influencer-collector",
     "collector:watchdog": "npm run watchdog --prefix influencer-collector",
     "dev": "npm run dev --prefix frontend",
-    "api": "npm run api --prefix crawl",
+    "api": "npm run api --prefix backend",
+    "api:dev": "npm run api:dev --prefix backend",
     "qualify": "npm run qualify --prefix qualify"
   }
 }

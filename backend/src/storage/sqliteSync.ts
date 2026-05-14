@@ -9,6 +9,88 @@ import { dirname } from 'path';
 
 const DEFAULT_PATH = './data/influencer.db';
 
+/** Filtros LLM espelhados em colunas/JSON do índice (`llm_qualification_json` + `llm_brand_level`). */
+export interface GlobalAuxSqlLlmFilter {
+  profileTypes: string[];
+  mainCategoriesCanonical: string[];
+  genders: string[];
+  languages: string[];
+  audienceTypes: string[];
+  toneOfVoices: string[];
+  /** Valores normalizados: familia | sensivel | adulto */
+  brandSafetyLevels: string[];
+  isFamilySafe?: boolean;
+  isAdultContent?: boolean;
+}
+
+/** Filtros do atalho SQL em `globalAuxSearchHandles` (aux + `profile_activation` + JSON LLM). */
+export interface GlobalAuxSqlFilter {
+  ftsMatchExpr: string | null;
+  minFollowers?: number;
+  maxFollowers?: number;
+  minEngagementRate?: number;
+  minAvgLikes?: number;
+  minPostsCount?: number;
+  engagementRateBuckets: number[];
+  avgLikesBuckets: number[];
+  postsCountBuckets: number[];
+  accountTypeFilter: number[];
+  /** OR de faixas de seguidores; `maxExclusive` null = sem teto. */
+  followerRanges?: { min: number; maxExclusive: number | null }[];
+  sort: string;
+  /** Subconjunto de handles (campanha); null = todos no índice. */
+  restrictHandles?: string[] | null;
+  excludePrivate?: boolean;
+  /** Categorias/hashtags (lowercase); OR — mesmo critério do loop sem `no_perfil`. */
+  categoriesAny?: string[] | null;
+  /**
+   * Exige linha com qualificação LLM indexada. true = descoberta global (só perfis com JSON no aux);
+   * false = escopo campanha (handles podem não ter JSON ainda).
+   */
+  requireIndexedLlm?: boolean;
+  /** `activated` = existe linha em profile_activation; `not` = sem linha. */
+  activationMode?: 'activated' | 'not' | null;
+  citiesLower?: string[] | null;
+  statesLower?: string[] | null;
+  neighborhoodsLower?: string[] | null;
+  socialNetworksLower?: string[] | null;
+  contentTypesLower?: string[] | null;
+  pricingFeedValues?: number[] | null;
+  pricingReelsValues?: number[] | null;
+  pricingStoryValues?: number[] | null;
+  pricingDestaqueValues?: number[] | null;
+  costTiers?: string[] | null;
+  llm?: GlobalAuxSqlLlmFilter | null;
+}
+
+/** Agregados numéricos de facetas a partir de `profile_search_aux` (sem loop em cada item). */
+export interface AuxNumericFacetSums {
+  engagement_baixa: number;
+  engagement_media: number;
+  engagement_alta: number;
+  avg_likes_baixa: number;
+  avg_likes_media: number;
+  avg_likes_alta: number;
+  posts_baixa: number;
+  posts_media: number;
+  posts_alta: number;
+  followers_nano: number;
+  followers_micro: number;
+  followers_medio: number;
+  followers_macro: number;
+  followers_elite: number;
+  followers_celebridade: number;
+  account_pessoal: number;
+  account_criador: number;
+  account_empresa: number;
+}
+
+/** Resultado de `aggregateAuxNumericFacetsForHandles` — `auxRowCount` deve bater com o número de handles únicos para os facet counts coincidirem com o loop em memória. */
+export interface AuxNumericFacetAggregate {
+  sums: AuxNumericFacetSums;
+  auxRowCount: number;
+}
+
 /** Valores por tipo de conteúdo (4 tipos). */
 export interface PricingData {
   feed?: string;
@@ -194,6 +276,61 @@ export class SqliteSync {
         search_blob TEXT NOT NULL
       );
     `);
+    this.migrateProfileSearchAuxMetrics();
+  }
+
+  /**
+   * Colunas denormalizadas (seguidores, engajamento, etc.) para filtros/índices sem parsear JSON em toda linha.
+   * Backfill a partir de `engagement_json` para linhas antigas.
+   */
+  private migrateProfileSearchAuxMetrics(): void {
+    const tryAdd = (sql: string): void => {
+      try {
+        this.db.exec(sql);
+      } catch {
+        /* coluna já existe */
+      }
+    };
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN followers_count INTEGER NOT NULL DEFAULT 0');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN engagement_rate REAL NOT NULL DEFAULT 0');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN avg_likes INTEGER NOT NULL DEFAULT 0');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN posts_count INTEGER NOT NULL DEFAULT 0');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN account_type INTEGER');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN categories_json TEXT NOT NULL DEFAULT \'[]\'');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN cost_tier TEXT');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN llm_qualification_json TEXT');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN llm_brand_level TEXT');
+    try {
+      this.db.exec(`
+        UPDATE profile_search_aux SET
+          engagement_rate = COALESCE(CAST(json_extract(engagement_json, '$.engagement_rate') AS REAL), engagement_rate, 0),
+          avg_likes = COALESCE(CAST(json_extract(engagement_json, '$.avg_likes') AS INTEGER), avg_likes, 0),
+          posts_count = COALESCE(CAST(json_extract(engagement_json, '$.posts_count') AS INTEGER), posts_count, 0)
+        WHERE engagement_json IS NOT NULL AND trim(engagement_json) != '' AND engagement_json != '{}'
+      `);
+    } catch (e) {
+      console.warn('[sqlite] profile_search_aux backfill métricas:', e instanceof Error ? e.message : e);
+    }
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_profile_search_aux_followers ON profile_search_aux(followers_count);
+        CREATE INDEX IF NOT EXISTS idx_profile_search_aux_engagement ON profile_search_aux(engagement_rate);
+        CREATE INDEX IF NOT EXISTS idx_profile_search_aux_avg_likes ON profile_search_aux(avg_likes);
+        CREATE INDEX IF NOT EXISTS idx_profile_search_aux_posts ON profile_search_aux(posts_count);
+      `);
+    } catch (e) {
+      console.warn('[sqlite] profile_search_aux índices:', e instanceof Error ? e.message : e);
+    }
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_profile_search_aux_cost_tier ON profile_search_aux(cost_tier);
+        CREATE INDEX IF NOT EXISTS idx_profile_search_aux_llm_brand ON profile_search_aux(llm_brand_level);
+        CREATE INDEX IF NOT EXISTS idx_profile_search_aux_private ON profile_search_aux(is_private);
+      `);
+    } catch (e) {
+      console.warn('[sqlite] profile_search_aux índices estendidos:', e instanceof Error ? e.message : e);
+    }
   }
 
   /** Substitui documento FTS + linha auxiliar (transação). */
@@ -202,23 +339,82 @@ export class SqliteSync {
     ftsContent: string,
     engagementJson: string,
     hashtagsJson: string,
-    searchBlob: string
+    searchBlob: string,
+    metrics?: {
+      followersCount: number;
+      engagementRate: number;
+      avgLikes: number;
+      postsCount: number;
+      accountType: number | null;
+      isPrivate?: boolean;
+      categoriesJson?: string;
+      costTier?: string | null;
+      llmQualificationJson?: string | null;
+      llmBrandLevel?: string | null;
+    }
   ): void {
     const h = handle.toLowerCase().replace(/^@/, '');
+    const fc = Math.max(0, Math.floor(metrics?.followersCount ?? 0));
+    const er = Number.isFinite(metrics?.engagementRate) ? Number(metrics!.engagementRate) : 0;
+    const al = Math.max(0, Math.floor(metrics?.avgLikes ?? 0));
+    const pc = Math.max(0, Math.floor(metrics?.postsCount ?? 0));
+    const at =
+      metrics?.accountType != null && [1, 2, 3].includes(metrics.accountType) ? metrics.accountType : null;
+    const isPrivate = metrics?.isPrivate === true ? 1 : 0;
+    const categoriesJson =
+      typeof metrics?.categoriesJson === 'string' && metrics.categoriesJson.trim() ? metrics.categoriesJson : '[]';
+    const costTier =
+      metrics?.costTier != null && typeof metrics.costTier === 'string' && metrics.costTier.trim()
+        ? metrics.costTier.trim().toLowerCase()
+        : null;
+    const llmQ = metrics?.llmQualificationJson?.trim() ? metrics.llmQualificationJson : null;
+    const llmBrand =
+      metrics?.llmBrandLevel != null && typeof metrics.llmBrandLevel === 'string' && metrics.llmBrandLevel.trim()
+        ? metrics.llmBrandLevel.trim().toLowerCase()
+        : null;
     const delFts = this.db.prepare('DELETE FROM profile_search_fts WHERE handle = ?');
     const insFts = this.db.prepare('INSERT INTO profile_search_fts (handle, content) VALUES (?, ?)');
     const upsertAux = this.db.prepare(`
-      INSERT INTO profile_search_aux (handle, engagement_json, hashtags_json, search_blob)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO profile_search_aux (
+        handle, engagement_json, hashtags_json, search_blob,
+        followers_count, engagement_rate, avg_likes, posts_count, account_type,
+        is_private, categories_json, cost_tier, llm_qualification_json, llm_brand_level
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(handle) DO UPDATE SET
         engagement_json = excluded.engagement_json,
         hashtags_json = excluded.hashtags_json,
-        search_blob = excluded.search_blob
+        search_blob = excluded.search_blob,
+        followers_count = excluded.followers_count,
+        engagement_rate = excluded.engagement_rate,
+        avg_likes = excluded.avg_likes,
+        posts_count = excluded.posts_count,
+        account_type = excluded.account_type,
+        is_private = excluded.is_private,
+        categories_json = excluded.categories_json,
+        cost_tier = excluded.cost_tier,
+        llm_qualification_json = excluded.llm_qualification_json,
+        llm_brand_level = excluded.llm_brand_level
     `);
     const trx = this.db.transaction(() => {
       delFts.run(h);
       insFts.run(h, ftsContent);
-      upsertAux.run(h, engagementJson, hashtagsJson, searchBlob);
+      upsertAux.run(
+        h,
+        engagementJson,
+        hashtagsJson,
+        searchBlob,
+        fc,
+        er,
+        al,
+        pc,
+        at,
+        isPrivate,
+        categoriesJson,
+        costTier,
+        llmQ,
+        llmBrand
+      );
     });
     trx();
   }
@@ -252,23 +448,498 @@ export class SqliteSync {
   }
 
   /** Todas as linhas auxiliares (para listagem / facets sem ler o bucket post inteiro). */
-  getAllProfileSearchAuxRows(): { handle: string; engagement_json: string; hashtags_json: string; search_blob: string }[] {
+  getAllProfileSearchAuxRows(): {
+    handle: string;
+    engagement_json: string;
+    hashtags_json: string;
+    search_blob: string;
+    followers_count: number;
+    engagement_rate: number;
+    avg_likes: number;
+    posts_count: number;
+    account_type: number | null;
+  }[] {
     const rows = this.db
       .prepare(
-        'SELECT handle, engagement_json, hashtags_json, search_blob FROM profile_search_aux'
+        `SELECT handle, engagement_json, hashtags_json, search_blob,
+                followers_count, engagement_rate, avg_likes, posts_count, account_type
+         FROM profile_search_aux`
       )
-      .all() as { handle: string; engagement_json: string; hashtags_json: string; search_blob: string }[];
+      .all() as {
+      handle: string;
+      engagement_json: string;
+      hashtags_json: string;
+      search_blob: string;
+      followers_count: number | null;
+      engagement_rate: number | null;
+      avg_likes: number | null;
+      posts_count: number | null;
+      account_type: number | null;
+    }[];
     return rows.map((r) => ({
       handle: String(r.handle ?? '').toLowerCase().replace(/^@/, ''),
       engagement_json: r.engagement_json ?? '{}',
       hashtags_json: r.hashtags_json ?? '[]',
       search_blob: r.search_blob ?? '',
+      followers_count: Math.max(0, Math.floor(Number(r.followers_count) || 0)),
+      engagement_rate: Number.isFinite(Number(r.engagement_rate)) ? Number(r.engagement_rate) : 0,
+      avg_likes: Math.max(0, Math.floor(Number(r.avg_likes) || 0)),
+      posts_count: Math.max(0, Math.floor(Number(r.posts_count) || 0)),
+      account_type:
+        r.account_type != null && [1, 2, 3].includes(Number(r.account_type)) ? Number(r.account_type) : null,
     }));
   }
 
   countProfileSearchAuxRows(): number {
     const row = this.db.prepare('SELECT COUNT(*) AS c FROM profile_search_aux').get() as { c: number } | undefined;
     return row?.c ?? 0;
+  }
+
+  /** Limite de handles retornados pelo atalho SQL (alinhado ao FTS). */
+  static readonly GLOBAL_AUX_SQL_HANDLE_CAP = 50_000;
+
+  /**
+   * Filtros na busca global: `profile_search_aux` + opcional `profile_activation` + FTS.
+   */
+  globalAuxSearchHandles(filter: GlobalAuxSqlFilter): { handles: string[]; total: number } {
+    const cap = SqliteSync.GLOBAL_AUX_SQL_HANDLE_CAP;
+    const whereParts: string[] = ['1=1'];
+    const params: unknown[] = [];
+
+    const needsPa =
+      filter.activationMode != null ||
+      (filter.citiesLower != null && filter.citiesLower.length > 0) ||
+      (filter.statesLower != null && filter.statesLower.length > 0) ||
+      (filter.neighborhoodsLower != null && filter.neighborhoodsLower.length > 0) ||
+      (filter.socialNetworksLower != null && filter.socialNetworksLower.length > 0) ||
+      (filter.contentTypesLower != null && filter.contentTypesLower.length > 0) ||
+      (filter.pricingFeedValues?.length ?? 0) > 0 ||
+      (filter.pricingReelsValues?.length ?? 0) > 0 ||
+      (filter.pricingStoryValues?.length ?? 0) > 0 ||
+      (filter.pricingDestaqueValues?.length ?? 0) > 0;
+    const joinPa = needsPa ? ' LEFT JOIN profile_activation pa ON pa.profile_handle = a.handle' : '';
+
+    if (filter.restrictHandles != null && filter.restrictHandles.length > 0) {
+      const uniq = [
+        ...new Set(
+          filter.restrictHandles.map((h) => String(h).toLowerCase().replace(/^@/, '')).filter(Boolean)
+        ),
+      ];
+      if (uniq.length > 0) {
+        const ph = uniq.map(() => '?').join(', ');
+        whereParts.push(`a.handle IN (${ph})`);
+        for (const h of uniq) params.push(h);
+      }
+    }
+
+    if (filter.excludePrivate === true) {
+      whereParts.push('a.is_private = 0');
+    }
+
+    if (filter.requireIndexedLlm === true) {
+      whereParts.push(
+        "json_valid(a.llm_qualification_json) AND a.llm_qualification_json IS NOT NULL AND length(trim(a.llm_qualification_json)) > 2"
+      );
+    }
+
+    if (filter.categoriesAny != null && filter.categoriesAny.length > 0) {
+      const ph = filter.categoriesAny.map(() => '?').join(', ');
+      whereParts.push(
+        `EXISTS (SELECT 1 FROM json_each(a.categories_json) jc WHERE lower(trim(jc.value)) IN (${ph}))`
+      );
+      for (const c of filter.categoriesAny) params.push(String(c).toLowerCase().trim());
+    }
+
+    if (filter.costTiers != null && filter.costTiers.length > 0) {
+      const ph = filter.costTiers.map(() => '?').join(', ');
+      whereParts.push(`a.cost_tier IN (${ph})`);
+      for (const t of filter.costTiers) params.push(String(t).toLowerCase().trim());
+    }
+
+    if (filter.activationMode === 'activated') {
+      whereParts.push('pa.profile_handle IS NOT NULL');
+    } else if (filter.activationMode === 'not') {
+      whereParts.push('pa.profile_handle IS NULL');
+    }
+
+    if (filter.citiesLower != null && filter.citiesLower.length > 0) {
+      const ph = filter.citiesLower.map(() => '?').join(', ');
+      whereParts.push(
+        `pa.city IS NOT NULL AND trim(pa.city) != '' AND lower(trim(pa.city)) IN (${ph})`
+      );
+      for (const c of filter.citiesLower) params.push(c);
+    }
+    if (filter.statesLower != null && filter.statesLower.length > 0) {
+      const ph = filter.statesLower.map(() => '?').join(', ');
+      whereParts.push(
+        `pa.state IS NOT NULL AND trim(pa.state) != '' AND lower(trim(pa.state)) IN (${ph})`
+      );
+      for (const s of filter.statesLower) params.push(s);
+    }
+    if (filter.neighborhoodsLower != null && filter.neighborhoodsLower.length > 0) {
+      const nhParts: string[] = [];
+      for (const nb of filter.neighborhoodsLower) {
+        nhParts.push(
+          `(pa.neighborhood IS NOT NULL AND instr(',' || lower(replace(replace(trim(pa.neighborhood), ', ', ','), ' ', '')) || ',', ',' || ? || ',') > 0)`
+        );
+        params.push(nb.replace(/\s+/g, '').toLowerCase());
+      }
+      whereParts.push(`(${nhParts.join(' OR ')})`);
+    }
+
+    if (filter.socialNetworksLower != null && filter.socialNetworksLower.length > 0) {
+      const snParts: string[] = [];
+      for (const net of filter.socialNetworksLower) {
+        const n = net.toLowerCase();
+        if (n === 'whatsapp') snParts.push("(pa.whatsapp IS NOT NULL AND trim(pa.whatsapp) != '')");
+        else if (n === 'tiktok') snParts.push("(pa.tiktok IS NOT NULL AND trim(pa.tiktok) != '')");
+        else if (n === 'facebook') snParts.push("(pa.facebook IS NOT NULL AND trim(pa.facebook) != '')");
+        else if (n === 'linkedin') snParts.push("(pa.linkedin IS NOT NULL AND trim(pa.linkedin) != '')");
+        else if (n === 'twitter') snParts.push("(pa.twitter IS NOT NULL AND trim(pa.twitter) != '')");
+      }
+      if (snParts.length > 0) whereParts.push(`(${snParts.join(' OR ')})`);
+    }
+
+    if (filter.contentTypesLower != null && filter.contentTypesLower.length > 0) {
+      const ph = filter.contentTypesLower.map(() => '?').join(', ');
+      whereParts.push(
+        `(json_valid(pa.content_type) AND EXISTS (SELECT 1 FROM json_each(pa.content_type) jct WHERE lower(trim(jct.value)) IN (${ph})))`
+      );
+      for (const c of filter.contentTypesLower) params.push(c);
+    }
+
+    const addPricingCol = (vals: number[] | null | undefined, jsonKey: string): void => {
+      if (vals == null || vals.length === 0) return;
+      const ph = vals.map(() => '?').join(', ');
+      whereParts.push(
+        `(json_valid(pa.pricing) AND CAST(json_extract(pa.pricing, '$.${jsonKey}') AS REAL) IN (${ph}))`
+      );
+      for (const v of vals) params.push(v);
+    };
+    addPricingCol(filter.pricingFeedValues, 'feed');
+    addPricingCol(filter.pricingReelsValues, 'reels');
+    addPricingCol(filter.pricingStoryValues, 'story');
+    addPricingCol(filter.pricingDestaqueValues, 'destaque');
+
+    const L = filter.llm;
+    if (L) {
+      whereParts.push(
+        'json_valid(a.llm_qualification_json) AND a.llm_qualification_json IS NOT NULL'
+      );
+      if (L.profileTypes.length > 0) {
+        const ph = L.profileTypes.map(() => '?').join(', ');
+        whereParts.push(`lower(trim(json_extract(a.llm_qualification_json, '$.profileType'))) IN (${ph})`);
+        for (const p of L.profileTypes) params.push(p);
+      }
+      if (L.mainCategoriesCanonical.length > 0) {
+        const ph = L.mainCategoriesCanonical.map(() => '?').join(', ');
+        whereParts.push(
+          `lower(trim(json_extract(a.llm_qualification_json, '$.mainCategoryCanonical'))) IN (${ph})`
+        );
+        for (const p of L.mainCategoriesCanonical) params.push(p);
+      }
+      if (L.genders.length > 0) {
+        const ph = L.genders.map(() => '?').join(', ');
+        whereParts.push(`lower(trim(json_extract(a.llm_qualification_json, '$.gender'))) IN (${ph})`);
+        for (const p of L.genders) params.push(p);
+      }
+      if (L.languages.length > 0) {
+        const ph = L.languages.map(() => '?').join(', ');
+        whereParts.push(`lower(trim(json_extract(a.llm_qualification_json, '$.language'))) IN (${ph})`);
+        for (const p of L.languages) params.push(p);
+      }
+      const addLlmArr = (jsonPath: string, selected: string[]): void => {
+        if (selected.length === 0) return;
+        const ph = selected.map(() => '?').join(', ');
+        whereParts.push(
+          `EXISTS (SELECT 1 FROM json_each(json_extract(a.llm_qualification_json, '${jsonPath}')) je WHERE lower(trim(je.value)) IN (${ph}))`
+        );
+        for (const p of selected) params.push(p);
+      };
+      addLlmArr('$.audienceType', L.audienceTypes);
+      addLlmArr('$.toneOfVoice', L.toneOfVoices);
+      if (L.brandSafetyLevels.length > 0) {
+        const ph = L.brandSafetyLevels.map(() => '?').join(', ');
+        whereParts.push(`a.llm_brand_level IN (${ph})`);
+        for (const p of L.brandSafetyLevels) params.push(p);
+      }
+      if (L.isFamilySafe === true) whereParts.push(`a.llm_brand_level = 'familia'`);
+      else if (L.isFamilySafe === false) whereParts.push(`(a.llm_brand_level IN ('sensivel', 'adulto'))`);
+      if (L.isAdultContent === true) whereParts.push(`a.llm_brand_level = 'adulto'`);
+      else if (L.isAdultContent === false) whereParts.push(`(a.llm_brand_level IN ('familia', 'sensivel'))`);
+    }
+
+    if (filter.minFollowers != null) {
+      whereParts.push('a.followers_count >= ?');
+      params.push(Math.floor(filter.minFollowers));
+    }
+    if (filter.maxFollowers != null) {
+      whereParts.push('a.followers_count <= ?');
+      params.push(Math.floor(filter.maxFollowers));
+    }
+
+    if (filter.engagementRateBuckets.length > 0) {
+      const erOr: string[] = [];
+      for (const b of filter.engagementRateBuckets) {
+        if (b === 0) erOr.push('(a.engagement_rate < 1)');
+        else if (b === 1) erOr.push('(a.engagement_rate >= 1 AND a.engagement_rate < 5)');
+        else if (b === 5) erOr.push('(a.engagement_rate >= 5)');
+      }
+      if (erOr.length > 0) whereParts.push(`(${erOr.join(' OR ')})`);
+    } else if (filter.minEngagementRate != null) {
+      whereParts.push('a.engagement_rate >= ?');
+      params.push(Number(filter.minEngagementRate));
+    }
+
+    if (filter.avgLikesBuckets.length > 0) {
+      const alOr: string[] = [];
+      for (const b of filter.avgLikesBuckets) {
+        if (b === 0) alOr.push('(a.avg_likes < 500)');
+        else if (b === 500) alOr.push('(a.avg_likes >= 500 AND a.avg_likes < 5000)');
+        else if (b === 5000) alOr.push('(a.avg_likes >= 5000)');
+      }
+      if (alOr.length > 0) whereParts.push(`(${alOr.join(' OR ')})`);
+    } else if (filter.minAvgLikes != null) {
+      whereParts.push('a.avg_likes >= ?');
+      params.push(Math.floor(filter.minAvgLikes));
+    }
+
+    if (filter.postsCountBuckets.length > 0) {
+      const pcOr: string[] = [];
+      for (const b of filter.postsCountBuckets) {
+        if (b === 0) pcOr.push('(a.posts_count < 25)');
+        else if (b === 25) pcOr.push('(a.posts_count >= 25 AND a.posts_count < 50)');
+        else if (b === 50) pcOr.push('(a.posts_count >= 50)');
+      }
+      if (pcOr.length > 0) whereParts.push(`(${pcOr.join(' OR ')})`);
+    } else if (filter.minPostsCount != null) {
+      whereParts.push('a.posts_count >= ?');
+      params.push(Math.floor(filter.minPostsCount));
+    }
+
+    if (filter.accountTypeFilter.length > 0) {
+      const ph = filter.accountTypeFilter.map(() => '?').join(', ');
+      whereParts.push(`a.account_type IN (${ph})`);
+      for (const at of filter.accountTypeFilter) params.push(at);
+    }
+
+    if (filter.followerRanges != null && filter.followerRanges.length > 0) {
+      const frOr: string[] = [];
+      for (const r of filter.followerRanges) {
+        if (r.maxExclusive == null) {
+          frOr.push('(a.followers_count >= ?)');
+          params.push(r.min);
+        } else {
+          frOr.push('(a.followers_count >= ? AND a.followers_count < ?)');
+          params.push(r.min, r.maxExclusive);
+        }
+      }
+      if (frOr.length > 0) whereParts.push(`(${frOr.join(' OR ')})`);
+    }
+
+    const whereSql = whereParts.join(' AND ');
+    const sort = (filter.sort || 'engagement_desc').toLowerCase();
+    const hasFts = Boolean(filter.ftsMatchExpr?.trim());
+
+    const orderBy = ((): string => {
+      if (hasFts && sort === 'relevance_desc') {
+        return 'n.rnk ASC, a.engagement_rate DESC, a.followers_count DESC';
+      }
+      if (sort === 'engagement_asc') return 'a.engagement_rate ASC, a.followers_count DESC';
+      if (sort === 'followers_desc') return 'a.followers_count DESC, a.engagement_rate DESC';
+      if (sort === 'followers_asc') return 'a.followers_count ASC, a.engagement_rate DESC';
+      if (sort === 'avg_likes_desc') return 'a.avg_likes DESC, a.engagement_rate DESC';
+      if (sort === 'avg_likes_asc') return 'a.avg_likes ASC, a.engagement_rate DESC';
+      if (sort === 'total_likes_desc') {
+        return 'COALESCE(CAST(json_extract(a.engagement_json, \'$.total_likes\') AS INTEGER), 0) DESC, a.engagement_rate DESC';
+      }
+      if (sort === 'total_likes_asc') {
+        return 'COALESCE(CAST(json_extract(a.engagement_json, \'$.total_likes\') AS INTEGER), 0) ASC, a.engagement_rate DESC';
+      }
+      return 'a.engagement_rate DESC, a.followers_count DESC';
+    })();
+
+    let countSql: string;
+    let listSql: string;
+    const countParams = [...params];
+    const listParams = [...params];
+
+    if (hasFts) {
+      countSql = `
+        WITH fts_n AS (
+          SELECT handle, bm25(profile_search_fts) AS rnk
+          FROM profile_search_fts
+          WHERE profile_search_fts MATCH ?
+          ORDER BY rnk ASC
+          LIMIT ${cap}
+        )
+        SELECT COUNT(*) AS c FROM profile_search_aux a
+        INNER JOIN fts_n n ON n.handle = a.handle${joinPa}
+        WHERE ${whereSql}`;
+      countParams.unshift(filter.ftsMatchExpr!);
+
+      listSql = `
+        WITH fts_n AS (
+          SELECT handle, bm25(profile_search_fts) AS rnk
+          FROM profile_search_fts
+          WHERE profile_search_fts MATCH ?
+          ORDER BY rnk ASC
+          LIMIT ${cap}
+        )
+        SELECT a.handle FROM profile_search_aux a
+        INNER JOIN fts_n n ON n.handle = a.handle${joinPa}
+        WHERE ${whereSql}
+        ORDER BY ${orderBy}`;
+      listParams.unshift(filter.ftsMatchExpr!);
+    } else {
+      countSql = `SELECT COUNT(*) AS c FROM profile_search_aux a${joinPa} WHERE ${whereSql}`;
+      listSql = `SELECT a.handle FROM profile_search_aux a${joinPa} WHERE ${whereSql} ORDER BY ${orderBy} LIMIT ${cap}`;
+    }
+
+    try {
+      const totalRow = this.db.prepare(countSql).get(...countParams) as { c: number } | undefined;
+      const total = Math.max(0, Math.floor(Number(totalRow?.c ?? 0)));
+      const rows = this.db.prepare(listSql).all(...listParams) as { handle: string }[];
+      const handles = rows
+        .map((r) => String(r.handle ?? '').toLowerCase().replace(/^@/, ''))
+        .filter(Boolean);
+      return { handles, total };
+    } catch (e) {
+      console.warn('[sqlite] globalAuxSearchHandles:', e instanceof Error ? e.message : e);
+      return { handles: [], total: 0 };
+    }
+  }
+
+  /** Linhas auxiliares só para os handles informados (evita `SELECT *` em toda a tabela). */
+  getProfileSearchAuxRowsForHandles(handles: string[]): {
+    handle: string;
+    engagement_json: string;
+    hashtags_json: string;
+    search_blob: string;
+    followers_count: number;
+    engagement_rate: number;
+    avg_likes: number;
+    posts_count: number;
+    account_type: number | null;
+  }[] {
+    if (handles.length === 0) return [];
+    const out: {
+      handle: string;
+      engagement_json: string;
+      hashtags_json: string;
+      search_blob: string;
+      followers_count: number;
+      engagement_rate: number;
+      avg_likes: number;
+      posts_count: number;
+      account_type: number | null;
+    }[] = [];
+    const chunk = 400;
+    const selectSql = `SELECT handle, engagement_json, hashtags_json, search_blob,
+        followers_count, engagement_rate, avg_likes, posts_count, account_type
+      FROM profile_search_aux WHERE handle IN (`;
+    for (let i = 0; i < handles.length; i += chunk) {
+      const slice = handles.slice(i, i + chunk).map((h) => h.toLowerCase().replace(/^@/, ''));
+      const ph = slice.map(() => '?').join(', ');
+      const sql = `${selectSql}${ph})`;
+      const rows = this.db.prepare(sql).all(...slice) as {
+        handle: string;
+        engagement_json: string;
+        hashtags_json: string;
+        search_blob: string;
+        followers_count: number | null;
+        engagement_rate: number | null;
+        avg_likes: number | null;
+        posts_count: number | null;
+        account_type: number | null;
+      }[];
+      for (const r of rows) {
+        out.push({
+          handle: String(r.handle ?? '').toLowerCase().replace(/^@/, ''),
+          engagement_json: r.engagement_json ?? '{}',
+          hashtags_json: r.hashtags_json ?? '[]',
+          search_blob: r.search_blob ?? '',
+          followers_count: Math.max(0, Math.floor(Number(r.followers_count) || 0)),
+          engagement_rate: Number.isFinite(Number(r.engagement_rate)) ? Number(r.engagement_rate) : 0,
+          avg_likes: Math.max(0, Math.floor(Number(r.avg_likes) || 0)),
+          posts_count: Math.max(0, Math.floor(Number(r.posts_count) || 0)),
+          account_type:
+            r.account_type != null && [1, 2, 3].includes(Number(r.account_type)) ? Number(r.account_type) : null,
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Soma facetas numéricas (engajamento, likes, posts, porte, tipo de conta) para um conjunto de handles,
+   * lendo só `profile_search_aux` — alinhado aos mesmos patamares do loop em `profilesSearch`.
+   */
+  aggregateAuxNumericFacetsForHandles(handles: string[]): AuxNumericFacetAggregate | null {
+    const uniq = [...new Set(handles.map((h) => String(h).toLowerCase().replace(/^@/, '')).filter(Boolean))];
+    if (uniq.length === 0) return null;
+    const empty = (): AuxNumericFacetSums => ({
+      engagement_baixa: 0,
+      engagement_media: 0,
+      engagement_alta: 0,
+      avg_likes_baixa: 0,
+      avg_likes_media: 0,
+      avg_likes_alta: 0,
+      posts_baixa: 0,
+      posts_media: 0,
+      posts_alta: 0,
+      followers_nano: 0,
+      followers_micro: 0,
+      followers_medio: 0,
+      followers_macro: 0,
+      followers_elite: 0,
+      followers_celebridade: 0,
+      account_pessoal: 0,
+      account_criador: 0,
+      account_empresa: 0,
+    });
+    const acc = empty();
+    let auxRowCount = 0;
+    const chunk = 500;
+    const sumSql = `
+      SELECT
+        COUNT(*) AS aux_matched,
+        SUM(CASE WHEN COALESCE(engagement_rate, 0) < 1 THEN 1 ELSE 0 END) AS engagement_baixa,
+        SUM(CASE WHEN COALESCE(engagement_rate, 0) >= 1 AND COALESCE(engagement_rate, 0) < 5 THEN 1 ELSE 0 END) AS engagement_media,
+        SUM(CASE WHEN COALESCE(engagement_rate, 0) >= 5 THEN 1 ELSE 0 END) AS engagement_alta,
+        SUM(CASE WHEN COALESCE(avg_likes, 0) < 500 THEN 1 ELSE 0 END) AS avg_likes_baixa,
+        SUM(CASE WHEN COALESCE(avg_likes, 0) >= 500 AND COALESCE(avg_likes, 0) < 5000 THEN 1 ELSE 0 END) AS avg_likes_media,
+        SUM(CASE WHEN COALESCE(avg_likes, 0) >= 5000 THEN 1 ELSE 0 END) AS avg_likes_alta,
+        SUM(CASE WHEN COALESCE(posts_count, 0) < 25 THEN 1 ELSE 0 END) AS posts_baixa,
+        SUM(CASE WHEN COALESCE(posts_count, 0) >= 25 AND COALESCE(posts_count, 0) < 50 THEN 1 ELSE 0 END) AS posts_media,
+        SUM(CASE WHEN COALESCE(posts_count, 0) >= 50 THEN 1 ELSE 0 END) AS posts_alta,
+        SUM(CASE WHEN COALESCE(followers_count, 0) >= 0 AND COALESCE(followers_count, 0) < 30000 THEN 1 ELSE 0 END) AS followers_nano,
+        SUM(CASE WHEN COALESCE(followers_count, 0) >= 30000 AND COALESCE(followers_count, 0) < 100000 THEN 1 ELSE 0 END) AS followers_micro,
+        SUM(CASE WHEN COALESCE(followers_count, 0) >= 100000 AND COALESCE(followers_count, 0) < 250000 THEN 1 ELSE 0 END) AS followers_medio,
+        SUM(CASE WHEN COALESCE(followers_count, 0) >= 250000 AND COALESCE(followers_count, 0) < 500000 THEN 1 ELSE 0 END) AS followers_macro,
+        SUM(CASE WHEN COALESCE(followers_count, 0) >= 500000 AND COALESCE(followers_count, 0) < 1000000 THEN 1 ELSE 0 END) AS followers_elite,
+        SUM(CASE WHEN COALESCE(followers_count, 0) >= 1000000 THEN 1 ELSE 0 END) AS followers_celebridade,
+        SUM(CASE WHEN account_type = 1 THEN 1 ELSE 0 END) AS account_pessoal,
+        SUM(CASE WHEN account_type = 2 THEN 1 ELSE 0 END) AS account_criador,
+        SUM(CASE WHEN account_type = 3 THEN 1 ELSE 0 END) AS account_empresa
+      FROM profile_search_aux WHERE handle IN (`;
+    for (let i = 0; i < uniq.length; i += chunk) {
+      const slice = uniq.slice(i, i + chunk);
+      const ph = slice.map(() => '?').join(', ');
+      try {
+        const row = this.db.prepare(`${sumSql}${ph})`).get(...slice) as Record<string, number | null> | undefined;
+        if (!row) continue;
+        auxRowCount += Math.max(0, Math.floor(Number(row.aux_matched) || 0));
+        for (const k of Object.keys(acc) as (keyof AuxNumericFacetSums)[]) {
+          const v = row[k];
+          acc[k] += Math.max(0, Math.floor(Number(v) || 0));
+        }
+      } catch (e) {
+        console.warn('[sqlite] aggregateAuxNumericFacetsForHandles:', e instanceof Error ? e.message : e);
+        return null;
+      }
+    }
+    return { sums: acc, auxRowCount };
   }
 
   private migrateUserFavoriteCampaignId(): void {

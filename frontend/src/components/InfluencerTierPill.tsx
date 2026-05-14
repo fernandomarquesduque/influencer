@@ -19,10 +19,22 @@ export interface InfluencerTierPillProps {
    * `chip`: mesmo formato dos badges do preview (`.iprv-mini-badge`) — só cores do tier.
    */
   variant?: 'gradient' | 'chip'
+  /** `sm` = padrão compacto; `lg` = destaque (ex.: modal de contratação). */
+  size?: 'sm' | 'lg'
 }
 
+const GRADIENT_SIZE = {
+  sm: { fontSize: 9, padding: '1px 5px', borderRadius: 8 },
+  lg: { fontSize: 12, padding: '4px 10px', borderRadius: 10 },
+} as const
+
 /** Selo de patamar — cores de `influencerTier.ts` (fonte: `@repo/followersSizeBuckets`). */
-export default function InfluencerTierPill({ followers, sizeKey, variant = 'gradient' }: InfluencerTierPillProps) {
+export default function InfluencerTierPill({
+  followers,
+  sizeKey,
+  variant = 'gradient',
+  size = 'sm',
+}: InfluencerTierPillProps) {
   let tier: InfluencerTierLabel
   let tooltip: string | undefined
 
@@ -64,11 +76,11 @@ export default function InfluencerTierPill({ followers, sizeKey, variant = 'grad
     <Tooltip title={tooltip}>
       <span
         style={{
-          fontSize: 9,
+          fontSize: GRADIENT_SIZE[size].fontSize,
           fontWeight: 600,
           color: '#fff',
-          padding: '1px 5px',
-          borderRadius: 8,
+          padding: GRADIENT_SIZE[size].padding,
+          borderRadius: GRADIENT_SIZE[size].borderRadius,
           flexShrink: 0,
           background: getInfluencerTierGradientCss(tier),
           lineHeight: 1.2,

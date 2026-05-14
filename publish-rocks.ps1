@@ -1,4 +1,4 @@
-# Publish influencer (RocksDB): só crawl\data\rocksdb, mesma estrutura. Sem frontend, sem backend.
+# Publish influencer (RocksDB): só backend\data\rocksdb, mesma estrutura. Sem frontend, sem backend.
 # Uso: .\publish-rocks.ps1
 # Para publicar só o banco e colar no servidor onde já está o site e a API.
 
@@ -20,21 +20,21 @@ if (Test-Path $PublishRoot) {
 New-Item -ItemType Directory -Path $PublishRoot -Force | Out-Null
 Write-Host "Pasta limpa; criada de novo." -ForegroundColor Gray
 
-# 2) Copiar só crawl\data\rocksdb mantendo a estrutura (Publish\influencer\crawl\data\rocksdb)
-$rocksdbSrc = Join-Path $ProjectRoot "crawl\data\rocksdb"
-$rocksdbDest = Join-Path $PublishRoot "crawl\data\rocksdb"
+# 2) Copiar só backend\data\rocksdb mantendo a estrutura (Publish\influencer\backend\data\rocksdb)
+$rocksdbSrc = Join-Path $ProjectRoot "backend\data\rocksdb"
+$rocksdbDest = Join-Path $PublishRoot "backend\data\rocksdb"
 if (Test-Path $rocksdbSrc) {
     New-Item -ItemType Directory -Path $rocksdbDest -Force | Out-Null
-    Write-Host "Copiando crawl\data\rocksdb (banco) para $rocksdbDest ..." -ForegroundColor Yellow
+    Write-Host "Copiando backend\data\rocksdb (banco) para $rocksdbDest ..." -ForegroundColor Yellow
     Get-ChildItem -Path $rocksdbSrc -Force | ForEach-Object {
         Copy-Item -Path $_.FullName -Destination $rocksdbDest -Recurse -Force
     }
 } else {
-    Write-Host "crawl\data\rocksdb nao existe; pulando." -ForegroundColor Gray
+    Write-Host "backend\data\rocksdb nao existe; pulando." -ForegroundColor Gray
 }
 
 Write-Host ""
 Write-Host "=== Pronto ===" -ForegroundColor Green
 Write-Host "Pasta: $PublishRoot" -ForegroundColor White
-Write-Host "  - crawl\data\rocksdb: banco (só esta pasta). Sem frontend; colar no servidor." -ForegroundColor Gray
+Write-Host "  - backend\data\rocksdb: banco (só esta pasta). Sem frontend; colar no servidor." -ForegroundColor Gray
 Write-Host ""

@@ -135,7 +135,7 @@ export default function MyCampaigns() {
         </Title>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button
-            onClick={() => navigate('/app/campaigns/all')}
+            onClick={() => navigate('/search')}
             title="Base completa"
             aria-label="Base completa"
             style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 12px' }}

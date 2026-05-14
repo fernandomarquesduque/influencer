@@ -1,5 +1,5 @@
 /**
- * Espelho de `crawl/src/utils/slimPost.ts` (buildNormalizedPost) — mantenha alinhado ao alterar ingest.
+ * Espelho de `backend/src/utils/slimPost.ts` (buildNormalizedPost) — mantenha alinhado ao alterar ingest.
  * Usado no coletor para reduzir heap antes do POST `collector-ingest-full` (nós GraphQL brutos são enormes).
  */
 

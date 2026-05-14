@@ -1,7 +1,7 @@
 /**
  * Taxonomia fechada de mainCategory (macro, uma palavra) + subCategories → main (V2).
  * Prioridade: subCategories (mapa fechado) → bio/contexto (aliases + sinais) → snap do LLM.
- * Duplicado em crawl/src/lib/mainCategoryTaxonomy.ts — altere nos dois arquivos.
+ * Duplicado em qualify/src/mainCategoryTaxonomy.ts — altere nos dois arquivos.
  */
 
 export const MAIN_CATEGORY_CANONICAL_LABELS = [
@@ -796,6 +796,10 @@ const SUBCATEGORY_TO_MAIN_RAW: Record<string, MainCategoryCanonical> = {
   posparto: 'Maternidade',
   puericultura: 'Maternidade',
   cha_revelacao: 'Maternidade',
+  paternidade: 'Maternidade',
+  'maternidade & paternidade': 'Maternidade',
+  'maternidade e paternidade': 'Maternidade',
+  'maternidade/paternidade': 'Maternidade',
 
   // Pets
   cao: 'Pets',
@@ -2233,6 +2237,18 @@ export function snapMainCategoryToTaxonomy(raw: string): MainCategoryCanonical |
 
   const r2 = reuseMainCategoryLabel(nfc, pool, MAIN_CATEGORY_SNAP_SCORE_LOW);
   if (r2) return r2 as MainCategoryCanonical;
+
+  /** Rótulos compostos do LLM ("Maternidade & Paternidade") — tenta cada segmento antes do fallback. */
+  const compoundParts = nfc
+    .split(/\s*(?:&|\/|,|\+|·|\be\b|\band\b)\s*/i)
+    .map((p) => p.trim())
+    .filter((p) => p.length >= 2);
+  if (compoundParts.length > 1) {
+    for (const part of compoundParts) {
+      const partSnap = snapMainCategoryToTaxonomy(part);
+      if (partSnap && partSnap !== MAIN_CATEGORY_FALLBACK) return partSnap;
+    }
+  }
 
   return MAIN_CATEGORY_FALLBACK;
 }
