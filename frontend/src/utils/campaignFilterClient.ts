@@ -350,13 +350,16 @@ function computeFacetBoostScore(item: ProfileListItem, query: Partial<ProfilesSe
 
 function postToProfileListItemForBoost(post: PostItem): ProfileListItem {
   const inf = post.influencer
-  const handle = String(post.profile_handle ?? inf?.username ?? '')
+  const profileRef = (post.profile_ref ?? '').trim()
+  const handle = String(post.profile_handle ?? inf?.username ?? profileRef)
     .replace(/^@/, '')
     .trim()
+  const key = profileRef || handle
   const fc = inf?.followers_count
   return {
-    key: handle,
-    handle,
+    key,
+    profile_ref: key,
+    handle: handle || undefined,
     followers_count: typeof fc === 'number' && Number.isFinite(fc) ? fc : 0,
     llm: inf?.llm as ProfileListItem['llm'],
     engagement: {
@@ -500,8 +503,8 @@ export function filterAndSortCampaignItems(
   const postHandles = options?.postCaptionMatchHandles
   if (postHandles != null) {
     list = list.filter((i) => {
-      const h = (i.handle ?? i.key ?? '').toString().toLowerCase().replace(/^@/, '').trim()
-      return !!h && postHandles.has(h)
+      const ref = (i.profile_ref ?? i.key ?? '').toString().trim()
+      return !!ref && postHandles.has(ref)
     })
   } else if (q) {
     list = list.filter((i) => {
@@ -573,17 +576,17 @@ export function filterAndSortCampaignItems(
   return list
 }
 
-/** Um perfil por handle a partir dos posts da galeria Origem (facets da busca por legenda). */
+/** Um perfil por `profile_ref` a partir dos posts da galeria Origem (facets da busca por legenda). */
 export function profileListItemsFromOriginPosts(posts: PostItem[]): ProfileListItem[] {
-  const byHandle = new Map<string, ProfileListItem>()
+  const byRef = new Map<string, ProfileListItem>()
   for (const post of posts) {
-    const raw = post.influencer?.username ?? post.profile_handle ?? ''
-    const handle = String(raw).replace(/^@/, '').trim().toLowerCase()
-    if (!handle || byHandle.has(handle)) continue
+    const ref = (post.profile_ref ?? '').trim()
+    if (!ref || byRef.has(ref)) continue
     const inf = post.influencer
-    byHandle.set(handle, {
-      key: handle,
-      handle,
+    byRef.set(ref, {
+      key: ref,
+      profile_ref: ref,
+      avatar_url: typeof post.avatar_url === 'string' ? post.avatar_url : undefined,
       full_name: inf?.full_name,
       followers_count: inf?.followers_count ?? 0,
       llm: inf?.llm as ProfileListItem['llm'],
@@ -599,7 +602,7 @@ export function profileListItemsFromOriginPosts(posts: PostItem[]): ProfileListI
       },
     })
   }
-  return [...byHandle.values()]
+  return [...byRef.values()]
 }
 
 export function computeFacetsFromItems(items: ProfileListItem[]): ProfilesSearchFacets {

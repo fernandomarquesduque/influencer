@@ -1,0 +1,59 @@
+.agency-login-panel-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin-top: 18px;
+  gap: 0;
+}
+
+.agency-login-panel-footer:has(> .agency-login-panel-footer__link:only-of-type) {
+  margin-top: 16px;
+}
+
+.agency-login-panel-footer__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #7c3aed;
+  text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.agency-login-panel-footer__link:hover {
+  opacity: 0.85;
+  color: #6226a7;
+}
+
+.agency-login-panel-footer__divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 14px 0;
+}
+
+.agency-login-panel-footer__divider::before,
+.agency-login-panel-footer__divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.agency-login-panel-footer__divider span {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9ca3af;
+  text-transform: lowercase;
+}

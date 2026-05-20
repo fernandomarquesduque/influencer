@@ -13,7 +13,6 @@ import {
   type PostItem,
 } from '../api'
 
-const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh } = t
 
 const cardBaseStyle: React.CSSProperties = {
@@ -31,7 +30,7 @@ const PROGRESS_TICK_MS = 250
 export interface PrivateProfileMessageProps {
   /** Perfil com is_private: true. Toda a lógica de exibição e retry fica encapsulada aqui. */
   profile: ProfileItem
-  handle: string
+  profileRef: string
   isAdm?: boolean
   isMobile?: boolean
   /** Chamado quando o retry atualiza perfil/posts (ex.: após aceitar solicitação). O pai atualiza estado e re-renderiza. */
@@ -50,7 +49,7 @@ export interface PrivateProfileMessageProps {
  */
 export function PrivateProfileMessage({
   profile,
-  handle,
+  profileRef,
   isAdm = false,
   isMobile = false,
   onProfileUpdate,
@@ -60,13 +59,11 @@ export function PrivateProfileMessage({
   const [timeoutError, setTimeoutError] = useState(false)
 
   const userData = profile?.data?.user as Record<string, unknown> | undefined
-  const displayHandle = (profile?.handle ?? profile?.username ?? profile?.key ?? handle ?? '') as string
   const name = profile?.full_name ?? (userData?.full_name != null ? String(userData.full_name) : undefined)
   const profilePic = proxyImageUrl(getProfilePicUrl(profile)) || undefined
-  const atHandle = displayHandle ? `@${displayHandle.replace(/^@/, '')}` : ''
 
   const onRetry = async () => {
-    const h = handle?.replace(/^@/, '').trim()
+    const h = profileRef?.trim()
     if (!h || retrying) return
     setRetrying(true)
     setRetryProgress(0)
@@ -148,8 +145,8 @@ export function PrivateProfileMessage({
             {profilePic ? (
               <ProfileAvatar
                 src={profilePic}
-                handle={displayHandle}
-                alt={name || atHandle || 'Foto do perfil'}
+                handle={profileRef}
+                alt={name || 'Foto do perfil'}
                 size={avatarSize}
                 border={isMobile ? '3px solid rgba(255,255,255,0.9)' : '4px solid rgba(255,255,255,0.9)'}
                 shadow={sh}
@@ -176,9 +173,6 @@ export function PrivateProfileMessage({
                 <Typography.Title level={5} style={{ margin: 0, color: '#fff', fontWeight: 700, fontSize: isMobile ? 15 : undefined }}>
                   {name}
                 </Typography.Title>
-              )}
-              {atHandle && (
-                <Text style={{ fontSize: isMobile ? 14 : 15, color: 'rgba(255,255,255,0.95)' }}>{atHandle}</Text>
               )}
             </div>
           </div>

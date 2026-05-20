@@ -120,7 +120,6 @@ export default function DiscoveryHomeHero({
 
   const goToInfluencerLanding = () => {
     trackAppUiClick('hero_sou_influenciador', { target_path: INFLUENCER_LANDING_PATH })
-    window.location.assign(INFLUENCER_LANDING_PATH)
   }
 
   return (
@@ -204,7 +203,12 @@ export default function DiscoveryHomeHero({
             </div>
 
             {showInfluencerPanel ? (
-              <aside className="discovery-influencer-panel" aria-labelledby="discovery-influencer-panel-title">
+              <a
+                href={INFLUENCER_LANDING_PATH}
+                className="discovery-influencer-panel"
+                aria-labelledby="discovery-influencer-panel-title"
+                onClick={goToInfluencerLanding}
+              >
                 <div className="discovery-influencer-panel__icon" aria-hidden>
                   <InstagramOutlined />
                 </div>
@@ -217,11 +221,11 @@ export default function DiscoveryHomeHero({
                     Ative seu perfil, gere seu media kit e apareça na vitrine para marcas da sua região.
                   </p>
                 </div>
-                <button type="button" className="discovery-influencer-panel__cta" onClick={goToInfluencerLanding}>
+                <span className="discovery-influencer-panel__cta">
                   Ativar meu perfil
                   <ArrowRightOutlined aria-hidden />
-                </button>
-              </aside>
+                </span>
+              </a>
             ) : null}
           </>
         ) : null}

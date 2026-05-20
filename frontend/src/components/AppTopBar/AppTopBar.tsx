@@ -162,7 +162,7 @@ export default function AppTopBar() {
         onClick: () => {
           trackAppUiClick('menu_logout')
           logout()
-          navigate(SEARCH_ROUTE_PATH)
+          window.location.href = SEARCH_ROUTE_PATH
         },
       },
     ]

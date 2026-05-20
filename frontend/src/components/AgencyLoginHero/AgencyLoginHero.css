@@ -1,0 +1,13 @@
+.agency-login-hero.influencer-login-panel {
+  height: 100%;
+  min-height: 0;
+  justify-content: center;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+@media (max-width: 900px) {
+  .agency-login-left-panel {
+    display: none !important;
+  }
+}

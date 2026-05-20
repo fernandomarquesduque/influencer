@@ -15,7 +15,8 @@ export function getLlmMainCategoryLabel(item: ProfileListItem): string | null {
 /**
  * Categoria principal LLM para o hero do detalhe do perfil (mesma lógica do painel: qualificação presente mesmo se status !== done).
  */
-export function getLlmMainCategoryLabelForDetailHero(profile: ProfileItem | null | undefined): string | null {
+/** Perfil com qualificação LLM normalizada (mesma regra do hero de detalhe). */
+export function profileItemForLlmBadges(profile: ProfileItem | null | undefined): ProfileListItem | null {
   if (!profile) return null
   const rec = profile as unknown as Record<string, unknown>
   const llmRaw = rec.llm
@@ -23,11 +24,30 @@ export function getLlmMainCategoryLabelForDetailHero(profile: ProfileItem | null
   const lo = llmRaw as Record<string, unknown>
   const qRaw = lo.qualification
   if (qRaw == null || typeof qRaw !== 'object' || Array.isArray(qRaw)) return null
-  const q = qRaw as Record<string, unknown>
-  const item = {
+  const ref = String(profile.profile_ref ?? profile.key ?? '').trim()
+  const fc = profile.followers_count
+  return {
     ...(profile as unknown as ProfileListItem),
-    llm: { ...lo, status: 'done', qualification: q },
+    key: ref || 'profile',
+    profile_ref: ref || 'profile',
+    followers_count: typeof fc === 'number' && Number.isFinite(fc) ? fc : 0,
+    llm: { ...lo, status: 'done', qualification: qRaw },
+    engagement: (profile as unknown as ProfileListItem).engagement ?? {
+      posts_count: 0,
+      total_likes: 0,
+      total_comments: 0,
+      total_views: 0,
+      avg_likes: 0,
+      avg_comments: 0,
+      avg_views: 0,
+      engagement_rate: 0,
+    },
   } as ProfileListItem
+}
+
+export function getLlmMainCategoryLabelForDetailHero(profile: ProfileItem | null | undefined): string | null {
+  const item = profileItemForLlmBadges(profile)
+  if (!item) return null
   return getLlmMainCategoryLabel(item)
 }
 

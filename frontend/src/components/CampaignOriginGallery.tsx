@@ -8,14 +8,13 @@ import {
   fetchCampaignPostMatches,
   getPostCoverDisplayUrl,
   getPostStablePreviewUrl,
-  proxyImageUrl,
-  proxyImageUrlForDisplay,
   type PostItem,
   type PostsResponse,
   type MediaKind,
   type ProfilesSearchQuery,
   type ProfileListItem,
 } from '../api'
+import { resolveMediaUrl } from '../constants/profilePaths'
 import { PostPreviewMedia } from './PostPreviewCard'
 import ProfileAvatar from './ProfileAvatar'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
@@ -172,37 +171,29 @@ function influencerLlmDescriptionText(post: PostItem): string | null {
 function influencerCardHeadline(post: PostItem, bar: ReturnType<typeof influencerBarData>): string {
   const text = influencerLlmDescriptionText(post)
   if (text) return text
-  const h = bar.handleKey
-  return h !== '—' ? `@${h}` : '—'
+  const name = bar.displayName
+  return name !== '—' ? name : '—'
 }
 
 function influencerBarData(post: PostItem): {
+  profileRef: string
   handleKey: string
   /** Nome de exibição: `full_name` do perfil (API) ou fallback no username sem @. */
   displayName: string
   avatarSrc?: string
   avatarStable?: string
 } {
-  const raw = post.profile_handle ?? post.influencer?.username ?? ''
-  const h = raw.replace(/^@/, '').trim()
+  const profileRef = (post.profile_ref ?? '').trim()
   const inf = post.influencer
   const fullNameRaw = typeof inf?.full_name === 'string' ? inf.full_name.trim() : ''
-  const picRaw = inf?.profile_pic_url
-  const stable =
-    typeof inf?.stable_profile_pic_url === 'string' && inf.stable_profile_pic_url.startsWith('http')
-      ? inf.stable_profile_pic_url
-      : undefined
-  let avatarSrc: string | undefined
-  if (picRaw) {
-    avatarSrc = (proxyImageUrlForDisplay(picRaw) ?? proxyImageUrl(picRaw)) || undefined
-  } else if (stable) {
-    avatarSrc = (proxyImageUrlForDisplay(stable) ?? proxyImageUrl(stable)) || undefined
-  }
+  const avatarPath = typeof post.avatar_url === 'string' ? post.avatar_url.trim() : ''
+  const avatarSrc = avatarPath ? resolveMediaUrl(avatarPath) : undefined
   return {
-    handleKey: h || '—',
-    displayName: fullNameRaw || h || '—',
+    profileRef,
+    handleKey: profileRef ? '·' : '—',
+    displayName: fullNameRaw || '—',
     avatarSrc,
-    avatarStable: stable,
+    avatarStable: undefined,
   }
 }
 
@@ -344,7 +335,7 @@ export default function CampaignOriginGallery({
   viewportCenterShiftX?: number
   profileFilters?: Partial<ProfilesSearchQuery>
   facetBoostQuery?: Partial<ProfilesSearchQuery>
-  onOpenInfluencerDetail?: (handle: string, snapshot?: InfluencerConnectSnapshot) => void
+  onOpenInfluencerDetail?: (profileRef: string, snapshot?: InfluencerConnectSnapshot) => void
   /**
    * Com termo de busca: só dispara post-matches quando true (ex.: após handlesOnly no pai),
    * para não duplicar a mesma busca pesada no backend.
@@ -385,13 +376,14 @@ export default function CampaignOriginGallery({
   }, [facetBoostSortKey, facetBoostQuery])
 
   const runOpenInfluencerDetail = useCallback(
-    (handle: string, snapshot?: InfluencerConnectSnapshot) => {
-      if (!handle || handle === '—') return
+    (profileRef: string, snapshot?: InfluencerConnectSnapshot) => {
+      const ref = (profileRef ?? '').trim()
+      if (!ref) return
       if (onOpenInfluencerDetail) {
-        onOpenInfluencerDetail(handle, snapshot)
+        onOpenInfluencerDetail(ref, snapshot)
         return
       }
-      const path = `/app/campaigns/${campaignId}/influencer/${encodeURIComponent(handle)}`
+      const path = `/app/campaigns/${campaignId}/influencer/${encodeURIComponent(ref)}`
       const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
       window.open(url, '_blank', 'noopener,noreferrer')
     },
@@ -450,9 +442,9 @@ export default function CampaignOriginGallery({
       onLoadedPostsForFacetsRef.current?.([])
       return
     }
-    if (loading || items.length === 0) return
+    if (items.length === 0) return
     onLoadedPostsForFacetsRef.current?.(items)
-  }, [items, loading, hasSearchTerm])
+  }, [items, hasSearchTerm])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -558,7 +550,7 @@ export default function CampaignOriginGallery({
                 const handle = bar.handleKey
                 const headline = influencerCardHeadline(post, bar)
                 const ct = (post.content_type || 'post') as MediaKind
-                const openInfluencerDetail = () => runOpenInfluencerDetail(handle, postToConnectSnapshot(post))
+                const openInfluencerDetail = () => runOpenInfluencerDetail(bar.profileRef, postToConnectSnapshot(post))
                 const followersCount = post.influencer?.followers_count
                 const mediaShellStyle: CSSProperties = {
                   position: 'relative',
@@ -668,15 +660,15 @@ export default function CampaignOriginGallery({
                 const fc = post.influencer?.followers_count
                 const followersLabel = formatFollowersShort(fc)
                 const postsPerWeekLabel = postsPerWeek != null ? `${formatPostsPerWeekShort(postsPerWeek)} posts/sem` : null
-                const openInfluencerDetail = () => runOpenInfluencerDetail(handle, postToConnectSnapshot(post))
+                const openInfluencerDetail = () => runOpenInfluencerDetail(bar.profileRef, postToConnectSnapshot(post))
                 return (
                   <div
                     key={post.key}
-                    role={handle !== '—' ? 'button' : undefined}
-                    tabIndex={handle !== '—' ? 0 : undefined}
+                    role={bar.profileRef ? 'button' : undefined}
+                    tabIndex={bar.profileRef ? 0 : undefined}
                     onClick={openInfluencerDetail}
                     onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
-                    aria-label={handle !== '—' ? `Ver perfil @${handle}` : undefined}
+                    aria-label={bar.profileRef ? 'Ver perfil do criador' : undefined}
                     className="campaign-origin-list-card"
                     style={{
                       borderRadius: 14,

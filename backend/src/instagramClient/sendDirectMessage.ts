@@ -8,6 +8,82 @@ const INSTAGRAM_ORIGIN = 'https://www.instagram.com';
 const DIRECT_NEW_URL = `${INSTAGRAM_ORIGIN}/direct/new/`;
 const DEBUG = process.env.DM_DEBUG === 'true';
 
+export type DmSendOptions = {
+  skipFollowerListCheck?: boolean;
+  /** Sem delays humanos, timeouts menores, uma tentativa de envio (cadastro/dev). */
+  fast?: boolean;
+};
+
+function dmDelay(minMs: number, maxMs: number, fast?: boolean): Promise<void> {
+  if (fast) return Promise.resolve();
+  return randomDelay(minMs, maxMs);
+}
+
+function dmTimeout(ms: number, fast?: boolean): number {
+  if (!fast) return ms;
+  // fast: ainda precisa tempo para UI do Direct montar (0.35x quebrava o campo de busca)
+  if (ms >= 2500) return 2000;
+  if (ms >= 1500) return 1200;
+  return Math.max(600, Math.round(ms * 0.55));
+}
+
+const DIRECT_SEARCH_SELECTORS = [
+  'div[role="dialog"] input[name="queryBox"]',
+  'div[role="dialog"] input[placeholder*="Pesquisar"]',
+  'div[role="dialog"] input[placeholder*="Search"]',
+  'input[name="queryBox"]',
+  'input[placeholder*="Pesquisar"]',
+  'input[placeholder*="Search"]',
+  'input[placeholder*="search"]',
+  'input[aria-label*="Search"]',
+  'input[aria-label*="Pesquisar"]',
+];
+
+async function openDirectComposer(page: Page, t0: number, fast?: boolean, modalAttempts = 3): Promise<void> {
+  try {
+    const sendMessageBtn = page
+      .locator('div[role="button"]:has-text("Enviar mensagem"), div[role="button"]:has-text("Send message")')
+      .first();
+    await sendMessageBtn.click({ timeout: dmTimeout(1200, fast) });
+    log('clicado em Enviar mensagem (tela vazia)');
+    await dmDelay(80, 200, fast);
+    await dismissModals(page, modalAttempts, fast);
+  } catch {
+    // já no composer ou botão com outro layout
+  }
+}
+
+async function findDirectSearchInput(
+  page: Page,
+  t0: number,
+  fast?: boolean
+): Promise<ReturnType<Page['locator']> | null> {
+  const perSelector = dmTimeout(2500, fast);
+  for (let round = 0; round < (fast ? 3 : 2); round++) {
+    if (round > 0) {
+      logStep(t0, `Campo busca: nova tentativa ${round + 1}...`);
+      await openDirectComposer(page, t0, fast, fast ? 1 : 3);
+      if (fast) await page.waitForTimeout(400);
+      else await randomDelay(200, 400);
+    }
+    for (let i = 0; i < DIRECT_SEARCH_SELECTORS.length; i++) {
+      const sel = DIRECT_SEARCH_SELECTORS[i];
+      const el = page.locator(sel).first();
+      if ((await el.count()) === 0) continue;
+      try {
+        const tWait = Date.now();
+        await el.waitFor({ state: 'visible', timeout: perSelector });
+        logStep(t0, `Campo busca seletor ${i + 1}/${DIRECT_SEARCH_SELECTORS.length} OK em ${Date.now() - tWait}ms`);
+        log(`campo de busca encontrado: ${sel}`);
+        return el;
+      } catch {
+        logStep(t0, `Campo busca seletor ${i + 1}/${DIRECT_SEARCH_SELECTORS.length} falhou`);
+      }
+    }
+  }
+  return null;
+}
+
 function log(msg: string): void {
   if (DEBUG) console.log(`[sendDM] ${msg}`);
 }
@@ -18,7 +94,7 @@ function logStep(t0: number, msg: string): void {
 }
 
 /** Fecha modais do Instagram (notificações "Ativar notificações", salvar login, etc.) que bloqueiam cliques. */
-async function dismissModals(page: Page, maxAttempts = 3): Promise<void> {
+async function dismissModals(page: Page, maxAttempts = 3, fast?: boolean): Promise<void> {
   const notNowSelectors = [
     // Modal "Ativar notificações" (container _a9-z com botão "Agora não")
     'div._a9-z button._a9_1',
@@ -38,11 +114,11 @@ async function dismissModals(page: Page, maxAttempts = 3): Promise<void> {
       try {
         const btn = page.locator(sel).first();
         if ((await btn.count()) > 0) {
-          await btn.waitFor({ state: 'visible', timeout: 1000 }).catch(() => {});
-          await btn.click({ timeout: 2000 });
+          await btn.waitFor({ state: 'visible', timeout: dmTimeout(1000, fast) }).catch(() => {});
+          await btn.click({ timeout: dmTimeout(2000, fast) });
           log(`modal fechado: ${sel}`);
           closed = true;
-          await randomDelay(150, 300);
+          await dmDelay(150, 300, fast);
           break;
         }
       } catch {
@@ -66,8 +142,9 @@ export async function sendDirectMessage(
   handle: string,
   message: string,
   imagePath?: string,
-  options?: { skipFollowerListCheck?: boolean }
+  options?: DmSendOptions
 ): Promise<{ ok: boolean; error?: string }> {
+  const fast = options?.fast === true;
   const cleanHandle = handle.replace(/^@/, '').trim().toLowerCase();
   if (!cleanHandle) {
     return { ok: false, error: 'Handle é obrigatório' };
@@ -79,7 +156,7 @@ export async function sendDirectMessage(
 
   const t0 = Date.now();
   logStep(t0, `Iniciando para @${cleanHandle}`);
-  if (!options?.skipFollowerListCheck) {
+  if (!options?.skipFollowerListCheck && !fast) {
     const myUsername = (process.env.INSTAGRAM_PERFIL ?? process.env.INSTAGRAM_USER ?? '').toString().trim();
     if (!myUsername) {
       return { ok: false, error: 'Configure INSTAGRAM_PERFIL ou INSTAGRAM_USER para verificar lista de seguidores.' };
@@ -96,10 +173,12 @@ export async function sendDirectMessage(
   try {
     log(`abrindo ${DIRECT_NEW_URL}`);
     logStep(t0, 'Abrindo /direct/new/...');
-    const directTimeout = Math.max(8000, parseInt(process.env.DIRECT_PAGE_TIMEOUT_MS ?? '12000', 10) || 12000);
+    const directTimeout = fast
+      ? 8000
+      : Math.max(8000, parseInt(process.env.DIRECT_PAGE_TIMEOUT_MS ?? '12000', 10) || 12000);
     await page.goto(DIRECT_NEW_URL, { waitUntil: 'domcontentloaded', timeout: directTimeout });
     logStep(t0, 'Página direct carregada.');
-    await randomDelay(200, 400);
+    await dmDelay(200, 400, fast);
 
     const currentUrl = page.url();
     if (currentUrl.includes('/accounts/login') || currentUrl.includes('/challenge/')) {
@@ -108,61 +187,25 @@ export async function sendDirectMessage(
     }
 
     logStep(t0, 'Fechando modais...');
-    await dismissModals(page);
-    await randomDelay(100, 250);
-    await dismissModals(page);
+    const modalAttempts = fast ? 1 : 3;
+    await dismissModals(page, modalAttempts, fast);
+    await dmDelay(100, 250, fast);
+    if (!fast) await dismissModals(page, modalAttempts, fast);
 
+    if (fast) await page.waitForTimeout(450);
     logStep(t0, 'Procurando botão Enviar mensagem ou campo de busca...');
-    // Tela "Suas mensagens" vazia: clicar em "Enviar mensagem" para abrir o composer (campo de busca)
-    try {
-      const sendMessageBtn = page.locator('div[role="button"]:has-text("Enviar mensagem"), div[role="button"]:has-text("Send message")').first();
-      await sendMessageBtn.click({ timeout: 1200 });
-      log('clicado em Enviar mensagem (tela vazia)');
-      await randomDelay(80, 200);
-      await dismissModals(page);
-    } catch {
-      // Não está na tela vazia ou já no composer
-    }
+    await openDirectComposer(page, t0, fast, modalAttempts);
 
-    // Modal "Nova mensagem" (role=dialog) – campo de busca "Para:" / "To:"
-    const searchSelectors = [
-      'div[role="dialog"] input[name="queryBox"]',
-      'div[role="dialog"] input[placeholder*="Pesquisar"]',
-      'div[role="dialog"] input[placeholder*="Search"]',
-      'input[name="queryBox"]',
-      'input[placeholder*="Pesquisar"]',
-      'input[placeholder*="Search"]',
-      'input[placeholder*="search"]',
-      'input[aria-label*="Search"]',
-      'input[aria-label*="Pesquisar"]',
-    ];
-    let searchInput: ReturnType<Page['locator']> | null = null;
-    for (let i = 0; i < searchSelectors.length; i++) {
-      const sel = searchSelectors[i];
-      const el = page.locator(sel).first();
-      if ((await el.count()) > 0) {
-        try {
-          const tWait = Date.now();
-          await el.waitFor({ state: 'visible', timeout: 2500 });
-          logStep(t0, `Campo busca seletor ${i + 1}/${searchSelectors.length} OK em ${Date.now() - tWait}ms`);
-          searchInput = el;
-          log(`campo de busca encontrado: ${sel}`);
-          break;
-        } catch {
-          logStep(t0, `Campo busca seletor ${i + 1}/${searchSelectors.length} falhou`);
-          continue;
-        }
-      }
-    }
+    const searchInput = await findDirectSearchInput(page, t0, fast);
     if (!searchInput) {
       logStep(t0, 'Campo de busca não encontrado.');
       return { ok: false, error: 'Não foi possível encontrar o campo de busca do Direct.' };
     }
     logStep(t0, 'Campo de busca encontrado, digitando handle...');
     await searchInput.click();
-    await randomDelay(50, 120);
+    await dmDelay(50, 120, fast);
     await searchInput.fill(cleanHandle);
-    await randomDelay(200, 400);
+    await dmDelay(200, 400, fast);
 
     logStep(t0, 'Clicando no resultado do usuário...');
     // Clicar no resultado do usuário (sugestões dentro do dialog)
@@ -181,7 +224,7 @@ export async function sendDirectMessage(
       try {
         const el = page.locator(sel).first();
         const tWait = Date.now();
-        await el.waitFor({ state: 'visible', timeout: 2500 });
+        await el.waitFor({ state: 'visible', timeout: dmTimeout(2500, fast) });
         logStep(t0, `Resultado usuário seletor ${i + 1}/${userResultSelectors.length} visível em ${Date.now() - tWait}ms`);
         await el.click();
         userClicked = true;
@@ -198,41 +241,41 @@ export async function sendDirectMessage(
       return { ok: false, error: `Usuário @${cleanHandle} não encontrado na busca. Verifique o nickname ou se já existe conversa.` };
     }
     logStep(t0, 'Usuário selecionado, avançando para conversa...');
-    await randomDelay(100, 200);
+    await dmDelay(100, 200, fast);
 
     // Botão "Conversa" / "Chat" no dialog para avançar para o composer da mensagem
     try {
       const chatBtn = page.locator('div[role="dialog"] div[role="button"]:has-text("Conversa"), div[role="dialog"] div[role="button"]:has-text("Chat")').first();
-      await chatBtn.click({ timeout: 2500 });
+      await chatBtn.click({ timeout: dmTimeout(2500, fast) });
       log('clicado em Conversa');
-      await randomDelay(80, 180);
+      await dmDelay(80, 180, fast);
     } catch {
       // Pode já ter avançado ou o botão ter outro texto
     }
 
     // Esperar a conversa carregar e fechar modais de novo
-    await randomDelay(150, 350);
-    logStep(t0, 'Aguardando URL /direct/ (timeout 4s)...');
+    await dmDelay(150, 350, fast);
+    logStep(t0, `Aguardando URL /direct/ (timeout ${fast ? '1.5' : '4'}s)...`);
     try {
       const tUrl = Date.now();
-      await page.waitForURL(/\/direct\//, { timeout: 4000 }).catch(() => { });
+      await page.waitForURL(/\/direct\//, { timeout: fast ? 1500 : 4000 }).catch(() => { });
       logStep(t0, `URL /direct/ OK em ${Date.now() - tUrl}ms`);
     } catch {
       // ignore
     }
-    await dismissModals(page);
-    await randomDelay(120, 250);
+    await dismissModals(page, modalAttempts, fast);
+    await dmDelay(120, 250, fast);
 
     // Anexar imagem se fornecida (input file no composer do Direct)
     if (imagePath) {
       logStep(t0, 'Anexando imagem...');
       try {
         const fileInput = page.locator('input[type="file"]').first();
-        await fileInput.waitFor({ state: 'attached', timeout: 5000 }).catch(() => null);
+        await fileInput.waitFor({ state: 'attached', timeout: dmTimeout(5000, fast) }).catch(() => null);
         if ((await fileInput.count()) > 0) {
           await fileInput.setInputFiles(imagePath);
           logStep(t0, 'Imagem anexada.');
-          await randomDelay(500, 1000);
+          await dmDelay(500, 1000, fast);
         } else {
           logStep(t0, 'Input file não encontrado; enviando só o texto.');
         }
@@ -266,19 +309,19 @@ export async function sendDirectMessage(
       'svg[aria-label="Send"]',
     ];
 
-    const maxSendAttempts = 3;
+    const maxSendAttempts = fast ? 1 : 3;
     let lastError: string | undefined;
 
     for (let attempt = 1; attempt <= maxSendAttempts; attempt++) {
       logStep(t0, `Tentativa envio ${attempt}/${maxSendAttempts}`);
       log(`tentativa de envio ${attempt}/${maxSendAttempts}`);
       if (attempt > 1) {
-        await dismissModals(page);
-        await randomDelay(200, 400);
+        await dismissModals(page, modalAttempts, fast);
+        await dmDelay(200, 400, fast);
       }
 
       let messageInput: ReturnType<Page['locator']> | null = null;
-      const msgTimeout = attempt === 1 ? 5000 : 3000;
+      const msgTimeout = dmTimeout(attempt === 1 ? 5000 : 3000, fast);
       for (let i = 0; i < messageInputSelectors.length; i++) {
         const sel = messageInputSelectors[i];
         const el = page.locator(sel).first();
@@ -306,16 +349,16 @@ export async function sendDirectMessage(
         logStep(t0, 'Clicando no campo e preenchendo mensagem...');
         const tFill = Date.now();
         await messageInput.click();
-        await randomDelay(30, 80);
+        await dmDelay(30, 80, fast);
         if (textToSend.trim()) {
           try {
             await messageInput.fill(textToSend);
           } catch {
-            await messageInput.pressSequentially(textToSend, { delay: 15 });
+            await messageInput.pressSequentially(textToSend, { delay: fast ? 0 : 15 });
           }
         }
         logStep(t0, `Mensagem preenchida em ${Date.now() - tFill}ms`);
-        await randomDelay(40, 100);
+        await dmDelay(40, 100, fast);
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
         logStep(t0, `Erro ao preencher: ${lastError}`);
@@ -323,7 +366,7 @@ export async function sendDirectMessage(
       }
 
       // Botão Enviar fica habilitado logo após digitar; espera curta e clica
-      await randomDelay(50, 120);
+      await dmDelay(50, 120, fast);
       logStep(t0, 'Procurando botão Enviar...');
       let sendClicked = false;
       for (let i = 0; i < sendSelectors.length; i++) {
@@ -331,7 +374,7 @@ export async function sendDirectMessage(
         try {
           const btn = page.locator(sel).first();
           const tSend = Date.now();
-          await btn.waitFor({ state: 'visible', timeout: 1500 });
+          await btn.waitFor({ state: 'visible', timeout: dmTimeout(1500, fast) });
           await btn.click();
           logStep(t0, `Botão Enviar seletor ${i + 1}/${sendSelectors.length} OK em ${Date.now() - tSend}ms`);
           sendClicked = true;
@@ -348,7 +391,7 @@ export async function sendDirectMessage(
         try {
           const tSvg = Date.now();
           const sendIcon = page.locator('svg[aria-label="Enviar"], svg[aria-label="Send"]').first();
-          await sendIcon.click({ force: true, timeout: 2000 });
+          await sendIcon.click({ force: true, timeout: dmTimeout(2000, fast) });
           logStep(t0, `Botão Enviar (svg force) OK em ${Date.now() - tSvg}ms`);
           sendClicked = true;
           log('botão Enviar clicado (svg force)');
@@ -358,7 +401,7 @@ export async function sendDirectMessage(
         }
       }
       if (sendClicked) {
-        await randomDelay(150, 300);
+        await dmDelay(150, 300, fast);
         logStep(t0, `Concluído em ${Date.now() - t0}ms (ok=true).`);
         logStep(t0, 'Fechando página...');
         return { ok: true };
@@ -388,7 +431,7 @@ export async function sendVerificationCode(
   client: InstagramClient,
   handle: string,
   code: string,
-  options?: { skipFollowerListCheck?: boolean }
+  options?: DmSendOptions
 ): Promise<{ ok: boolean; error?: string }> {
   const text = `Seu código de ativação: ${code}`;
   return sendDirectMessage(client, handle, text, undefined, options);

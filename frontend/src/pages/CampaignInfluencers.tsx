@@ -168,7 +168,7 @@ function normalizeCampaignListHandle(raw: string): string {
 }
 
 function profileItemToConnectSnapshot(item: ProfileListItem): InfluencerConnectSnapshot {
-  const h = normalizeCampaignListHandle(item.handle ?? item.key)
+  const h = (item.profile_ref ?? '').trim()
   const er = item.engagement?.engagement_rate
   return {
     displayName: item.full_name?.trim() || h,
@@ -285,8 +285,8 @@ function CampaignListRow({
 }) {
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
   const stablePic = getStableProfilePicUrl(item as unknown as Record<string, unknown>)
-  const name = (item.full_name || item.handle) as string
-  const handle = item.handle ?? item.key
+  const name = (item.full_name || 'Influenciador') as string
+  const profileRef = (item.profile_ref ?? '').trim()
   const eng = item.engagement
   const act = item.activation
   const followers = item.followers_count ?? 0
@@ -333,7 +333,7 @@ function CampaignListRow({
             <ProfileAvatar
               src={pic}
               stableBackgroundUrl={stablePic}
-              handle={handle}
+              handle={profileRef}
               size={40}
               fallbackIconSize={20}
               onRefreshQueued={onImageRefreshQueued}
@@ -362,14 +362,14 @@ function CampaignListRow({
                   }}
                   onClick={(e) => {
                     e.stopPropagation()
-                    onFavoriteToggle(handle)
+                    onFavoriteToggle(profileRef)
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
                       e.stopPropagation()
-                      onFavoriteToggle(handle)
+                      onFavoriteToggle(profileRef)
                     }
                   }}
                 >
@@ -447,20 +447,6 @@ function CampaignListRow({
                 >
                   {name}
                 </div>
-              </Tooltip>
-              <Tooltip title={`@${handle}`}>
-                <span
-                  className="campaign-list-profile-handle"
-                  style={{
-                    fontSize: 10,
-                    color: 'var(--app-text-secondary)',
-                    lineHeight: 1.35,
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                  }}
-                >
-                  @{handle}
-                </span>
               </Tooltip>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 14, paddingTop: 2 }}>
@@ -619,7 +605,7 @@ export default function CampaignInfluencers() {
     handle: string
     snapshot?: InfluencerConnectSnapshot
   } | null>(null)
-  const [profileDetailHandle, setProfileDetailHandle] = useState<string | null>(null)
+  const [profileDetailRef, setProfileDetailRef] = useState<string | null>(null)
   const [payingWithCredits, setPayingWithCredits] = useState(false)
   const [deletingCampaign, setDeletingCampaign] = useState(false)
   const [filteredList, setFilteredList] = useState<ProfileListItem[]>([])
@@ -707,19 +693,18 @@ export default function CampaignInfluencers() {
       setFavoriteHandles(new Set())
       return
     }
-    const norm = (h: string) => (h ?? '').toLowerCase().replace(/^@/, '').trim()
     fetchFavorites()
       .then((res) => {
         if (campaignId === ALL_CAMPAIGNS_SLUG) {
-          setFavoriteHandles(new Set((res.handles ?? []).map(norm)))
+          setFavoriteHandles(new Set((res.profile_refs ?? res.favorites?.map((f) => f.profile_ref) ?? []).map((r) => r.trim()).filter(Boolean)))
           return
         }
         // Na tela de campanha, considerar só favoritos desta campanha para o estado "selecionado"
         if (campaignId && (res.favorites?.length ?? 0) > 0) {
-          const forCampaign = (res.favorites ?? []).filter((f) => f.campaignId === campaignId).map((f) => norm(f.handle))
+          const forCampaign = (res.favorites ?? []).filter((f) => f.campaignId === campaignId).map((f) => f.profile_ref.trim())
           setFavoriteHandles(new Set(forCampaign))
         } else {
-          setFavoriteHandles(new Set((res.handles ?? []).map(norm)))
+          setFavoriteHandles(new Set((res.profile_refs ?? res.favorites?.map((f) => f.profile_ref) ?? []).map((r) => r.trim()).filter(Boolean)))
         }
       })
       .catch(() => setFavoriteHandles(new Set()))
@@ -1326,10 +1311,10 @@ export default function CampaignInfluencers() {
     [campaignId]
   )
 
-  const openInfluencerProfileDetail = useCallback((handleOrKey: string) => {
-    const h = normalizeCampaignListHandle(handleOrKey)
-    if (!h) return
-    setProfileDetailHandle(h)
+  const openInfluencerProfileDetail = useCallback((profileRef: string) => {
+    const ref = (profileRef ?? '').trim()
+    if (!ref) return
+    setProfileDetailRef(ref)
   }, [])
 
   /** Busca pública (/search): perfil no modal. Campanha paga: fluxo de contratação via WhatsApp. */
@@ -1387,7 +1372,8 @@ export default function CampaignInfluencers() {
   const originCaptionSearchHidesBIPanel =
     campaignMainTab === 'origin' &&
     !!query.q?.trim() &&
-    (originGallerySearchLoading || originSearchSettledEmpty)
+    (originGallerySearchLoading || originSearchSettledEmpty) &&
+    searchFacets == null
   const influencersCaptionSearchHidesBIPanel =
     campaignMainTab === 'influencers' &&
     !!query.q?.trim() &&
@@ -1624,9 +1610,9 @@ export default function CampaignInfluencers() {
       />
 
       <InfluencerDetailModal
-        open={profileDetailHandle != null}
-        onClose={() => setProfileDetailHandle(null)}
-        handle={profileDetailHandle ?? ''}
+        open={profileDetailRef != null}
+        onClose={() => setProfileDetailRef(null)}
+        profileRef={profileDetailRef ?? ''}
         campaignId={isAllCampaignsView ? ALL_CAMPAIGNS_SLUG : campaignId}
       />
 
@@ -2068,9 +2054,9 @@ export default function CampaignInfluencers() {
                                   key={item.key}
                                   item={item}
                                   onClick={() =>
-                                    openInfluencerFromCard(item.handle ?? item.key, profileItemToConnectSnapshot(item))
+                                    openInfluencerFromCard(item.profile_ref, profileItemToConnectSnapshot(item))
                                   }
-                                  isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
+                                  isFavorite={user ? favoriteHandles.has((item.profile_ref ?? '').trim()) : false}
                                   onFavoriteToggle={user && user.scope !== 'influencer' ? handleFavoriteToggle : undefined}
                                   showFavoriteColumn={showFavoriteColumn}
                                   onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
@@ -2094,11 +2080,11 @@ export default function CampaignInfluencers() {
                                 item={item}
                                 variant="list"
                                 onClick={() =>
-                                  openInfluencerFromCard(item.handle ?? item.key, profileItemToConnectSnapshot(item))
+                                  openInfluencerFromCard(item.profile_ref ?? item.key, profileItemToConnectSnapshot(item))
                                 }
                                 onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
                                 showMetrics={!!user}
-                                isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
+                                isFavorite={user ? favoriteHandles.has((item.profile_ref ?? '').trim()) : false}
                                 onFavoriteToggle={user && user.scope !== 'influencer' ? handleFavoriteToggle : undefined}
                               />
                             </Col>

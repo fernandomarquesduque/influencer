@@ -1,11 +1,16 @@
 import { useState } from 'react'
-import { App, Segmented, Form, Input, Button, Typography } from 'antd'
+import { App, Segmented, Form, Input, Button } from 'antd'
 import { Link } from 'react-router-dom'
-import { MailOutlined, LockOutlined, UserOutlined } from '@ant-design/icons'
+import {
+  MailOutlined,
+  LockOutlined,
+  UserOutlined,
+  RightOutlined,
+  GlobalOutlined,
+} from '@ant-design/icons'
 import { useAuth } from '../../contexts/AuthContext'
 import { registerAssinanteApi, type AuthScope } from '../../api'
-
-const { Text } = Typography
+import './AgencyLoginPanel.css'
 
 type PanelMode = 'login' | 'signup'
 
@@ -119,9 +124,6 @@ export default function AgencyLoginPanel({ onSuccess }: AgencyLoginPanelProps) {
           >
             Entrar
           </Button>
-          <div style={{ textAlign: 'center', marginTop: 14 }}>
-            <Link to="/agencia/esqueci-senha">Esqueci minha senha</Link>
-          </div>
         </Form>
       ) : (
         <Form form={signupForm} layout="vertical" onFinish={onSignup} requiredMark={false}>
@@ -203,18 +205,30 @@ export default function AgencyLoginPanel({ onSuccess }: AgencyLoginPanelProps) {
           </Button>
         </Form>
       )}
-      <div style={{ marginTop: 16, textAlign: 'center' }}>
-        <Text type="secondary" style={{ fontSize: 11 }}>
-          <span
-            style={{ cursor: 'pointer' }}
-            onClick={() => {
-              window.location.href = '/landing/search/'
-            }}
-          >
-            Voltar ao site
-          </span>
-        </Text>
-      </div>
+
+      <footer className="agency-login-panel-footer">
+        {mode === 'login' ? (
+          <>
+            <Link to="/agencia/esqueci-senha" className="agency-login-panel-footer__link">
+              Esqueci minha senha
+              <RightOutlined aria-hidden />
+            </Link>
+            <div className="agency-login-panel-footer__divider">
+              <span>ou</span>
+            </div>
+          </>
+        ) : null}
+        <button
+          type="button"
+          className="agency-login-panel-footer__link"
+          onClick={() => {
+            window.location.href = '/landing/index.html'
+          }}
+        >
+          <GlobalOutlined aria-hidden />
+          Voltar ao site
+        </button>
+      </footer>
     </div>
   )
 }

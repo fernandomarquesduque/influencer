@@ -35,7 +35,7 @@ interface CampaignRef {
 
 interface FavoriteProfileRow {
   key: string
-  handle: string
+  profileRef: string
   profile: ProfileItem | null
   engagement?: { engagement_rate?: number; posts_per_week?: number }
   campaigns: CampaignRef[]
@@ -51,7 +51,7 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
   const [rows, setRows] = useState<FavoriteProfileRow[]>([])
   const [loading, setLoading] = useState(true)
 
-  const handleRemoveFavorite = (handle: string, displayName: string, e?: React.SyntheticEvent) => {
+  const handleRemoveFavorite = (profileRef: string, displayName: string, e?: React.SyntheticEvent) => {
     e?.stopPropagation()
     Modal.confirm({
       title: 'Remover dos favoritos',
@@ -60,9 +60,9 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
       cancelText: 'Cancelar',
       okButtonProps: { danger: true },
       onOk: () =>
-        removeFavorite(handle).then(() => {
+        removeFavorite(profileRef).then(() => {
           setRows((prev) => {
-            const next = prev.filter((r) => r.handle !== handle)
+            const next = prev.filter((r) => r.profileRef !== profileRef)
             if (next.length === 0) onEmpty?.()
             return next
           })
@@ -79,47 +79,47 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
           setLoading(false)
           return
         }
-        const uniqueHandles = [...new Set(favorites.map((f) => (f.handle ?? '').toLowerCase().replace(/^@/, '').trim()).filter(Boolean))]
+        const uniqueRefs = [...new Set(favorites.map((f) => (f.profile_ref ?? '').trim()).filter(Boolean))]
         Promise.all(
-          uniqueHandles.map((handle) => {
-            return fetchProfileSummary(handle)
-              .then((summary) => ({ handle, profile: summary?.profile ?? null, engagement: summary?.engagement }))
+          uniqueRefs.map((profileRef) => {
+            return fetchProfileSummary(profileRef)
+              .then((summary) => ({ profileRef, profile: summary?.profile ?? null, engagement: summary?.engagement }))
               .catch(() =>
-                fetchProfile(handle)
-                  .then((profile) => ({ handle, profile, engagement: undefined as { engagement_rate?: number; posts_per_week?: number } | undefined }))
-                  .catch(() => ({ handle, profile: null as ProfileItem | null, engagement: undefined }))
+                fetchProfile(profileRef)
+                  .then((profile) => ({ profileRef, profile, engagement: undefined as { engagement_rate?: number; posts_per_week?: number } | undefined }))
+                  .catch(() => ({ profileRef, profile: null as ProfileItem | null, engagement: undefined }))
               )
           })
         ).then((profileResults) => {
-          const profileByHandle = new Map<string | undefined, { profile: ProfileItem | null; engagement?: { engagement_rate?: number; posts_per_week?: number } }>()
-          profileResults.forEach((r) => profileByHandle.set(r.handle, { profile: r.profile, engagement: r.engagement }))
+          const profileByRef = new Map<string | undefined, { profile: ProfileItem | null; engagement?: { engagement_rate?: number; posts_per_week?: number } }>()
+          profileResults.forEach((r) => profileByRef.set(r.profileRef, { profile: r.profile, engagement: r.engagement }))
           const rawRows = favorites.map((f) => {
-            const h = (f.handle ?? '').toLowerCase().replace(/^@/, '').trim()
-            const { profile, engagement } = profileByHandle.get(h) ?? { profile: null, engagement: undefined }
+            const ref = (f.profile_ref ?? '').trim()
+            const { profile, engagement } = profileByRef.get(ref) ?? { profile: null, engagement: undefined }
             return {
-              handle: h,
+              profileRef: ref,
               profile,
               engagement,
               campaignRef: { campaignId: f.campaignId, campaignName: f.campaignName } as CampaignRef,
             }
           })
-          const groupedByHandle = new Map<string, Omit<FavoriteProfileRow, 'key'> & { campaigns: CampaignRef[] }>()
+          const groupedByRef = new Map<string, Omit<FavoriteProfileRow, 'key'> & { campaigns: CampaignRef[] }>()
           rawRows.forEach((r) => {
-            const existing = groupedByHandle.get(r.handle)
+            const existing = groupedByRef.get(r.profileRef)
             if (existing) {
               existing.campaigns.push(r.campaignRef)
             } else {
-              groupedByHandle.set(r.handle, {
-                handle: r.handle,
+              groupedByRef.set(r.profileRef, {
+                profileRef: r.profileRef,
                 profile: r.profile,
                 engagement: r.engagement,
                 campaigns: [r.campaignRef],
               })
             }
           })
-          const list: FavoriteProfileRow[] = Array.from(groupedByHandle.values()).map((row) => ({
+          const list: FavoriteProfileRow[] = Array.from(groupedByRef.values()).map((row) => ({
             ...row,
-            key: row.handle,
+            key: row.profileRef,
           }))
           setRows(list)
           setLoading(false)
@@ -160,8 +160,8 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
           dataSource={rows}
           rowKey={(r) => r.key}
           style={{ flex: 1, overflow: 'auto', minHeight: 0 }}
-          renderItem={({ handle, profile, engagement, campaigns }) => {
-            const name = (profile?.full_name ?? profile?.username ?? handle) as string
+          renderItem={({ profileRef, profile, engagement, campaigns }) => {
+            const name = (profile?.full_name ?? 'Influenciador') as string
             const pic = profile ? proxyImageUrl(getProfilePicUrl(profile as unknown as Record<string, unknown>)) : undefined
             const followers = profile?.followers_count ?? 0
             const engagementRate = engagement?.engagement_rate
@@ -175,8 +175,8 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}`)}
-                  onKeyDown={(e) => e.key === 'Enter' && navigate(`/app/influencer/${encodeURIComponent(handle)}`)}
+                  onClick={() => navigate(`/app/influencer/${encodeURIComponent(profileRef)}`)}
+                  onKeyDown={(e) => e.key === 'Enter' && navigate(`/app/influencer/${encodeURIComponent(profileRef)}`)}
                   style={{
                     cursor: 'pointer',
                     width: '100%',
@@ -197,7 +197,7 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                       <ProfileAvatar
                         size={40}
                         src={pic || undefined}
-                        handle={handle}
+                        handle={profileRef}
                         border="1px solid var(--app-border)"
                       />
                       <InfluencerTierPill followers={followers} variant="gradient" />
@@ -260,7 +260,6 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                           ))}
                         </div>
                       ) : null}
-                      <Text type="secondary" style={{ fontSize: 11 }}>@{handle}</Text>
                     </div>
                   </div>
                   <div
@@ -327,7 +326,7 @@ const FavoriteProfilesList: React.FC<FavoriteProfilesListProps> = ({ onEmpty }) 
                           aria-label="Remover dos favoritos"
                           onClick={(e) => {
                             e.stopPropagation()
-                            handleRemoveFavorite(handle, name !== handle ? `${name} (@${handle})` : `@${handle}`, e)
+                            handleRemoveFavorite(profileRef, name, e)
                           }}
                         />
                       </Tooltip>

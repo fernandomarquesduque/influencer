@@ -1,0 +1,202 @@
+.influencer-login-hero-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: clamp(28px, 4vh, 48px) clamp(24px, 4vw, 52px);
+  overflow: hidden;
+  background: linear-gradient(145deg, #faf8ff 0%, #f3eeff 50%, #ebe4ff 100%);
+}
+
+.influencer-login-hero-panel__decor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.influencer-login-hero-panel__star {
+  position: absolute;
+  color: rgba(167, 139, 250, 0.55);
+}
+
+.influencer-login-hero-panel__star--1 {
+  top: 12%;
+  right: 18%;
+  transform: scale(1.2);
+}
+
+.influencer-login-hero-panel__star--2 {
+  top: 22%;
+  right: 28%;
+  transform: scale(0.9);
+  opacity: 0.7;
+}
+
+.influencer-login-hero-panel__orb {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(237, 233, 254, 0.65);
+  border: 1px solid rgba(139, 92, 246, 0.12);
+}
+
+.influencer-login-hero-panel__orb--1 {
+  width: 140px;
+  height: 140px;
+  bottom: 8%;
+  right: -20px;
+}
+
+.influencer-login-hero-panel__orb--2 {
+  width: 88px;
+  height: 88px;
+  bottom: 18%;
+  right: 22%;
+  opacity: 0.85;
+}
+
+.influencer-login-hero-panel__dots {
+  position: absolute;
+  bottom: 14%;
+  right: 10%;
+  width: 56px;
+  height: 56px;
+  background-image: radial-gradient(circle, rgba(167, 139, 250, 0.4) 1.5px, transparent 1.5px);
+  background-size: 10px 10px;
+  opacity: 0.6;
+}
+
+.influencer-login-hero-panel__content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: clamp(18px, 3vh, 28px);
+}
+
+.influencer-login-hero-panel__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 10px;
+  border-radius: 999px;
+  background: rgba(237, 233, 254, 0.95);
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  color: #6226a7;
+  font-size: 12px;
+  font-weight: 700;
+  width: fit-content;
+}
+
+.influencer-login-hero-panel__badge .anticon {
+  font-size: 13px;
+}
+
+.influencer-login-hero-panel__title {
+  margin: 0;
+  font-size: clamp(1.65rem, 3.2vw, 2.15rem);
+  font-weight: 800;
+  line-height: 1.15;
+  color: #111827;
+  letter-spacing: -0.02em;
+}
+
+.influencer-login-hero-panel__title-accent {
+  display: block;
+  color: #7c3aed;
+  margin-top: 2px;
+}
+
+.influencer-login-hero-panel__lead {
+  margin: 0;
+  font-size: clamp(0.9rem, 1.5vw, 1.05rem);
+  line-height: 1.55;
+  color: #4b5563;
+  max-width: 40ch;
+}
+
+.influencer-login-hero-panel__benefits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  max-width: 360px;
+  text-align: left;
+}
+
+.influencer-login-hero-panel__benefits li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  font-size: clamp(0.9rem, 1.4vw, 1rem);
+  line-height: 1.45;
+  color: #374151;
+  font-weight: 500;
+}
+
+.influencer-login-hero-panel__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: #ecfdf5;
+  color: #10b981;
+  font-size: 12px;
+}
+
+.influencer-login-hero-panel__cta.ant-btn-primary,
+.influencer-login-hero-panel__cta.login-btn-primary {
+  height: 52px !important;
+  border-radius: 14px !important;
+  font-weight: 700 !important;
+  font-size: 15px !important;
+  border: none !important;
+  background: linear-gradient(135deg, #ff0080 0%, #e11d74 55%, #f97316 100%) !important;
+  box-shadow: 0 12px 32px rgba(255, 0, 128, 0.28) !important;
+}
+
+.influencer-login-hero-panel__cta.ant-btn-primary:hover,
+.influencer-login-hero-panel__cta.ant-btn-primary:focus,
+.influencer-login-hero-panel__cta.login-btn-primary:hover,
+.influencer-login-hero-panel__cta.login-btn-primary:focus {
+  background: linear-gradient(135deg, #ff1a8c 0%, #ec4899 55%, #fb923c 100%) !important;
+  filter: none !important;
+  box-shadow: 0 14px 36px rgba(255, 0, 128, 0.34) !important;
+}
+
+.influencer-login-hero-panel__cta-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.influencer-login-hero-panel__cta-inner > span:nth-child(2) {
+  flex: 1;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .influencer-login-page .login-left-panel .influencer-login-hero-panel {
+    display: none;
+  }
+}

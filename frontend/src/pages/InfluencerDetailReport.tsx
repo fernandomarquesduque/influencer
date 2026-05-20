@@ -13,6 +13,7 @@ import {
   TeamOutlined,
   FileTextOutlined,
   CalendarOutlined,
+  InstagramOutlined,
   HeartOutlined,
   EyeOutlined,
   LineChartOutlined,
@@ -82,8 +83,6 @@ export interface ReportHeroProps {
   score?: number
   /** Tooltip da barra de progresso (ex.: explicação do score) */
   scoreTooltip?: string
-  /** Tags de tipo/conteúdo exibidas na coluna direita (ex.: Moda, Beleza) */
-  typesTags?: React.ReactNode
   /** Prévia limitada: desfoca os números do hero (seguidores, ER, posts/sem). */
   blurHighlights?: boolean
   /** Modal / prévia bloqueada: menos padding e bio em uma linha. */
@@ -92,6 +91,8 @@ export interface ReportHeroProps {
   tierBadgeTooltip?: string
   /** Ação primária alinhada à faixa de métricas (ex.: Ativar Cadastro). */
   heroAction?: React.ReactNode
+  /** URL do perfil no Instagram — botão na coluna direita (assinante com plano ativo). */
+  instagramProfileUrl?: string | null
   /** Menos espaço abaixo do hero (ex.: card de localização logo em seguida). */
   tightBottomSpacing?: boolean
 }
@@ -163,10 +164,10 @@ export function ReportHero({
   handle: handleProp,
   headline,
   badgeLabel,
-  tierLabel: tierLabelProp,
+  tierLabel: _tierLabelProp,
   tierBadgeShort,
-  percentil,
-  scoreSelo,
+  percentil: _percentil,
+  scoreSelo: _scoreSelo,
   highlights,
   secondaryMetrics,
   onBack: _onBack,
@@ -175,21 +176,38 @@ export function ReportHero({
   extraContent,
   score: scoreValue,
   scoreTooltip: _scoreTooltip,
-  typesTags,
   blurHighlights = false,
   compact = false,
   tierBadgeTooltip,
   heroAction,
-  tightBottomSpacing = false,
+  instagramProfileUrl,
+  tightBottomSpacing: _tightBottomSpacing = false,
 }: ReportHeroProps) {
   const atHandle = handleProp ? `@${handleProp.replace(/^@/, '')}` : ''
   const avatarSize = isMobile ? AVATAR_SIZE_MOBILE : compact ? 96 : AVATAR_SIZE
   const avatarRenderSize = compact ? 96 : avatarSize
   const pad = compact ? s.sm : isMobile ? s.sm : s.md
   const gap = isMobile ? s.xs : s.sm
-  const showTypesColumn = !isMobile && typesTags != null
   const tierUnderAvatarLabel = tierBadgeShort ?? badgeLabel ?? null
   const showTierUnderAvatar = tierUnderAvatarLabel != null && tierUnderAvatarLabel !== '—'
+  const instagramUrl = (instagramProfileUrl ?? '').trim()
+  const showInstagramButton = instagramUrl.length > 0
+  const instagramButton = showInstagramButton ? (
+    <Button
+      type="primary"
+      size="large"
+      className="report-hero-instagram-btn"
+      icon={<InstagramOutlined />}
+      href={instagramUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      aria-label="Abrir perfil no Instagram"
+    >
+      Abrir Instagram
+    </Button>
+  ) : null
+  const rightColActions = heroAction != null || instagramButton != null
 
   const tierUnderAvatarTag = showTierUnderAvatar ? (
     <Tag
@@ -359,36 +377,42 @@ export function ReportHero({
                     {secondaryMetrics}
                   </div>
                 )}
-                {typesTags != null && isMobile && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: s.sm }}>
-                    {typesTags}
-                  </div>
-                )}
-                {heroAction != null && isMobile && (
-                  <div className="report-hero-action" style={{ display: 'flex', justifyContent: 'center', marginTop: s.sm, width: '100%' }}>
+                {(heroAction != null || instagramButton != null) && isMobile && (
+                  <div
+                    className="report-hero-action"
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: s.xs,
+                      marginTop: s.sm,
+                      width: '100%',
+                    }}
+                  >
+                    {instagramButton}
                     {heroAction}
                   </div>
                 )}
               </div>
             </div>
           </div>
-          {heroAction != null && !isMobile && (
+          {rightColActions && !isMobile && (
             <div
               className="report-hero-action-col"
               style={{
                 flexShrink: 0,
                 display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'flex-end',
+                flexDirection: 'column',
+                alignItems: 'flex-end',
+                justifyContent: 'center',
+                gap: s.sm,
                 paddingLeft: s.sm,
+                minWidth: 140,
+                maxWidth: 200,
               }}
             >
+              {instagramButton}
               {heroAction}
-            </div>
-          )}
-          {showTypesColumn && (
-            <div className="report-hero-types-col" style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, minWidth: 120, alignSelf: 'flex-start' }}>
-              {typesTags}
             </div>
           )}
         </div>
@@ -1291,7 +1315,6 @@ export function MetricasMediakitSection({
   const picoDayLabel = bestDayByErIndex >= 0 ? WEEKDAY_LABELS[bestDayByErIndex] : bestDay
   const cpeValue = cpmCpe.cpeEstimate != null && cpmCpe.cpeEstimate > 0 ? `R$ ${cpmCpe.cpeEstimate.toFixed(2)}` : '—'
   const cpmValue = cpmCpe.cpmEstimate != null && cpmCpe.cpmEstimate > 0 ? `R$ ${cpmCpe.cpmEstimate.toFixed(1)}` : null
-  const showViewsNote = totalViews > 0 && totalViews < totalLikes
   const showCpmCol = Boolean(cpmValue && totalViews > 0)
   const picoErBanda = maxEr > 0 ? (ER_QUALIDADE_BANDAS.find((b) => maxEr >= b.min && maxEr < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]) : null
   const conversationCardLabel = conversationLabel ?? 'Taxa comentários'

@@ -109,7 +109,7 @@ export default function App() {
               <Route path="campaigns/create" element={<ListAndDetailModal />} />
               <Route path="campaigns/all" element={<AllCampaignsRedirect />} />
               <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
-              <Route path="campaigns/:campaignId/influencer/:handle" element={<InfluencerDetail />} />
+              <Route path="campaigns/:campaignId/influencer/:profileRef" element={<InfluencerDetail />} />
               <Route path="payments" element={<Payments />} />
               <Route path="profile" element={<Profile />} />
               <Route path="projects" element={<Projects />} />
@@ -118,9 +118,9 @@ export default function App() {
               <Route path="create" element={<Auth />} />
               <Route path="create/password" element={<AuthPassword />} />
               <Route path="missions/link-instagram" element={<LinkInstagramMission />} />
-              <Route path="influencer/:handle" element={<InfluencerDetail />} />
-              <Route path="influencer/:handle/media-kit" element={<MediaKit />} />
-              <Route path="influencer/:handle/send-message" element={<SendMessage />} />
+              <Route path="influencer/:profileRef" element={<InfluencerDetail />} />
+              <Route path="influencer/:profileRef/media-kit" element={<MediaKit />} />
+              <Route path="influencer/:profileRef/send-message" element={<SendMessage />} />
               <Route
                 path="admin/dashboard"
                 element={
@@ -157,7 +157,7 @@ export default function App() {
 
             <Route path="/extraction" element={<Extraction />} />
             <Route path="/extract-profile" element={<ExtractProfile />} />
-            <Route path="/activate/:handle" element={<Activate />} />
+            <Route path="/activate/:profileRef" element={<Activate />} />
             <Route path="/admin/dashboard" element={<Navigate to="/app/admin/dashboard" replace />} />
             <Route path="/admin/users" element={<Navigate to="/app/admin/users" replace />} />
             <Route

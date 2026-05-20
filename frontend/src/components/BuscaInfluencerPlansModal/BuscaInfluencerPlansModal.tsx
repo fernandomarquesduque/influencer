@@ -21,7 +21,7 @@ export default function BuscaInfluencerPlansModal({ open, onClose }: BuscaInflue
       destroyOnHidden
       zIndex={1100}
       wrapClassName="busca-plans-modal"
-      maskStyle={{ backdropFilter: 'blur(4px)' }}
+      styles={{ mask: { backdropFilter: 'blur(4px)' } }}
     >
       <BuscaInfluencerPlansPanel checkSubscription onAfterAction={onClose} />
     </Modal>

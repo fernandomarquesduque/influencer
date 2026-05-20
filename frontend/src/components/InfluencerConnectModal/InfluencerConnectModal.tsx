@@ -1,7 +1,7 @@
 /**
  * Modal ao escolher um criador: formulário de solicitação de contratação via WhatsApp da agência.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Modal, Button, Form, Input } from 'antd'
 import { WhatsAppOutlined, UserOutlined } from '@ant-design/icons'
 import ProfileAvatar from '../ProfileAvatar'
@@ -108,13 +108,19 @@ export default function InfluencerConnectModal({
   const [profileDetailOpen, setProfileDetailOpen] = useState(false)
   useLockPageScroll(open)
 
+  const wasOpenRef = useRef(false)
   useEffect(() => {
-    if (!open) {
-      form.resetFields()
-      setPlansModalOpen(false)
-      setFullProfileLoading(false)
-      setProfileDetailOpen(false)
+    if (open) {
+      wasOpenRef.current = true
+      return
     }
+    if (wasOpenRef.current) {
+      form.resetFields()
+      wasOpenRef.current = false
+    }
+    setPlansModalOpen(false)
+    setFullProfileLoading(false)
+    setProfileDetailOpen(false)
   }, [open, form])
 
   const llmDescription = snapshot?.llmDescription?.trim() ?? ''
@@ -170,7 +176,7 @@ export default function InfluencerConnectModal({
       width={Math.min(760, typeof window !== 'undefined' ? window.innerWidth - 32 : 760)}
       destroyOnHidden
       wrapClassName="influencer-connect-modal"
-      maskStyle={{ backdropFilter: 'blur(4px)' }}
+      styles={{ mask: { backdropFilter: 'blur(4px)' } }}
     >
       <div className="influencer-connect-modal__body">
         <div className="influencer-connect-modal__layout">
@@ -296,7 +302,7 @@ export default function InfluencerConnectModal({
       <InfluencerDetailModal
         open={profileDetailOpen}
         onClose={() => setProfileDetailOpen(false)}
-        handle={handle.replace(/^@/, '').trim()}
+        profileRef={handle.replace(/^@/, '').trim()}
         campaignId={campaignId}
       />
     </Modal>

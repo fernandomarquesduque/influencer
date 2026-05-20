@@ -32,7 +32,8 @@ const { Text } = Typography
 
 export interface ProfileSummaryCardItem {
   key: string
-  handle: string
+  profile_ref?: string
+  handle?: string
   full_name?: string
   profile_pic_url?: string
   data?: Record<string, unknown>

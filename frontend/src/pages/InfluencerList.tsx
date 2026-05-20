@@ -1454,7 +1454,7 @@ export default function InfluencerList() {
       <InfluencerDetailModal
         open={profileDetailHandle != null}
         onClose={() => setProfileDetailHandle(null)}
-        handle={profileDetailHandle ?? ''}
+        profileRef={profileDetailHandle ?? ''}
       />
     </div>
   )

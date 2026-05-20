@@ -145,7 +145,7 @@ export default function AdminProfileLlmEditModal({ open, handle, profile, onClos
       okText="Salvar"
       cancelText="Cancelar"
       width={640}
-      destroyOnClose
+      destroyOnHidden
     >
       <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
         Altera <Text code>llm.qualification</Text> deste perfil na base. Campos vazios também são gravados onde aplicável.

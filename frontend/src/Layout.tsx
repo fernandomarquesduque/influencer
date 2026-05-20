@@ -14,9 +14,9 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const myHandle = user?.profile_handle?.replace(/^@/, '')
-  const myProfilePath = myHandle ? `/app/influencer/${encodeURIComponent(myHandle)}` : ''
-  const isOnActivate = myHandle && location.pathname === `/activate/${encodeURIComponent(myHandle)}`
+  const myProfileRef = user?.profile_ref?.trim() ?? ''
+  const myProfilePath = myProfileRef ? `/app/influencer/${encodeURIComponent(myProfileRef)}` : ''
+  const isOnActivate = myProfileRef && location.pathname === `/activate/${encodeURIComponent(myProfileRef)}`
   const allowedForInfluencer =
     isSearchRoute(location.pathname) ||
     location.pathname.startsWith('/app/influencer') ||
@@ -25,10 +25,10 @@ export default function Layout() {
     isOnActivate
 
   useEffect(() => {
-    if (user?.scope === 'influencer' && myHandle && !allowedForInfluencer) {
+    if (user?.scope === 'influencer' && myProfileRef && !allowedForInfluencer) {
       navigate(myProfilePath, { replace: true })
     }
-  }, [user?.scope, myHandle, myProfilePath, allowedForInfluencer, navigate])
+  }, [user?.scope, myProfileRef, myProfilePath, allowedForInfluencer, navigate])
 
   useEffect(() => {
     if (user?.scope === 'assinante') {

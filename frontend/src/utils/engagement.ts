@@ -44,9 +44,14 @@ export function computeEngagementFromPosts(
   const timestamps: number[] = []
   for (const p of posts) {
     const m = p.metrics
-    const views = toNum(m?.view_count ?? (p as { view_count?: number }).view_count)
-    totalLikes += toNum(m?.likes ?? (p as { like_count?: number }).like_count)
-    totalComments += toNum(m?.comments ?? (p as { comment_count?: number }).comment_count)
+    const postObj = p.post as Record<string, unknown> | undefined
+    const views = toNum(m?.view_count ?? (p as { view_count?: number }).view_count ?? postObj?.view_count)
+    totalLikes += toNum(
+      m?.likes ?? (p as { like_count?: number }).like_count ?? postObj?.like_count
+    )
+    totalComments += toNum(
+      m?.comments ?? (p as { comment_count?: number }).comment_count ?? postObj?.comment_count
+    )
     totalViews += views
     if (views > 0) postsWithViewsCount += 1
     const ts = getPostTimestamp(p)

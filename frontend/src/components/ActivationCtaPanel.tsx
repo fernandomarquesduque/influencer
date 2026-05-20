@@ -8,7 +8,7 @@ const { Text } = Typography
 const { spacing: s, typography: typ } = t
 
 export interface ActivationCtaPanelProps {
-  handle: string
+  profileRef: string
   isMobile: boolean
   marginBottom?: number
   /** Id do elemento âncora (ex.: secao-metricas-mediakit). O painel só aparece quando essa seção estiver pelo menos 50% visível (meio da seção). */
@@ -22,7 +22,7 @@ const PAGE_PADDING_MOBILE = 16
 const VISIBILITY_THRESHOLD = 0.5
 
 export function ActivationCtaPanel({
-  handle,
+  profileRef,
   isMobile,
   marginBottom = 90,
   scrollAnchorId,
@@ -154,7 +154,7 @@ export function ActivationCtaPanel({
                   type="default"
                   size="large"
                   icon={<RocketOutlined />}
-                  onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                  onClick={() => navigate(`/activate/${encodeURIComponent(profileRef)}`)}
                   className="activation-cta-btn"
                   style={{
                     borderRadius: t.radius.md,

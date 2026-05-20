@@ -18,7 +18,7 @@ export default function ListAndDetailModal() {
     return (
       <>
 
-        <InfluencerDetail overrideHandle={handle} />
+        <InfluencerDetail overrideProfileRef={handle} />
       </>
     )
   }

@@ -545,8 +545,6 @@ function CoverPage(props: CoverPageProps) {
   ]
   const metrics = metricsBase
   const metricCardWidth = metrics.length === 2 ? '50%' : '33.33%'
-  const showViewsNote = totalViews > 0 && totalViews < totalLikes
-
   const converteQuadrants = [
     { value: `${(er || 0).toFixed(1)}%`, label: 'Engajamento' },
     { value: `${Math.round(conversationRate)}%`, label: conversationLabel ?? 'Taxa comentários' },

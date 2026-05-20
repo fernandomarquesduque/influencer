@@ -1,0 +1,15 @@
+.agency-login-influencer-aside.influencer-login-panel {
+  width: 100%;
+}
+
+/* Desktop: bloco fica só no painel esquerdo */
+.agency-login-influencer-aside--in-hero,
+.agency-login-influencer-aside--mobile {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .agency-login-influencer-aside--mobile {
+    display: flex;
+  }
+}

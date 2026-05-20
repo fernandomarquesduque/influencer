@@ -75,6 +75,8 @@ export interface ExtractSingleProfileResult {
 export interface ExtractSingleProfileOptions {
   forRefresh?: boolean;
   fastMode?: boolean;
+  /** Cadastro rápido: salva só o perfil slim, sem S3/posts/reels (request-code-with-extract + fast). */
+  signupLight?: boolean;
   /** Quando fornecido com storage, destaques são coletados em background (não bloqueia o retorno). */
   client?: InstagramClient;
 }
@@ -99,7 +101,14 @@ export async function extractSingleProfileWithPage(
   const minRequired = config.minFollowersToSave > 0 ? Math.max(config.minFollowersToSave, MIN_FOLLOWERS_FLOOR) : 0;
 
   const fastMode = options?.fastMode ?? false;
-  const extractOpts = { fastMode, client: options?.client, storage: options?.client && storage && typeof storage.saveMedia === 'function' ? storage : undefined };
+  const signupLight = options?.signupLight === true;
+  const extractOpts = {
+    fastMode,
+    client: options?.client,
+    storage:
+      !signupLight && options?.client && storage && typeof storage.saveMedia === 'function' ? storage : undefined,
+    extractHighlights: !signupLight,
+  };
   const extracted = await extractProfile(page, cleanHandle, 'seed', '', config, extractOpts);
   if (!extracted) {
     return { success: false, handle: cleanHandle, error: 'Falha ao extrair perfil (página ou API)' };
@@ -111,7 +120,7 @@ export async function extractSingleProfileWithPage(
   const raw = rawProfile as Record<string, unknown>;
 
   let followersFromRaw = getFollowersFromEntity(raw);
-  if (followersFromRaw <= 0) {
+  if (followersFromRaw <= 0 && !signupLight) {
     const fromDom = await scrapeFollowersFromProfilePage(page);
     if (fromDom != null && fromDom > 0) {
       followersFromRaw = fromDom;
@@ -138,6 +147,17 @@ export async function extractSingleProfileWithPage(
   };
 
   if (options?.forRefresh) {
+    if (options.signupLight) {
+      logStep('signupLight: salvando só perfil (sem S3/posts)...');
+      const existingLight = await loadExistingProfileRecordForMerge(
+        storage as CrawlStorage & { loadByHandle?: (h: string) => Promise<Entity | null> },
+        slim.handle
+      );
+      const mergedLight = mergeProfilePreservingLlm(existingLight, slim as Record<string, unknown>);
+      await storage.save(mergedLight as Entity & { handle: string });
+      logStep('signupLight: pronto.');
+      return { success: true, saved: true, handle: cleanHandle, followers, postsSaved: 0, followsOfficialProfile };
+    }
     const collectedAt = String(slim._collected_at ?? new Date().toISOString());
     if (typeof storage.deletePostsByHandle === 'function') {
       logStep('forRefresh: deletando mídia antiga (DB)...');

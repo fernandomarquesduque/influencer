@@ -104,6 +104,17 @@ import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
 import { sendPasswordResetCode } from '../email/sendPasswordResetCode.js';
 import { logS3StartupStatus, wipeInfluencerS3Prefix } from '../s3/influencerProfileStorage.js';
 import { campaignAccessDurationDays, defaultCampaignExpiresAtIso } from '../config/campaignAccess.js';
+import { ProfileRefDb } from '../storage/profileRefDb.js';
+import { streamProfileAvatarMedia, streamProfileCoverMedia } from './profileMedia.js';
+import {
+  buildPublicProfilePreviewDto,
+  enrichListItemsWithRefs,
+  enrichPostItemsWithRefs,
+  sanitizePostItemsForClient,
+  sanitizeProfileForClient,
+  shouldIncludeHandleInApi,
+} from '../utils/profilePublicDto.js';
+import { profileAvatarMediaPath } from '../utils/profileMediaUrls.js';
 
 const require = createRequire(import.meta.url);
 const openApiRocksdb = require('./openapi-rocksdb.json');
@@ -173,12 +184,18 @@ const db = new CompositeStorage(
   sqlite,
   (storage) => scheduleSearchCacheRewarm(storage),
   (storage, handle) => {
+    try {
+      profileRefDb.getOrCreateRef(handle);
+    } catch (_) {
+      /* handle inválido */
+    }
     void syncProfileSearchIndexForHandle(storage, handle);
   }
 );
 const collectorController = createCollectorController(db);
 app.use('/api/crawl', createCollectorCrawlRouter(collectorController));
 const authDb = new AuthDb(sqlitePath);
+const profileRefDb = new ProfileRefDb(sqlitePath);
 const creditsCampaignsDb = new CreditsCampaignsDb(sqlitePath);
 const paymentsDb = new PaymentsDb(sqlitePath);
 
@@ -310,6 +327,8 @@ function isSessionExpiredError(msg: string): boolean {
 interface RunOneExtractOptions {
   client?: InstagramClient;
   skipCount?: boolean;
+  /** Pula delay antes da extração (cadastro com fast). */
+  fast?: boolean;
 }
 
 /** Executa uma extração (um perfil). Usado pelo extract-profile e pela fila de refresh. forRefresh=true pula todas as validações de qualificação. fromExtractProfileApi=true usa delay curto (2s em vez de 8–20s). Se a sessão estiver expirada e houver INSTAGRAM_USER/PASSWORD no .env, tenta login automático e reextrai uma vez. Com options.client a extração usa esse client (ex.: cadastro imediato sem fila). */
@@ -331,11 +350,19 @@ async function runOneExtract(
         error: `Rate limit ou bloqueio. Tente novamente em ${Math.ceil((apiExtractBlockedUntil - now) / 60000)} min.`,
       };
     }
-    await (fromExtractProfileApi ? profileExtractDelayForApi() : profileExtractDelay());
+    if (!options?.fast) {
+      await (fromExtractProfileApi ? profileExtractDelayForApi() : profileExtractDelay());
+    }
     const cooldownEvery = Math.max(0, parseInt(process.env.COOLDOWN_EVERY ?? '10', 10) || 10);
     const cooldownMinMs = Math.max(0, parseInt(process.env.COOLDOWN_MIN_MS ?? '60000', 10) || 60000);
     const cooldownMaxMs = Math.max(cooldownMinMs, parseInt(process.env.COOLDOWN_MAX_MS ?? '180000', 10) || 180000);
-    if (!options?.skipCount && cooldownEvery > 0 && apiExtractProfileCount > 0 && apiExtractProfileCount % cooldownEvery === 0) {
+    if (
+      !options?.fast &&
+      !options?.skipCount &&
+      cooldownEvery > 0 &&
+      apiExtractProfileCount > 0 &&
+      apiExtractProfileCount % cooldownEvery === 0
+    ) {
       const cooldownMs = cooldownMinMs + Math.floor(Math.random() * (cooldownMaxMs - cooldownMinMs + 1));
       await new Promise((r) => setTimeout(r, cooldownMs));
     }
@@ -349,12 +376,17 @@ async function runOneExtract(
     );
     try {
       result = await Promise.race([
-        extractSingleProfileWithPage(page, handle, db, config, { forRefresh, fastMode: fromExtractProfileApi, client }),
+        extractSingleProfileWithPage(page, handle, db, config, {
+          forRefresh,
+          fastMode: fromExtractProfileApi || options?.fast === true,
+          signupLight: options?.fast === true && fromExtractProfileApi,
+          client,
+        }),
         timeoutPromise,
       ]);
       console.log(`[runOneExtract] @${handle} extração concluída, fechando página...`);
     } finally {
-      const skipCloseForSupplement = fromExtractProfileApi && result?.success === true;
+      const skipCloseForSupplement = fromExtractProfileApi && result?.success === true && !options?.fast;
       if (!skipCloseForSupplement && page) {
         const tClose = Date.now();
         await page.close().catch(() => { });
@@ -385,7 +417,7 @@ async function runOneExtract(
       console.log(`[runOneExtract] @${result.handle} extração salva, tentando enfileirar #selecao (30 min)`);
       enqueueSelectionMessageIfAllowed(result.handle);
     }
-    if (fromExtractProfileApi && result.success && page) {
+    if (fromExtractProfileApi && result.success && page && !options?.fast) {
       runSupplementReelsAndTagged(page, handle, db).catch(() => { });
     }
     if (!options?.skipCount) apiExtractProfileCount++;
@@ -627,12 +659,16 @@ app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
   const email_verified = dbUser?.email_verified !== undefined ? dbUser.email_verified === 1 : undefined;
   const display_name = dbUser && 'display_name' in dbUser ? (dbUser as { display_name?: string | null }).display_name ?? null : null;
   const billing_cpf_cnpj = dbUser ? ((dbUser as { billing_cpf_cnpj?: string | null }).billing_cpf_cnpj ?? null) : null;
+  const profile_ref =
+    profileHandle && String(profileHandle).trim()
+      ? profileRefDb.getOrCreateRef(String(profileHandle).replace(/^@/, '').trim().toLowerCase())
+      : null;
   res.json({
     user: {
       id: userId,
       username: req.user.username,
       scope: req.user.scope,
-      profile_handle: profileHandle,
+      profile_ref,
       display_name,
       ...(profile_activated !== undefined && { profile_activated }),
       ...(email_verified !== undefined && { email_verified: email_verified === true }),
@@ -720,7 +756,13 @@ async function performRequestCodeFlow(
   nickname: string,
   code: string,
   _userId: number | null,
-  flowOptions?: { client?: InstagramClient; /** Extração acabou de rodar no mesmo fluxo (request-code-with-extract): evita 2ª visita ao perfil que costuma falhar no browser já em uso. */ trustFreshExtract?: boolean }
+  flowOptions?: {
+    client?: InstagramClient;
+    /** Extração acabou de rodar no mesmo fluxo (request-code-with-extract): evita 2ª visita ao perfil que costuma falhar no browser já em uso. */
+    trustFreshExtract?: boolean;
+    /** Sem delays humanos no envio do DM e uma tentativa só. */
+    fast?: boolean;
+  }
 ): Promise<{ sent: boolean; error?: string; followProfileUrl?: string; nao_segue_perfil?: boolean }> {
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[request-code] ${logTimestamp()} +${Date.now() - t0}ms ${msg}`);
@@ -733,8 +775,9 @@ async function performRequestCodeFlow(
     return { sent: false, error: 'Sessão do Instagram não configurada. Execute o login do crawl (npm run login).' };
   }
 
-  const maxAttempts = 3;
-  const delayMs = 2000;
+  const fast = flowOptions?.fast === true;
+  const maxAttempts = fast ? 2 : 3;
+  const delayMs = fast ? 0 : 2000;
   try {
     const client = flowOptions?.client ?? getApiExtractClient();
     try {
@@ -755,7 +798,14 @@ async function performRequestCodeFlow(
         // Após request-code-with-extract, não reabrir se o cache já tem followsOfficialProfile (2ª visita no mesmo client costuma falhar).
         const useCachedFollowOnly =
           flowOptions?.trustFreshExtract === true && stored?.status === 'done' && followsFromExtract !== undefined;
-        if (followsFromExtract === true) {
+        const skipRevalidateProfile = fast && flowOptions?.trustFreshExtract === true && stored?.status === 'done';
+        if (skipRevalidateProfile) {
+          if (followsFromExtract === false) {
+            logStep('[fast] Cache: não segue perfil oficial.');
+            return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
+          }
+          logStep('[fast] Cache de extração recente, pulando revalidação de perfil.');
+        } else if (followsFromExtract === true) {
           logStep('Usando cache (segue perfil), pulando abertura de perfil.');
         } else if (useCachedFollowOnly && followsFromExtract === false) {
           logStep('Usando cache (não segue perfil), sem 2ª extração.');
@@ -816,35 +866,40 @@ async function performRequestCodeFlow(
         }
       }
 
-      // Quando usamos cache (segue perfil) e follow-back está ativo: seguir de volta em background (não bloqueia envio do código)
       const followBackEnabled = process.env.FOLLOW_BACK_ENABLED !== 'false';
-      if (followBackEnabled && requiredProfile && requiredProfile.length > 0) {
-        const followsFromExtract = (() => {
-          const stored = extractProfileResults.get(nickname.trim().toLowerCase());
-          return stored?.status === 'done' && stored.result && 'followsOfficialProfile' in stored.result
+      const runFollowBackAfterDm = () => {
+        if (!followBackEnabled || !requiredProfile || requiredProfile.length === 0) return;
+        const stored = extractProfileResults.get(nickname.trim().toLowerCase());
+        const follows =
+          stored?.status === 'done' && stored.result && 'followsOfficialProfile' in stored.result
             ? (stored.result as { followsOfficialProfile?: boolean }).followsOfficialProfile
             : undefined;
-        })();
-        if (followsFromExtract === true) {
-          void followUser(client, nickname)
-            .then((followResult) => {
-              if (!followResult.ok) logStep(`Follow-back (cache, em background) falhou: ${followResult.error ?? 'erro'}`);
-              else if (followResult.alreadyFollowing) logStep('Follow-back (cache, em background): já estávamos seguindo.');
-              else logStep('Follow-back (cache, em background): seguimos o influenciador.');
-            })
-            .catch((err) => logStep(`Follow-back (cache) em background falhou: ${err instanceof Error ? err.message : String(err)}`));
-        }
-      }
+        if (follows !== true) return;
+        void followUser(client, nickname)
+          .then((followResult) => {
+            if (!followResult.ok) logStep(`Follow-back (após DM) falhou: ${followResult.error ?? 'erro'}`);
+            else if (followResult.alreadyFollowing) logStep('Follow-back (após DM): já estávamos seguindo.');
+            else logStep('Follow-back (após DM): seguimos o influenciador.');
+          })
+          .catch((err) => logStep(`Follow-back (após DM) falhou: ${err instanceof Error ? err.message : String(err)}`));
+      };
 
       logStep('Enviando código por Direct...');
       const tSend = Date.now();
       const storedForSend = extractProfileResults.get(nickname.trim().toLowerCase());
       const skipFollowerListCheck =
-        storedForSend?.status === 'done' &&
-        storedForSend.result &&
-        'followsOfficialProfile' in storedForSend.result &&
-        (storedForSend.result as { followsOfficialProfile?: boolean }).followsOfficialProfile === true;
-      const sendOpts = skipFollowerListCheck ? { skipFollowerListCheck: true as const } : undefined;
+        fast ||
+        (storedForSend?.status === 'done' &&
+          storedForSend.result &&
+          'followsOfficialProfile' in storedForSend.result &&
+          (storedForSend.result as { followsOfficialProfile?: boolean }).followsOfficialProfile === true);
+      const sendOpts =
+        skipFollowerListCheck || fast
+          ? {
+              ...(skipFollowerListCheck ? { skipFollowerListCheck: true as const } : {}),
+              ...(fast ? { fast: true as const } : {}),
+            }
+          : undefined;
       let result = await sendVerificationCode(client, nickname, code, sendOpts);
       for (let attempt = 1; !result.ok && attempt < maxAttempts; attempt++) {
         logStep(`sendVerificationCode tentativa ${attempt} retornou ok=false, nova tentativa em ${delayMs}ms...`);
@@ -856,6 +911,7 @@ async function performRequestCodeFlow(
         logStep(`Erro: ${result.error ?? 'desconhecido'}`);
         return { sent: false, error: result.error ?? 'Falha ao enviar mensagem no Instagram.' };
       }
+      runFollowBackAfterDm();
     } finally {
       // Não fechar o client: é compartilhado (getApiExtractClient) para o próximo request ser rápido
     }
@@ -877,11 +933,12 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
       res.status(400).json({ error: 'Informe o nickname do Instagram' });
       return;
     }
+    const fast = req.body?.fast === true || req.body?.fast === 'true';
     const userId = req.user ? Number(req.user.sub) : null;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
 
-    const flowPromise = performRequestCodeFlow(nickname, code, userId);
+    const flowPromise = performRequestCodeFlow(nickname, code, userId, fast ? { fast: true } : undefined);
     requestCodeFlushPromise = requestCodeFlushPromise.then(async () => {
       await flowPromise;
     });
@@ -1388,7 +1445,8 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
       res.status(400).json({ error: 'Informe o nickname do Instagram' });
       return;
     }
-    logStep(`Cadastro: extração imediata (fora da fila) + envio de código para @${nickname}`);
+    const fast = req.body?.fast === true || req.body?.fast === 'true';
+    logStep(`Cadastro: extração imediata (fora da fila) + envio de código para @${nickname}${fast ? ' [fast]' : ''}`);
 
     const authStatePath = resolveAuthStatePath(process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json');
     if (!existsSync(authStatePath)) {
@@ -1400,7 +1458,7 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
     extractProfileResults.set(handle, { status: 'pending' });
     const priorityClient = getPriorityExtractClient();
     try {
-      await runExtractAndStore(handle, { client: priorityClient, skipCount: true });
+      await runExtractAndStore(handle, { client: priorityClient, skipCount: true, fast });
     } catch (err) {
       console.error('[API] request-code-with-extract extract erro:', err instanceof Error ? err.stack : err);
       const stored = extractProfileResults.get(handle);
@@ -1431,7 +1489,11 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
 
-    const flowPromise = performRequestCodeFlow(nickname, code, userId, { client: priorityClient, trustFreshExtract: true });
+    const flowPromise = performRequestCodeFlow(nickname, code, userId, {
+      client: priorityClient,
+      trustFreshExtract: true,
+      ...(fast ? { fast: true } : {}),
+    });
     requestCodeFlushPromise = requestCodeFlushPromise.then(async () => {
       await flowPromise;
     });
@@ -1759,9 +1821,10 @@ type AdminPurgeCoreResult =
 
 /** Núcleo compartilhado: purge completo (sem invalidar cache de campanha). */
 async function purgeInfluencerAsAdminCore(rawInput: string): Promise<AdminPurgeCoreResult> {
-  const handle = rawInput.replace(/^@+/, '').toLowerCase().trim();
+  const resolved = profileRefDb.resolveToHandle(rawInput.trim()) ?? rawInput.replace(/^@+/, '').toLowerCase().trim();
+  const handle = resolved;
   if (!handle || handle.length > 200) {
-    return { ok: false, handle: rawInput.trim() || '(vazio)', error: 'Handle inválido', statusCode: 400 };
+    return { ok: false, handle: rawInput.trim() || '(vazio)', error: 'Identificador inválido', statusCode: 400 };
   }
 
   let s3ObjectsRemoved = 0;
@@ -2077,6 +2140,26 @@ async function fetchWithTimeout(
   }
 }
 
+/** Avatar do perfil por profile_ref (sem @ na URL). */
+app.get('/api/media/p/:profileRef/avatar', rateLimitDataApi, async (req: Request, res: Response) => {
+  try {
+    await streamProfileAvatarMedia(profileRefDb, db, req.params.profileRef, res);
+  } catch (e) {
+    console.error('[API] media avatar:', e instanceof Error ? e.message : e);
+    if (!res.headersSent) res.status(500).json({ error: 'Erro ao carregar imagem' });
+  }
+});
+
+/** Capa de post/reel por profile_ref + mediaKey (sem handle na URL). */
+app.get('/api/media/p/:profileRef/covers/:mediaKey', rateLimitDataApi, async (req: Request, res: Response) => {
+  try {
+    await streamProfileCoverMedia(profileRefDb, db, req.params.profileRef, req.params.mediaKey, res);
+  } catch (e) {
+    console.error('[API] media cover:', e instanceof Error ? e.message : e);
+    if (!res.headersSent) res.status(500).json({ error: 'Erro ao carregar imagem' });
+  }
+});
+
 /** Proxy de imagem para evitar bloqueio por CORS/CORP (ex.: CDN do Instagram). Timeout + fallbacks em caso de 403 ou erro. */
 app.get('/api/proxy-image', async (req: Request, res: Response) => {
   const url = (req.query.url as string)?.trim();
@@ -2248,30 +2331,22 @@ function pickPublicProfileDisplayFields(profile: Record<string, unknown>): Recor
   return out;
 }
 
-/** Prévia pública: handle, foto, bio, seguidores, métricas e LLM (sem nome completo). */
+/** Prévia pública: profile_ref + avatar_url (sem @). */
 function buildPublicProfilePreview(
   handle: string,
   profile: Record<string, unknown>,
   engagement: Record<string, unknown>,
   engagementByType: Awaited<ReturnType<typeof getProfileEngagementByType>>
 ): Record<string, unknown> {
+  const ref = profileRefForHandle(handle);
   const followers = getFollowersFromProfile(profile);
-  const out: Record<string, unknown> = {
-    handle,
-    username: handle,
-    key: handle,
-    followers_count: followers > 0 ? followers : null,
-    _redacted: true,
-    _all_base_preview: true,
+  return buildPublicProfilePreviewDto(
+    ref,
+    { ...profile, followers_count: followers > 0 ? followers : profile.followers_count },
     engagement,
     engagementByType,
-    ...pickPublicProfileDisplayFields(profile),
-  };
-  const llm = profile.llm;
-  if (llm != null && typeof llm === 'object' && !Array.isArray(llm)) {
-    out.llm = llm;
-  }
-  return out;
+    pickPublicProfileDisplayFields
+  );
 }
 
 /** Reduz perfil para versão sem dados sensíveis (público que atingiu limite). Mantém apenas bio e dados mínimos de exibição (foto, nome, handle). */
@@ -2327,13 +2402,16 @@ function redactPostsItems(items: Array<{ key: string;[k: string]: unknown }>): A
   });
 }
 
-/** Posts para resposta da API: sempre oculta @ e telefones em legendas/textos. */
-function preparePostItemsForApiResponse(items: Array<{ key: string;[k: string]: unknown }>): Array<Record<string, unknown>> {
-  return redactContactInfoInPostItems(items);
+/** Posts para resposta da API: oculta @ e inclui `profile_ref` opaco por item. */
+function preparePostItemsForApiResponse(
+  items: Array<{ key: string; [k: string]: unknown }>,
+  req?: RequestWithAuth
+): Array<Record<string, unknown>> {
+  return enrichPostItemsWithRefs(items, profileRefDb, req);
 }
 
-function prepareProfileListItemsForApiResponse(items: ProfileListItem[]): ProfileListItem[] {
-  return items.map((item) => redactContactInfoInProfileListItem(item as Record<string, unknown>) as ProfileListItem);
+function prepareProfileListItemsForApiResponse(items: ProfileListItem[], req?: RequestWithAuth): ProfileListItem[] {
+  return enrichListItemsWithRefs(items, profileRefDb, req);
 }
 
 /** Resposta de busca para público/anônimo: só totais e facets agregados — sem lista de perfis (`items`). */
@@ -2419,13 +2497,7 @@ function buildProfilePreviewItem(item: ProfileListItem, previewIndex: number): P
       const fromName = chooseFromParts(fullName.split(/\s+/));
       if (fromName) return fromName;
     }
-    const handleBase = String(item.handle ?? '').replace(/^@/, '').trim();
-    if (!handleBase) return 'Influenciador';
-    const handleParts = handleBase
-      .split(/[._-]+/)
-      .map((x) => x.replace(/\d+/g, '').trim())
-      .filter(Boolean);
-    return chooseFromParts(handleParts) ?? handleBase;
+    return 'Influenciador';
   })();
   const q = getLlmQualification(item as unknown as Record<string, unknown>);
   const personaRaw = String(q?.personaSummary ?? '').trim();
@@ -2437,7 +2509,11 @@ function buildProfilePreviewItem(item: ProfileListItem, previewIndex: number): P
       .slice(0, 6)
     : [];
   const audience = audienceArr.join(' / ') || '-';
-  const profilePicUrl = String(item.stable_profile_pic_url ?? '').trim();
+  const hKey = String(item.handle ?? item.key ?? '')
+    .toLowerCase()
+    .replace(/^@/, '');
+  const previewRef = hKey ? profileRefDb.getOrCreateRef(hKey) : '';
+  const profilePicUrl = previewRef ? profileAvatarMediaPath(previewRef) : '';
   const followers = Number(item.followers_count ?? 0);
   const size = followersCountToSizeKey(followers);
   const collectedAtRaw = (item as Record<string, unknown>)._collected_at;
@@ -4668,13 +4744,17 @@ app.get('/api/me/favorites', async (req: RequestWithAuth, res: Response) => {
           }
         }
       }
+      const ref = profileRefDb.getOrCreateRef(r.profile_handle);
       return {
-        handle: r.profile_handle,
+        profile_ref: ref,
         campaignId: campaignId ?? undefined,
         campaignName: campaignName ?? undefined,
       };
     });
-    res.json({ handles: rows.map((r) => r.profile_handle), favorites });
+    res.json({
+      profile_refs: favorites.map((f) => f.profile_ref),
+      favorites,
+    });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -4688,11 +4768,15 @@ app.post('/api/me/favorites', async (req: RequestWithAuth, res: Response) => {
       return;
     }
     const userId = Number(req.user.sub);
-    const handle = (req.body?.handle ?? req.body?.profile_handle ?? '').toString().trim().replace(/^@/, '');
+    const ident = (req.body?.profile_ref ?? req.body?.handle ?? req.body?.profile_handle ?? '')
+      .toString()
+      .trim();
+    const handle = resolveProfileParam(ident) ?? normalizeHandle(ident);
     if (!handle) {
-      res.status(400).json({ error: 'handle é obrigatório' });
+      res.status(400).json({ error: 'profile_ref é obrigatório' });
       return;
     }
+    profileRefDb.getOrCreateRef(handle);
     const campaignId = (req.body?.campaignId ?? req.body?.campaign_id ?? '').toString().trim() || undefined;
     if (campaignId && !isCampaignIdGuid(campaignId)) {
       res.status(400).json({ error: 'campaignId inválido' });
@@ -4706,7 +4790,11 @@ app.post('/api/me/favorites', async (req: RequestWithAuth, res: Response) => {
       }
     }
     sqlite.addFavorite(userId, handle, campaignId);
-    res.status(201).json({ ok: true, handle, campaignId: campaignId ?? null });
+    res.status(201).json({
+      ok: true,
+      profile_ref: profileRefDb.getOrCreateRef(handle),
+      campaignId: campaignId ?? null,
+    });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -4720,15 +4808,16 @@ app.delete('/api/me/favorites/:handle', async (req: RequestWithAuth, res: Respon
       return;
     }
     const userId = Number(req.user.sub);
-    const handle = (req.params.handle ?? '').replace(/^@/, '').trim();
+    const ident = (req.params.handle ?? '').trim();
+    const handle = resolveProfileParam(ident) ?? normalizeHandle(ident);
     if (!handle) {
-      res.status(400).json({ error: 'handle é obrigatório' });
+      res.status(400).json({ error: 'profile_ref inválido' });
       return;
     }
     const campaignIdRaw = (req.query.campaignId ?? req.query.campaign_id) as string | undefined;
     const campaignId = typeof campaignIdRaw === 'string' && campaignIdRaw.trim() && isCampaignIdGuid(campaignIdRaw.trim()) ? campaignIdRaw.trim() : undefined;
     sqlite.removeFavorite(userId, handle, campaignId ?? null);
-    res.json({ ok: true, handle, campaignId: campaignId ?? null });
+    res.json({ ok: true, profile_ref: profileRefDb.getOrCreateRef(handle), campaignId: campaignId ?? null });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5646,7 +5735,7 @@ app.get('/api/admin/influencers', requireScopes('adm'), rateLimitDataApi, async 
     };
     const result = await searchProfiles(db, query, { allowLargeLimit: true });
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items), facets: result.facets });
+    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items, req), facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5686,6 +5775,15 @@ const X_CAMPAIGN_ID = 'x-campaign-id';
 
 function normalizeHandle(h: string | undefined): string {
   return (h ?? '').replace(/^@/, '').trim().toLowerCase();
+}
+
+/** Resolve profile_ref (UUID) ou handle legado → handle interno (nunca retornar ao cliente). */
+function resolveProfileParam(identifier: string | undefined): string | null {
+  return profileRefDb.resolveToHandle(identifier ?? '');
+}
+
+function profileRefForHandle(handle: string): string {
+  return profileRefDb.getOrCreateRef(normalizeHandle(handle));
 }
 
 /** Acesso completo ao perfil (assinatura ativa, campanha paga com o handle, próprio perfil, favorito, adm). */
@@ -5739,12 +5837,12 @@ function requireProfileOrCampaign(
       return;
     }
     const rawHandle = getHandle(req);
-    const handle = normalizeHandle(rawHandle);
+    const handle = resolveProfileParam(rawHandle ?? '') ?? '';
     if (!handle) {
       if (options?.requireHandle) {
         res.status(403).json({
-          error: 'Para acessar dados de perfil, informe o handle (ex.: profile=@handle na query) ou use o header X-Campaign-Id em uma rota de campanha.',
-          code: 'HANDLE_REQUIRED',
+          error: 'Para acessar dados de perfil, informe profile_ref ou use o header X-Campaign-Id em uma rota de campanha.',
+          code: 'PROFILE_REF_REQUIRED',
         });
         return;
       }
@@ -5871,7 +5969,7 @@ app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWith
       initialItems: contextItems,
       ...(campaignBaseFacets != null ? { campaignBaseFacets } : {}),
     });
-    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items), facets: result.facets });
+    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items, req), facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5961,7 +6059,7 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
       const billableProfileCount = result.items.length - priceSums.alreadyOwnedCount;
       res.json({
         total: result.total,
-        items: prepareProfileListItemsForApiResponse(result.items),
+        items: prepareProfileListItemsForApiResponse(result.items, req),
         facets: result.facets,
         pricePreview: {
           amountCents,
@@ -5984,7 +6082,7 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
       });
       return;
     }
-    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items), facets: result.facets });
+    res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items, req), facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -5993,14 +6091,15 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
 /** Perfil na visão agregada "Todos" (base completa). */
 app.get('/api/campaigns/all/profiles/:handle', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
-    const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
+    const handle = resolveProfileParam(req.params.handle);
     if (!handle) {
-      res.status(400).json({ error: 'Handle inválido' });
+      res.status(404).json({ error: 'Perfil não encontrado' });
       return;
     }
+    const ref = profileRefForHandle(handle);
     const value = await db.get('profile', handle);
     if (value == null) {
-      res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+      res.status(404).json({ error: 'Perfil não encontrado' });
       return;
     }
     const profile = value as Record<string, unknown>;
@@ -6008,7 +6107,7 @@ app.get('/api/campaigns/all/profiles/:handle', rateLimitDataApi, async (req: Req
     if (shouldUsePublicProfilePreview(req, handle)) {
       const summary = await getProfileSummary(db, handle);
       if (summary == null) {
-        res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+        res.status(404).json({ error: 'Perfil não encontrado' });
         return;
       }
       res.json(
@@ -6021,7 +6120,13 @@ app.get('/api/campaigns/all/profiles/:handle', rateLimitDataApi, async (req: Req
       );
       return;
     }
-    res.json(redactContactInfoInProfile(profile));
+    res.json(
+      sanitizeProfileForClient(profile, {
+        profileRef: ref,
+        handle,
+        includeHandleForAdmin: shouldIncludeHandleInApi(req),
+      })
+    );
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -6039,11 +6144,12 @@ app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: Req
       res.status(400).json({ error: 'ID da campanha inválido' });
       return;
     }
-    const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
+    const handle = resolveProfileParam(req.params.handle);
     if (!handle) {
-      res.status(400).json({ error: 'Handle inválido' });
+      res.status(404).json({ error: 'Perfil não encontrado' });
       return;
     }
+    const ref = profileRefForHandle(handle);
     const userId = Number(req.user.sub);
     const handles = creditsCampaignsDb.getCampaignHandlesIfActiveAndPaid(campaignId, userId);
     if (!handles || handles.length === 0) {
@@ -6052,17 +6158,23 @@ app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: Req
     }
     const handleInCampaign = handles.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle);
     if (!handleInCampaign) {
-      res.status(404).json({ error: 'Perfil não encontrado nesta campanha', handle: req.params.handle });
+      res.status(404).json({ error: 'Perfil não encontrado nesta campanha' });
       return;
     }
     const value = await db.get('profile', handle);
     if (value == null) {
-      res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+      res.status(404).json({ error: 'Perfil não encontrado' });
       return;
     }
     const profile = value as Record<string, unknown>;
     res.setHeader('Cache-Control', 'no-store');
-    res.json(redactContactInfoInProfile(profile));
+    res.json(
+      sanitizeProfileForClient(profile, {
+        profileRef: ref,
+        handle,
+        includeHandleForAdmin: shouldIncludeHandleInApi(req),
+      })
+    );
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -6071,9 +6183,9 @@ app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: Req
 /** Ativação na visão agregada "Todos" (base completa). */
 app.get('/api/campaigns/all/profiles/:handle/activation', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
-    const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
+    const handle = resolveProfileParam(req.params.handle);
     if (!handle) {
-      res.status(400).json({ error: 'Handle inválido' });
+      res.status(404).json({ error: 'Perfil não encontrado' });
       return;
     }
     const data = sqlite.getActivation(handle);
@@ -6114,9 +6226,9 @@ app.get('/api/campaigns/:id/profiles/:handle/activation', rateLimitDataApi, asyn
       res.status(400).json({ error: 'ID da campanha inválido' });
       return;
     }
-    const handle = (req.params.handle ?? '').replace(/^@/, '').trim().toLowerCase();
+    const handle = resolveProfileParam(req.params.handle);
     if (!handle) {
-      res.status(400).json({ error: 'Handle inválido' });
+      res.status(404).json({ error: 'Perfil não encontrado' });
       return;
     }
     const userId = Number(req.user.sub);
@@ -6127,7 +6239,7 @@ app.get('/api/campaigns/:id/profiles/:handle/activation', rateLimitDataApi, asyn
     }
     const handleInCampaign = handles.some((h) => String(h).replace(/^@/, '').trim().toLowerCase() === handle);
     if (!handleInCampaign) {
-      res.status(404).json({ error: 'Perfil não encontrado nesta campanha', handle: req.params.handle });
+      res.status(404).json({ error: 'Perfil não encontrado nesta campanha' });
       return;
     }
     const data = sqlite.getActivation(handle);
@@ -6177,7 +6289,11 @@ app.get(
   requireProfileOrCampaign((req) => req.params.handle, { requireAuth: false }),
   async (req: RequestWithAuth, res: Response) => {
     try {
-      const handle = normalizeHandle(req.params.handle);
+      const handle = resolveProfileParam(req.params.handle);
+      if (!handle) {
+        res.status(404).json({ error: 'Perfil não encontrado' });
+        return;
+      }
       if (shouldUsePublicProfilePreview(req, handle)) {
         res.status(200).json({ _redacted: true, _all_base_preview: true });
         return;
@@ -6210,7 +6326,11 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
       res.status(401).json({ error: 'Não autenticado', code: 'UNAUTHORIZED' });
       return;
     }
-    const handle = (req.params.handle || '').replace(/^@/, '');
+    const handle = resolveProfileParam(req.params.handle);
+    if (!handle) {
+      res.status(404).json({ error: 'Perfil não encontrado' });
+      return;
+    }
     if (!canEditProfile(req.user, handle)) {
       res.status(403).json({ error: 'Sem permissão para editar este perfil', code: 'FORBIDDEN' });
       return;
@@ -6312,10 +6432,20 @@ app.get(
   rateLimitDataApi,
   async (req: RequestWithAuth, res: Response) => {
     try {
-      const handle = normalizeHandle(req.params.handle);
+      const handle = resolveProfileParam(req.params.handle);
+      if (!handle) {
+        res.status(404).json({ error: 'Perfil não encontrado' });
+        return;
+      }
+      const ref = profileRefForHandle(handle);
+      if (db.getProfileSearchAuxRowsForHandles([handle]).length === 0) {
+        await syncProfileSearchIndexForHandle(db, handle).catch((e) =>
+          console.warn('[profiles] lazy search index sync:', handle, e instanceof Error ? e.message : e)
+        );
+      }
       const summary = await getProfileSummary(db, handle);
       if (summary == null) {
-        res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+        res.status(404).json({ error: 'Perfil não encontrado' });
         return;
       }
       res.setHeader('Cache-Control', 'no-store');
@@ -6333,7 +6463,11 @@ app.get(
       const prof = summary.profile as Record<string, unknown>;
       const fc = getFollowersFromProfile(prof);
       if (fc > 0) prof.followers_count = fc;
-      const out = redactContactInfoInProfile(prof) as Record<string, unknown>;
+      const out = sanitizeProfileForClient(prof, {
+        profileRef: ref,
+        handle,
+        includeHandleForAdmin: shouldIncludeHandleInApi(req),
+      });
       out.engagement = summary.engagement;
       out.engagementByType = await getProfileEngagementByType(db, handle);
       res.json(out);
@@ -6350,10 +6484,15 @@ app.get(
   requireProfileOrCampaign((req) => req.params.handle, { requireAuth: false }),
   async (req: RequestWithAuth, res: Response) => {
     try {
-      const handle = normalizeHandle(req.params.handle);
+      const handle = resolveProfileParam(req.params.handle);
+      if (!handle) {
+        res.status(404).json({ error: 'Perfil não encontrado' });
+        return;
+      }
+      const ref = profileRefForHandle(handle);
       const summary = await getProfileSummary(db, handle);
       if (summary == null) {
-        res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+        res.status(404).json({ error: 'Perfil não encontrado' });
         return;
       }
       res.setHeader('Cache-Control', 'no-store');
@@ -6371,7 +6510,11 @@ app.get(
       }
       res.json({
         ...summary,
-        profile: redactContactInfoInProfile(summary.profile as Record<string, unknown>),
+        profile: sanitizeProfileForClient(summary.profile as Record<string, unknown>, {
+          profileRef: ref,
+          handle,
+          includeHandleForAdmin: shouldIncludeHandleInApi(req),
+        }),
       });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -6407,7 +6550,7 @@ app.get(
   requireProfileOrCampaign((req) => req.query.profile as string | undefined, { requireHandle: true, requireAuth: false }),
   async (req: RequestWithAuth, res: Response) => {
     try {
-      const profileFilter = normalizeHandle(req.query.profile as string | undefined);
+      const profileFilter = resolveProfileParam(req.query.profile as string | undefined) ?? '';
       const typeFilter = (req.query.type as string)?.toLowerCase();
       const limit = Math.min(Number(req.query.limit) || 50, 200);
       const offset = Number(req.query.offset) || 0;
@@ -6436,7 +6579,11 @@ app.get(
         res.json({ total: 0, items: [], _redacted: true, _all_base_preview: true });
         return;
       }
-      res.json({ total, items: preparePostItemsForApiResponse(slice) });
+      const ref = profileFilter ? profileRefForHandle(profileFilter) : '';
+      const itemsOut = ref
+        ? sanitizePostItemsForClient(slice, ref, shouldIncludeHandleInApi(req))
+        : preparePostItemsForApiResponse(slice, req);
+      res.json({ total, items: itemsOut });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -6929,10 +7076,12 @@ async function runPostMatchesForHandles(
         if (h) profileHandlesSet.add(h);
       }
       const profileHandles = [...profileHandlesSet].sort((a, b) => a.localeCompare(b));
+      const profileRefs = profileHandles.map((h) => profileRefDb.getOrCreateRef(h));
       const payload = {
         total,
         items: [] as unknown[],
-        profileHandles,
+        profileRefs,
+        ...(shouldIncludeHandleInApi(req) ? { profileHandles } : {}),
         mediaKindCounts,
         q: qRaw || undefined,
         ...(scanMeta ? { scanMeta } : {}),
@@ -7001,7 +7150,13 @@ async function runPostMatchesForHandles(
       };
     }
 
-    res.json({ total, items: preparePostItemsForApiResponse(slice), q: qRaw || undefined, mediaKindCounts, ...(scanMeta ? { scanMeta } : {}) });
+    res.json({
+      total,
+      items: preparePostItemsForApiResponse(slice, req),
+      q: qRaw || undefined,
+      mediaKindCounts,
+      ...(scanMeta ? { scanMeta } : {}),
+    });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -7348,9 +7503,11 @@ app.post('/api/crawl/queue-refresh', requireScopes('adm', 'influencer'), async (
     res.status(403).json({ error: 'Apenas administradores podem forçar atualização prioritária.' });
     return;
   }
-  let handle = (req.body?.handle ?? req.body?.url ?? '').toString().trim();
+  let handle = resolveProfileParam(
+    String(req.body?.profile_ref ?? req.body?.handle ?? req.body?.url ?? '').trim()
+  );
   if (!handle) {
-    res.status(400).json({ error: 'Envie "handle" (ex.: rafaellacassol).' });
+    res.status(400).json({ error: 'Envie "profile_ref" do perfil.' });
     return;
   }
   if (handle.startsWith('http://') || handle.startsWith('https://')) {

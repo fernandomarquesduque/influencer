@@ -80,7 +80,7 @@ export default function MyCampaigns() {
     Promise.all([
       fetchMyCampaigns({ signal: ac.signal, light: true }),
       fetchFavorites({ signal: ac.signal })
-        .then((res) => (res.handles?.length ?? 0) > 0)
+        .then((res) => (res.profile_refs?.length ?? res.favorites?.length ?? 0) > 0)
         .catch(() => false),
     ])
       .then(([campaignsRes, fav]) => {

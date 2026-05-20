@@ -1,0 +1,311 @@
+.influencer-login-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: clamp(14px, 2.2vh, 20px);
+}
+
+.influencer-login-panel__intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.influencer-login-panel__intro-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.influencer-login-panel__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 5px 8px;
+  margin-bottom: 12px;
+  border-radius: 999px;
+  background: rgba(237, 233, 254, 0.95);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.influencer-login-panel__badge-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #8b5cf6, #6226a7);
+  color: #fff;
+  font-size: 11px;
+}
+
+.influencer-login-panel__badge > span:last-child {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6226a7;
+}
+
+.influencer-login-panel__title {
+  margin: 0 0 8px;
+  font-size: clamp(1.35rem, 2.4vw, 1.65rem);
+  font-weight: 800;
+  line-height: 1.15;
+  color: #1a1033;
+  letter-spacing: -0.02em;
+}
+
+.influencer-login-panel__subtitle {
+  margin: 0;
+  font-size: clamp(0.78rem, 1.3vw, 0.875rem);
+  line-height: 1.5;
+  color: #6b7280;
+  max-width: 28ch;
+}
+
+.influencer-login-panel__subtitle-accent {
+  color: #6226a7;
+  font-weight: 600;
+}
+
+/* Decorativo do cabeçalho */
+.influencer-login-panel__visual {
+  position: relative;
+  flex-shrink: 0;
+  width: 108px;
+  height: 108px;
+  margin-top: 4px;
+}
+
+.influencer-login-panel__visual-dots {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(167, 139, 250, 0.35) 1px, transparent 1px);
+  background-size: 10px 10px;
+  opacity: 0.5;
+  border-radius: 12px;
+}
+
+.influencer-login-panel__ig {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #c026d3 0%, #7c3aed 45%, #f97316 100%);
+  box-shadow: 0 10px 24px rgba(124, 58, 237, 0.35);
+}
+
+.influencer-login-panel__ig::before {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border: 2.5px solid rgba(255, 255, 255, 0.9);
+  border-radius: 10px;
+}
+
+.influencer-login-panel__ig::after {
+  content: '';
+  position: absolute;
+  top: 17px;
+  left: 17px;
+  width: 10px;
+  height: 10px;
+  border: 2.5px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+}
+
+.influencer-login-panel__ig-heart {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.influencer-login-panel__ig-heart::after {
+  content: '♥';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #f43f5e;
+  line-height: 1;
+}
+
+.influencer-login-panel__mini-chart {
+  position: absolute;
+  left: 0;
+  bottom: 18px;
+  width: 78px;
+  padding: 8px 8px 6px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(98, 38, 167, 0.15);
+}
+
+.influencer-login-panel__mini-chart-line {
+  display: block;
+  width: 100%;
+  height: 28px;
+}
+
+.influencer-login-panel__mini-chart-badge {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #059669;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.influencer-login-panel__people {
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+  border: 2px solid #fff;
+  box-shadow: 0 4px 10px rgba(98, 38, 167, 0.12);
+}
+
+.influencer-login-panel__people::before {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7c3aed;
+  top: 9px;
+  left: 6px;
+  box-shadow: 12px 0 0 #a78bfa;
+}
+
+/* Lista de benefícios */
+.influencer-login-panel__features {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid rgba(139, 92, 246, 0.08);
+  box-shadow: 0 4px 14px rgba(98, 38, 167, 0.06);
+  overflow: hidden;
+}
+
+.influencer-login-panel__feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.08);
+}
+
+.influencer-login-panel__feature:last-child {
+  border-bottom: none;
+}
+
+.influencer-login-panel__feature-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: #f5f3ff;
+  color: #7c3aed;
+  font-size: 17px;
+}
+
+.influencer-login-panel__feature-at {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.influencer-login-panel__feature-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.influencer-login-panel__feature-body strong {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #1a1033;
+  line-height: 1.25;
+}
+
+.influencer-login-panel__feature-body span {
+  font-size: 0.75rem;
+  color: #6b7280;
+  line-height: 1.35;
+}
+
+.influencer-login-panel__cta.ant-btn-primary,
+.influencer-login-panel__cta.login-btn-primary {
+  height: 48px !important;
+  border-radius: 14px !important;
+  font-weight: 700 !important;
+  font-size: 14px !important;
+  margin-top: 4px;
+  border: none !important;
+  background: linear-gradient(135deg, #ff0080 0%, #e11d74 55%, #f97316 100%) !important;
+  box-shadow: 0 10px 28px rgba(255, 0, 128, 0.28) !important;
+}
+
+.influencer-login-panel__cta.ant-btn-primary:hover,
+.influencer-login-panel__cta.ant-btn-primary:focus,
+.influencer-login-panel__cta.login-btn-primary:hover,
+.influencer-login-panel__cta.login-btn-primary:focus {
+  background: linear-gradient(135deg, #ff1a8c 0%, #ec4899 55%, #fb923c 100%) !important;
+  filter: none !important;
+  box-shadow: 0 12px 32px rgba(255, 0, 128, 0.34) !important;
+}
+
+.influencer-login-panel__cta-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.influencer-login-panel__cta-inner > span:nth-child(2) {
+  flex: 1;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .influencer-login-panel__visual {
+    display: none;
+  }
+
+  .influencer-login-panel__intro {
+    display: block;
+  }
+
+  .influencer-login-panel__subtitle {
+    max-width: none;
+  }
+}

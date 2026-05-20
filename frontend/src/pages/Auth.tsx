@@ -1,10 +1,19 @@
 import { useState, useEffect } from 'react'
-import { Form, Input, Button, Card, message, Collapse, Checkbox } from 'antd'
+import { Form, Input, Button, message, Collapse, Checkbox } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
 import { requestCodeWithExtract, verifyProfile, type ExtractProfileResult } from '../api'
-import { SafetyCertificateOutlined, MessageOutlined, UserOutlined, RocketOutlined, InstagramOutlined, ReloadOutlined, EditOutlined, ArrowRightOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import {
+  SafetyCertificateOutlined,
+  UserOutlined,
+  InstagramOutlined,
+  ReloadOutlined,
+  EditOutlined,
+  ArrowRightOutlined,
+  RocketOutlined,
+} from '@ant-design/icons'
 import { trackMetaPixel } from '../utils/metaPixel'
+import AuthCreateLayout from '../components/AuthCreateLayout/AuthCreateLayout'
 
 const REJECTION_REASON_LABELS: Record<string, string> = {
   nao_segue_perfil: '', // tratado por bloco especial no RejectionFullScreen
@@ -512,6 +521,8 @@ export default function Auth() {
   const fromState = (location.state as { nickname?: string })?.nickname
   const fromQuery = searchParams.get('u') || searchParams.get('@')
   const savedNickname = fromState || (fromQuery ? fromQuery.replace(/^@/, '').trim().toLowerCase() : undefined)
+  /** Dev ou ?fast=1: pula delays humanos na extração + envio do código. */
+  const requestCodeFast = searchParams.get('fast') === '1' || import.meta.env.DEV
   useEffect(() => {
     if (savedNickname && form) {
       form.setFieldsValue({ nickname: savedNickname })
@@ -526,7 +537,7 @@ export default function Auth() {
     setShowInstallLoader(true)
     trackMetaPixel('Lead', { source: 'auth_request_code' })
     try {
-      const data = await requestCodeWithExtract(n)
+      const data = await requestCodeWithExtract(n, { fast: requestCodeFast })
       if (data.rejectionReason === 'nao_segue_perfil') {
         setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
         return
@@ -600,7 +611,7 @@ export default function Auth() {
     setShowInstallLoader(true)
     trackMetaPixel('Lead', { source: 'auth_retry_request_code' })
     try {
-      const data = await requestCodeWithExtract(n)
+      const data = await requestCodeWithExtract(n, { fast: requestCodeFast })
       if (data.rejectionReason === 'nao_segue_perfil') {
         setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
         return
@@ -638,190 +649,24 @@ export default function Auth() {
       )}
 
       {!showInstallLoader && !rejectionInfo && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflowX: 'hidden',
-            overflowY: 'auto',
-            padding: compactHeight
-              ? 'max(8px, env(safe-area-inset-top, 0px)) 12px max(10px, env(safe-area-inset-bottom, 0px))'
-              : '24px 16px',
-            background: 'linear-gradient(135deg, var(--app-card-bg-soft) 0%, var(--app-warning-bg) 25%, var(--app-primary-muted) 50%, var(--app-gold-light) 75%, var(--app-primary-muted) 100%)',
-            backgroundAttachment: 'fixed',
-            fontFamily: "'Segoe UI', system-ui, sans-serif",
-          }}
-        >
-          {/* Blobs ficam clipados para não ampliar a área de scroll (evita barra horizontal) */}
-          <div
-            aria-hidden
-            style={{
-              position: 'absolute',
-              inset: 0,
-              overflow: 'hidden',
-              pointerEvents: 'none',
-              zIndex: 0,
-            }}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                width: 400,
-                height: 400,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, var(--app-primary-muted) 0%, transparent 70%)',
-                top: '-15%',
-                right: '-10%',
-                animation: 'auth-blob-float 12s ease-in-out infinite',
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                width: 320,
-                height: 320,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, var(--app-warning-bg) 0%, transparent 70%)',
-                bottom: '10%',
-                left: '-8%',
-                animation: 'auth-blob-float 10s ease-in-out infinite reverse',
-                animationDelay: '2s',
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                width: 200,
-                height: 200,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, var(--app-gold-light) 0%, transparent 70%)',
-                top: '45%',
-                left: '20%',
-                animation: 'auth-blob-float 8s ease-in-out infinite',
-                animationDelay: '1s',
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                width: 180,
-                height: 180,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, var(--app-bg-blob1) 0%, transparent 70%)',
-                bottom: '25%',
-                right: '25%',
-                animation: 'auth-blob-float 11s ease-in-out infinite',
-                animationDelay: '0.5s',
-              }}
-            />
-          </div>
-
-          <style>{`
-          @keyframes auth-blob-float {
-            0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.85; }
-            50% { transform: translate(15px, -15px) scale(1.08); opacity: 1; }
+        <AuthCreateLayout
+          compact={compactHeight}
+          showSignupHint={step === 'nickname' && !user?.profile_handle}
+          cardTitle={
+            step === 'code' ? (
+              <h2 className="auth-create__card-title">
+                <SafetyCertificateOutlined />
+                Validar perfil no Instagram
+              </h2>
+            ) : user?.profile_handle && step === 'nickname' ? (
+              <h2 className="auth-create__card-title">
+                <UserOutlined />
+                Perfil validado
+              </h2>
+            ) : undefined
           }
-        `}</style>
-
-          <div style={{ maxWidth: 440, width: '100%', minWidth: 0, position: 'relative', zIndex: 1, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            {/* Hero para primeiro passo */}
-            {step === 'nickname' && (
-              <div style={{ textAlign: 'center', marginBottom: compactHeight ? 10 : 28 }}>
-                <div
-                  style={{
-                    width: compactHeight ? 52 : 72,
-                    height: compactHeight ? 52 : 72,
-                    margin: compactHeight ? '0 auto 8px' : '0 auto 16px',
-                    borderRadius: compactHeight ? 18 : 24,
-                    background: 'linear-gradient(145deg, var(--app-primary) 0%, var(--app-primary-dark) 40%, var(--app-accent) 100%)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: 'var(--app-shadow-lg)',
-                    animation: 'auth-hero-pulse 3s ease-in-out infinite',
-                  }}
-                >
-                  <RocketOutlined style={{ fontSize: compactHeight ? 26 : 34, color: 'var(--brand-white)', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }} />
-                </div>
-                <style>{`
-                @keyframes auth-hero-pulse {
-                  0%, 100% { transform: scale(1); }
-                  50% { transform: scale(1.04); }
-                }
-              `}</style>
-                <h1
-                  style={{
-                    fontSize: compactHeight ? 18 : 24,
-                    fontWeight: 800,
-                    margin: 0,
-                    lineHeight: compactHeight ? 1.2 : 1.3,
-                    letterSpacing: '-0.02em',
-                    color: 'var(--app-text)',
-                    textShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                  }}
-                >
-                  Entra pro programa de influenciadores
-                </h1>
-                <p
-                  style={{
-                    fontSize: compactHeight ? 12 : 14,
-                    color: 'var(--app-text-secondary)',
-                    marginTop: compactHeight ? 4 : 8,
-                    lineHeight: compactHeight ? 1.35 : 1.5,
-                    maxWidth: 340,
-                    margin: compactHeight ? '4px auto 0' : '8px auto 0',
-                  }}
-                >
-                  Valida teu perfil em poucos cliques e começa a receber proposta de marca.
-                </p>
-              </div>
-            )}
-
-            <Card
-              title={
-                compactHeight && step === 'nickname' && !user?.profile_handle
-                  ? undefined
-                  : step === 'nickname' ? (
-                  <span style={{ fontSize: compactHeight ? 14 : 16, fontWeight: 700, color: 'var(--app-text)' }}>
-                    <UserOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
-                    {user?.profile_handle ? 'Perfil validado' : 'Começar cadastro'}
-                  </span>
-                ) : (
-                  <span style={{ fontSize: compactHeight ? 14 : 16, fontWeight: 700, color: 'var(--app-text)' }}>
-                    <SafetyCertificateOutlined style={{ marginRight: 8, color: 'var(--app-primary)' }} />
-                    Validar perfil no Instagram
-                  </span>
-                )
-              }
-              style={{
-                overflow: 'hidden',
-                background: 'var(--app-glass-bg)',
-                backdropFilter: 'blur(12px)',
-                borderRadius: 'var(--app-card-radius)',
-                border: '1px solid var(--app-glass-border)',
-                boxShadow: 'var(--app-shadow-lg)',
-              }}
-              styles={{
-                header: {
-                  borderBottom: '1px solid var(--app-border)',
-                  padding: compactHeight ? '10px 16px' : '20px 24px',
-                  minHeight: compactHeight ? 44 : undefined,
-                },
-                body: {
-                  padding: compactHeight
-                    ? (step === 'nickname'
-                        ? (user?.profile_handle ? '14px 16px 16px' : '12px 16px 14px')
-                        : '14px 16px 16px')
-                    : (step === 'nickname'
-                        ? (user?.profile_handle ? '24px 24px 28px' : '16px 24px 24px')
-                        : '24px 24px 28px'),
-                },
-              }}
-            >
+          onBack={() => { window.location.href = '/' }}
+        >
               {user?.profile_handle && step === 'nickname' && (
                 <div style={{
                   display: 'flex',
@@ -843,19 +688,12 @@ export default function Auth() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: compactHeight ? 8 : 12 }}>
                     <Button
                       type="primary"
-                      size={compactHeight ? 'middle' : 'large'}
+                      size="large"
+                      className="auth-create__submit"
                       onClick={() => navigate(`/activate/${user.profile_handle}`)}
-                      style={{
-                        height: compactHeight ? 42 : 48,
-                        borderRadius: compactHeight ? 12 : 14,
-                        fontWeight: 600,
-                        fontSize: compactHeight ? 14 : undefined,
-                        background: 'linear-gradient(90deg, var(--app-primary) 0%, var(--app-accent) 100%)',
-                        border: 'none',
-                        boxShadow: 'var(--app-shadow-md)',
-                      }}
                     >
                       Continuar
+                      <ArrowRightOutlined className="auth-create__submit-arrow" />
                     </Button>
                     <Button
                       type="text"
@@ -871,90 +709,79 @@ export default function Auth() {
               )}
 
               {!user?.profile_handle && step === 'nickname' && (
-                <>
-                  <p style={{ color: 'var(--app-text-secondary)', marginBottom: compactHeight ? 10 : 24, fontSize: compactHeight ? 12 : 14, lineHeight: compactHeight ? 1.45 : 1.6 }}>
-                    Coloca teu <strong style={{ color: 'var(--app-primary)' }}>@</strong>. A gente manda um código no <strong style={{ color: 'var(--app-primary)' }}>Direct do Instagram</strong>.
-                  </p>
-                  <Form form={form} name="request-code" onFinish={onRequestCode} layout="vertical" requiredMark={false}>
-                    <Form.Item
-                      name="nickname"
-                      label={<span style={{ fontWeight: 600, color: 'var(--app-text)', fontSize: compactHeight ? 13 : undefined }}>Seu @ no Instagram</span>}
-                      rules={[{ required: true, message: 'Coloca teu @ do Instagram.' }]}
-                      style={{ marginBottom: compactHeight ? 8 : undefined }}
+                <Form form={form} name="request-code" onFinish={onRequestCode} layout="vertical" requiredMark={false}>
+                  <Form.Item
+                    name="nickname"
+                    label="Seu @ no Instagram"
+                    rules={[{ required: true, message: 'Informe seu @ do Instagram.' }]}
+                    style={{ marginBottom: compactHeight ? 8 : 12 }}
+                  >
+                    <Input
+                      className="auth-create__input"
+                      prefix={<span className="auth-create__input-prefix">@</span>}
+                      placeholder="seuinstagram"
+                      size="large"
+                      autoComplete="username"
+                      autoFocus
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="acceptTerms"
+                    valuePropName="checked"
+                    rules={[
+                      {
+                        validator: (_, v) =>
+                          v ? Promise.resolve() : Promise.reject(new Error('Precisa aceitar os termos para continuar.')),
+                      },
+                    ]}
+                    style={{ marginBottom: compactHeight ? 8 : 16 }}
+                  >
+                    <Checkbox className="auth-create__terms" style={{ alignItems: 'flex-start' }}>
+                      <span>
+                        Li e aceito os{' '}
+                        <a
+                          href="/documents/termos.html"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          termos de uso
+                        </a>
+                        .
+                      </span>
+                    </Checkbox>
+                  </Form.Item>
+                  <Form.Item style={{ marginBottom: 0 }}>
+                    <Button
+                      type="primary"
+                      htmlType="submit"
+                      loading={loading && !showInstallLoader}
+                      block
+                      size="large"
+                      className="auth-create__submit"
+                      icon={<InstagramOutlined />}
                     >
-                      <Input
-                        prefix={<UserOutlined style={{ color: 'var(--app-primary)' }} />}
-                        placeholder="ex: seu_usuario"
-                        size={compactHeight ? 'middle' : 'large'}
-                        autoComplete="username"
-                        style={{ borderRadius: compactHeight ? 10 : 12, borderColor: 'var(--app-border)' }}
-                        autoFocus
-                      />
-                    </Form.Item>
-                    <Form.Item
-                      name="acceptTerms"
-                      valuePropName="checked"
-                      rules={[
-                        {
-                          validator: (_, v) =>
-                            v ? Promise.resolve() : Promise.reject(new Error('Precisa aceitar os termos para continuar.')),
-                        },
-                      ]}
-                      style={{ marginBottom: compactHeight ? 8 : 16 }}
-                    >
-                      <Checkbox style={{ alignItems: 'flex-start', lineHeight: compactHeight ? 1.35 : 1.5 }}>
-                        <span style={{ color: 'var(--app-text-secondary)', fontSize: compactHeight ? 12 : 13 }}>
-                          Li e aceito os{' '}
-                          <a
-                            href="/documents/termos.html"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: 'var(--app-primary)', fontWeight: 600 }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            termos de uso
-                          </a>
-                          .
-                        </span>
-                      </Checkbox>
-                    </Form.Item>
-                    <Form.Item style={{ marginBottom: 0 }}>
-                      <Button
-                        type="primary"
-                        htmlType="submit"
-                        loading={loading && !showInstallLoader}
-                        block
-                        size={compactHeight ? 'middle' : 'large'}
-                        icon={<MessageOutlined />}
-                        style={{
-                          height: compactHeight ? 42 : 52,
-                          borderRadius: compactHeight ? 12 : 14,
-                          fontWeight: 700,
-                          fontSize: compactHeight ? 14 : 15,
-                          background: 'linear-gradient(90deg, var(--app-primary) 0%, var(--app-accent) 100%)',
-                          border: 'none',
-                          boxShadow: 'var(--app-shadow-md)',
-                        }}
-                      >
-                        Pedir código no Instagram
-                      </Button>
-                    </Form.Item>
-                  </Form>
-                </>
+                      Receber código no Instagram
+                      <ArrowRightOutlined className="auth-create__submit-arrow" />
+                    </Button>
+                  </Form.Item>
+                </Form>
               )}
 
               {step === 'code' && (
                 <>
-                  <div style={{
-                    marginBottom: compactHeight ? 12 : 24,
-                    padding: compactHeight ? 12 : 20,
-                    background: 'var(--app-info-bg)',
-                    border: '1px solid var(--app-info-border)',
-                    borderRadius: compactHeight ? 12 : 16,
-                    boxShadow: 'var(--app-shadow-sm)',
-                  }}>
-                    <p style={{ margin: 0, color: 'var(--app-info-text)', fontSize: compactHeight ? 12 : 14, lineHeight: compactHeight ? 1.45 : 1.5 }}>
-                      Mandamos um código de 6 números no <strong style={{ color: 'var(--app-info-text-accent)', fontWeight: 700 }}>Direct</strong> para <strong style={{ color: 'var(--app-info-text-accent)', fontWeight: 700 }}>@{nickname}</strong>. Olha a DM e cola aqui.
+                  <div
+                    style={{
+                      marginBottom: compactHeight ? 12 : 20,
+                      padding: compactHeight ? 12 : 16,
+                      background: 'rgba(237, 233, 254, 0.6)',
+                      border: '1px solid rgba(139, 92, 246, 0.15)',
+                      borderRadius: 12,
+                    }}
+                  >
+                    <p style={{ margin: 0, color: '#4b5563', fontSize: compactHeight ? 12 : 14, lineHeight: 1.5 }}>
+                      Enviamos um código de 6 números no <strong style={{ color: '#7c3aed' }}>Direct</strong> para{' '}
+                      <strong style={{ color: '#7c3aed' }}>@{nickname}</strong>. Confira sua DM e cole o código abaixo.
                     </p>
                   </div>
                   <Form form={form} name="verify" onFinish={onVerify} layout="vertical" requiredMark={false}>
@@ -983,19 +810,12 @@ export default function Auth() {
                         htmlType="submit"
                         loading={loading}
                         block
-                        size={compactHeight ? 'middle' : 'large'}
+                        size="large"
+                        className="auth-create__submit"
                         icon={<SafetyCertificateOutlined />}
-                        style={{
-                          height: compactHeight ? 42 : 52,
-                          borderRadius: compactHeight ? 12 : 14,
-                          fontWeight: 700,
-                          fontSize: compactHeight ? 14 : 15,
-                          background: 'linear-gradient(90deg, var(--app-primary) 0%, var(--app-accent) 100%)',
-                          border: 'none',
-                          boxShadow: 'var(--app-shadow-md)',
-                        }}
                       >
                         Validar e continuar
+                        <ArrowRightOutlined className="auth-create__submit-arrow" />
                       </Button>
                     </Form.Item>
                     <Form.Item style={{ marginTop: compactHeight ? 4 : 8, marginBottom: 0 }}>
@@ -1006,26 +826,7 @@ export default function Auth() {
                   </Form>
                 </>
               )}
-            </Card>
-
-            <Button
-              type="text"
-              onClick={() => window.location.href = '/'}
-              style={{
-                marginTop: compactHeight ? 8 : 24,
-                height: compactHeight ? 32 : 40,
-                padding: '0 16px',
-                borderRadius: 12,
-                fontWeight: 500,
-                fontSize: compactHeight ? 12 : 13,
-                color: 'var(--app-text-tertiary)',
-              }}
-              icon={<ArrowLeftOutlined />}
-            >
-              Voltar
-            </Button>
-          </div>
-        </div>
+        </AuthCreateLayout>
       )}
     </>
   )

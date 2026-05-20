@@ -7,14 +7,14 @@ import './InfluencerDetailModal.css'
 export type InfluencerDetailModalProps = {
   open: boolean
   onClose: () => void
-  handle: string
+  profileRef: string
   campaignId?: string | null
 }
 
 export default function InfluencerDetailModal({
   open,
   onClose,
-  handle,
+  profileRef,
   campaignId = null,
 }: InfluencerDetailModalProps) {
   useLockPageScroll(open)
@@ -31,8 +31,8 @@ export default function InfluencerDetailModal({
       destroyOnHidden
       closable={false}
       wrapClassName="influencer-detail-modal"
-      maskStyle={{ backdropFilter: 'blur(4px)' }}
       styles={{
+        mask: { backdropFilter: 'blur(4px)' },
         body: {
           padding: 0,
           maxHeight: 'min(92vh, 960px)',
@@ -42,7 +42,7 @@ export default function InfluencerDetailModal({
         },
       }}
     >
-      {open && handle ? (
+      {open && profileRef ? (
         <div className="influencer-detail-modal__shell">
           <button
             type="button"
@@ -53,7 +53,7 @@ export default function InfluencerDetailModal({
             <CloseOutlined />
           </button>
           <InfluencerDetail
-            overrideHandle={handle}
+            overrideProfileRef={profileRef}
             overrideCampaignId={campaignId}
             embeddedInModal
             onModalClose={onClose}

@@ -17,7 +17,9 @@ export interface AuthUser {
   id: number
   username: string
   scope: AuthScope
-  profile_handle: string | null
+  profile_handle?: string | null
+  /** Ref opaco do perfil Instagram vinculado (influencer). */
+  profile_ref?: string | null
   /** Nome escolhido no cadastro (ex.: assinante). */
   displayName?: string | null
   /** Para scope influencer: true se o cadastro foi ativado (cidade preenchida na ativação). */
@@ -70,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             username: u.username,
             scope: u.scope,
             profile_handle: u.profile_handle ?? null,
+            profile_ref: u.profile_ref ?? null,
             displayName: u.display_name ?? null,
             profile_activated: u.profile_activated,
             emailVerified: u.email_verified,
@@ -170,6 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             username: u.username,
             scope: u.scope,
             profile_handle: u.profile_handle ?? null,
+            profile_ref: u.profile_ref ?? null,
             displayName: u.display_name ?? null,
             profile_activated: u.profile_activated,
             emailVerified: u.email_verified,
@@ -186,13 +190,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isPublic = state.user?.scope === 'public'
 
   const canEditProfile = useCallback(
-    (handle: string) => {
+    (profileRefOrLegacy: string) => {
       if (!state.user) return false
       if (state.user.scope === 'adm') return true
       if (state.user.scope === 'influencer') {
-        const h = (handle || '').replace(/^@/, '').toLowerCase()
+        const id = (profileRefOrLegacy || '').trim()
+        if (state.user.profile_ref && id === state.user.profile_ref) return true
+        const h = id.replace(/^@/, '').toLowerCase()
         const ph = (state.user.profile_handle || '').replace(/^@/, '').toLowerCase()
-        return ph === h
+        return ph.length > 0 && ph === h
       }
       return false
     },

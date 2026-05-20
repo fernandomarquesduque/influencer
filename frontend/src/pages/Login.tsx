@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react'
 import { App, Form, Input, Button, Typography, Space, Divider, Spin } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { UserOutlined, LockOutlined, LoginOutlined, MessageOutlined, UserAddOutlined, CheckOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import {
+  UserOutlined,
+  LockOutlined,
+  LoginOutlined,
+  MessageOutlined,
+  GlobalOutlined,
+} from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import Logo from '../components/Logo'
+import InfluencerLoginHeroPanel from '../components/InfluencerLoginHeroPanel/InfluencerLoginHeroPanel'
+import '../components/AgencyLoginPanel/AgencyLoginPanel.css'
 import { trackMetaPixel } from '../utils/metaPixel'
 import { SEARCH_ROUTE_PATH } from '../constants/searchRoute'
 
@@ -106,103 +114,8 @@ function Login() {
           alignItems: 'stretch',
         }}
       >
-        {/* Painel esquerdo: apresentação do produto */}
-        <div
-          className="login-left-panel"
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 'clamp(24px, 5vw, 56px) clamp(24px, 4vw, 48px)',
-            borderRight: '1px solid var(--app-border)',
-            background: 'linear-gradient(135deg, #f7f3ff 0%, #f1ebff 100%)',
-          }}
-        >
-          <div style={{ maxWidth: 420, width: '100%' }}>
-            <Space direction="vertical" size={32} style={{ width: '100%' }}>
-              <div>
-                <Title
-                  level={1}
-                  style={{
-                    margin: 0,
-                    marginBottom: 16,
-                    fontSize: 36,
-                    fontWeight: 700,
-                    color: '#1a1a2e',
-                    lineHeight: 1.25,
-                  }}
-                >
-                  Transforme seu perfil em oportunidades de parceria
-                </Title>
-                <Text
-                  style={{
-                    fontSize: 18,
-                    lineHeight: 1.6,
-                    color: '#374151',
-                    display: 'block',
-                  }}
-                >
-                  Descubra métricas do seu Instagram, gere seu Mídia Kit automaticamente e entre no radar de marcas.
-                </Text>
-              </div>
-
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                {[
-                  'Seu perfil merece ser visto por quem importa',
-                  'O Mídia Kit que abre portas para parcerias',
-                  'Entre no radar das marcas que você admira',
-                ].map((item) => (
-                  <div key={item} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <CheckOutlined style={{ color: 'var(--app-success)', fontSize: 16, flexShrink: 0 }} />
-                    <Text style={{ fontSize: 16, color: '#4b5563' }}>{item}</Text>
-                  </div>
-                ))}
-              </Space>
-
-
-
-              <Button
-                type="default"
-                size="large"
-                icon={<UserAddOutlined />}
-                onClick={() => {
-                  trackMetaPixel('Lead', { source: 'login_cadastrar' })
-                  navigate('/app/create')
-                }}
-                className="login-tab"
-                style={{
-                  height: 48,
-                  borderRadius: 12,
-                  fontWeight: 600,
-                  fontSize: 15,
-                  width: '100%',
-                  maxWidth: 260,
-                  borderColor: 'var(--app-primary)',
-                  color: 'var(--app-primary)',
-                }}
-              >
-                Cadastrar
-              </Button>
-            </Space>
-            <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 16 }} >
-              <Text
-                type="secondary"
-                style={{
-                  fontSize: 14,
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-                onClick={() => window.location.href = '/landing/index.html'}
-              >
-                <ArrowLeftOutlined />
-                Voltar ao site
-              </Text>
-
-            </Space>
-          </div>
+        <div className="login-left-panel influencer-login-left-panel">
+          <InfluencerLoginHeroPanel />
         </div>
 
         {/* Painel direito: login */}
@@ -431,7 +344,21 @@ function Login() {
               </div>
             )}
 
-
+            <footer className="agency-login-panel-footer influencer-login-form-footer">
+              <div className="agency-login-panel-footer__divider">
+                <span>ou</span>
+              </div>
+              <button
+                type="button"
+                className="agency-login-panel-footer__link"
+                onClick={() => {
+                  window.location.href = '/landing/index.html'
+                }}
+              >
+                <GlobalOutlined aria-hidden />
+                Voltar ao site
+              </button>
+            </footer>
           </div>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import type { FollowersSizeKey } from '@repo/followersSizeBuckets'
+import { resolveMediaUrl } from './constants/profilePaths'
 
 /** Em produção sob subpasta (ex.: /influencer) use VITE_API_BASE=/influencer/api */
 const API_BASE = (import.meta.env.VITE_API_BASE as string) || '/api'
@@ -23,15 +24,34 @@ export function authHeadersWithCampaign(campaignId?: string | null): Record<stri
   return h
 }
 
-/** Usa proxy da API para carregar imagem (evita CORS/CORP do CDN do Instagram). Em caso de 403, o backend tenta fallback via proxy público. */
+/** Preferir avatar_url / cover_url da API (sem vazar @). Fallback legado: proxy Instagram. */
 export function proxyImageUrl(url: string | undefined): string | undefined {
   if (!url || typeof url !== 'string') return undefined
+  const resolved = resolveMediaUrl(url)
+  if (resolved && (resolved.startsWith('/api/media/') || resolved.includes('/api/media/p/'))) {
+    return resolved.startsWith('/api/') ? resolved : `${API_BASE}${resolved.replace(/^\/api/, '')}`
+  }
+  if (resolved && (resolved.startsWith('http://') || resolved.startsWith('https://'))) {
+    const lower = resolved.toLowerCase()
+    if (
+      !lower.includes('instagram.') &&
+      !lower.includes('fbcdn.net') &&
+      !lower.includes('cdninstagram') &&
+      !lower.includes('/influencers/')
+    ) {
+      return resolved
+    }
+  }
   return `${API_BASE}/proxy-image?url=${encodeURIComponent(url)}`
 }
 
-/** Instagram/fbcdn → proxy da API; URLs públicas (ex.: S3) sem proxy. */
+/** Exibe mídia: API media > proxy IG > URL direta segura. */
 export function proxyImageUrlForDisplay(url: string | undefined): string | undefined {
   if (!url || typeof url !== 'string') return undefined
+  const media = resolveMediaUrl(url)
+  if (media?.includes('/api/media/p/')) {
+    return media.startsWith('/api/') ? media : `${API_BASE}${media.startsWith('/') ? media : `/${media}`}`
+  }
   const lower = url.toLowerCase()
   if (
     lower.includes('instagram.') ||
@@ -40,12 +60,20 @@ export function proxyImageUrlForDisplay(url: string | undefined): string | undef
   ) {
     return proxyImageUrl(url)
   }
+  if (lower.includes('/influencers/')) return undefined
   return url
 }
 
 export interface ProfileItem {
-  key: string
+  key?: string
+  /** Identificador opaco (UUID) — usar em rotas e API. */
+  profile_ref?: string
+  /** URL de avatar sem @ (ex.: /api/media/p/{ref}/avatar). */
+  avatar_url?: string
+  /** Somente admin — não confiar no cliente. */
   handle?: string
+  /** Link público do perfil no Instagram (quando o viewer tem acesso completo). */
+  instagram_profile_url?: string
   username?: string
   full_name?: string
   profile_pic_url?: string
@@ -88,9 +116,11 @@ export interface ProfileItem {
   [key: string]: unknown
 }
 
-/** Extrai URL da foto do perfil (lista e detalhe). Aceita qualquer objeto com profile_pic_url/data.user. */
+/** Extrai URL da foto do perfil (lista e detalhe). Prioriza avatar_url da API. */
 export function getProfilePicUrl(item: ProfileItem | Record<string, unknown> | null | undefined): string | undefined {
   if (!item) return undefined
+  const avatar = (item as Record<string, unknown>).avatar_url as string | undefined
+  if (avatar) return proxyImageUrlForDisplay(avatar) ?? resolveMediaUrl(avatar)
   const top = (item.profile_pic_url ?? item.hd_profile_pic_url) as string | undefined
   if (top && typeof top === 'string') return top
   const data = (item as Record<string, unknown>).data
@@ -107,11 +137,13 @@ export function getProfilePicUrl(item: ProfileItem | Record<string, unknown> | n
   return undefined
 }
 
-/** URL da foto estável (S3) — não passa pelo proxy da API. */
+/** URL da foto estável — preferir avatar_url; ignorar S3 com handle no path. */
 export function getStableProfilePicUrl(item: ProfileItem | Record<string, unknown> | null | undefined): string | undefined {
   if (!item) return undefined
+  const avatar = (item as Record<string, unknown>).avatar_url as string | undefined
+  if (avatar) return proxyImageUrlForDisplay(avatar) ?? resolveMediaUrl(avatar)
   const top = (item as Record<string, unknown>).stable_profile_pic_url
-  if (typeof top === 'string' && top.startsWith('http')) return top
+  if (typeof top === 'string' && top.startsWith('http') && !top.toLowerCase().includes('/influencers/')) return top
   const data = (item as Record<string, unknown>).data
   const u =
     data && typeof data === 'object' && 'user' in data
@@ -183,7 +215,10 @@ export interface EngagementStats {
 /** Item da listagem com filtros (endpoint /api/profiles/search). */
 export interface ProfileListItem {
   key: string
-  handle: string
+  profile_ref: string
+  avatar_url?: string
+  /** Admin only */
+  handle?: string
   full_name?: string
   profile_pic_url?: string
   stable_profile_pic_url?: string
@@ -870,13 +905,16 @@ export async function createPaymentForCredits(
 
 /** Item de favorito com nome da campanha (quando favoritado a partir de uma campanha). */
 export interface FavoriteItem {
-  handle: string
+  profile_ref: string
   campaignId?: string
   campaignName?: string
 }
 
 /** Lista de favoritos do usuário (handles + opcionalmente favorites com campaignName). */
-export async function fetchFavorites(options?: { signal?: AbortSignal }): Promise<{ handles: string[]; favorites?: FavoriteItem[] }> {
+export async function fetchFavorites(options?: { signal?: AbortSignal }): Promise<{
+  profile_refs: string[]
+  favorites?: FavoriteItem[]
+}> {
   const res = await fetch(`${API_BASE}/me/favorites`, {
     headers: { ...authHeaders() },
     signal: options?.signal,
@@ -886,9 +924,9 @@ export async function fetchFavorites(options?: { signal?: AbortSignal }): Promis
 }
 
 /** Adiciona influenciador aos favoritos. campaignId opcional: campanha de onde está favoritando. */
-export async function addFavorite(handle: string, options?: { campaignId?: string | null }): Promise<void> {
-  const h = handle.replace(/^@/, '').trim()
-  const body: { handle: string; campaignId?: string } = { handle: h }
+export async function addFavorite(profileRef: string, options?: { campaignId?: string | null }): Promise<void> {
+  const ref = profileRef.trim()
+  const body: { profile_ref: string; campaignId?: string } = { profile_ref: ref }
   if (options?.campaignId?.trim()) body.campaignId = options.campaignId.trim()
   const res = await fetch(`${API_BASE}/me/favorites`, {
     method: 'POST',
@@ -902,10 +940,10 @@ export async function addFavorite(handle: string, options?: { campaignId?: strin
 }
 
 /** Remove influenciador dos favoritos. campaignId opcional: remove só essa (handle, campanha); sem campaignId remove todas as entradas do handle. */
-export async function removeFavorite(handle: string, options?: { campaignId?: string | null }): Promise<void> {
-  const h = handle.replace(/^@/, '').trim()
+export async function removeFavorite(profileRef: string, options?: { campaignId?: string | null }): Promise<void> {
+  const ref = profileRef.trim()
   const qs = options?.campaignId?.trim() ? `?campaignId=${encodeURIComponent(options.campaignId.trim())}` : ''
-  const res = await fetch(`${API_BASE}/me/favorites/${encodeURIComponent(h)}${qs}`, {
+  const res = await fetch(`${API_BASE}/me/favorites/${encodeURIComponent(ref)}${qs}`, {
     method: 'DELETE',
     headers: { ...authHeaders() },
   })
@@ -1317,6 +1355,10 @@ export interface PostMetrics {
 
 export interface PostItem {
   key: string
+  /** Identificador opaco (UUID) — usar ao abrir perfil / API. */
+  profile_ref?: string
+  /** Avatar via `/api/media/p/{ref}/avatar` (sem @). */
+  avatar_url?: string
   profile_handle?: string
   /** Tipo de mídia quando extraímos reels, marcados e destaques. */
   content_type?: MediaKind
@@ -1354,15 +1396,25 @@ export function getPostCoverRawUrl(post: PostItem): string | undefined {
 
 /** URL pronta para `<img src>` (proxy só quando for Instagram/fbcdn). */
 export function getPostCoverDisplayUrl(post: PostItem): string | undefined {
+  const coverUrl = (post as Record<string, unknown>).cover_url as string | undefined
+  if (coverUrl) return proxyImageUrlForDisplay(coverUrl) ?? resolveMediaUrl(coverUrl)
   const raw = getPostCoverRawUrl(post)
   if (!raw) return undefined
   return proxyImageUrlForDisplay(raw) ?? proxyImageUrl(raw)
 }
 
+export function getProfileRef(item: ProfileItem | Record<string, unknown> | null | undefined): string | undefined {
+  if (!item) return undefined
+  const ref = (item as Record<string, unknown>).profile_ref
+  return typeof ref === 'string' && ref.trim() ? ref.trim() : undefined
+}
+
 export interface PostsResponse {
   total: number
   items: PostItem[]
-  /** Quando `handlesOnly=1` na API: handles com ao menos um post que casa com `q`. */
+  /** Quando `handlesOnly=1` na API: refs opacos com post que casa com `q`. */
+  profileRefs?: string[]
+  /** Somente admin — handles legados em handlesOnly. */
   profileHandles?: string[]
   /** Scan limitado por performance: total pode ser subestimado. */
   scanMeta?: { partial: true; handlesScanned: number; handlesTotal: number }
@@ -1447,6 +1499,11 @@ export async function fetchCampaignPostSearchHandles(
     { q, mediaKinds: params.mediaKinds, limit: 1, offset: 0, handlesOnly: true },
     options
   )
+  const refs = Array.isArray(res.profileRefs) ? res.profileRefs : []
+  const fromRefs = refs.map((r) => String(r).trim()).filter(Boolean)
+  if (fromRefs.length > 0) {
+    return { handles: fromRefs, totalPosts: res.total }
+  }
   const list = Array.isArray(res.profileHandles) ? res.profileHandles : []
   const handles = list
     .map((h) => String(h).toLowerCase().replace(/^@/, '').trim())
@@ -1470,8 +1527,8 @@ export async function fetchProfiles(
   return res.json()
 }
 
-export async function fetchProfile(handle: string, options?: { campaignId?: string | null }): Promise<ProfileItem | null> {
-  const h = handle.replace(/^@/, '')
+export async function fetchProfile(profileRef: string, options?: { campaignId?: string | null }): Promise<ProfileItem | null> {
+  const h = profileRef.replace(/^@/, '').trim()
   const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}`, {
     headers: authHeadersWithCampaign(options?.campaignId),
   })
@@ -1492,8 +1549,8 @@ export interface ProfileSummaryResponse {
   bi?: unknown
 }
 
-export async function fetchProfileSummary(handle: string, options?: { campaignId?: string | null }): Promise<ProfileSummaryResponse | null> {
-  const h = handle.replace(/^@/, '')
+export async function fetchProfileSummary(profileRef: string, options?: { campaignId?: string | null }): Promise<ProfileSummaryResponse | null> {
+  const h = profileRef.replace(/^@/, '').trim()
   const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}/summary`, {
     headers: authHeadersWithCampaign(options?.campaignId),
   })
@@ -1508,8 +1565,8 @@ export async function fetchProfileSummary(handle: string, options?: { campaignId
 }
 
 /** Perfil de um influenciador dentro de uma campanha. Só retorna dados se o perfil estiver na campanha. */
-export async function fetchCampaignProfile(campaignId: string, handle: string): Promise<ProfileItem | null> {
-  const h = handle.replace(/^@/, '').trim()
+export async function fetchCampaignProfile(campaignId: string, profileRef: string): Promise<ProfileItem | null> {
+  const h = profileRef.replace(/^@/, '').trim()
   const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/profiles/${encodeURIComponent(h)}`, {
     headers: { ...authHeaders() },
   })
@@ -1524,8 +1581,8 @@ export async function fetchCampaignProfile(campaignId: string, handle: string): 
 }
 
 /** Ativação do perfil dentro de uma campanha. Só retorna dados se o perfil estiver na campanha. */
-export async function fetchCampaignProfileActivation(campaignId: string, handle: string): Promise<ProfileActivation> {
-  const h = handle.replace(/^@/, '').trim()
+export async function fetchCampaignProfileActivation(campaignId: string, profileRef: string): Promise<ProfileActivation> {
+  const h = profileRef.replace(/^@/, '').trim()
   const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/profiles/${encodeURIComponent(h)}/activation`, {
     headers: { ...authHeaders() },
   })
@@ -1551,11 +1608,19 @@ export interface RequestCodeResponse {
  * Extract + request-code em uma única chamada (sem polling). Processo todo no backend.
  * Usado no fluxo de cadastro (/app/create) para evitar gap entre extract e envio do código.
  */
-export async function requestCodeWithExtract(nickname: string): Promise<RequestCodeResponse & { success?: boolean }> {
+export async function requestCodeWithExtract(
+  nickname: string,
+  options?: { fast?: boolean }
+): Promise<RequestCodeResponse & { success?: boolean }> {
+  const handle = nickname.replace(/^@/, '').trim()
   const res = await fetch(`${API_BASE}/auth/request-code-with-extract`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ nickname: nickname.replace(/^@/, '').trim(), handle: nickname.replace(/^@/, '').trim() }),
+    body: JSON.stringify({
+      nickname: handle,
+      handle,
+      ...(options?.fast ? { fast: true } : {}),
+    }),
   })
   const body = await res.json().catch(() => ({})) as { error?: string; followProfileUrl?: string; sent?: boolean; code?: string }
   if (res.status === 400 && body.error === 'nao_segue_perfil') {
@@ -2080,8 +2145,8 @@ export interface ProfileActivation {
   updated_at?: string
 }
 
-export async function fetchProfileActivation(handle: string, options?: { campaignId?: string | null }): Promise<ProfileActivation> {
-  const h = handle.replace(/^@/, '')
+export async function fetchProfileActivation(profileRef: string, options?: { campaignId?: string | null }): Promise<ProfileActivation> {
+  const h = profileRef.replace(/^@/, '').trim()
   const res = await fetch(`${API_BASE}/profiles/${encodeURIComponent(h)}/activation`, {
     headers: authHeadersWithCampaign(options?.campaignId),
   })

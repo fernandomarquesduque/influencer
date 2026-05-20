@@ -17,6 +17,7 @@ import {
 } from './followersSizeBuckets.js';
 import { snapMainCategoryToTaxonomy } from '../lib/mainCategoryTaxonomy.js';
 import { getFollowersFromEntity } from '../utils/entityAccess.js';
+import { estimateFollowersFromPosts, resolveFollowersCountForProfile } from '../utils/followersResolve.js';
 import { searchHandlesViaMeilisearch, buildMeilisearchFilterExpr } from '../search/meilisearchProfile.js';
 
 /**
@@ -2465,7 +2466,10 @@ export async function getProfileSummary(
   if (profile == null) return null;
   const postsRaw = await db.getByBucket<Record<string, unknown>>('post', key + ':');
   const posts = postsRaw.map(({ value }) => value);
-  const followersCount = getFollowers(profile);
+  const auxRow = db.getProfileSearchAuxRowsForHandles([key])[0];
+  let followersCount = resolveFollowersCountForProfile(profile, getFollowers, auxRow, posts);
+  if (followersCount <= 0) followersCount = estimateFollowersFromPosts(posts);
+  if (followersCount > 0) profile.followers_count = followersCount;
   const engagement = computeEngagement(posts, followersCount);
   let bi: InstagramBi | undefined;
   if (posts.length >= 2) {
@@ -2489,9 +2493,12 @@ export async function getProfileEngagementByType(
 }> {
   const key = handle.toLowerCase().replace(/^@/, '');
   const profile = await db.get<Record<string, unknown>>('profile', key);
-  const followersCount = profile != null ? getFollowers(profile) : 0;
   const postsRaw = await db.getByBucket<Record<string, unknown>>('post', key + ':');
   const posts = postsRaw.map(({ value }) => value);
+  const auxRow = profile != null ? db.getProfileSearchAuxRowsForHandles([key])[0] : undefined;
+  let followersCount =
+    profile != null ? resolveFollowersCountForProfile(profile, getFollowers, auxRow, posts) : 0;
+  if (followersCount <= 0 && posts.length > 0) followersCount = estimateFollowersFromPosts(posts);
   const byType = (type: string) =>
     posts.filter((p) => {
       const ct = typeof p.content_type === 'string' ? p.content_type.toLowerCase() : 'post';
