@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
+﻿import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Spin,
@@ -9,14 +9,11 @@ import {
   Card,
   Typography,
   Tooltip,
-  Collapse,
   message,
   Skeleton,
   Modal,
 } from 'antd'
 import {
-  EditOutlined,
-  SafetyOutlined,
   MessageOutlined,
   SyncOutlined,
   VideoCameraOutlined,
@@ -33,7 +30,8 @@ import {
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchCampaignProfile, fetchProfileSummary, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, fetchFavorites, addFavorite, removeFavorite, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, adminPurgeInfluencer, type ProfileItem, type PostItem, type ProfileActivation, type EngagementStats } from '../api'
 import { computeEngagementFromPosts } from '../utils/engagement'
-import { getInfluencerTierLongLabel } from '../utils/influencerTier'
+import { getFollowersCountFromProfile } from '../utils/profileMetrics'
+import { getInfluencerTierLongLabel, getInfluencerTierShort, getInfluencerTierTooltip } from '../utils/influencerTier'
 import { buildReportInsights, getWeekdayName, getPostsByWeekday } from '../utils/reportInsights'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { GENDER_LABELS, AUDIENCE_GENDER_LABELS, INFLUENCE_AGE_RANGE_LABELS } from '../constants/activationLabels'
@@ -50,10 +48,8 @@ import {
   EngajamentoPorTipoSection,
   MetricasMediakitSection,
   ValorEpublicoSection,
-  StrategicMetricsSection,
   StickyCTA,
   ReportSkeleton,
-  ProofCarousel,
 } from './InfluencerDetailReport'
 import { getProfilePersonaSummary } from '../utils/mapProfileListToPreviewItems'
 import { ActivationCtaPanel } from '../components/ActivationCtaPanel'
@@ -63,7 +59,10 @@ import { ReelsAnalysisSection } from '../components/ReelsAnalysisSection'
 import { TaggedAnalysisSection } from '../components/TaggedAnalysisSection'
 import { PrivateProfileMessage } from '../components/PrivateProfileMessage'
 import { ProfileLlmDetailPanel } from '../components/ProfileLlmDetailPanel'
+import ProfileLimitedPreviewLock, { engagementByTypeFromProfileRecord } from '../components/ProfileLimitedPreviewLock'
+import ProfileLocationCard from '../components/ProfileLocationCard'
 import AdminProfileLlmEditModal from '../components/AdminProfileLlmEditModal/AdminProfileLlmEditModal'
+import './InfluencerDetailStack.css'
 
 const { Text } = Typography
 const { spacing: s, colors: c, radiusLegacy: r, shadowLegacy: sh, typography: typ, layout: lay } = t
@@ -172,7 +171,17 @@ function getPostLink(post: PostItem): string {
 }
 
 const CAMPAIGN_ID_GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+/** Engagement embutido na prévia pública (`buildPublicProfilePreview` no backend). */
+function engagementFromProfileRecord(profile: ProfileItem | null | undefined): EngagementStats | null {
+  if (!profile) return null
+  const eng = (profile as Record<string, unknown>).engagement
+  if (eng == null || typeof eng !== 'object' || Array.isArray(eng)) return null
+  return eng as EngagementStats
+}
 const sectionGap = (t.spacing.xl as number)
+/** Espaçamento uniforme entre blocos no modal de detalhe */
+const MODAL_DETAIL_STACK_GAP = 16
 interface InfluencerDetailProps {
   overrideHandle?: string
   /** Substitui campaignId da URL (ex.: modal sobre a campanha). */
@@ -238,7 +247,11 @@ export default function InfluencerDetail({
   const [allBasePreview, setAllBasePreview] = useState(false)
   const [previewEngagement, setPreviewEngagement] = useState<EngagementStats | null>(null)
   const [previewSummaryFollowers, setPreviewSummaryFollowers] = useState<number | null>(null)
-  const isLimitedView = !user || isPublic || allBasePreview
+  /** Prévia sem dados completos (API: _all_base_preview ou scope public). */
+  const isPreviewLocked = allBasePreview || isPublic
+  const isRedacted = dataRedacted && !!user && !allBasePreview
+  const isProfileLocked = isPreviewLocked || isRedacted
+  const isLimitedView = isProfileLocked
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const [showActivationCta, setShowActivationCta] = useState(false)
@@ -298,8 +311,15 @@ export default function InfluencerDetail({
         if (!cancelled) {
           const pr = p as Record<string, unknown> | null
           if (pr?._redacted === true) setDataRedacted(true)
-          setAllBasePreview(pr?._all_base_preview === true)
+          const basePreview = pr?._all_base_preview === true
+          setAllBasePreview(basePreview)
           setProfile(p ?? null)
+          if (basePreview) {
+            const embedded = engagementFromProfileRecord(p ?? null)
+            if (embedded) setPreviewEngagement(embedded)
+          } else {
+            setPreviewEngagement(null)
+          }
         }
       })
       .finally(() => {
@@ -315,8 +335,13 @@ export default function InfluencerDetail({
     if (p != null) {
       const pr = p as Record<string, unknown> | null
       if (pr?._redacted === true) setDataRedacted(true)
-      setAllBasePreview(pr?._all_base_preview === true)
+      const basePreview = pr?._all_base_preview === true
+      setAllBasePreview(basePreview)
       setProfile(p)
+      if (basePreview) {
+        const embedded = engagementFromProfileRecord(p)
+        if (embedded) setPreviewEngagement(embedded)
+      }
     }
   }, [handle, campaignId])
 
@@ -345,6 +370,12 @@ export default function InfluencerDetail({
 
   useEffect(() => {
     if (!handle || authLoading) return
+    if (!user || isPreviewLocked) {
+      setPosts([])
+      setPostsTotal(0)
+      setPostsLoading(false)
+      return
+    }
     let cancelled = false
     setPostsLoading(true)
     fetchPosts(handle, 100, 0, undefined, campaignId ? { campaignId } : undefined)
@@ -359,12 +390,12 @@ export default function InfluencerDetail({
       .catch(() => { if (!cancelled) setPosts([]) })
       .finally(() => { if (!cancelled) setPostsLoading(false) })
     return () => { cancelled = true }
-  }, [handle, campaignId, authLoading])
+  }, [handle, campaignId, authLoading, user, isPreviewLocked])
 
   useEffect(() => {
     if (!handle || authLoading) return
-    const limited = !user || isPublic || allBasePreview
-    if (!limited) {
+    const needsPreviewMetrics = allBasePreview || isPublic || (dataRedacted && !!user)
+    if (!needsPreviewMetrics) {
       setPreviewEngagement(null)
       setPreviewSummaryFollowers(null)
       return
@@ -384,7 +415,7 @@ export default function InfluencerDetail({
         }
       })
     return () => { cancelled = true }
-  }, [handle, campaignId, authLoading, user, isPublic, allBasePreview])
+  }, [handle, campaignId, authLoading, allBasePreview, isPublic, dataRedacted, user])
 
   const startRefreshPolling = useRef<(h: string) => void>(() => { })
   startRefreshPolling.current = (h: string) => {
@@ -473,9 +504,7 @@ export default function InfluencerDetail({
   const userData = profile?.data?.user as Record<string, unknown> | undefined
   const displayHandle = (profile?.handle ?? profile?.username ?? profile?.key ?? handle ?? '') as string
   const fullName: string | undefined = profile?.full_name ?? (userData?.full_name != null ? String(userData.full_name) : undefined)
-  const followersCount = typeof profile?.followers_count === 'number'
-    ? profile.followers_count
-    : (typeof userData?.follower_count === 'number' ? userData.follower_count : 0)
+  const followersCount = getFollowersCountFromProfile(profile)
   const categories = (Array.isArray(profile?.categories) ? profile.categories : []) as string[]
   const ownPosts = useMemo(() => {
     const ct = (p: PostItem) => (p.content_type || 'post') as string
@@ -485,6 +514,18 @@ export default function InfluencerDetail({
     () => computeEngagementFromPosts(ownPosts, followersCount),
     [ownPosts, followersCount]
   )
+
+  const embeddedProfileEngagement = useMemo(() => engagementFromProfileRecord(profile), [profile])
+  const displayEngagement = isPreviewLocked
+    ? (previewEngagement ?? embeddedProfileEngagement ?? engagement)
+    : engagement
+  const displayFollowersCount =
+    isPreviewLocked && previewSummaryFollowers != null && previewSummaryFollowers > 0
+      ? previewSummaryFollowers
+      : followersCount
+  const tierLabel = getInfluencerTierLongLabel(displayFollowersCount)
+  const tierShort = getInfluencerTierShort(displayFollowersCount)
+  const previewEngagementByType = useMemo(() => engagementByTypeFromProfileRecord(profile), [profile])
 
   const reportInsights = useMemo(
     () => (profile && posts.length > 0 ? buildReportInsights(profile, posts) : null),
@@ -529,23 +570,6 @@ export default function InfluencerDetail({
       tagged: { er: tagged.engagement_rate ?? 0, erByViews: tagged.engagement_rate_by_views, count: tagged.posts_count },
     }
   }, [mediaByType.posts, mediaByType.reels, mediaByType.tagged, followersCount])
-
-  const guestPreviewPosts = useMemo(() => {
-    const mixed = [...mediaByType.posts, ...mediaByType.reels]
-    if (mixed.length > 0) return mixed.slice(0, 9)
-    return ownPosts.slice(0, 9)
-  }, [mediaByType.posts, mediaByType.reels, ownPosts])
-
-  const guestPreviewProofItems = useMemo(
-    () =>
-      guestPreviewPosts.map((post) => ({
-        post,
-        interactions: 0,
-        erPost: 0,
-        oQueFuncionou: '',
-      })),
-    [guestPreviewPosts],
-  )
 
   /** Quando o usuário informou preços na ativação, sobrescreve o valor estimado por tipo com o valor informado. (Hook antes de qualquer return.) */
   const valorEstimadoPorTipoExibir = useMemo(() => {
@@ -617,21 +641,18 @@ export default function InfluencerDetail({
       activation.linkedin?.trim() || activation.twitter?.trim() || activation.websites?.trim() ||
       activation.description?.trim() || activation.about_topics?.trim())
 
-  const isRedacted = dataRedacted && isLimitedView && !allBasePreview && !!user
+  /** Barra fixa “Gerar MediaKit” — só para conta logada como influenciador. */
+  const showMediaKitStickyBar = user?.scope === 'influencer' && !isRedacted
 
-  /** Blur das métricas: influenciador vendo outro / próprio sem ativação; ou visitante em prévia limitada (fotos desfocadas). */
+  /** Blur das métricas: influenciador vendo outro perfil; ou próprio sem ativação (exceto barra do MediaKit). */
   const isOwnProfileAsInfluencer = user?.scope === 'influencer' && handle && canEditProfile(handle)
-  const showGuestPreviewBlur = isLimitedView && !isRedacted
-  const showMetricsBlur =
-    (user?.scope === 'influencer' && handle && !canEditProfile(handle)) ||
-    (!hasActivationData && isOwnProfileAsInfluencer)
-
-  const displayEngagement = showGuestPreviewBlur && previewEngagement ? previewEngagement : engagement
-  const displayFollowersCount =
-    showGuestPreviewBlur && previewSummaryFollowers != null && previewSummaryFollowers > 0
-      ? previewSummaryFollowers
-      : followersCount
-  const tierLabel = getInfluencerTierLongLabel(displayFollowersCount)
+  const showMetricsBlurForOtherProfile = Boolean(
+    user?.scope === 'influencer' && handle && !canEditProfile(handle)
+  )
+  const showMetricsBlurUntilActivation = Boolean(isOwnProfileAsInfluencer && !hasActivationData)
+  const showMetricsBlur = showMetricsBlurForOtherProfile || showMetricsBlurUntilActivation
+  /** Barra de métricas do MediaKit: sempre visível no próprio perfil do influenciador. */
+  const showMediakitMetricsBlur = showMetricsBlurForOtherProfile
 
   const engagementScore = reportInsights?.score.total ?? Math.min(100, Math.round((engagement.engagement_rate / 12) * 100))
   const scoreSelo = reportInsights?.score.selo ?? 'Alto Engajamento'
@@ -680,8 +701,12 @@ export default function InfluencerDetail({
     showMainCta: 'final' as const,
     showScorePills: false,
   }
-  const gap = isMobile ? s.lg : sectionGap
-  const rowGutter: [number, number] = isMobile ? [s.md, s.md] : [s.lg, s.lg]
+  const stackGap = embeddedInModal ? MODAL_DETAIL_STACK_GAP : (isMobile ? s.lg : sectionGap)
+  const rowGutter: [number, number] = [stackGap, stackGap]
+  const detailStackStyle: React.CSSProperties = {
+    ['--influencer-detail-gap' as string]: `${stackGap}px`,
+    width: '100%',
+  }
 
   const bio = profile?.biography ?? (profile?.data?.user as Record<string, unknown>)?.biography
   const personaSummary = profile ? getProfilePersonaSummary(profile as unknown as Record<string, unknown>) : ''
@@ -692,9 +717,9 @@ export default function InfluencerDetail({
     : defaultHeadline
   const heroTypesTags = (hasActivationData && activation && activation.content_type && activation.content_type.length > 0)
     ? (
-      <Space wrap size={[2, 2]}>
+      <Space wrap size={[8, 8]} className="report-hero-types-tags">
         {activation.content_type.map((ct) => (
-          <Tag key={ct} color="blue">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>
+          <Tag key={ct} color="blue" className="report-hero-type-tag">{CONTENT_TYPE_LABELS[ct] ?? ct}</Tag>
         ))}
       </Space>
     )
@@ -709,1007 +734,864 @@ export default function InfluencerDetail({
     else navigate(-1)
   }
 
+  const modalCompact = embeddedInModal && isProfileLocked
   const detailContentPadX = isMobile
     ? (lay.contentPaddingMobile ?? s.md)
     : embeddedInModal
-      ? (lay.contentPadding ?? s.lg)
+      ? (modalCompact ? s.sm : (lay.contentPadding ?? s.lg))
       : 0
-  const detailContentPadTop = embeddedInModal ? detailContentPadX : 0
+  const detailContentPadTop = embeddedInModal ? (modalCompact ? s.sm : detailContentPadX) : 0
+  const detailContentPadBottom = embeddedInModal ? (modalCompact ? s.sm : s.md) : showMediaKitStickyBar && isMobile ? 160 : s.xl
+  const showDetailActions =
+    (user && handle && user.scope !== 'influencer' && !isProfileLocked) ||
+    (handle && canEdit) ||
+    (isAdm && handle)
+
+  const stickyCta = (
+    <StickyCTA
+      visible={showMediaKitStickyBar}
+      isMobile={isMobile}
+      primaryLabel={mediaKitCtaShortLabel}
+      onPrimary={goToMediaKitOrLogin}
+      embeddedInModal={embeddedInModal}
+    />
+  )
 
   return (
     <div
-      className={embeddedInModal ? 'influencer-detail--embedded' : undefined}
-      style={{ paddingBottom: s.xl, background: c.pageBg, minHeight: embeddedInModal ? 0 : '100vh' }}
+      className={
+        embeddedInModal
+          ? `influencer-detail--embedded${modalCompact ? ' influencer-detail--embedded-locked' : ''}`
+          : undefined
+      }
+      style={{ paddingBottom: embeddedInModal ? 0 : s.xl, background: c.pageBg, minHeight: embeddedInModal ? 0 : '100vh' }}
     >
 
+      <div
+        className={embeddedInModal ? 'influencer-detail__modal-scroll' : undefined}
+        style={embeddedInModal ? undefined : { display: 'contents' }}
+      >
 
-      {isRedacted && user && (
-        <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
-          <div style={{ marginBottom: s.lg, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
-            <Text>Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.</Text>
+        {isRedacted && user && (
+          <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
+            <div style={{ marginBottom: s.lg, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
+              <Text>Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.</Text>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {allBasePreview && user && (
-        <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
-          <div style={{ marginBottom: s.md, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
-            <Text>
-              Este criador não está em nenhum dos seus relatórios pagos. Você vê uma prévia; inclua-o numa campanha para desbloquear métricas e dados completos.{' '}
-              <Link to="/app/campaigns">Minhas campanhas</Link>
-            </Text>
-          </div>
-        </div>
-      )}
-
-      {isLimitedView && !isRedacted && user && !allBasePreview && (
-        <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
-          <div style={{ marginBottom: s.md, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
-            <Text>Você está vendo uma prévia limitada. <Link to="/premium">Seja assinante</Link> para ver métricas completas e filtros avançados.</Text>
-          </div>
-        </div>
-      )}
-
-      <div style={{ width: '100%', padding: `${detailContentPadTop}px ${detailContentPadX}px ${isMobile ? 160 : s.xl}px`, position: 'relative', zIndex: 1, background: c.pageBg, boxSizing: 'border-box' }}>
-        {!isRedacted && (
-          <>
-            <ReportHero
-              profilePic={profilePic || ''}
-              stableProfilePicUrl={stableProfilePic}
-              name={fullName}
-              handle={displayHandle}
-              isMobile={isMobile}
-              score={reportInsights ? engagementScore : undefined}
-              scoreTooltip={reportInsights?.score?.pillars
-                ? `Sua nota é uma mistura de: comunidade (${reportInsights.score.pillars.comunidade}), consistência (${reportInsights.score.pillars.consistencia}), alcance (${reportInsights.score.pillars.alcance}), autoridade (${reportInsights.score.pillars.autoridade}) e conteúdo (${reportInsights.score.pillars.conteudo}). Quanto maior, mais seu perfil está pronto para marcas e parcerias.`
-                : reportInsights ? 'É a nota geral do perfil. Quanto maior, mais pronto você está para fechar parcerias com marcas.' : undefined}
-              tierLabel={reportInsights ? tierLabel : undefined}
-              percentil={reportInsights?.benchmark?.percentil ?? undefined}
-              scoreSelo={reportInsights ? scoreSelo : undefined}
-              headline={heroHeadline}
-              typesTags={heroTypesTags}
-              badgeLabel={!reportInsights ? tierLabel : undefined}
-              blurHighlights={showGuestPreviewBlur}
-              highlights={[
-                { label: 'Seguidores', value: formatShortNum(displayFollowersCount) },
-                { label: 'Posts/sem', value: displayEngagement.posts_per_week != null
-                  ? displayEngagement.posts_per_week.toFixed(1)
-                  : (reportInsights?.consistency?.postsPerWeekByWeek?.length
-                    ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1)
-                    : '0') },
-                { label: 'ER médio', value: `${(displayEngagement.engagement_rate ?? 0).toFixed(1)}%` },
-              ]}
-              onBack={closeDetailView}
-              onAvatarError={() => {
-                if (!refreshQueuedRef.current && handle) {
-                  refreshQueuedRef.current = true
-                  queueRefreshProfile(handle).catch(() => { })
-                  startRefreshPolling.current(handle)
-                }
-              }}
-              extraContent={
-                <>
-                  {!isLimitedView ? (
-                    <>
-                      {reportInsights ? (
-                        <ScoreOverview
-                          embedded
-                          tierInHero
-                          hidePostsPerWeek
-                          hideExplanationInEmbedded
-                          score={engagementScore}
-                          tierLabel={tierLabel}
-                          scoreSelo={scoreSelo}
-                          percentil={reportInsights.benchmark?.percentil ?? null}
-                          explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
-                          scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
-                          statPills={layout.showScorePills ? [
-                            { label: 'Seguidores', value: formatShortNum(followersCount) },
-                            { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
-                            { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
-                          ] : []}
-                          postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
-                          bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
-                          bestHour={reportInsights.consistency.bestHour}
-                        />
-                      ) : null}
-                      {!isRedacted && hasActivationData && activation ? (
-                        <div className="collapse-endereco-transparent">
-                          <Collapse
-                            ghost
-                            defaultActiveKey={[]}
-                            items={[{
-                              key: 'contato',
-                              label: (
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: canEdit && handle ? 8 : 0 }}>
-                                  <span><SafetyOutlined style={{ color: c.primary, marginRight: s.xs }} />{[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || 'Localização'}</span>
-                                  {canEdit && handle && (
-                                    <Button type="default" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/activate/${encodeURIComponent(handle)}`); }} style={{ borderRadius: r }}>
-                                      Editar
-                                    </Button>
-                                  )}
-                                </div>
-                              ),
-                              children: (
-                                <>
-                                  {activation.pricing && (() => {
-                                    const costTier = getCostTier(activation.pricing)
-                                    const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
-                                      const val = activation.pricing![key as keyof typeof activation.pricing]
-                                      return val !== undefined && val !== null && String(val).trim() !== ''
-                                    })
-                                    if (!hasAnyPricing) return null
-                                    return (
-                                      <>
-                                        <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
-                                        <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
-                                          {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
-                                          {PRICING_FIELD_KEYS.map((key) => {
-                                            const val = activation.pricing![key as keyof typeof activation.pricing]
-                                            if (val === undefined || val === null || String(val).trim() === '') return null
-                                            const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
-                                            return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
-                                          })}
-                                        </Descriptions>
-                                      </>
-                                    )
-                                  })()}
-                                  <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
-
-                                    <Descriptions column={1} bordered size="small">
-                                      {activation.gender && (
-                                        <Descriptions.Item label="Gênero">{GENDER_LABELS[activation.gender] ?? activation.gender}</Descriptions.Item>
-                                      )}
-                                      {activation.audience_gender && (
-                                        <Descriptions.Item label="Gênero predominante do público">{AUDIENCE_GENDER_LABELS[activation.audience_gender] ?? activation.audience_gender}</Descriptions.Item>
-                                      )}
-                                      {activation.content_type?.length ? (
-                                        <Descriptions.Item label="Tipos de conteúdo">{activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}</Descriptions.Item>
-                                      ) : null}
-                                      {activation.influence_audience?.length ? (
-                                        <Descriptions.Item label="Público que influencia (A, B, C, D)">{activation.influence_audience.join(', ')}</Descriptions.Item>
-                                      ) : null}
-                                      {activation.influence_age_range?.length ? (
-                                        <Descriptions.Item label="Faixa etária que influencia">{activation.influence_age_range.map((fa) => INFLUENCE_AGE_RANGE_LABELS[fa] ?? fa).join(', ')}</Descriptions.Item>
-                                      ) : null}
-                                      {activation.description?.trim() && (
-                                        <Descriptions.Item label="Fala de você (trajetória e proposta)"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.description.trim()}</Text></Descriptions.Item>
-                                      )}
-                                      {activation.brands_worked_with?.trim() && (
-                                        <Descriptions.Item label="Marcas que já trabalhou"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.brands_worked_with.trim()}</Text></Descriptions.Item>
-                                      )}
-                                      {(activation.city || activation.state || activation.neighborhood || activation.country) && (
-                                        <Descriptions.Item label="Localização">
-                                          {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
-                                        </Descriptions.Item>
-                                      )}
-                                      {activation.address && (
-                                        <Descriptions.Item label="Endereço">
-                                          {[activation.address, activation.address_number].filter(Boolean).join(', ')}
-                                        </Descriptions.Item>
-                                      )}
-                                      {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
-                                      {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
-                                      {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
-                                      {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
-                                      {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
-                                      {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
-                                      {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
-                                      {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
-                                      {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
-                                      {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
-                                    </Descriptions>
-                                  </div>
-                                </>
-                              ),
-                            }]}
-                            style={{ borderRadius: r, overflow: 'hidden', border: 'none', background: 'transparent' }}
-                          />
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                </>
-              }
-            />
-            {/* Ações da tela: abaixo do painel do perfil — bloco admin separado (cor / borda distintas) */}
+        <div style={{ width: '100%', padding: `${detailContentPadTop}px ${detailContentPadX}px ${detailContentPadBottom}px`, position: 'relative', zIndex: 1, background: c.pageBg, boxSizing: 'border-box' }}>
+          {!isRedacted && (
             <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: isMobile ? s.md : s.lg,
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginTop: s.md, marginBottom: s.md,
-                flexDirection: isMobile ? 'column' : 'row',
-              }}
+              className={`influencer-detail-stack${embeddedInModal ? ' influencer-detail-stack--modal' : ''}`}
+              style={detailStackStyle}
             >
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'center', justifyContent: 'center' }}>
-                {user && handle && user.scope !== 'influencer' && (
-                  <Tooltip title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={isFavorite ? <HeartFilled style={{ color: '#db2777' }} /> : <HeartOutlined />}
-                      onClick={handleFavoriteToggle}
-                      style={DETAIL_SUBTLE_ACTION.favorite}
-                      aria-label={isFavorite ? 'Remover dos favoritos' : 'Favoritar'}
-                    >
-                      {isFavorite ? 'Favoritado' : 'Favoritar'}
-                    </Button>
-                  </Tooltip>
-                )}
-                {handle && canEdit && (
-                  <Tooltip title="Editar cadastro, ativação e dados do seu perfil na plataforma">
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={<EditOutlined />}
-                      onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-                      style={DETAIL_SUBTLE_ACTION.editProfile}
-                      aria-label="Editar perfil"
-                    >
-                      Editar perfil
-                    </Button>
-                  </Tooltip>
-                )}
-              </div>
-              {isAdm && handle && (
+              <ReportHero
+                profilePic={profilePic || ''}
+                stableProfilePicUrl={stableProfilePic}
+                name={fullName}
+                handle={displayHandle}
+                isMobile={isMobile}
+                compact={modalCompact}
+                score={reportInsights ? engagementScore : undefined}
+                scoreTooltip={reportInsights?.score?.pillars
+                  ? `Sua nota é uma mistura de: comunidade (${reportInsights.score.pillars.comunidade}), consistência (${reportInsights.score.pillars.consistencia}), alcance (${reportInsights.score.pillars.alcance}), autoridade (${reportInsights.score.pillars.autoridade}) e conteúdo (${reportInsights.score.pillars.conteudo}). Quanto maior, mais seu perfil está pronto para marcas e parcerias.`
+                  : reportInsights ? 'É a nota geral do perfil. Quanto maior, mais pronto você está para fechar parcerias com marcas.' : undefined}
+                tierBadgeShort={tierShort !== '—' ? tierShort : undefined}
+                headline={heroHeadline}
+                typesTags={heroTypesTags}
+                tierBadgeTooltip={tierShort !== '—' ? getInfluencerTierTooltip(displayFollowersCount) : undefined}
+                blurHighlights={false}
+                highlights={[
+                  { label: 'Seguidores', value: formatShortNum(displayFollowersCount) },
+                  {
+                    label: 'Posts/sem', value: displayEngagement.posts_per_week != null
+                      ? displayEngagement.posts_per_week.toFixed(1)
+                      : (reportInsights?.consistency?.postsPerWeekByWeek?.length
+                        ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1)
+                        : '0')
+                  },
+                  { label: 'ER médio', value: `${(displayEngagement.engagement_rate ?? 0).toFixed(1)}%` },
+                ]}
+                onBack={closeDetailView}
+                onAvatarError={() => {
+                  if (!refreshQueuedRef.current && handle) {
+                    refreshQueuedRef.current = true
+                    queueRefreshProfile(handle).catch(() => { })
+                    startRefreshPolling.current(handle)
+                  }
+                }}
+                heroAction={
+                  handle && canEdit && !hasActivationData && user?.profile_activated !== true ? (
+                    <Tooltip title="Completar cadastro, ativação e dados do seu perfil na plataforma">
+                      <Button
+                        type="primary"
+                        size="middle"
+                        icon={<CheckCircleOutlined />}
+                        onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                        style={{ borderRadius: r, fontWeight: 600, whiteSpace: 'nowrap' }}
+                        aria-label="Ativar cadastro"
+                      >
+                        Ativar Cadastro
+                      </Button>
+                    </Tooltip>
+                  ) : undefined
+                }
+                extraContent={
+                  <>
+                    {!isLimitedView ? (
+                      <>
+                        {reportInsights ? (
+                          <ScoreOverview
+                            embedded
+                            tierInHero
+                            hidePostsPerWeek
+                            hideExplanationInEmbedded
+                            score={engagementScore}
+                            tierLabel={tierLabel}
+                            scoreSelo={scoreSelo}
+                            percentil={reportInsights.benchmark?.percentil ?? null}
+                            explanation="Quanto maior a nota, mais seu perfil está pronto para marcas e parcerias."
+                            scoreNarrativaFrase={reportInsights.diagnosticoBI?.scoreNarrativaFrase ?? null}
+                            statPills={layout.showScorePills ? [
+                              { label: 'Seguidores', value: formatShortNum(followersCount) },
+                              { label: 'Posts/sem', value: reportInsights.consistency.postsPerWeekByWeek.length ? (reportInsights.consistency.postsPerWeekByWeek.reduce((a, b) => a + b, 0) / reportInsights.consistency.postsPerWeekByWeek.length).toFixed(1) : '0' },
+                              { label: 'ER médio', value: `${(engagement.engagement_rate ?? 0).toFixed(1)}%` },
+                            ] : []}
+                            postsPerWeekData={reportInsights.consistency.postsPerWeekByWeek}
+                            bestDay={getWeekdayName(reportInsights.consistency.bestWeekday)}
+                            bestHour={reportInsights.consistency.bestHour}
+                          />
+                        ) : null}
+                      </>
+                    ) : null}
+                  </>
+                }
+              />
+              {!isLimitedView && !isRedacted && hasActivationData && activation ? (
+                <ProfileLocationCard
+                  city={activation.city}
+                  state={activation.state}
+                  neighborhood={activation.neighborhood}
+                  country={activation.country}
+                  isActive={Boolean(activation.activated_at) || (canEdit && user?.profile_activated === true)}
+                  showEdit={Boolean(canEdit && handle)}
+                  onEdit={canEdit && handle ? () => navigate(`/activate/${encodeURIComponent(handle)}`) : undefined}
+                  details={(
+                    <>
+                      {activation.pricing && (() => {
+                        const costTier = getCostTier(activation.pricing)
+                        const hasAnyPricing = costTier || PRICING_FIELD_KEYS.some((key) => {
+                          const val = activation.pricing![key as keyof typeof activation.pricing]
+                          return val !== undefined && val !== null && String(val).trim() !== ''
+                        })
+                        if (!hasAnyPricing) return null
+                        return (
+                          <>
+                            <div style={{ ...typ.caption, fontWeight: 600, color: c.text, marginBottom: s.sm }}>Custos</div>
+                            <Descriptions column={1} bordered size="small" style={{ marginBottom: s.lg }}>
+                              {costTier ? <Descriptions.Item label="Custo médio"><Text strong style={{ color: c.warning }}>{costTier.symbol} {costTier.label}</Text></Descriptions.Item> : null}
+                              {PRICING_FIELD_KEYS.map((key) => {
+                                const val = activation.pricing![key as keyof typeof activation.pricing]
+                                if (val === undefined || val === null || String(val).trim() === '') return null
+                                const label = PRICING_FIELD_LABELS[key as PricingFieldKey].replace(/^[\d\s️⃣]+\s*/, '').trim() || key
+                                return <Descriptions.Item key={key} label={label}>{formatPricingValue(val)}</Descriptions.Item>
+                              })}
+                            </Descriptions>
+                          </>
+                        )
+                      })()}
+                      <div style={activation.pricing ? { borderTop: `1px solid ${c.borderLight}`, paddingTop: s.lg } : undefined}>
+                        <Descriptions column={1} bordered size="small">
+                          {activation.gender && (
+                            <Descriptions.Item label="Gênero">{GENDER_LABELS[activation.gender] ?? activation.gender}</Descriptions.Item>
+                          )}
+                          {activation.audience_gender && (
+                            <Descriptions.Item label="Gênero predominante do público">{AUDIENCE_GENDER_LABELS[activation.audience_gender] ?? activation.audience_gender}</Descriptions.Item>
+                          )}
+                          {activation.content_type?.length ? (
+                            <Descriptions.Item label="Tipos de conteúdo">{activation.content_type.map((ct) => CONTENT_TYPE_LABELS[ct] ?? ct).join(', ')}</Descriptions.Item>
+                          ) : null}
+                          {activation.influence_audience?.length ? (
+                            <Descriptions.Item label="Público que influencia (A, B, C, D)">{activation.influence_audience.join(', ')}</Descriptions.Item>
+                          ) : null}
+                          {activation.influence_age_range?.length ? (
+                            <Descriptions.Item label="Faixa etária que influencia">{activation.influence_age_range.map((fa) => INFLUENCE_AGE_RANGE_LABELS[fa] ?? fa).join(', ')}</Descriptions.Item>
+                          ) : null}
+                          {activation.description?.trim() && (
+                            <Descriptions.Item label="Fala de você (trajetória e proposta)"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.description.trim()}</Text></Descriptions.Item>
+                          )}
+                          {activation.brands_worked_with?.trim() && (
+                            <Descriptions.Item label="Marcas que já trabalhou"><Text style={{ whiteSpace: 'pre-wrap' }}>{activation.brands_worked_with.trim()}</Text></Descriptions.Item>
+                          )}
+                          {(activation.city || activation.state || activation.neighborhood || activation.country) && (
+                            <Descriptions.Item label="Localização">
+                              {[activation.city, activation.state, activation.neighborhood, activation.country].filter(Boolean).join(', ') || '—'}
+                            </Descriptions.Item>
+                          )}
+                          {activation.address && (
+                            <Descriptions.Item label="Endereço">
+                              {[activation.address, activation.address_number].filter(Boolean).join(', ')}
+                            </Descriptions.Item>
+                          )}
+                          {activation.zip_code && <Descriptions.Item label="CEP">{activation.zip_code}</Descriptions.Item>}
+                          {activation.whatsapp?.trim() && <Descriptions.Item label="WhatsApp"><Space><MessageOutlined style={{ color: 'var(--app-icon-whatsapp)' }} />{activation.whatsapp}</Space></Descriptions.Item>}
+                          {activation.tiktok?.trim() && <Descriptions.Item label="TikTok"><Space><VideoCameraOutlined />{activation.tiktok}</Space></Descriptions.Item>}
+                          {activation.facebook?.trim() && <Descriptions.Item label="Facebook"><Space><FacebookOutlined style={{ color: 'var(--app-icon-facebook)' }} />{activation.facebook}</Space></Descriptions.Item>}
+                          {activation.linkedin?.trim() && <Descriptions.Item label="LinkedIn"><Space><LinkedinOutlined style={{ color: 'var(--app-icon-linkedin)' }} />{activation.linkedin}</Space></Descriptions.Item>}
+                          {activation.twitter?.trim() && <Descriptions.Item label="X / Twitter"><Space><TwitterOutlined style={{ color: 'var(--app-icon-twitter)' }} />{activation.twitter}</Space></Descriptions.Item>}
+                          {activation.websites?.trim() && <Descriptions.Item label="Websites">{activation.websites}</Descriptions.Item>}
+                          {activation.about_topics?.trim() && <Descriptions.Item label="Temas">{activation.about_topics}</Descriptions.Item>}
+                          {activation.activated_at && <Descriptions.Item label="Ativado em">{formatDate(activation.activated_at)}</Descriptions.Item>}
+                          {activation.updated_at && <Descriptions.Item label="Atualizado em">{formatDate(activation.updated_at)}</Descriptions.Item>}
+                        </Descriptions>
+                      </div>
+                    </>
+                  )}
+                />
+              ) : null}
+              {showDetailActions && isAdm && handle ? (
                 <div
-                  role="group"
-                  aria-label="Ações de administrador"
                   style={{
                     display: 'flex',
                     flexWrap: 'wrap',
-                    gap: s.sm,
+                    gap: isMobile ? s.md : s.lg,
                     alignItems: 'center',
                     justifyContent: 'center',
-                    padding: `${s.sm}px ${s.md}px`,
-                    borderRadius: r,
-                    background: 'color-mix(in srgb, var(--app-primary) 12%, var(--app-card-bg))',
-                    border: '1px solid color-mix(in srgb, var(--app-primary) 32%, var(--app-border))',
-                    boxShadow: 'inset 0 1px 0 color-mix(in srgb, var(--app-primary) 12%, transparent)',
+                    margin: 0,
+                    flexDirection: isMobile ? 'column' : 'row',
                   }}
                 >
-                  <Text
-                    type="secondary"
+                  <div
+                    role="group"
+                    aria-label="Ações de administrador"
                     style={{
-                      width: '100%',
-                      textAlign: 'center',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase',
-                      color: 'color-mix(in srgb, var(--app-primary) 55%, var(--app-text-secondary))',
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: s.sm,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: `${s.sm}px ${s.md}px`,
+                      borderRadius: r,
+                      background: 'color-mix(in srgb, var(--app-primary) 12%, var(--app-card-bg))',
+                      border: '1px solid color-mix(in srgb, var(--app-primary) 32%, var(--app-border))',
+                      boxShadow: 'inset 0 1px 0 color-mix(in srgb, var(--app-primary) 12%, transparent)',
                     }}
                   >
-                    Administrador
-                  </Text>
-                  <Tooltip title="Força re-extração do perfil no Instagram (prioritária, só admin)">
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={<SyncOutlined />}
-                      onClick={async () => {
-                        const res = await queueRefreshProfile(handle, { priority: true })
-                        if (res.queued) message.success(res.message)
-                        else message.warning(res.message)
-                      }}
-                      style={DETAIL_SUBTLE_ACTION.adminSync}
-                      aria-label="Atualizar Instagram"
-                    >
-                      Atualizar
-                    </Button>
-                  </Tooltip>
-                  <Tooltip title="Abrir fluxo de ativação do cadastro do influenciador">
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={<CheckCircleOutlined />}
-                      onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-                      style={DETAIL_SUBTLE_ACTION.adminActivate}
-                      aria-label="Ativar influenciador"
-                    >
-                      Ativar
-                    </Button>
-                  </Tooltip>
-                  <Tooltip title="Enviar mensagem pelo Direct do Instagram (via sistema)">
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={<MessageOutlined />}
-                      onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}/send-message`)}
-                      style={DETAIL_SUBTLE_ACTION.adminMessage}
-                      aria-label="Enviar mensagem"
-                    >
-                      Mensagem
-                    </Button>
-                  </Tooltip>
-                  <Tooltip title="Editar classificação LLM salva na base (tags, texto, público-alvo)">
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={<RobotOutlined />}
-                      onClick={() => setEditLlmOpen(true)}
-                      style={DETAIL_SUBTLE_ACTION.adminLlm}
-                      aria-label="Editar LLM"
-                    >
-                      Editar LLM
-                    </Button>
-                  </Tooltip>
-                  <Tooltip title="Apaga perfil, posts, cadastro, fila, favoritos, referências em campanhas, arquivos no S3 e conta de usuário (se houver). Irreversível.">
-                    <Button
-                      type="default"
-                      size="large"
-                      className={DETAIL_ACTION_BTN_CLASS}
-                      icon={<DeleteOutlined />}
-                      style={DETAIL_SUBTLE_ACTION.adminPurge}
-                      aria-label="Excluir influenciador completamente"
-                      onClick={() => {
-                        Modal.confirm({
-                          title: 'Excluir este influenciador por completo?',
-                          content: `Isso remove dados do perfil e mídias, cadastro/ativação, fila de mensagens, favoritos que apontam para @${handle}, o handle nas campanhas, objetos no S3 (avatar e capas) e a conta de usuário vinculada, se existir. Não dá para desfazer.`,
-                          okText: 'Excluir tudo',
-                          okType: 'danger',
-                          cancelText: 'Cancelar',
-                          onOk: async () => {
-                            try {
-                              const out = await adminPurgeInfluencer(handle)
-                              const n = out?.s3ObjectsRemoved
-                              message.success(
-                                typeof n === 'number' && n > 0
-                                  ? `Removido. ${n} arquivo(s) apagados no S3.`
-                                  : 'Influenciador removido.',
-                              )
-                              navigate(campaignId ? `/app/campaigns/${campaignId}` : '/app')
-                            } catch (e) {
-                              message.error(e instanceof Error ? e.message : 'Falha ao excluir')
-                              throw e
-                            }
-                          },
-                        })
-                      }}
-                    >
-                      Excluir completamente
-                    </Button>
-                  </Tooltip>
-                </div>
-              )}
-            </div>
-            <ProfileLlmDetailPanel profile={profile} variant="embedded" isMobile={isMobile} />
-          </>
-        )}
-
-        {showGuestPreviewBlur && (
-          <div id="secao-previa-limitada" style={{ marginBottom: gap }}>
-            <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-              Prévia do conteúdo
-            </h2>
-            <div
-              style={{
-                position: 'relative',
-                overflow: 'hidden',
-                borderRadius: t.radius.lg,
-                minHeight: guestPreviewProofItems.length > 0 ? undefined : 120,
-              }}
-            >
-              {guestPreviewProofItems.length > 0 ? (
-                <div style={{ filter: 'blur(8px)', userSelect: 'none', pointerEvents: 'none' }}>
-                  <ProofCarousel
-                    items={guestPreviewProofItems}
-                    getImageUrl={(post) => getPostImageUrl(post as PostItem)}
-                    getLink={(post) => getPostLink(post as PostItem)}
-                    failedImages={failedPostImages}
-                    formatShortNum={formatShortNum}
-                  />
-                </div>
-              ) : postsLoading ? (
-                <Card size="small" style={cardStyle}>
-                  <Skeleton active paragraph={{ rows: 2 }} />
-                </Card>
-              ) : (
-                <Card size="small" style={cardStyle}>
-                  <Text type="secondary">Nenhum post público disponível para prévia.</Text>
-                </Card>
-              )}
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'rgba(0,0,0,0.35)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: s.sm,
-                  padding: s.lg,
-                  pointerEvents: 'auto',
-                }}
-              >
-                {!user ? (
-                  <>
-                    <Link to="/login">
-                      <Button type="primary" size="small">Entrar para ver tudo</Button>
-                    </Link>
-                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                      Métricas, análises e dados de contato ficam disponíveis após o login.
-                    </Text>
-                  </>
-                ) : allBasePreview ? (
-                  <>
-                    <Link to="/app/campaigns">
-                      <Button type="primary" size="small">Ver minhas campanhas</Button>
-                    </Link>
-                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                      Inclua este criador num relatório pago para desbloquear métricas completas.
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Link to="/premium">
-                      <Button type="primary" size="small">Assinar premium</Button>
-                    </Link>
-                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                      Assine para ver métricas completas e filtros avançados.
-                    </Text>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {!isLimitedView && !isRedacted && isOwnProfileAsInfluencer && reportInsights?.diagnosticoBI?.insightPatamar && (
-          <div style={{ marginBottom: gap }}>
-            <PatamarCardSection
-              benchmarkTier={reportInsights.diagnosticoBI.benchmarkTier}
-              proximoPatamar={reportInsights.diagnosticoBI.proximoPatamar}
-              faltaParaProximo={reportInsights.diagnosticoBI.faltaParaProximo ?? 0}
-              percentualNoPatamar={reportInsights.diagnosticoBI.percentualNoPatamar ?? 0}
-              insightPatamar={reportInsights.diagnosticoBI.insightPatamar}
-              projecaoProximoPatamar={reportInsights.diagnosticoBI.projecaoProximoPatamar ?? null}
-              comparacaoLocal={
-                activation?.city && reportInsights.benchmark?.percentil != null
-                  ? `Você está entre os ${Math.max(1, Math.min(99, 100 - reportInsights.benchmark.percentil))}% com maior engajamento em ${activation.city}.`
-                  : reportInsights.diagnosticoBI.comparacaoLocal ?? undefined
-              }
-              proximoPassoConcreto={reportInsights.diagnosticoBI.proximoPassoConcreto ?? null}
-              growthProjectionNote={reportInsights?.strategicMetrics?.growthProjectionNote ?? undefined}
-            />
-          </div>
-        )}
-
-        {!isLimitedView && !isRedacted && DETAIL_SECTION_ORDER.map((sectionId) => {
-          const renderSection = (id: DetailSectionId) => {
-            switch (id) {
-              case 'diagnostico': {
-                if (!isOwnProfileAsInfluencer) return null
-                const topPercent = reportInsights?.benchmark?.percentil != null
-                  ? Math.max(1, Math.min(99, 100 - reportInsights.benchmark.percentil))
-                  : null
-                const comparacaoLocalComCidade = activation?.city && topPercent != null
-                  ? `Você está entre os ${topPercent}% com maior engajamento em ${activation.city}.`
-                  : reportInsights?.diagnosticoBI?.comparacaoLocal ?? null
-                return (
-                  <div key="diagnostico" id="diagnostico-secao" style={{ marginBottom: gap }}>
-                    {reportInsights?.diagnosticoBI && (
-                      <DiagnosticoBISection
-                        erPct={reportInsights.diagnosticoBI.erPct}
-                        erMaxViral={reportInsights.diagnosticoBI.erMaxViral}
-                        erNote={reportInsights.diagnosticoBI.erNote}
-                        benchmarkTier={reportInsights.diagnosticoBI.benchmarkTier}
-                        forcas={reportInsights.diagnosticoBI.forcas}
-                        ondePerdeAlcance={reportInsights.diagnosticoBI.ondePerdeAlcance}
-                        alcancePositivo={reportInsights.diagnosticoBI.alcancePositivo}
-                        ondePerdeMonetizacao={reportInsights.diagnosticoBI.ondePerdeMonetizacao}
-                        proximoPassoTop3={reportInsights.diagnosticoBI.proximoPassoTop3}
-                        nichoLabel={reportInsights.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas].join(', ') : undefined}
-                        conversationLabel={reportInsights.conversation?.label}
-                        conversationCard={reportInsights.conversation ? { rate: reportInsights.conversation.rate, label: reportInsights.conversation.label, comparisonLabel: reportInsights.conversation.comparisonLabel, color: reportInsights.conversation.color } : undefined}
-                        topHashtags={reportInsights.nicho?.topHashtags}
-                        performingHashtags={reportInsights.nicho?.performingHashtags}
-                        conversationHashtags={reportInsights.nicho?.conversationHashtags}
-                        proximoPatamar={reportInsights.diagnosticoBI.proximoPatamar}
-                        faltaParaProximo={reportInsights.diagnosticoBI.faltaParaProximo}
-                        percentualNoPatamar={reportInsights.diagnosticoBI.percentualNoPatamar}
-                        insightPatamar={reportInsights.diagnosticoBI.insightPatamar}
-                        projecaoProximoPatamar={reportInsights.diagnosticoBI.projecaoProximoPatamar}
-                        comparacaoLocal={comparacaoLocalComCidade}
-                        hashtagsSugeridas={reportInsights.nicho?.hashtagsSugeridas}
-                        proximoPassoConcreto={reportInsights.diagnosticoBI.proximoPassoConcreto}
-                        growthProjectionNote={reportInsights?.strategicMetrics?.growthProjectionNote}
-                        semana1Items={reportInsights.diagnosticoBI.proximoPassoTop3}
-                      />
-                    )}
-                  </div>
-                )
-              }
-              case 'engajamentoPorTipo':
-                return (
-                  <div key="engajamentoPorTipo" id="engajamento-por-tipo" style={{ marginBottom: gap }}>
-                    <EngajamentoPorTipoSection
-                      engagementByType={engagementByType}
-                      rowGutter={rowGutter}
-                      erByTypeNarrative={reportInsights?.strategicMetrics?.erByTypeNarrative ?? null}
-                    />
-                  </div>
-                )
-              case 'alcance':
-                return reportInsights?.strategicMetrics?.contentTypeDistribution ? (
-                  <div key="alcance" id="secao-alcance" style={{ marginBottom: gap }}>
-                    <AlcanceSection distribution={reportInsights.strategicMetrics.contentTypeDistribution} gutter={rowGutter} />
-                  </div>
-                ) : null
-              case 'metricasMediakit':
-                return reportInsights ? (
-                  <div key="metricasMediakit" id="secao-metricas-mediakit" style={{ marginBottom: gap }}>
-                    {showMetricsBlur && (
-                      <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-                        Métricas
-                      </h2>
-                    )}
-                    <div
+                    <Text
+                      type="secondary"
                       style={{
-                        position: 'relative',
-                        overflow: 'hidden',
-                        ...(showMetricsBlur && { borderRadius: t.radius.lg, minHeight: 80 }),
+                        width: '100%',
+                        textAlign: 'center',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        color: 'color-mix(in srgb, var(--app-primary) 55%, var(--app-text-secondary))',
                       }}
                     >
-                      <div
-                        style={{
-                          ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
+                      Administrador
+                    </Text>
+                    <Tooltip title="Força re-extração do perfil no Instagram (prioritária, só admin)">
+                      <Button
+                        type="default"
+                        size="large"
+                        className={DETAIL_ACTION_BTN_CLASS}
+                        icon={<SyncOutlined />}
+                        onClick={async () => {
+                          const res = await queueRefreshProfile(handle, { priority: true })
+                          if (res.queued) message.success(res.message)
+                          else message.warning(res.message)
+                        }}
+                        style={DETAIL_SUBTLE_ACTION.adminSync}
+                        aria-label="Atualizar Instagram"
+                      >
+                        Atualizar
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title="Abrir fluxo de ativação do cadastro do influenciador">
+                      <Button
+                        type="default"
+                        size="large"
+                        className={DETAIL_ACTION_BTN_CLASS}
+                        icon={<CheckCircleOutlined />}
+                        onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                        style={DETAIL_SUBTLE_ACTION.adminActivate}
+                        aria-label="Ativar influenciador"
+                      >
+                        Ativar
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title="Enviar mensagem pelo Direct do Instagram (via sistema)">
+                      <Button
+                        type="default"
+                        size="large"
+                        className={DETAIL_ACTION_BTN_CLASS}
+                        icon={<MessageOutlined />}
+                        onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}/send-message`)}
+                        style={DETAIL_SUBTLE_ACTION.adminMessage}
+                        aria-label="Enviar mensagem"
+                      >
+                        Mensagem
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title="Editar classificação LLM salva na base (tags, texto, público-alvo)">
+                      <Button
+                        type="default"
+                        size="large"
+                        className={DETAIL_ACTION_BTN_CLASS}
+                        icon={<RobotOutlined />}
+                        onClick={() => setEditLlmOpen(true)}
+                        style={DETAIL_SUBTLE_ACTION.adminLlm}
+                        aria-label="Editar LLM"
+                      >
+                        Editar LLM
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title="Apaga perfil, posts, cadastro, fila, favoritos, referências em campanhas, arquivos no S3 e conta de usuário (se houver). Irreversível.">
+                      <Button
+                        type="default"
+                        size="large"
+                        className={DETAIL_ACTION_BTN_CLASS}
+                        icon={<DeleteOutlined />}
+                        style={DETAIL_SUBTLE_ACTION.adminPurge}
+                        aria-label="Excluir influenciador completamente"
+                        onClick={() => {
+                          Modal.confirm({
+                            title: 'Excluir este influenciador por completo?',
+                            content: `Isso remove dados do perfil e mídias, cadastro/ativação, fila de mensagens, favoritos que apontam para @${handle}, o handle nas campanhas, objetos no S3 (avatar e capas) e a conta de usuário vinculada, se existir. Não dá para desfazer.`,
+                            okText: 'Excluir tudo',
+                            okType: 'danger',
+                            cancelText: 'Cancelar',
+                            onOk: async () => {
+                              try {
+                                const out = await adminPurgeInfluencer(handle)
+                                const n = out?.s3ObjectsRemoved
+                                message.success(
+                                  typeof n === 'number' && n > 0
+                                    ? `Removido. ${n} arquivo(s) apagados no S3.`
+                                    : 'Influenciador removido.',
+                                )
+                                navigate(campaignId ? `/app/campaigns/${campaignId}` : '/app')
+                              } catch (e) {
+                                message.error(e instanceof Error ? e.message : 'Falha ao excluir')
+                                throw e
+                              }
+                            },
+                          })
                         }}
                       >
-                        <MetricasMediakitSection
-                          formatShortNum={formatShortNum}
-                          followersCount={followersCount}
-                          engagement={engagement}
-                          conversationRate={reportInsights.conversation?.rate ?? 0}
+                        Excluir completamente
+                      </Button>
+                    </Tooltip>
+                  </div>
+                </div>
+              ) : null}
+              {isProfileLocked && !isRedacted && (
+                <ProfileLimitedPreviewLock
+                  isMobile={isMobile}
+                  engagementByType={previewEngagementByType}
+                  rowGutter={rowGutter}
+                  user={user}
+                  handle={handle}
+                />
+              )}
+              <ProfileLlmDetailPanel
+                profile={profile}
+                variant="embedded"
+                isMobile={isMobile}
+                stripDensity={embeddedInModal ? 'compact' : undefined}
+              />
+
+              {!isLimitedView && isOwnProfileAsInfluencer && reportInsights?.diagnosticoBI?.insightPatamar && (
+              <PatamarCardSection
+                benchmarkTier={reportInsights.diagnosticoBI.benchmarkTier}
+                proximoPatamar={reportInsights.diagnosticoBI.proximoPatamar}
+                faltaParaProximo={reportInsights.diagnosticoBI.faltaParaProximo ?? 0}
+                percentualNoPatamar={reportInsights.diagnosticoBI.percentualNoPatamar ?? 0}
+                insightPatamar={reportInsights.diagnosticoBI.insightPatamar}
+                projecaoProximoPatamar={reportInsights.diagnosticoBI.projecaoProximoPatamar ?? null}
+                comparacaoLocal={
+                  activation?.city && reportInsights.benchmark?.percentil != null
+                    ? `Você está entre os ${Math.max(1, Math.min(99, 100 - reportInsights.benchmark.percentil))}% com maior engajamento em ${activation.city}.`
+                    : reportInsights.diagnosticoBI.comparacaoLocal ?? undefined
+                }
+                proximoPassoConcreto={reportInsights.diagnosticoBI.proximoPassoConcreto ?? null}
+                growthProjectionNote={reportInsights?.strategicMetrics?.growthProjectionNote ?? undefined}
+              />
+              )}
+
+              {!isLimitedView && DETAIL_SECTION_ORDER.map((sectionId) => {
+            const renderSection = (id: DetailSectionId) => {
+              switch (id) {
+                case 'diagnostico': {
+                  if (!isOwnProfileAsInfluencer) return null
+                  const topPercent = reportInsights?.benchmark?.percentil != null
+                    ? Math.max(1, Math.min(99, 100 - reportInsights.benchmark.percentil))
+                    : null
+                  const comparacaoLocalComCidade = activation?.city && topPercent != null
+                    ? `Você está entre os ${topPercent}% com maior engajamento em ${activation.city}.`
+                    : reportInsights?.diagnosticoBI?.comparacaoLocal ?? null
+                  return (
+                    <div key="diagnostico" id="diagnostico-secao">
+                      {reportInsights?.diagnosticoBI && (
+                        <DiagnosticoBISection
+                          erPct={reportInsights.diagnosticoBI.erPct}
+                          erMaxViral={reportInsights.diagnosticoBI.erMaxViral}
+                          erNote={reportInsights.diagnosticoBI.erNote}
+                          benchmarkTier={reportInsights.diagnosticoBI.benchmarkTier}
+                          forcas={reportInsights.diagnosticoBI.forcas}
+                          ondePerdeAlcance={reportInsights.diagnosticoBI.ondePerdeAlcance}
+                          alcancePositivo={reportInsights.diagnosticoBI.alcancePositivo}
+                          ondePerdeMonetizacao={reportInsights.diagnosticoBI.ondePerdeMonetizacao}
+                          proximoPassoTop3={reportInsights.diagnosticoBI.proximoPassoTop3}
+                          nichoLabel={reportInsights.nicho ? [reportInsights.nicho.nichoDominante, ...reportInsights.nicho.subtemas].join(', ') : undefined}
                           conversationLabel={reportInsights.conversation?.label}
-                          bestDay={getWeekdayName(reportInsights.consistency?.bestWeekday ?? 0)}
-                          bestHour={reportInsights.consistency?.bestHour}
-                          engagementPerWeekday={reportInsights.engagementPerWeekday ?? [0, 0, 0, 0, 0, 0, 0]}
-                          maxEr={Math.max(
-                            engagement.engagement_rate ?? 0,
-                            ...(reportInsights.topPosts?.byInteractions?.map((t) => t.erPost) ?? [])
-                          )}
-                          cpmCpe={reportInsights.cpmCpe ?? { cpmEstimate: null, cpeEstimate: null }}
-                          strategicMetrics={reportInsights.strategicMetrics ?? null}
-                          rowGutter={rowGutter}
-                          postsByWeekday={getPostsByWeekday(ownPosts)}
-                          getPostImageUrl={getPostImageUrl}
-                          getPostLink={getPostLink}
-                          failedPostImages={failedPostImages}
+                          conversationCard={reportInsights.conversation ? { rate: reportInsights.conversation.rate, label: reportInsights.conversation.label, comparisonLabel: reportInsights.conversation.comparisonLabel, color: reportInsights.conversation.color } : undefined}
+                          topHashtags={reportInsights.nicho?.topHashtags}
+                          performingHashtags={reportInsights.nicho?.performingHashtags}
+                          conversationHashtags={reportInsights.nicho?.conversationHashtags}
+                          proximoPatamar={reportInsights.diagnosticoBI.proximoPatamar}
+                          faltaParaProximo={reportInsights.diagnosticoBI.faltaParaProximo}
+                          percentualNoPatamar={reportInsights.diagnosticoBI.percentualNoPatamar}
+                          insightPatamar={reportInsights.diagnosticoBI.insightPatamar}
+                          projecaoProximoPatamar={reportInsights.diagnosticoBI.projecaoProximoPatamar}
+                          comparacaoLocal={comparacaoLocalComCidade}
+                          hashtagsSugeridas={reportInsights.nicho?.hashtagsSugeridas}
+                          proximoPassoConcreto={reportInsights.diagnosticoBI.proximoPassoConcreto}
+                          growthProjectionNote={reportInsights?.strategicMetrics?.growthProjectionNote}
+                          semana1Items={reportInsights.diagnosticoBI.proximoPassoTop3}
                         />
-                      </div>
-                      {showMetricsBlur && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            inset: 0,
-                            background: 'rgba(0,0,0,0.4)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: s.sm,
-                            pointerEvents: 'auto',
-                            padding: s.lg,
-                          }}
-                        >
-                          {handle && canEditProfile(handle) ? (
-                            <>
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<LockOutlined />}
-                                onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-                                style={{
-                                  borderRadius: t.radius.md,
-                                  fontWeight: 600,
-                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                                }}
-                              >
-                                Desbloquear análise completa
-                              </Button>
-                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                Dados e resultados para sua marca contratar.
-                              </Text>
-                            </>
-                          ) : (
-                            <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                              Análise completa disponível apenas para marcas.
-                            </Text>
-                          )}
-                        </div>
                       )}
                     </div>
-                  </div>
-                ) : null
-              case 'metricasEstrategicas':
-                return reportInsights?.strategicMetrics ? (
-                  <div key="metricasEstrategicas" id="metricas-estrategicas" style={{ marginBottom: gap }}>
-                    {showMetricsBlur && (
-                      <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-                        Métricas que marcas olham
-                      </h2>
-                    )}
+                  )
+                }
+                case 'engajamentoPorTipo':
+                  return (
                     <div
-                      style={{
-                        position: 'relative',
-                        overflow: 'hidden',
-                        ...(showMetricsBlur && { borderRadius: t.radius.lg, minHeight: 80 }),
-                      }}
+                      key="engajamento-alcance-cluster"
+                      id="engajamento-alcance-cluster"
+                      className="detail-er-alcance-cluster"
                     >
+                      <EngajamentoPorTipoSection
+                        engagementByType={engagementByType}
+                        rowGutter={rowGutter}
+                      />
+                      {reportInsights?.strategicMetrics?.contentTypeDistribution ? (
+                        <AlcanceSection
+                          distribution={reportInsights.strategicMetrics.contentTypeDistribution}
+                          gutter={rowGutter}
+                        />
+                      ) : null}
+                    </div>
+                  )
+                case 'alcance':
+                  return null
+                case 'metricasMediakit':
+                  return reportInsights ? (
+                    <div key="metricasMediakit" id="secao-metricas-mediakit">
+                      {(showMediakitMetricsBlur || isOwnProfileAsInfluencer || showMetricsBlurUntilActivation) && (
+                        <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                          Métricas
+                        </h2>
+                      )}
                       <div
                         style={{
-                          ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
+                          position: 'relative',
+                          overflow: showMediakitMetricsBlur ? 'hidden' : 'visible',
+                          ...(showMediakitMetricsBlur && { borderRadius: t.radius.lg, minHeight: 80 }),
                         }}
                       >
-                        <StrategicMetricsSection
-                          metrics={reportInsights.strategicMetrics}
-                          monetizationReadinessScore={reportInsights.monetizationReadinessScore}
-                          nicheAuthorityScore={reportInsights.nicheAuthorityScore}
-                        />
-                      </div>
-                      {showMetricsBlur && (
                         <div
                           style={{
-                            position: 'absolute',
-                            inset: 0,
-                            background: 'rgba(0,0,0,0.4)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: s.sm,
-                            pointerEvents: 'auto',
-                            padding: s.lg,
+                            ...(showMediakitMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                           }}
                         >
-                          {handle && canEditProfile(handle) ? (
-                            <>
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<LockOutlined />}
-                                onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-                                style={{
-                                  borderRadius: t.radius.md,
-                                  fontWeight: 600,
-                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                                }}
-                              >
-                                Desbloquear análise completa
-                              </Button>
-                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                Dados e resultados para sua marca contratar.
-                              </Text>
-                            </>
-                          ) : (
+                          <MetricasMediakitSection
+                            formatShortNum={formatShortNum}
+                            followersCount={followersCount}
+                            engagement={engagement}
+                            conversationRate={reportInsights.conversation?.rate ?? 0}
+                            conversationLabel={reportInsights.conversation?.label}
+                            bestDay={getWeekdayName(reportInsights.consistency?.bestWeekday ?? 0)}
+                            bestHour={reportInsights.consistency?.bestHour}
+                            engagementPerWeekday={reportInsights.engagementPerWeekday ?? [0, 0, 0, 0, 0, 0, 0]}
+                            maxEr={Math.max(
+                              engagement.engagement_rate ?? 0,
+                              ...(reportInsights.topPosts?.byInteractions?.map((t) => t.erPost) ?? [])
+                            )}
+                            cpmCpe={reportInsights.cpmCpe ?? { cpmEstimate: null, cpeEstimate: null }}
+                            strategicMetrics={reportInsights.strategicMetrics ?? null}
+                            postsByWeekday={getPostsByWeekday(ownPosts)}
+                            getPostImageUrl={getPostImageUrl}
+                            getPostLink={getPostLink}
+                            failedPostImages={failedPostImages}
+                            isMobile={isMobile}
+                            blurMediakitPreview={showMetricsBlur && !showMediakitMetricsBlur}
+                            mediakitLockOverlay={
+                              showMetricsBlurUntilActivation ? (
+                                handle && canEdit ? (
+                                  <>
+                                    <Button
+                                      type="primary"
+                                      size="small"
+                                      icon={<LockOutlined />}
+                                      onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                      style={{
+                                        borderRadius: t.radius.md,
+                                        fontWeight: 600,
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                      }}
+                                    >
+                                      Desbloquear análise completa
+                                    </Button>
+                                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                      Veja curtidas, engajamento, CPE e o melhor dia para publicar no seu perfil.
+                                    </Text>
+                                  </>
+                                ) : (
+                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                    Análise completa disponível apenas para marcas.
+                                  </Text>
+                                )
+                              ) : undefined
+                            }
+                          />
+                        </div>
+                        {showMediakitMetricsBlur && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              background: 'rgba(0,0,0,0.4)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: s.sm,
+                              pointerEvents: 'auto',
+                              padding: s.lg,
+                            }}
+                          >
                             <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
                               Análise completa disponível apenas para marcas.
                             </Text>
-                          )}
-                        </div>
-                      )}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ) : null
-              case 'valorEpublico':
-                return reportInsights ? (
-                  <div key="valorEpublico" style={{ marginBottom: gap }}>
-                    {showMetricsBlur && (
-                      <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-                        Valor estimado das postagens
-                      </h2>
-                    )}
-                    <div
-                      style={{
-                        position: 'relative',
-                        overflow: 'hidden',
-                        ...(showMetricsBlur && { borderRadius: t.radius.lg, minHeight: 80 }),
-                      }}
-                    >
+                  ) : null
+                case 'valorEpublico':
+                  return reportInsights ? (
+                    <div key="valorEpublico">
+                      {showMetricsBlur && (
+                        <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                          Valor estimado das postagens
+                        </h2>
+                      )}
                       <div
                         style={{
-                          ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
+                          position: 'relative',
+                          overflow: 'hidden',
+                          ...(showMetricsBlur && { borderRadius: t.radius.lg, minHeight: 80 }),
                         }}
                       >
-                        <ValorEpublicoSection
-                          valorEstimado={{ min: valorEstimadoMin, max: valorEstimadoMax, porque: valorEstimadoPorque }}
-                          valorEstimadoPorTipo={valorEstimadoPorTipoExibir ?? reportInsights.valorEstimadoPorTipo}
-                          hideCta={layout.showMainCta === 'final'}
-                          ctaLabel={mediaKitCtaShortLabel}
-                          rowGutter={rowGutter}
-                          isMobile={isMobile}
-                        />
-                      </div>
-                      {showMetricsBlur && (
                         <div
                           style={{
-                            position: 'absolute',
-                            inset: 0,
-                            background: 'rgba(0,0,0,0.4)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: s.sm,
-                            pointerEvents: 'auto',
-                            padding: s.lg,
+                            ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                           }}
                         >
-                          {handle && canEditProfile(handle) ? (
-                            <>
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<LockOutlined />}
-                                onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                          <ValorEpublicoSection
+                            valorEstimado={{ min: valorEstimadoMin, max: valorEstimadoMax, porque: valorEstimadoPorque }}
+                            valorEstimadoPorTipo={valorEstimadoPorTipoExibir ?? reportInsights.valorEstimadoPorTipo}
+                            hideCta={layout.showMainCta === 'final'}
+                            ctaLabel={mediaKitCtaShortLabel}
+                            rowGutter={rowGutter}
+                            isMobile={isMobile}
+                          />
+                        </div>
+                        {showMetricsBlur && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              background: 'rgba(0,0,0,0.4)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: s.sm,
+                              pointerEvents: 'auto',
+                              padding: s.lg,
+                            }}
+                          >
+                            {handle && canEditProfile(handle) ? (
+                              <>
+                                <Button
+                                  type="primary"
+                                  size="small"
+                                  icon={<LockOutlined />}
+                                  onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                  style={{
+                                    borderRadius: t.radius.md,
+                                    fontWeight: 600,
+                                    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                  }}
+                                >
+                                  Desbloquear análise completa
+                                </Button>
+                                <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                  Descubra quanto criadores do seu nível estão cobrando na sua cidade.
+                                </Text>
+                              </>
+                            ) : (
+                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                Análise completa disponível apenas para marcas.
+                              </Text>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : postsLoading ? (
+                    <Card key="valorEpublico" size="small" style={{ ...cardStyle, margin: 0 }}>
+                      <div style={{ textAlign: 'center', padding: s.xl }}><Spin /></div>
+                    </Card>
+                  ) : null
+                case 'conteudoPerforma':
+                  return (
+                    <div
+                      key="conteudoPerforma"
+                      id="secao-conteudo-performa"
+                      ref={feedSectionRef}
+                      className={`influencer-detail-stack${embeddedInModal ? ' influencer-detail-stack--modal' : ''}`}
+                      style={detailStackStyle}
+                    >
+                      {!hasActivationData && user?.scope === 'influencer' && canEdit && handle && showActivationCta && (
+                        <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={0} scrollAnchorId="secao-metricas-mediakit" />
+                      )}
+                      {postsLoading ? (
+                        <Card size="small" style={{ ...cardStyle, margin: 0 }}>
+                          <Skeleton active paragraph={{ rows: 4 }} title={{ width: 200 }} />
+                        </Card>
+                      ) : (
+                        <>
+                          {showMetricsBlur && (
+                            <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                              Análise de Feed
+                            </h2>
+                          )}
+                          <div
+                            id="blur-feed-analysis"
+                            style={{
+                              margin: 0,
+                              position: 'relative',
+                              overflow: 'hidden',
+                              borderRadius: t.radius.lg,
+                              minHeight: showMetricsBlur ? 80 : undefined,
+                            }}
+                          >
+                            <div
+                              style={{
+                                ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
+                              }}
+                            >
+                              <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={ownPosts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={stackGap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
+                            </div>
+                            {showMetricsBlur && (
+                              <div
                                 style={{
-                                  borderRadius: t.radius.md,
-                                  fontWeight: 600,
-                                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                  position: 'absolute',
+                                  inset: 0,
+                                  background: 'rgba(0,0,0,0.4)',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: s.sm,
+                                  pointerEvents: 'auto',
+                                  padding: s.lg,
                                 }}
                               >
-                                Desbloquear análise completa
-                              </Button>
-                              <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                Descubra quanto criadores do seu nível estão cobrando na sua cidade.
-                              </Text>
-                            </>
-                          ) : (
-                            <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                              Análise completa disponível apenas para marcas.
-                            </Text>
+                                {handle && canEditProfile(handle) ? (
+                                  <>
+                                    <Button
+                                      type="primary"
+                                      size="small"
+                                      icon={<LockOutlined />}
+                                      onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                      style={{
+                                        borderRadius: t.radius.md,
+                                        fontWeight: 600,
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                      }}
+                                    >
+                                      Desbloquear análise completa
+                                    </Button>
+                                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                      Descubra o padrão que faz seus posts viralizarem.
+                                    </Text>
+                                  </>
+                                ) : (
+                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                    Análise completa disponível apenas para marcas.
+                                  </Text>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {showMetricsBlur && (
+                            <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                              Análise de reels
+                            </h2>
                           )}
-                        </div>
+                          <div
+                            style={{
+                              margin: 0,
+                              position: 'relative',
+                              overflow: 'hidden',
+                              borderRadius: t.radius.lg,
+                              minHeight: showMetricsBlur ? 80 : undefined,
+                            }}
+                          >
+                            <div
+                              style={{
+                                ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
+                              }}
+                            >
+                              <ReelsAnalysisSection
+                                reels={mediaByType.reels}
+                                followersCount={followersCount}
+                                failedPostImages={failedPostImages}
+                                formatShortNum={formatShortNum}
+                                getPostImageUrl={getPostImageUrl}
+                                getPostLink={getPostLink}
+                                gap={stackGap}
+                                cardStyle={cardStyle}
+                                lastReelAmplificationLabel={reportInsights?.strategicMetrics?.lastReelAmplificationLabel}
+                                contentOnly={!hasActivationData}
+                              />
+                            </div>
+                            {showMetricsBlur && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  inset: 0,
+                                  background: 'rgba(0,0,0,0.4)',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: s.sm,
+                                  pointerEvents: 'auto',
+                                  padding: s.lg,
+                                }}
+                              >
+                                {handle && canEditProfile(handle) ? (
+                                  <>
+                                    <Button
+                                      type="primary"
+                                      size="small"
+                                      icon={<LockOutlined />}
+                                      onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                      style={{
+                                        borderRadius: t.radius.md,
+                                        fontWeight: 600,
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                      }}
+                                    >
+                                      Desbloquear análise completa
+                                    </Button>
+                                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                      Veja qual tipo de reel tem maior potencial de descoberta.
+                                    </Text>
+                                  </>
+                                ) : (
+                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                    Análise completa disponível apenas para marcas.
+                                  </Text>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {showMetricsBlur && (
+                            <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
+                              Análise de marcados
+                            </h2>
+                          )}
+                          <div
+                            style={{
+                              position: 'relative',
+                              overflow: 'hidden',
+                              borderRadius: t.radius.lg,
+                              minHeight: showMetricsBlur ? 80 : undefined,
+                            }}
+                          >
+                            <div
+                              style={{
+                                ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
+                              }}
+                            >
+                              <TaggedAnalysisSection tagged={mediaByType.tagged} followersCount={followersCount} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={stackGap} contentOnly={!hasActivationData} />
+                            </div>
+                            {showMetricsBlur && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  inset: 0,
+                                  background: 'rgba(0,0,0,0.4)',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: s.sm,
+                                  pointerEvents: 'auto',
+                                  padding: s.lg,
+                                }}
+                              >
+                                {handle && canEditProfile(handle) ? (
+                                  <>
+                                    <Button
+                                      type="primary"
+                                      size="small"
+                                      icon={<LockOutlined />}
+                                      onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
+                                      style={{
+                                        borderRadius: t.radius.md,
+                                        fontWeight: 600,
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                      }}
+                                    >
+                                      Desbloquear análise completa
+                                    </Button>
+                                    <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                      Veja as marcas que estão buscando criadores na sua região agora.
+                                    </Text>
+                                  </>
+                                ) : (
+                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
+                                    Análise completa disponível apenas para marcas.
+                                  </Text>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </>
                       )}
                     </div>
-                  </div>
-                ) : postsLoading ? (
-                  <Card key="valorEpublico" size="small" style={{ ...cardStyle, marginBottom: gap }}>
-                    <div style={{ textAlign: 'center', padding: s.xl }}><Spin /></div>
-                  </Card>
-                ) : null
-              case 'conteudoPerforma':
-                return (
-                  <div key="conteudoPerforma" id="secao-conteudo-performa" ref={feedSectionRef} style={{ marginBottom: gap }}>
-                    {!hasActivationData && user?.scope === 'influencer' && canEdit && handle && showActivationCta && (
-                      <ActivationCtaPanel handle={handle} isMobile={isMobile} marginBottom={gap} scrollAnchorId="secao-metricas-mediakit" />
-                    )}
-                    {postsLoading ? (
-                      <Card size="small" style={{ ...cardStyle, marginBottom: gap }}>
-                        <Skeleton active paragraph={{ rows: 4 }} title={{ width: 200 }} />
-                      </Card>
-                    ) : (
-                      <>
-                        {showMetricsBlur && (
-                          <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-                            Análise de Feed
-                          </h2>
-                        )}
-                        <div
-                          id="blur-feed-analysis"
-                          style={{
-                            marginBottom: gap,
-                            position: 'relative',
-                            overflow: 'hidden',
-                            borderRadius: t.radius.lg,
-                            minHeight: showMetricsBlur ? 80 : undefined,
-                          }}
-                        >
-                          <div
-                            style={{
-                              ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
-                            }}
-                          >
-                            <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={ownPosts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={gap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
-                          </div>
-                          {showMetricsBlur && (
-                            <div
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: 'rgba(0,0,0,0.4)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: s.sm,
-                                pointerEvents: 'auto',
-                                padding: s.lg,
-                              }}
-                            >
-                              {handle && canEditProfile(handle) ? (
-                                <>
-                                  <Button
-                                    type="primary"
-                                    size="small"
-                                    icon={<LockOutlined />}
-                                    onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-                                    style={{
-                                      borderRadius: t.radius.md,
-                                      fontWeight: 600,
-                                      boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                                    }}
-                                  >
-                                    Desbloquear análise completa
-                                  </Button>
-                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                    Descubra o padrão que faz seus posts viralizarem.
-                                  </Text>
-                                </>
-                              ) : (
-                                <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                  Análise completa disponível apenas para marcas.
-                                </Text>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        {showMetricsBlur && (
-                          <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-                            Análise de reels
-                          </h2>
-                        )}
-                        <div
-                          style={{
-                            marginBottom: gap,
-                            position: 'relative',
-                            overflow: 'hidden',
-                            borderRadius: t.radius.lg,
-                            minHeight: showMetricsBlur ? 80 : undefined,
-                          }}
-                        >
-                          <div
-                            style={{
-                              ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
-                            }}
-                          >
-                            <ReelsAnalysisSection
-                              reels={mediaByType.reels}
-                              followersCount={followersCount}
-                              failedPostImages={failedPostImages}
-                              formatShortNum={formatShortNum}
-                              getPostImageUrl={getPostImageUrl}
-                              getPostLink={getPostLink}
-                              gap={gap}
-                              cardStyle={cardStyle}
-                              lastReelAmplificationLabel={reportInsights?.strategicMetrics?.lastReelAmplificationLabel}
-                              contentOnly={!hasActivationData}
-                            />
-                          </div>
-                          {showMetricsBlur && (
-                            <div
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: 'rgba(0,0,0,0.4)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: s.sm,
-                                pointerEvents: 'auto',
-                                padding: s.lg,
-                              }}
-                            >
-                              {handle && canEditProfile(handle) ? (
-                                <>
-                                  <Button
-                                    type="primary"
-                                    size="small"
-                                    icon={<LockOutlined />}
-                                    onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-                                    style={{
-                                      borderRadius: t.radius.md,
-                                      fontWeight: 600,
-                                      boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                                    }}
-                                  >
-                                    Desbloquear análise completa
-                                  </Button>
-                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                    Veja qual tipo de reel tem maior potencial de descoberta.
-                                  </Text>
-                                </>
-                              ) : (
-                                <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                  Análise completa disponível apenas para marcas.
-                                </Text>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        {showMetricsBlur && (
-                          <h2 className="section-h2" style={{ ...typ.h2, color: c.text, textAlign: 'center', marginBottom: s.sm }}>
-                            Análise de marcados
-                          </h2>
-                        )}
-                        <div
-                          style={{
-                            position: 'relative',
-                            overflow: 'hidden',
-                            borderRadius: t.radius.lg,
-                            minHeight: showMetricsBlur ? 80 : undefined,
-                          }}
-                        >
-                          <div
-                            style={{
-                              ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
-                            }}
-                          >
-                            <TaggedAnalysisSection tagged={mediaByType.tagged} followersCount={followersCount} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={gap} contentOnly={!hasActivationData} />
-                          </div>
-                          {showMetricsBlur && (
-                            <div
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: 'rgba(0,0,0,0.4)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: s.sm,
-                                pointerEvents: 'auto',
-                                padding: s.lg,
-                              }}
-                            >
-                              {handle && canEditProfile(handle) ? (
-                                <>
-                                  <Button
-                                    type="primary"
-                                    size="small"
-                                    icon={<LockOutlined />}
-                                    onClick={() => navigate(`/activate/${encodeURIComponent(handle)}`)}
-                                    style={{
-                                      borderRadius: t.radius.md,
-                                      fontWeight: 600,
-                                      boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                                    }}
-                                  >
-                                    Desbloquear análise completa
-                                  </Button>
-                                  <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                    Veja as marcas que estão buscando criadores na sua região agora.
-                                  </Text>
-                                </>
-                              ) : (
-                                <Text style={{ fontSize: typ.caption.fontSize, color: 'rgba(255,255,255,0.95)', textAlign: 'center', maxWidth: 320, lineHeight: 1.4 }}>
-                                  Análise completa disponível apenas para marcas.
-                                </Text>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )
-              default:
-                return null
+                  )
+                default:
+                  return null
+              }
             }
-          }
-          return renderSection(sectionId)
-        })}
+            return renderSection(sectionId)
+          })}
+            </div>
+          )}
 
-        <StickyCTA
-          visible={!isRedacted}
-          isMobile={isMobile}
-          primaryLabel={mediaKitCtaShortLabel}
-          onPrimary={goToMediaKitOrLogin}
-        />
+          {!embeddedInModal ? stickyCta : null}
 
-        <style>{`
+          <style>{`
         .detail-action-btn-subtle.ant-btn {
           transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
         }
@@ -1758,7 +1640,11 @@ export default function InfluencerDetail({
           .no-print { display: none !important; }
         }
       `}</style>
+        </div>
       </div>
+
+      {embeddedInModal ? stickyCta : null}
+
       {handle ? (
         <AdminProfileLlmEditModal
           open={editLlmOpen}

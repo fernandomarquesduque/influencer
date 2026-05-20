@@ -47,10 +47,11 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const initialToken = localStorage.getItem(AUTH_TOKEN_KEY)
   const [state, setState] = useState<AuthState>({
-    token: localStorage.getItem(AUTH_TOKEN_KEY),
+    token: initialToken,
     user: null,
-    loading: true,
+    loading: !!initialToken,
   })
 
   const loadUser = useCallback(async (token: string) => {

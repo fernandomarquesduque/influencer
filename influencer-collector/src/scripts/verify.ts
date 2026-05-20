@@ -8,6 +8,7 @@ import type { AddressInfo } from 'net';
 import assert from 'node:assert/strict';
 import type { InstagramClient } from '../instagram.js';
 import { loadConfig, mergeCollectorConfig } from '../config.js';
+import { enrichProfileWithFollowersHint, getFollowersFromEntity } from '../entityRules.js';
 import * as runner from '../runner.js';
 import { getProfiles } from '../memoryStorage.js';
 import { createCollectorRequestHandler } from '../server.js';
@@ -128,6 +129,18 @@ async function main(): Promise<void> {
 
   const m = mergeCollectorConfig(c, { minFollowersToSave: 12_345 });
   assert.equal(m.minFollowersToSave, 12_345);
+
+  const nestedZero = {
+    handle: 'teste',
+    followers_count: 42_000,
+    data: { user: { follower_count: 0 } },
+  } as Record<string, unknown>;
+  assert.equal(getFollowersFromEntity(nestedZero), 42_000);
+  const enriched = enrichProfileWithFollowersHint(
+    { data: { user: { follower_count: 0 } } } as Record<string, unknown>,
+    18_500
+  );
+  assert.equal(getFollowersFromEntity(enriched), 18_500);
 
   assert.equal(runner.tryScheduleCollection(), true);
   assert.equal(runner.tryScheduleCollection(), false);

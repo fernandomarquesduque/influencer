@@ -48,19 +48,33 @@ function deepFindEdgeFollowedBy(obj: unknown, seen = new Set<unknown>()): unknow
 }
 
 export function getFollowersFromEntity(entity: Record<string, unknown>): number {
-  const fromPaths = getIn(
+  /** Gate/DOM gravam no topo; o GraphQL aninhado costuma vir com follower_count: 0 antes de carregar. */
+  const top = getIn(entity, 'followers_count', 'followers', 'follower_count');
+  if (top !== undefined && top !== null) {
+    const n = toNumber(top);
+    if (n > 0) return n;
+  }
+  const fromNested = getIn(
     entity,
     'data.user.follower_count',
-    'followers_count',
-    'followers',
     'edge_followed_by.count',
     'data.user.edge_followed_by.count'
   );
-  let v = fromPaths;
+  let v = fromNested;
   if (v === undefined || (typeof v === 'number' && v === 0)) {
     v = deepFindEdgeFollowedBy(entity);
   }
   return toNumber(v);
+}
+
+/** Injeta contagem do gate/DOM quando o GraphQL aninhado veio com follower_count: 0. */
+export function enrichProfileWithFollowersHint(
+  entity: Record<string, unknown>,
+  followersHint?: number | null
+): Record<string, unknown> {
+  if (followersHint == null || followersHint <= 0) return entity;
+  if (getFollowersFromEntity(entity) > 0) return entity;
+  return { ...entity, followers_count: followersHint };
 }
 
 // --- Blocklist e palavras rejeitadas ---

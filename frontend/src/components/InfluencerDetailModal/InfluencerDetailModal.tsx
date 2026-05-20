@@ -1,4 +1,5 @@
 import { Modal } from 'antd'
+import { CloseOutlined } from '@ant-design/icons'
 import InfluencerDetail from '../../pages/InfluencerDetail'
 import { useLockPageScroll } from '../../utils/useLockPageScroll'
 import './InfluencerDetailModal.css'
@@ -28,24 +29,36 @@ export default function InfluencerDetailModal({
       centered
       width={modalWidth}
       destroyOnHidden
+      closable={false}
       wrapClassName="influencer-detail-modal"
       maskStyle={{ backdropFilter: 'blur(4px)' }}
       styles={{
         body: {
           padding: 0,
           maxHeight: 'min(92vh, 960px)',
-          overflowY: 'auto',
-          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'visible',
         },
       }}
     >
       {open && handle ? (
-        <InfluencerDetail
-          overrideHandle={handle}
-          overrideCampaignId={campaignId}
-          embeddedInModal
-          onModalClose={onClose}
-        />
+        <div className="influencer-detail-modal__shell">
+          <button
+            type="button"
+            className="influencer-detail-modal__close"
+            onClick={onClose}
+            aria-label="Fechar"
+          >
+            <CloseOutlined />
+          </button>
+          <InfluencerDetail
+            overrideHandle={handle}
+            overrideCampaignId={campaignId}
+            embeddedInModal
+            onModalClose={onClose}
+          />
+        </div>
       ) : null}
     </Modal>
   )

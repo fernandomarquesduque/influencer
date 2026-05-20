@@ -4,7 +4,7 @@ import type { ProfilesSearchQuery } from '../api'
  * Rotas que usam o wizard de busca e compartilham o mesmo default de `llmProfileType`
  * (valores do qualify: criador + pessoal quando a URL não especifica).
  */
-export const DISCOVERY_LLM_PROFILE_TYPE_PATHS = ['/app/campaigns/create', '/search'] as const
+export const DISCOVERY_LLM_PROFILE_TYPE_PATHS = ['/app/campaigns/create', '/'] as const
 
 const DISCOVERY_PATH_SET = new Set<string>(DISCOVERY_LLM_PROFILE_TYPE_PATHS)
 

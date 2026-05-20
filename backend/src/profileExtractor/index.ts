@@ -90,6 +90,11 @@ export interface GetFollowersOptions {
   skipGoto?: boolean;
 }
 
+/** Lê seguidores do header do perfil (fallback quando GraphQL não traz follower_count). */
+export async function scrapeFollowersFromProfilePage(page: Page): Promise<number | null> {
+  return readFollowersFromCurrentPage(page);
+}
+
 async function readFollowersFromCurrentPage(page: Page): Promise<number | null> {
   await humanDelay();
   await page.waitForTimeout(delayMs(1000));
@@ -194,6 +199,69 @@ function getDataUserUsername(b: Record<string, unknown>): string | undefined {
   const u = user as Record<string, unknown>;
   const v = u.username;
   return v != null ? String(v).trim() : undefined;
+}
+
+/** Usuário do perfil visitado: data.user, feed_user da timeline ou user no primeiro edge. */
+function extractUserFromRaw(raw: Record<string, unknown>): Record<string, unknown> | null {
+  const fromDataUser = getIn(raw, 'data.user');
+  if (fromDataUser != null && typeof fromDataUser === 'object') return fromDataUser as Record<string, unknown>;
+  const feedUser =
+    getIn(raw, 'data.xdt_api__v1__feed__user_timeline_graphql_connection.feed_user') ??
+    getIn(raw, 'data.feed_user_timeline.feed_user');
+  if (feedUser != null && typeof feedUser === 'object') return feedUser as Record<string, unknown>;
+  const edges = getEdgesFromRaw(raw, TIMELINE_EDGES_PATHS);
+  if (edges.length === 0) return null;
+  const first = edges[0];
+  if (first == null || typeof first !== 'object') return null;
+  const node = (first as Record<string, unknown>).node;
+  if (node == null || typeof node !== 'object') return null;
+  const u = (node as Record<string, unknown>).user;
+  return u != null && typeof u === 'object' ? (u as Record<string, unknown>) : null;
+}
+
+function mergeMissingShallow(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const k of Object.keys(source)) {
+    const sv = source[k];
+    const tv = target[k];
+    if ((tv === undefined || tv === null) && sv !== undefined && sv !== null) {
+      target[k] = sv;
+    }
+  }
+}
+
+/** Une data.user de várias respostas; se não houver, monta a partir de feed_user ou edges da timeline. */
+function mergeProfileRawFromCaptured(bodies: Record<string, unknown>[]): Record<string, unknown> | null {
+  const userBodies = bodies.filter((b) => hasDataUser(b));
+  if (userBodies.length === 0) {
+    for (const body of bodies) {
+      const user = extractUserFromRaw(body);
+      if (user != null) return { data: { user } } as Record<string, unknown>;
+    }
+    return null;
+  }
+  const firstUser = getIn(userBodies[0], 'data.user');
+  if (firstUser == null || typeof firstUser !== 'object') return null;
+  const tu = structuredClone(firstUser) as Record<string, unknown>;
+  const merged = { data: { user: tu } } as Record<string, unknown>;
+  if (userBodies.length > 1) {
+    for (let i = 1; i < userBodies.length; i++) {
+      const ui = getIn(userBodies[i], 'data.user');
+      if (ui != null && typeof ui === 'object') mergeMissingShallow(tu, ui as Record<string, unknown>);
+    }
+  }
+  for (const body of bodies) {
+    if (hasDataUser(body)) continue;
+    const extra = extractUserFromRaw(body);
+    if (extra != null) mergeMissingShallow(tu, extra);
+  }
+  return merged;
+}
+
+/** Body útil para montar perfil (Polaris clássico ou timeline/feed_user). */
+function bodyHasProfileData(b: Record<string, unknown>): boolean {
+  if (hasDataUser(b)) return true;
+  if (extractUserFromRaw(b) != null) return true;
+  return getEdgesFromRaw(b, TIMELINE_EDGES_PATHS).length > 0;
 }
 
 /** Merge profundo de objetos (para juntar timeline + respostas de perfil em uma só). */
@@ -924,7 +992,7 @@ export async function extractProfile(
     }
 
     logStep('aguardando respostas da API (Polaris)...');
-    await page.waitForTimeout(fastMode ? 600 : 2000);
+    await page.waitForTimeout(fastMode ? 1800 : 2000);
 
     const runHighlightsInBackground =
       extractHighlights && Boolean(optClient && optStorage && typeof optStorage.saveMedia === 'function');
@@ -1158,10 +1226,12 @@ export async function extractProfile(
   }
 
   const bodies = captured.map((c) => c.body).filter((b): b is Record<string, unknown> => b != null && typeof b === 'object');
-  const hasUsableProfile = bodies.some((b) => hasDataUser(b));
-  logStep(`pronto: ${bodies.length} respostas, hasUsableProfile=${hasUsableProfile}`);
+  const mergedFromApi = mergeProfileRawFromCaptured(bodies);
+  const hasUsableProfile = mergedFromApi != null;
+  const hasDataUserCount = bodies.filter((b) => hasDataUser(b)).length;
+  logStep(`pronto: ${bodies.length} respostas, hasDataUser=${hasDataUserCount}, hasUsableProfile=${hasUsableProfile}`);
 
-  if (bodies.length === 0 || !hasUsableProfile) {
+  if (bodies.length === 0 || !hasUsableProfile || mergedFromApi == null) {
     if (had429) {
       record429();
       throw new Error('RATE_LIMIT_429');
@@ -1171,10 +1241,17 @@ export async function extractProfile(
 
   // Garantir que usamos o perfil do usuário visitado (handle), não do viewer (logado). Várias respostas podem ter data.user.
   const keyHandle = handle.toLowerCase().replace(/^@/, '');
+  const usernameFromBody = (r: Record<string, unknown>): string | undefined => {
+    const fromData = getDataUserUsername(r);
+    if (fromData) return fromData;
+    const u = extractUserFromRaw(r);
+    return u?.username != null ? String(u.username).trim() : undefined;
+  };
+
   const bodyForRequestedProfile = (predicate: (r: Record<string, unknown>) => boolean) =>
     bodies.find((r) => {
       if (!r || !predicate(r)) return false;
-      const username = getDataUserUsername(r);
+      const username = usernameFromBody(r);
       return username != null && username.toLowerCase() === keyHandle;
     }) as Record<string, unknown> | undefined;
 
@@ -1185,8 +1262,10 @@ export async function extractProfile(
   const rawForProfile =
     bodyForRequestedProfile(hasDataUserWithMetrics) ??
     bodyForRequestedProfile(hasDataUser) ??
+    bodyForRequestedProfile(bodyHasProfileData) ??
     polarisFull ??
     polarisAny ??
+    mergedFromApi ??
     merged;
 
   try {

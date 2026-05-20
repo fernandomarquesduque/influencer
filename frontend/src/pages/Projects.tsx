@@ -56,7 +56,7 @@ function ProjectList() {
     return (
       <div style={{ padding: 48, textAlign: 'center' }}>
         <Title level={4} style={{ color: 'var(--app-text)' }}>Entra na sua conta pra ver os projetos</Title>
-        <Link to="/login"><Button type="primary">Entrar</Button></Link>
+        <Link to="/influencer/login"><Button type="primary">Entrar</Button></Link>
       </div>
     )
   }
@@ -233,7 +233,7 @@ function ProjectDetail() {
     return (
       <div style={{ padding: 48, textAlign: 'center' }}>
         <Title level={4} style={{ color: 'var(--app-text)' }}>Faça login para ver o projeto</Title>
-        <Link to="/login"><Button type="primary">Entrar</Button></Link>
+        <Link to="/influencer/login"><Button type="primary">Entrar</Button></Link>
       </div>
     )
   }

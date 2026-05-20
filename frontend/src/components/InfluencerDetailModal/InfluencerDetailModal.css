@@ -1,5 +1,77 @@
 .influencer-detail-modal .ant-modal-content {
+  position: relative;
   padding: 0;
+  overflow: visible;
+  max-height: min(92vh, 960px);
+  display: flex;
+  flex-direction: column;
+}
+
+.influencer-detail-modal .ant-modal-close {
+  display: none;
+}
+
+.influencer-detail-modal__shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: visible;
+}
+
+.influencer-detail-modal__close {
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  z-index: 30;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
+  transition: color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.influencer-detail-modal__close:hover {
+  color: rgba(0, 0, 0, 0.85);
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.16),
+    0 0 0 1px rgba(0, 0, 0, 0.08);
+  transform: scale(1.04);
+}
+
+.influencer-detail-modal__close:focus-visible {
+  outline: 2px solid var(--app-primary, #722ed1);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .influencer-detail-modal__close {
+    top: 10px;
+    right: 10px;
+    width: 36px;
+    height: 36px;
+    font-size: 14px;
+  }
+}
+
+.influencer-detail-modal .ant-modal-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -7,6 +79,35 @@
   min-height: 0;
 }
 
+/* Coluna: área rolável dentro da caixa do modal (não na viewport). */
 .influencer-detail-modal .influencer-detail--embedded {
+  height: 100%;
   min-height: 0 !important;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.influencer-detail-modal .influencer-detail__modal-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.influencer-detail-modal .influencer-detail--embedded-locked .influencer-detail__modal-scroll {
+  overflow-y: auto;
+}
+
+/* Conteúdo rolável: stack com gap uniforme (não colapsar no flex do modal) */
+.influencer-detail-modal .influencer-detail__modal-scroll > div {
+  min-height: min-content;
+}
+
+.influencer-detail-modal .influencer-detail-stack {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: var(--influencer-detail-gap, 16px) !important;
 }

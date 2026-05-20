@@ -22,7 +22,7 @@ const TABLE_LABELS: Record<string, string> = {
   campaign: 'Campanhas (relatórios)',
   user_credits: 'Registros de saldo de créditos',
   credit_transaction: 'Movimentações de crédito',
-  payment: 'Pagamentos (Asaas)',
+  payment: 'Pagamentos',
   direct_queue: 'Fila de Direct',
   user_favorite: 'Favoritos',
   message_templates: 'Templates de mensagem',
@@ -322,7 +322,7 @@ export default function AdminDashboard() {
               <div className="admin-dashboard__panel">
                 <div className="admin-dashboard__panel-head">
                   <ShopOutlined style={{ color: '#0d9488' }} />
-                  Pagamentos Asaas por status
+                  Pagamentos por status
                 </div>
                 <div className="admin-dashboard__chips">
                   {stats.sqlite.paymentsByStatus.map((row) => {

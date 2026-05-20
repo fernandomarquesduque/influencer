@@ -5,13 +5,14 @@ import { ArrowLeftOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import AgencyLoginPanel from '../components/AgencyLoginPanel/AgencyLoginPanel'
 import Logo from '../components/Logo'
+import { SEARCH_ROUTE_PATH } from '../constants/searchRoute'
 
 const { Title, Text } = Typography
 
-const DEFAULT_REDIRECT = '/app'
+const DEFAULT_REDIRECT = SEARCH_ROUTE_PATH
 
 /**
- * Rota `/agencia/login`: layout em duas colunas (igual recuperação de senha e CSS `.agency-login-page`),
+ * Rota `/login` (marcas/assinantes): layout em duas colunas (igual recuperação de senha e CSS `.agency-login-page`),
  * não é modal — painel esquerdo com contexto, direito com formulário.
  */
 export default function AgencyLogin() {

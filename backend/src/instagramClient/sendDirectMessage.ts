@@ -65,7 +65,8 @@ export async function sendDirectMessage(
   client: InstagramClient,
   handle: string,
   message: string,
-  imagePath?: string
+  imagePath?: string,
+  options?: { skipFollowerListCheck?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
   const cleanHandle = handle.replace(/^@/, '').trim().toLowerCase();
   if (!cleanHandle) {
@@ -78,15 +79,19 @@ export async function sendDirectMessage(
 
   const t0 = Date.now();
   logStep(t0, `Iniciando para @${cleanHandle}`);
-  const myUsername = (process.env.INSTAGRAM_PERFIL ?? process.env.INSTAGRAM_USER ?? '').toString().trim();
-  if (!myUsername) {
-    return { ok: false, error: 'Configure INSTAGRAM_PERFIL ou INSTAGRAM_USER para verificar lista de seguidores.' };
+  if (!options?.skipFollowerListCheck) {
+    const myUsername = (process.env.INSTAGRAM_PERFIL ?? process.env.INSTAGRAM_USER ?? '').toString().trim();
+    if (!myUsername) {
+      return { ok: false, error: 'Configure INSTAGRAM_PERFIL ou INSTAGRAM_USER para verificar lista de seguidores.' };
+    }
+    const followCheck = await isHandleMyFollower(client, myUsername, cleanHandle, (msg) => logStep(t0, msg));
+    if (!followCheck.isFollower) {
+      return { ok: false, error: followCheck.error ?? 'Perfil não está na sua lista de seguidores; mensagem iria para spam.' };
+    }
+    logStep(t0, 'Verificação OK (perfil está na lista de seguidores). Abrindo Direct...');
+  } else {
+    logStep(t0, 'Pulando verificação da lista de seguidores (já confirmado na extração). Abrindo Direct...');
   }
-  const followCheck = await isHandleMyFollower(client, myUsername, cleanHandle, (msg) => logStep(t0, msg));
-  if (!followCheck.isFollower) {
-    return { ok: false, error: followCheck.error ?? 'Perfil não está na sua lista de seguidores; mensagem iria para spam.' };
-  }
-  logStep(t0, 'Verificação OK (perfil está na lista de seguidores). Abrindo Direct...');
   const page = await client.newPage();
   try {
     log(`abrindo ${DIRECT_NEW_URL}`);
@@ -382,8 +387,9 @@ export async function sendDirectMessage(
 export async function sendVerificationCode(
   client: InstagramClient,
   handle: string,
-  code: string
+  code: string,
+  options?: { skipFollowerListCheck?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
   const text = `Seu código de ativação: ${code}`;
-  return sendDirectMessage(client, handle, text);
+  return sendDirectMessage(client, handle, text, undefined, options);
 }

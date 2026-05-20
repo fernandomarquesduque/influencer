@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   SearchOutlined,
   FilterOutlined,
@@ -8,10 +9,14 @@ import {
   CheckCircleOutlined,
 } from '@ant-design/icons'
 import Logo from '../components/Logo'
+import { DiscoveryHomeHero } from '../components/DiscoveryHomeHero'
 
 const sectionMaxWidth = 1000
 
 export default function Home() {
+  const navigate = useNavigate()
+  const [searchInput, setSearchInput] = useState('')
+
   return (
     <div
       className="landing-vibrant home-b2b"
@@ -85,7 +90,7 @@ export default function Home() {
         role="banner"
       >
         <Link
-          to="/"
+          to="/home"
           className="landing-header-logo"
           style={{
             display: 'flex',
@@ -115,7 +120,7 @@ export default function Home() {
             Ver vitrine
           </Link>
           <Link
-            to="/agencia/login"
+            to="/login"
             style={{
               color: 'var(--lp-text)',
               fontSize: 14,
@@ -126,7 +131,7 @@ export default function Home() {
             Entrar
           </Link>
           <Link
-            to="/agencia/login"
+            to="/login"
             style={{
               background: 'var(--lp-primary)',
               color: '#fff',
@@ -144,95 +149,16 @@ export default function Home() {
       </header>
 
       <main>
-        {/* Hero B2B: foco em marcas e agências */}
-        <section
-          id="hero"
-          style={{
-            maxWidth: 800,
-            margin: '0 auto',
-            padding: '80px 24px 100px',
-            textAlign: 'center',
-            position: 'relative',
-            zIndex: 1,
+        <DiscoveryHomeHero
+          variant="full"
+          searchValue={searchInput}
+          onSearchValueChange={setSearchInput}
+          onSearch={(term) => {
+            const q = (term ?? searchInput).trim()
+            navigate(q ? `/?q=${encodeURIComponent(q)}` : '/')
           }}
-          aria-labelledby="hero-title"
-        >
-          <p
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-              color: 'var(--lp-primary)',
-              marginBottom: 16,
-              fontFamily: 'Montserrat, sans-serif',
-            }}
-          >
-            Para marcas e agências
-          </p>
-          <h1
-            id="hero-title"
-            style={{
-              fontSize: 'clamp(32px, 4.5vw, 48px)',
-              fontWeight: 700,
-              color: 'var(--lp-text)',
-              lineHeight: 1.2,
-              margin: '0 0 24px',
-              letterSpacing: '-0.03em',
-              fontFamily: 'Montserrat, sans-serif',
-            }}
-          >
-            Ache os criadores certos pra sua campanha
-          </h1>
-          <p
-            style={{
-              fontSize: 18,
-              color: 'var(--lp-text)',
-              opacity: 0.85,
-              lineHeight: 1.65,
-              margin: '0 auto 40px',
-              maxWidth: 560,
-            }}
-          >
-            Vitrine de criadores verificados, métricas reais e filtros por nicho e engajamento. Menos tempo caçando, mais parceria.
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'center' }}>
-            <Link
-              to="/app"
-              style={{
-                display: 'inline-block',
-                background: 'var(--lp-primary)',
-                color: '#fff',
-                padding: '16px 32px',
-                borderRadius: 10,
-                fontWeight: 600,
-                fontSize: 15,
-                textDecoration: 'none',
-                fontFamily: 'Montserrat, sans-serif',
-                boxShadow: '0 4px 20px rgba(104, 39, 143, 0.3)',
-              }}
-            >
-              Ver vitrine
-            </Link>
-            <Link
-              to="/agencia/login"
-              style={{
-                display: 'inline-block',
-                background: 'transparent',
-                color: 'var(--lp-text)',
-                padding: '16px 32px',
-                borderRadius: 10,
-                fontWeight: 600,
-                fontSize: 15,
-                textDecoration: 'none',
-                border: '2px solid var(--lp-border)',
-                fontFamily: 'Montserrat, sans-serif',
-              }}
-            >
-              Entrar
-            </Link>
-          </div>
-        </section>
+          style={{ position: 'relative', zIndex: 1, minHeight: 'auto', paddingBottom: '2rem' }}
+        />
 
         {/* O que a plataforma oferece para marcas/agências */}
         <section
@@ -549,7 +475,7 @@ export default function Home() {
                 Ver vitrine
               </Link>
               <Link
-                to="/agencia/login"
+                to="/login"
                 style={{
                   display: 'inline-block',
                   background: 'transparent',

@@ -21,6 +21,42 @@
   white-space: nowrap;
 }
 
+/* Faixa LLM no mobile: largura total, células partem o espaço igualmente, texto pode quebrar. */
+.hero-info-strip--inline.hero-info-strip--compact.hero-info-strip--stack-mobile .hero-info-strip-row {
+  width: 100%;
+}
+
+.hero-info-strip--inline.hero-info-strip--compact.hero-info-strip--stack-mobile .hero-info-strip-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: normal;
+}
+
+/* Faixa LLM / modal: largura total, células dividem o espaço igualmente. */
+.hero-info-strip--inline.hero-info-strip--compact.hero-info-strip--full-width {
+  width: 100%;
+}
+
+.hero-info-strip--inline.hero-info-strip--compact.hero-info-strip--full-width .hero-info-strip-row {
+  width: 100%;
+}
+
+.hero-info-strip--inline.hero-info-strip--compact.hero-info-strip--full-width .hero-info-strip-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: normal;
+  justify-content: center;
+}
+
+.hero-info-strip--inline.hero-info-strip--compact.hero-info-strip--full-width .hero-info-strip-cell > div:last-child {
+  align-items: center;
+  text-align: center;
+}
+
+.hero-info-strip--inline.hero-info-strip--compact.hero-info-strip--full-width .hero-info-strip-divider {
+  margin: 10px 0;
+}
+
 .hero-info-strip-cell {
   display: flex;
   align-items: center;

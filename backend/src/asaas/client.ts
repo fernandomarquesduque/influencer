@@ -20,6 +20,11 @@ function getBaseUrl(): string {
     : 'https://sandbox.asaas.com/api/v3';
 }
 
+/** true quando as requisições vão para o sandbox Asaas. */
+export function isAsaasSandbox(): boolean {
+  return getBaseUrl().includes('sandbox');
+}
+
 function getAsaasApiKey(): string {
   return process.env.ASAAS_API_KEY ?? '';
 }
@@ -38,7 +43,7 @@ function getErrorMessage(err: AsaasApiError): string {
   if (Array.isArray(list) && list.length > 0 && list[0].description) {
     return list[0].description;
   }
-  return 'Erro na API Asaas';
+  return 'Erro no provedor de pagamentos';
 }
 
 /** `ASAAS_DEBUG=1` ou ambiente não production — JSON bruto das respostas (URLs / nomes de campo). */
@@ -108,6 +113,8 @@ export interface AsaasPayment {
   invoiceNumber?: string;
   deleted?: boolean;
   externalReference?: string;
+  /** Quando a cobrança veio de uma assinatura, id da assinatura (string ou objeto com id). */
+  subscription?: string | { id?: string };
   /** PIX: código para copia e cola */
   pixTransaction?: { qrCode?: string; payload?: string };
 }
@@ -389,10 +396,30 @@ export async function deleteAsaasPayment(paymentId: string): Promise<void> {
   }
 }
 
+/** DELETE subscriptions/:id — cancela assinatura e remove parcelas pendentes no Asaas. */
+export async function deleteAsaasSubscription(subscriptionId: string): Promise<void> {
+  const base = getBaseUrl();
+  const url = `${base.replace(/\/$/, '')}/subscriptions/${encodeURIComponent(subscriptionId)}`;
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: { access_token: getAsaasApiKey() },
+  });
+  const data = (await res.json().catch(() => ({}))) as AsaasApiError;
+  if (!res.ok) {
+    throw new Error(getErrorMessage(data));
+  }
+}
+
 /** Verifica se o módulo está configurado (API key definida). */
 export function isAsaasConfigured(): boolean {
-  const k = getAsaasApiKey();
-  return Boolean(k && k.trim());
+  return paymentsUnavailableReason() == null;
+}
+
+/** Motivo quando pagamentos estão desligados (null = ok). */
+export function paymentsUnavailableReason(): string | null {
+  const k = getAsaasApiKey().trim();
+  if (!k) return 'ASAAS_API_KEY não configurada no backend (.env)';
+  return null;
 }
 
 export interface AsaasSubscription {
@@ -405,6 +432,11 @@ export interface AsaasSubscription {
   nextDueDate?: string;
   description?: string;
   externalReference?: string;
+}
+
+/** GET /subscriptions/:id — confirma assinatura recorrente no Asaas. */
+export async function getSubscription(subscriptionId: string): Promise<AsaasSubscription> {
+  return request<AsaasSubscription>('GET', `subscriptions/${encodeURIComponent(subscriptionId)}`);
 }
 
 /** POST /subscriptions — assinatura recorrente (mensal). */
@@ -427,8 +459,9 @@ export async function createSubscription(payload: {
     name: string;
     email: string;
     cpfCnpj: string;
-    postalCode: string;
-    addressNumber: string;
+    /** Quando omitido no payload, o backend usa CEP genérico para o Asaas aceitar a assinatura. */
+    postalCode?: string;
+    addressNumber?: string;
     phone?: string;
     mobilePhone?: string;
   };

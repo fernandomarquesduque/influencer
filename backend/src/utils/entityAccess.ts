@@ -96,11 +96,16 @@ export function getFollowersFromEntity(entity: Record<string, unknown>): number 
   const fromPaths = getIn(
     entity,
     'data.user.follower_count',
+    'data.user.followers_count',
     'followers_count',
+    'follower_count',
     'followers',
     'edge_followed_by.count',
     'data.user.edge_followed_by.count',
+    'data.xdt_api__v1__feed__user_timeline_graphql_connection.feed_user.follower_count',
     'data.xdt_api__v1__feed__user_timeline_graphql_connection.feed_user.edge_followed_by.count',
+    'data.feed_user_timeline.feed_user.follower_count',
+    'data.feed_user_timeline.feed_user.edge_followed_by.count',
     'graphql.user.edge_followed_by.count'
   );
   let v = fromPaths;

@@ -1,13 +1,14 @@
 ﻿/**
  * Listagem de influenciadores de uma campanha.
- * Rota: /app/campaigns/:campaignId â€” filtros baseados nos facets (retorno da API), igual InfluencerList.
+ * Rota: /app/campaigns/:campaignId — filtros baseados nos facets (retorno da API), igual InfluencerList.
  */
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, message, Segmented, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined, ArrowLeftOutlined, UserOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
+import { isSearchRoute as checkIsSearchRoute, isSearchLandingHome } from '../constants/searchRoute'
 import {
   fetchCampaignProfiles,
   fetchProfile,
@@ -59,6 +60,8 @@ import CampaignOriginGallery, { OriginGalleryLoadingState } from '../components/
 import InfluencerConnectModal, {
   type InfluencerConnectSnapshot,
 } from '../components/InfluencerConnectModal/InfluencerConnectModal'
+import InfluencerDetailModal from '../components/InfluencerDetailModal/InfluencerDetailModal'
+import { DiscoveryHomeHero } from '../components/DiscoveryHomeHero'
 import './CampaignInfluencers.css'
 import { MessageOutlined, VideoCameraOutlined } from '@ant-design/icons'
 
@@ -133,13 +136,27 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
   }
 }
 
-/** NÃºmeros inteiros completos na coluna de mÃ©tricas da lista (sem k/M). */
+/** Query + hash (#q=...) — hash sobrescreve query na mesma chave. */
+function getMergedUrlParams(location: { search: string; hash: string }): URLSearchParams {
+  const merged = new URLSearchParams()
+  const qs = location.search?.replace(/^\?/, '').trim()
+  if (qs) {
+    new URLSearchParams(qs).forEach((v, k) => merged.set(k, v))
+  }
+  const hash = location.hash?.trim().replace(/^#/, '') || ''
+  if (hash) {
+    new URLSearchParams(hash).forEach((v, k) => merged.set(k, v))
+  }
+  return merged
+}
+
+/** Números inteiros completos na coluna de métricas da lista (sem k/M). */
 function formatCampaignListMetricInt(n: number | undefined | null): string {
   if (n == null || !Number.isFinite(n)) return '0'
   return Math.round(n).toLocaleString('pt-BR')
 }
 
-/** MÃ©dia de likes/post com separador pt-BR, sem abreviar. */
+/** Média de likes/post com separador pt-BR, sem abreviar. */
 function formatCampaignListAvgLikes(n: number | undefined | null): string {
   if (n == null || !Number.isFinite(n)) return '0'
   const x = Math.round(n * 100) / 100
@@ -179,7 +196,7 @@ function isCampaignListMetricSort(s: ProfilesSort): boolean {
   return CAMPAIGN_LIST_METRIC_SORT_KEYS.has(s)
 }
 
-/** Menu suspenso: escolher critÃ©rio e direÃ§Ã£o da ordenaÃ§Ã£o das mÃ©tricas na lista. */
+/** Menu suspenso: escolher critério e direção da ordenação das métricas na lista. */
 const CAMPAIGN_LIST_METRICS_SORT_MENU_ITEMS: MenuProps['items'] = [
   {
     key: 'grp-seg',
@@ -210,7 +227,7 @@ const CAMPAIGN_LIST_METRICS_SORT_MENU_ITEMS: MenuProps['items'] = [
   },
   {
     key: 'grp-com',
-    label: 'ComentÃ¡rios',
+    label: 'Comentários',
     type: 'group',
     children: [
       { key: 'total_comments_desc', label: 'Maior primeiro' },
@@ -219,7 +236,7 @@ const CAMPAIGN_LIST_METRICS_SORT_MENU_ITEMS: MenuProps['items'] = [
   },
   {
     key: 'grp-post',
-    label: 'MÃ©dia likes / post',
+    label: 'Média likes / post',
     type: 'group',
     children: [
       { key: 'avg_likes_desc', label: 'Maior primeiro' },
@@ -236,12 +253,12 @@ function campaignListMetricSortSummary(sort: ProfilesSort): string {
     engagement_asc: 'Engajamento, menor primeiro',
     total_likes_desc: 'Curtidas, maior primeiro',
     total_likes_asc: 'Curtidas, menor primeiro',
-    total_comments_desc: 'ComentÃ¡rios, maior primeiro',
-    total_comments_asc: 'ComentÃ¡rios, menor primeiro',
-    avg_likes_desc: 'MÃ©dia likes por post, maior primeiro',
-    avg_likes_asc: 'MÃ©dia likes por post, menor primeiro',
+    total_comments_desc: 'Comentários, maior primeiro',
+    total_comments_asc: 'Comentários, menor primeiro',
+    avg_likes_desc: 'Média likes por post, maior primeiro',
+    avg_likes_asc: 'Média likes por post, menor primeiro',
   }
-  return map[sort] ?? 'Escolher ordenaÃ§Ã£o'
+  return map[sort] ?? 'Escolher ordenação'
 }
 
 function campaignListEngagementColor(rate: number): string {
@@ -250,7 +267,7 @@ function campaignListEngagementColor(rate: number): string {
   return 'var(--app-rate-low)'
 }
 
-/** Uma linha compacta (modo lista tipo tabela) com dados de ativaÃ§Ã£o. */
+/** Uma linha compacta (modo lista tipo tabela) com dados de ativação. */
 function CampaignListRow({
   item,
   onClick,
@@ -468,7 +485,7 @@ function CampaignListRow({
                   </Tooltip>
                 ) : null}
                 {pillarLabels.map((pillar) => (
-                  <Tooltip key={pillar} title="Pilar de conteÃºdo">
+                  <Tooltip key={pillar} title="Pilar de conteúdo">
                     <span className="campaign-list-llm-badge" style={campaignLlmBadgeStyles(pillar)}>
                       {pillar}
                     </span>
@@ -515,7 +532,7 @@ function CampaignListRow({
               <span className="campaign-list-metrics-value">{formatCampaignListMetricInt(totalLikes)}</span>
             </div>
             <div className="campaign-list-metrics-row">
-              <span className="campaign-list-metrics-label">ComentÃ¡rios</span>
+              <span className="campaign-list-metrics-label">Comentários</span>
               <span className="campaign-list-metrics-value campaign-list-metrics-value--muted">{formatCampaignListMetricInt(totalComments)}</span>
             </div>
             <div className="campaign-list-metrics-row">
@@ -547,8 +564,10 @@ const POST_CAPTION_SEARCH_DEBOUNCE_MS = 280
 export default function CampaignInfluencers() {
   const { campaignId: campaignIdParam } = useParams<{ campaignId: string }>()
   const location = useLocation()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const isSearchRoute = location.pathname === '/search' || location.pathname.startsWith('/search/')
+  const [, setSearchParams] = useSearchParams()
+  const urlParams = useMemo(() => getMergedUrlParams(location), [location.search, location.hash])
+  const isSearchRoute = checkIsSearchRoute(location.pathname)
+  const isSearchLanding = isSearchLandingHome(location.pathname, location.search, location.hash)
   const isAllCampaignsView =
     isSearchRoute ||
     (campaignIdParam != null && campaignIdParam.trim().toLowerCase() === ALL_CAMPAIGNS_SLUG)
@@ -558,28 +577,28 @@ export default function CampaignInfluencers() {
       ? campaignIdParam.trim()
       : null
   const navigate = useNavigate()
-  const { user, loading: authLoading, isAdm } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const showFavoriteColumn = !!user && user.scope !== 'influencer'
   const creditsContext = useCreditsOptional()
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT)
   const [viewMode, setViewMode] = useState<CampaignViewMode>('list')
-  const effectiveViewMode: CampaignViewMode = isMobile ? 'grid' : viewMode
+  const effectiveViewMode: CampaignViewMode = isMobile ? 'list' : viewMode
   const [originViewMode, setOriginViewMode] = useState<CampaignViewMode>('list')
-  const effectiveOriginViewMode: CampaignViewMode = isMobile ? 'grid' : originViewMode
+  const effectiveOriginViewMode: CampaignViewMode = isMobile ? 'list' : originViewMode
   const [query, setQuery] = useState<Partial<ProfilesSearchQuery>>(() => ({
     ...defaultQuery,
-    ...urlParamsToCampaignQuery(searchParams),
+    ...urlParamsToCampaignQuery(urlParams),
   }))
-  /** Filtros de perfil estÃ¡veis (sem prioridade de facet na URL) â€” legenda nÃ£o estreita por porte/LLM. */
+  /** Filtros de perfil estáveis (sem prioridade de facet na URL) — legenda não estreita por porte/LLM. */
   const postMatchProfileFiltersKey = useMemo(() => {
     const stripped = stripCampaignFacetBoostFromQuery({
       ...defaultQuery,
-      ...urlParamsToCampaignQuery(searchParams),
+      ...urlParamsToCampaignQuery(urlParams),
     })
     return JSON.stringify(profileFiltersForCampaignPostApis(stripped))
-  }, [searchParams.toString()])
+  }, [urlParams.toString()])
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
-  /** Facets sÃ³ dos posts carregados na busca por legenda (aba Origem). */
+  /** Facets só dos posts carregados na busca por legenda (aba Origem). */
   const [searchFacets, setSearchFacets] = useState<ProfilesSearchFacets | null>(null)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -600,10 +619,11 @@ export default function CampaignInfluencers() {
     handle: string
     snapshot?: InfluencerConnectSnapshot
   } | null>(null)
+  const [profileDetailHandle, setProfileDetailHandle] = useState<string | null>(null)
   const [payingWithCredits, setPayingWithCredits] = useState(false)
   const [deletingCampaign, setDeletingCampaign] = useState(false)
   const [filteredList, setFilteredList] = useState<ProfileListItem[]>([])
-  /** Com `q` preenchido: handles com post que casa com o termo (API post-matches), alinhado Ã  aba Origem. */
+  /** Com `q` preenchido: handles com post que casa com o termo (API post-matches), alinhado à aba Origem. */
   const [postCaptionSearch, setPostCaptionSearch] = useState<{
     qKey: string
     handles: Set<string>
@@ -613,17 +633,20 @@ export default function CampaignInfluencers() {
   const [displayedCount, setDisplayedCount] = useState(DISPLAY_PAGE_SIZE)
   const [loadingMore, setLoadingMore] = useState(false)
   const [campaignMainTab, setCampaignMainTab] = useState<'influencers' | 'origin'>(() => {
-    const tab = searchParams.get('tab')
+    const tab = urlParams.get('tab')
     if (isAllCampaignsView) {
       return tab === 'influencers' ? 'influencers' : 'origin'
     }
     return tab === 'origin' ? 'origin' : 'influencers'
   })
-  /** Aba Posts com termo: esconder coluna de filtros enquanto a galeria carrega a primeira pÃ¡gina. */
+  /** Aba Posts com termo: esconder coluna de filtros enquanto a galeria carrega a primeira página. */
   const [originGallerySearchLoading, setOriginGallerySearchLoading] = useState(false)
-  /** Aba Posts com termo: apÃ³s carregar, sem posts â€” esconder painel BI Ã  esquerda. */
+  /** Aba Posts com termo: após carregar, sem posts — esconder painel BI à esquerda. */
   const [originSearchSettledEmpty, setOriginSearchSettledEmpty] = useState(false)
-  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') ?? '')
+  const [searchInput, setSearchInput] = useState(() => urlParams.get('q') ?? '')
+  /** Incrementado quando a top bar reenvia a mesma busca (URL igual). */
+  const [searchRefreshToken, setSearchRefreshToken] = useState(0)
+  const lastTopBarSearchSubmitRef = useRef<number | null>(null)
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const [favoriteHandles, setFavoriteHandles] = useState<Set<string>>(new Set())
   const [data, setData] = useState<ProfileListItem[]>([])
@@ -643,13 +666,13 @@ export default function CampaignInfluencers() {
     () =>
       campaignContextFetchQueryKey({
         ...defaultQuery,
-        ...urlParamsToCampaignQuery(searchParams),
+        ...urlParamsToCampaignQuery(urlParams),
       }),
-    [searchParams.toString()]
+    [urlParams.toString()]
   )
-  const captionSearchQ = searchParams.get('q')?.trim() ?? ''
+  const captionSearchQ = urlParams.get('q')?.trim() ?? ''
   const hasActiveSearchQ = captionSearchQ.length > 0
-  /** Na busca por legenda: sÃ³ facets dos posts carregados â€” nunca os da campanha inteira. */
+  /** Na busca por legenda: só facets dos posts carregados — nunca os da campanha inteira. */
   const displayFacets = hasActiveSearchQ ? searchFacets : facets
   const buildCampaignUrlParams = useCallback(
     (nextQuery: Partial<ProfilesSearchQuery>, tab: 'influencers' | 'origin' = campaignMainTab) => {
@@ -664,7 +687,7 @@ export default function CampaignInfluencers() {
     [campaignMainTab, isAllCampaignsView]
   )
   useEffect(() => {
-    const tab = searchParams.get('tab')
+    const tab = urlParams.get('tab')
     const nextTab = isAllCampaignsView
       ? tab === 'influencers'
         ? 'influencers'
@@ -673,7 +696,7 @@ export default function CampaignInfluencers() {
         ? 'origin'
         : 'influencers'
     setCampaignMainTab((prev) => (prev === nextTab ? prev : nextTab))
-  }, [searchParams, isAllCampaignsView])
+  }, [urlParams, isAllCampaignsView])
   useEffect(() => {
     if (campaignMainTab !== 'origin' || !query.q?.trim()) {
       setOriginGallerySearchLoading(false)
@@ -691,7 +714,7 @@ export default function CampaignInfluencers() {
           setFavoriteHandles(new Set((res.handles ?? []).map(norm)))
           return
         }
-        // Na tela de campanha, considerar sÃ³ favoritos desta campanha para o estado "selecionado"
+        // Na tela de campanha, considerar só favoritos desta campanha para o estado "selecionado"
         if (campaignId && (res.favorites?.length ?? 0) > 0) {
           const forCampaign = (res.favorites ?? []).filter((f) => f.campaignId === campaignId).map((f) => norm(f.handle))
           setFavoriteHandles(new Set(forCampaign))
@@ -754,11 +777,11 @@ export default function CampaignInfluencers() {
 
   const handleOriginPostsForFacets = useCallback(
     (posts: PostItem[]) => {
-      if (!searchParams.get('q')?.trim()) return
+      if (!urlParams.get('q')?.trim()) return
       const items = profileListItemsFromOriginPosts(posts)
       applySearchFacets(filterFacetsForDisplay(computeFacetsFromItems(items)))
     },
-    [applySearchFacets, searchParams]
+    [applySearchFacets, urlParams]
   )
 
   useEffect(() => {
@@ -913,7 +936,7 @@ export default function CampaignInfluencers() {
       setLoading(true)
       const baseQuery = queryOverride ?? query
       const hasWordSearch = !!(baseQuery.q?.trim())
-      /** `q` aqui Ã© sÃ³ busca em legendas/posts (post-matches + cliente); nÃ£o enviar para /profiles â€” senÃ£o o backend filtra nome/bio e zera a lista (ex.: "marcado" sÃ³ em posts marcados). */
+      /** `q` aqui é só busca em legendas/posts (post-matches + cliente); não enviar para /profiles — senão o backend filtra nome/bio e zera a lista (ex.: "marcado" só em posts marcados). */
       const { q: _wordSearchOmit, ...baseWithoutWordSearch } = baseQuery
       if (!pendingPayment && isAllCampaignsView && !hasWordSearch) {
         const quickQuery = { ...defaultQuery, ...baseWithoutWordSearch, limit: 1, offset: 0 }
@@ -967,7 +990,7 @@ export default function CampaignInfluencers() {
       const explicitQ = 'q' in overrides
       const qTrim = typeof qFromOverride === 'string' ? qFromOverride.trim() : ''
       const wordSearchApplied = explicitQ && qTrim.length > 0
-      /** Buscar por legenda: URL sÃ³ com `q` (remove LLM, geo, tipo de mÃ­dia na origem, etc.). */
+      /** Buscar por legenda: URL só com `q` (remove LLM, geo, tipo de mídia na origem, etc.). */
       const newQuery = wordSearchApplied
         ? { ...defaultQuery, q: qTrim, offset: 0 }
         : { ...query, ...overrides, offset: 0 }
@@ -1040,12 +1063,26 @@ export default function CampaignInfluencers() {
   }, [pendingPayment, data.length, total, loadMore, loadingMore])
 
   useEffect(() => {
-    setSearchInput(searchParams.get('q') ?? '')
-  }, [searchParams.get('q')])
+    setSearchInput(urlParams.get('q') ?? '')
+  }, [urlParams.get('q')])
+
+  useEffect(() => {
+    if (!isAllCampaignsView) return
+    const submitAt = (location.state as { searchSubmitAt?: number } | null)?.searchSubmitAt
+    if (submitAt == null || submitAt === lastTopBarSearchSubmitRef.current) return
+    lastTopBarSearchSubmitRef.current = submitAt
+
+    const q = urlParams.get('q')?.trim()
+    if (q) setCampaignMainTab('origin')
+    setQuery({ ...defaultQuery, ...urlParamsToCampaignQuery(urlParams), offset: 0 })
+    setSearchFacets(null)
+    setSearchRefreshToken((t) => t + 1)
+  }, [isAllCampaignsView, location.state, urlParams])
 
   useEffect(() => {
     if (campaignId == null) return
     if (!user && !isAllCampaignsView) return
+    if (isSearchLanding) return
     if (campaignMainTab === 'origin' && query.q?.trim()) return
     if (pendingPayment && pendingLoadFromFilterRef.current) {
       pendingLoadFromFilterRef.current = false
@@ -1054,7 +1091,7 @@ export default function CampaignInfluencers() {
     const controller = new AbortController()
     loadContext(controller.signal)
     return () => controller.abort()
-  }, [campaignId, user?.id, loadContext, pendingPayment, isAllCampaignsView, campaignMainTab, contextFetchQueryKey, query.q])
+  }, [campaignId, user?.id, loadContext, pendingPayment, isAllCampaignsView, isSearchLanding, campaignMainTab, contextFetchQueryKey, query.q])
 
   const originMediaKindsKey =
     query.originMediaKinds?.length ? [...query.originMediaKinds].sort().join(',') : ''
@@ -1111,16 +1148,22 @@ export default function CampaignInfluencers() {
       ac.abort()
       window.clearTimeout(tid)
     }
-  }, [campaignId, query.q, originMediaKindsKey, postMatchProfileFiltersKey])
+  }, [campaignId, query.q, originMediaKindsKey, postMatchProfileFiltersKey, searchRefreshToken])
 
   useEffect(() => {
     if (campaignId == null) return
     if (!user && !isAllCampaignsView) return
     setCampaignInfo(null)
-    setCampaignInfoLoaded(false)
     setNamePromptDismissed(false)
     setNameModalOpen(false)
     hasAutoOpenedNameModalRef.current = false
+    if (isSearchLanding) {
+      setCampaignCredits(null)
+      setCampaignInfo(null)
+      setCampaignInfoLoaded(true)
+      return
+    }
+    setCampaignInfoLoaded(false)
     const controller = new AbortController()
     getCampaign(campaignId, { signal: controller.signal })
       .then((info) => {
@@ -1134,7 +1177,7 @@ export default function CampaignInfluencers() {
         setCampaignInfoLoaded(true)
       })
     return () => controller.abort()
-  }, [campaignId, user?.id, isAllCampaignsView])
+  }, [campaignId, user?.id, isAllCampaignsView, isSearchLanding])
 
   useEffect(() => {
     if (contextItems == null) return
@@ -1219,7 +1262,7 @@ export default function CampaignInfluencers() {
     setDeletingCampaign(true)
     return deleteCampaign(campaignId)
       .then(() => {
-        message.success('Campanha excluÃ­da.')
+        message.success('Campanha excluída.')
         navigate('/app/campaigns', { replace: true })
       })
       .catch((err) => {
@@ -1254,11 +1297,11 @@ export default function CampaignInfluencers() {
         campaignId,
         freeUnlock || payFullCampaignBillable ? undefined : creditsToApply > 0 ? creditsToApply : undefined
       )
-      message.success('Pagamento com crÃ©ditos concluÃ­do. RelatÃ³rio liberado!')
+      message.success('Pagamento com créditos concluído. Relatório liberado!')
       refreshCampaign()
       void creditsContext?.refreshCredits()
     } catch (err) {
-      message.error(err instanceof Error ? err.message : 'Falha ao pagar com crÃ©ditos')
+      message.error(err instanceof Error ? err.message : 'Falha ao pagar com créditos')
     } finally {
       setPayingWithCredits(false)
     }
@@ -1281,6 +1324,24 @@ export default function CampaignInfluencers() {
       setConnectModal({ handle: h, snapshot })
     },
     [campaignId]
+  )
+
+  const openInfluencerProfileDetail = useCallback((handleOrKey: string) => {
+    const h = normalizeCampaignListHandle(handleOrKey)
+    if (!h) return
+    setProfileDetailHandle(h)
+  }, [])
+
+  /** Busca pública (/search): perfil no modal. Campanha paga: fluxo de contratação via WhatsApp. */
+  const openInfluencerFromCard = useCallback(
+    (handleOrKey: string, snapshot?: InfluencerConnectSnapshot) => {
+      if (isAllCampaignsView) {
+        openInfluencerProfileDetail(handleOrKey)
+        return
+      }
+      openInfluencerConnect(handleOrKey, snapshot)
+    },
+    [isAllCampaignsView, openInfluencerProfileDetail, openInfluencerConnect]
   )
 
   const currentSort = query.sort ?? 'engagement_desc'
@@ -1311,7 +1372,7 @@ export default function CampaignInfluencers() {
   const selectedOriginMediaKinds = (query.originMediaKinds ?? []) as MediaKind[]
   const hasOriginSearchTerm = (query.q?.trim().length ?? 0) > 0
   const captionQNormalized = query.q?.trim() ?? ''
-  /** Evita post-matches em paralelo com handlesOnly: galeria sÃ³ busca posts apÃ³s handles alinhados ao `q` atual. */
+  /** Evita post-matches em paralelo com handlesOnly: galeria só busca posts após handles alinhados ao `q` atual. */
   const originCaptionPostMatchesReady =
     !captionQNormalized ||
     (!!postCaptionSearch &&
@@ -1322,7 +1383,7 @@ export default function CampaignInfluencers() {
   const showAllCampaignsFixedChrome = isAllCampaignsView && !pendingPayment && !showOriginSearchOnly
   const showCampaignSearchToolbar =
     !pendingPayment && !(campaignMainTab === 'origin' && !hasOriginSearchTerm)
-  /** Na aba Posts com termo: esconde abas + BI (base completa mantÃ©m sÃ³ o logo). Mesmo padrÃ£o na aba Perfis enquanto busca handles por legenda ou quando a API nÃ£o devolve nenhum. */
+  /** Na aba Posts com termo: esconde abas + BI (base completa mantém só o logo). Mesmo padrão na aba Perfis enquanto busca handles por legenda ou quando a API não devolve nenhum. */
   const originCaptionSearchHidesBIPanel =
     campaignMainTab === 'origin' &&
     !!query.q?.trim() &&
@@ -1339,7 +1400,7 @@ export default function CampaignInfluencers() {
   const showCampaignLeftColumn =
     !isMobile &&
     ((isAllCampaignsView && !pendingPayment) || !campaignHidesBIPanel)
-  /** Com sÃ³ o logo Ã  esquerda, o conteÃºdo da coluna principal fica deslocado Ã  direita do centro da viewport. */
+  /** Com só o logo à esquerda, o conteúdo da coluna principal fica deslocado à direita do centro da viewport. */
   const originGalleryViewportShiftX =
     !isMobile &&
     isAllCampaignsView &&
@@ -1392,42 +1453,6 @@ export default function CampaignInfluencers() {
     )
   }
 
-  const renderCampaignHeaderAccountMenu = () => {
-    const menuItems: MenuProps['items'] = [
-      {
-        key: 'cadastro',
-        label: 'Cadastro',
-        onClick: () => navigate('/agencia/login'),
-      },
-      {
-        key: 'quem-somos',
-        label: 'Quem somos',
-        onClick: () => {
-          window.location.href = '/landing/search/'
-        },
-      },
-      {
-        key: 'blog',
-        label: 'Blog',
-        onClick: () => {
-          window.location.href = '/blog/artigos.html'
-        },
-      },
-    ]
-    return (
-      <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
-        <button
-          type="button"
-          className="campaign-top-header-account-btn"
-          aria-label="Abrir menu"
-        >
-          <UserOutlined className="campaign-top-header-account-btn__user" />
-          <DownOutlined className="campaign-top-header-account-btn__chevron" />
-        </button>
-      </Dropdown>
-    )
-  }
-
   const renderCampaignSearchToolbar = (options?: { withViewToggle?: boolean }) => {
     const withViewToggle = options?.withViewToggle ?? !showAllCampaignsFixedChrome
     return (
@@ -1451,19 +1476,10 @@ export default function CampaignInfluencers() {
           Buscar
         </Button>
       </Space.Compact>
-      {showAllCampaignsFixedChrome ? renderCampaignHeaderAccountMenu() : null}
       {withViewToggle ? renderCampaignViewToggle() : null}
     </>
     )
   }
-
-  const allCampaignsLogoImg = (
-    <img
-      src="/images/logo.svg"
-      alt="Base completa"
-      style={{ height: 28, width: 'auto', maxWidth: 'min(100%, 240px)', objectFit: 'contain', display: 'block' }}
-    />
-  )
 
   const renderCampaignMainTabs = () =>
     !pendingPayment && !isAllCampaignsView ? (
@@ -1486,11 +1502,7 @@ export default function CampaignInfluencers() {
   const renderCampaignPageBranding = () => (
     <>
       <Typography.Title level={4} style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-        {isAllCampaignsView ? (
-          allCampaignsLogoImg
-        ) : (
-          campaignInfo?.name?.trim() || 'Sua campanha'
-        )}
+        {campaignInfo?.name?.trim() || 'Sua campanha'}
         {campaignId && !isAllCampaignsView && (
           <Tooltip title="Editar nome da campanha">
             <Button type="text" size="small" icon={<EditOutlined />} onClick={openNameModalForEdit} style={{ padding: '0 4px' }} />
@@ -1500,13 +1512,16 @@ export default function CampaignInfluencers() {
       {renderCampaignMainTabs()}
       {!isAllCampaignsView && campaignCredits != null ? (
         <Typography.Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 6 }}>
-          {campaignCredits.toLocaleString('pt-BR')} crÃ©ditos
+          {campaignCredits.toLocaleString('pt-BR')} créditos
         </Typography.Text>
       ) : null}
     </>
   )
 
-  if (authLoading || (campaignId != null && !user && !isAllCampaignsView)) {
+  if (
+    !isSearchLanding &&
+    (authLoading || (campaignId != null && !user && !isAllCampaignsView))
+  ) {
     return (
       <div style={{ padding: '48px 24px', textAlign: 'center' }}>
         <Spin size="large" />
@@ -1517,15 +1532,15 @@ export default function CampaignInfluencers() {
   if (campaignId == null) {
     return (
       <div style={{ padding: '24px 0' }}>
-        <Empty description="Campanha nÃ£o encontrada." />
+        <Empty description="Campanha não encontrada." />
         <Button type="primary" onClick={() => navigate('/app/campaigns')} style={{ marginTop: 16 }}>
-          Voltar Ã s campanhas
+          Voltar às campanhas
         </Button>
       </div>
     )
   }
 
-  if (!campaignInfoLoaded) {
+  if (!isSearchLanding && !campaignInfoLoaded) {
     return (
       <div style={{ padding: '48px 24px', textAlign: 'center' }}>
         <Spin size="large" />
@@ -1537,7 +1552,7 @@ export default function CampaignInfluencers() {
     <div
       className={
         showAllCampaignsFixedChrome
-          ? 'campaign-page campaign-page--all campaign-page--with-top-header'
+          ? 'campaign-page campaign-page--all'
           : undefined
       }
       style={{ overflowX: 'hidden' }}
@@ -1550,7 +1565,7 @@ export default function CampaignInfluencers() {
         destroyOnHidden
       >
         <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-          {campaignHasName ? 'Altere o nome para organizar melhor em Minhas campanhas.' : 'Assim fica mais fÃ¡cil organizar e encontrar seus relatÃ³rios.'}
+          {campaignHasName ? 'Altere o nome para organizar melhor em Minhas campanhas.' : 'Assim fica mais fácil organizar e encontrar seus relatórios.'}
         </Typography.Paragraph>
         <Space.Compact style={{ width: '100%' }}>
           <Input
@@ -1575,7 +1590,7 @@ export default function CampaignInfluencers() {
               onClick={() => {
                 Modal.confirm({
                   title: 'Excluir esta campanha?',
-                  content: 'Ela sai da sua lista. NÃ£o dÃ¡ pra desfazer.',
+                  content: 'Ela sai da sua lista. Não dá pra desfazer.',
                   okText: 'Excluir',
                   okType: 'danger',
                   cancelText: 'Cancelar',
@@ -1605,17 +1620,25 @@ export default function CampaignInfluencers() {
         onClose={() => setConnectModal(null)}
         handle={connectModal?.handle ?? ''}
         snapshot={connectModal?.snapshot}
+        campaignId={campaignId !== ALL_CAMPAIGNS_SLUG ? campaignId : null}
+      />
+
+      <InfluencerDetailModal
+        open={profileDetailHandle != null}
+        onClose={() => setProfileDetailHandle(null)}
+        handle={profileDetailHandle ?? ''}
+        campaignId={isAllCampaignsView ? ALL_CAMPAIGNS_SLUG : campaignId}
       />
 
       <Modal
-        title="Cadastro necessÃ¡rio"
+        title="Cadastro necessário"
         open={signupGateModalOpen}
         onCancel={() => setSignupGateModalOpen(false)}
         footer={null}
         destroyOnHidden
       >
         <Typography.Paragraph style={{ marginBottom: 16 }}>
-          Para ver os dados completos do influenciador neste relatÃ³rio, acesse a Ã¡rea da agÃªncia: faÃ§a login ou cadastro na mesma pÃ¡gina.
+          Para ver os dados completos do influenciador neste relatório, acesse a área da agência: faça login ou cadastro na mesma página.
         </Typography.Paragraph>
         <Button
           type="primary"
@@ -1623,24 +1646,14 @@ export default function CampaignInfluencers() {
           block
           onClick={() => {
             setSignupGateModalOpen(false)
-            navigate('/agencia/login')
+            navigate('/login')
           }}
         >
           Entrar ou cadastrar
         </Button>
       </Modal>
 
-      {showAllCampaignsFixedChrome && showCampaignSearchToolbar ? (
-        <>
-          <header className="campaign-top-header">
-            <div className="campaign-top-header__brand">{allCampaignsLogoImg}</div>
-            <div className="campaign-top-header__search">{renderCampaignSearchToolbar()}</div>
-          </header>
-          <div className="campaign-top-header-spacer" aria-hidden />
-        </>
-      ) : null}
-
-      {!showOriginSearchOnly && (!isAllCampaignsView || isMobile || pendingPayment) && (
+      {!showOriginSearchOnly && !isAllCampaignsView && (
         <div
           style={{
             display: 'flex',
@@ -1715,43 +1728,16 @@ export default function CampaignInfluencers() {
       )}
 
       {showOriginSearchOnly ? (
-        <div
-          style={{
-            minHeight: 'clamp(220px, calc(100dvh - 200px), 520px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px 0',
-            boxSizing: 'border-box',
+        <DiscoveryHomeHero
+          variant="full"
+          searchValue={searchInput}
+          onSearchValueChange={setSearchInput}
+          onSearch={(term) => {
+            const q = (term ?? searchInput).trim()
+            updateFilter({ q: q || undefined })
           }}
-        >
-          <div style={{ width: '100%', maxWidth: 680 }}>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 22 }}>
-              <img
-                src="/images/logo.svg"
-                alt="Busca Influencer"
-                style={{ width: 'min(72vw, 320px)', height: 'auto' }}
-              />
-            </div>
-            <Space.Compact size="large" style={{ width: '100%' }}>
-              <Input
-                placeholder="Digite uma palavra para buscar"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                allowClear
-                style={{ borderRadius: '999px 0 0 999px' }}
-              />
-              <Button
-                type="primary"
-                icon={<SearchOutlined />}
-                onClick={() => updateFilter({ q: searchInput.trim() || undefined })}
-                style={{ borderRadius: '0 999px 999px 0' }}
-              >
-                Buscar
-              </Button>
-            </Space.Compact>
-          </div>
-        </div>
+          showScrollHint={false}
+        />
       ) : !hasActiveSearchQ && facets == null && loading ? (
         <OriginGalleryLoadingState railShiftX={0} />
       ) : !hasActiveSearchQ && facets == null && !loading && !campaignInfo?.pendingPayment ? (
@@ -1789,13 +1775,6 @@ export default function CampaignInfluencers() {
                   : { flexShrink: 0, width: CAMPAIGN_BI_PANEL_WIDTH_PX, minWidth: 0 }
               }
             >
-              {isAllCampaignsView && !pendingPayment && !showAllCampaignsFixedChrome ? (
-                <div style={{ marginBottom: 10 }}>
-                  <Typography.Title level={4} style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    {allCampaignsLogoImg}
-                  </Typography.Title>
-                </div>
-              ) : null}
               {!isAllCampaignsView && !pendingPayment && !campaignHidesBIPanel ? (
                 <div style={{ marginBottom: 10 }}>{renderCampaignMainTabs()}</div>
               ) : null}
@@ -1811,8 +1790,6 @@ export default function CampaignInfluencers() {
                   onFilter={updateFilter}
                   description={campaignInfo?.description ?? null}
                   onDescriptionSave={pendingPayment || isAllCampaignsView ? undefined : handleDescriptionSave}
-                  expiresAt={campaignInfo?.expires_at ?? null}
-                  createdAt={campaignInfo?.created_at ?? null}
                 />
               ) : null}
             </div>
@@ -1864,6 +1841,7 @@ export default function CampaignInfluencers() {
                 {campaignMainTab === 'origin' && campaignId ? (
                   hasOriginSearchTerm ? (
                     <CampaignOriginGallery
+                      key={`origin-${query.q?.trim() ?? ''}-${searchRefreshToken}`}
                       campaignId={campaignId}
                       viewMode={effectiveOriginViewMode}
                       textQuery={query.q?.trim() || ''}
@@ -1873,7 +1851,7 @@ export default function CampaignInfluencers() {
                       viewportCenterShiftX={originGalleryViewportShiftX}
                       facetBoostQuery={query}
                       onLoadedPostsForFacets={handleOriginPostsForFacets}
-                      onOpenInfluencerDetail={openInfluencerConnect}
+                      onOpenInfluencerDetail={openInfluencerFromCard}
                       captionFilterReady={originCaptionPostMatchesReady}
                     />
                   ) : null
@@ -1912,7 +1890,7 @@ export default function CampaignInfluencers() {
                           <Select
                             mode="multiple"
                             size="small"
-                            placeholder="ConteÃºdo"
+                            placeholder="Conteúdo"
                             allowClear
                             showSearch
                             optionFilterProp="label"
@@ -2071,13 +2049,13 @@ export default function CampaignInfluencers() {
                                     trigger={['click']}
                                     placement="bottomRight"
                                   >
-                                    <button type="button" className="campaign-list-metrics-sort-btn" aria-label="Ordenar por mÃ©trica">
+                                    <button type="button" className="campaign-list-metrics-sort-btn" aria-label="Ordenar por métrica">
                                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
-                                        MÃ©tricas
+                                        Métricas
                                         <DownOutlined style={{ fontSize: 9, opacity: 0.85 }} />
                                       </span>
                                       <span style={{ fontSize: 9, fontWeight: 500, opacity: 0.8, lineHeight: 1.2, whiteSpace: 'nowrap' }}>
-                                        {isCampaignListMetricSort(currentSort) ? campaignListMetricSortSummary(currentSort) : 'Escolher ordenaÃ§Ã£o'}
+                                        {isCampaignListMetricSort(currentSort) ? campaignListMetricSortSummary(currentSort) : 'Escolher ordenação'}
                                       </span>
                                     </button>
                                   </Dropdown>
@@ -2090,7 +2068,7 @@ export default function CampaignInfluencers() {
                                   key={item.key}
                                   item={item}
                                   onClick={() =>
-                                    openInfluencerConnect(item.handle ?? item.key, profileItemToConnectSnapshot(item))
+                                    openInfluencerFromCard(item.handle ?? item.key, profileItemToConnectSnapshot(item))
                                   }
                                   isFavorite={user ? favoriteHandles.has((item.handle ?? item.key).toLowerCase().replace(/^@/, '')) : false}
                                   onFavoriteToggle={user && user.scope !== 'influencer' ? handleFavoriteToggle : undefined}
@@ -2116,7 +2094,7 @@ export default function CampaignInfluencers() {
                                 item={item}
                                 variant="list"
                                 onClick={() =>
-                                  openInfluencerConnect(item.handle ?? item.key, profileItemToConnectSnapshot(item))
+                                  openInfluencerFromCard(item.handle ?? item.key, profileItemToConnectSnapshot(item))
                                 }
                                 onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
                                 showMetrics={!!user}

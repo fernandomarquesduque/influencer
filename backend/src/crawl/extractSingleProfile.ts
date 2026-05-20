@@ -1,7 +1,8 @@
 import type { Page } from 'playwright';
 import { DEFAULT_CRAWL_CONFIG, type CrawlConfig, type Entity } from '../types/index.js';
 import { InstagramClient } from '../instagramClient/index.js';
-import { extractProfile } from '../profileExtractor/index.js';
+import { extractProfile, scrapeFollowersFromProfilePage } from '../profileExtractor/index.js';
+import { buildSlimProfile, injectFollowerCountIntoProfileEntity } from '../utils/slimProfile.js';
 import { logTimestamp } from '../utils/logTimestamp.js';
 import {
   getBusinessBlockReason,
@@ -16,7 +17,6 @@ import {
   qualifiesAsInfluencer,
   type InfluencerRejectionDiagnostic,
 } from '../utils/entityAccess.js';
-import { buildSlimProfile } from '../utils/slimProfile.js';
 import { loadExistingProfileRecordForMerge, mergeProfilePreservingLlm } from '../utils/preserveLlmOnProfileMerge.js';
 import { resyncInfluencerS3AfterDbMediaReset } from '../storage/s3InfluencerImage.js';
 import { logMemorySnapshot } from '../utils/memoryDiag.js';
@@ -110,8 +110,17 @@ export async function extractSingleProfileWithPage(
   const { profile: rawProfile, posts, reels = [], tagged = [], highlights = [] } = extracted;
   const raw = rawProfile as Record<string, unknown>;
 
-  const followersFromRaw = getFollowersFromEntity(raw);
+  let followersFromRaw = getFollowersFromEntity(raw);
+  if (followersFromRaw <= 0) {
+    const fromDom = await scrapeFollowersFromProfilePage(page);
+    if (fromDom != null && fromDom > 0) {
+      followersFromRaw = fromDom;
+      injectFollowerCountIntoProfileEntity(raw, fromDom);
+      logStep(`seguidores via DOM: ${fromDom}`);
+    }
+  }
   const slim = buildSlimProfile(raw, cleanHandle, followersFromRaw, posts, 'seed', '');
+  if (followersFromRaw > 0) slim.followers_count = followersFromRaw;
   logStep('slim construído, verificando qualificação...');
   const followers = followersFromRaw > 0 ? followersFromRaw : getFollowersFromEntity(slim as Record<string, unknown>);
   const requiredProfile = process.env.INSTAGRAM_PERFIL?.trim().replace(/^@/, '');

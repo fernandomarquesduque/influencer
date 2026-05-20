@@ -14,7 +14,7 @@ export interface AgencyLoginPanelProps {
 }
 
 /**
- * Formulários de login/cadastro assinante (coluna direita da página `/agencia/login`).
+ * Formulários de login/cadastro assinante (coluna direita da página `/login`).
  * Estilos alinhados a `AgencyForgotPassword`: `login-input`, `login-btn-primary`.
  */
 export default function AgencyLoginPanel({ onSuccess }: AgencyLoginPanelProps) {

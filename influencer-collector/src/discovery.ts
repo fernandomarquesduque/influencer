@@ -17,6 +17,7 @@ import {
 import { buildSlimProfile } from './slimProfile.js';
 import {
   getFollowersFromEntity,
+  enrichProfileWithFollowersHint,
   hasPostWithMinLikes,
   hasRejectedProfileKeyword,
   isBlocklistedHandle,
@@ -37,7 +38,6 @@ import { explainBioNotBrazilianPortuguese } from './bioLanguageBr.js';
 import {
   addToGoogleQueue,
   hasIntegratedHandle,
-  hasOpenIssueForHandle,
   listHandles,
   recordDuplicate,
   recordIssue,
@@ -90,7 +90,8 @@ async function checkRemoteDuplicateAndMaybeSkip(
   logSuffix?: string
 ): Promise<{ skipped: boolean; remotePrecheck: RemotePrecheckUi }> {
   const hk = handle.replace(/^@/, '').trim().toLowerCase();
-  if (hasOpenIssueForHandle(hk) || hasIntegratedHandle(hk)) {
+  /** Só integrados/pending bloqueiam; perfil com erro na lista de Problemas pode ser reprocessado. */
+  if (hasIntegratedHandle(hk)) {
     recordDuplicate(handle);
     existingHandles.add(hk);
     if (handleLower !== hk) existingHandles.add(handleLower);
@@ -201,12 +202,14 @@ function runCollectorProfileRules(
   config: CollectorConfig,
   proc: (stage: string, patch?: ProfileUiPatch) => void,
   validationStageLabel: string,
-  skipEstablishmentKeywordRules = false
+  skipEstablishmentKeywordRules = false,
+  followersHint?: number | null
 ): boolean {
-  const followers = getFollowersFromEntity(raw);
-  proc(validationStageLabel, summarizeProfileForUi(raw, followers));
+  const profile = enrichProfileWithFollowersHint(raw, followersHint);
+  const followers = getFollowersFromEntity(profile);
+  proc(validationStageLabel, summarizeProfileForUi(profile, followers));
 
-  const typeRej = explainAccountTypeFilterMismatch(raw, config.allowedAccountTypes, {
+  const typeRej = explainAccountTypeFilterMismatch(profile, config.allowedAccountTypes, {
     skipEstablishmentCategoryHeuristic: skipEstablishmentKeywordRules,
   });
   if (typeRej) {
@@ -225,7 +228,7 @@ function runCollectorProfileRules(
   }
 
   if (!skipEstablishmentKeywordRules) {
-    const rejListaPosExtract = explainRejectedEstablishmentKeywordInBio(raw);
+    const rejListaPosExtract = explainRejectedEstablishmentKeywordInBio(profile);
     if (rejListaPosExtract) {
       recordIssue(handle, 'regra', rejListaPosExtract);
       coletaLog(`@${handle}: rejeitado por bio (lista) após leitura do perfil — não envia à API.`);
@@ -234,7 +237,7 @@ function runCollectorProfileRules(
   }
 
   if (config.requireBioBrazilianPortuguese) {
-    const bioRegra = explainBioNotBrazilianPortuguese(raw, {
+    const bioRegra = explainBioNotBrazilianPortuguese(profile, {
       skipEstablishmentKeywordInBio: skipEstablishmentKeywordRules,
     });
     if (bioRegra) {
@@ -242,26 +245,26 @@ function runCollectorProfileRules(
       return false;
     }
   }
-  if (isPrivateFromEntity(raw)) {
+  if (isPrivateFromEntity(profile)) {
     recordIssue(handle, 'regra', INSTAGRAM_PROFILE_PRIVATE_DETAIL);
     return false;
   }
-  if (!skipEstablishmentKeywordRules && hasRejectedProfileKeyword(raw)) {
-    recordIssue(handle, 'regra', explainRejectedProfileKeyword(raw));
+  if (!skipEstablishmentKeywordRules && hasRejectedProfileKeyword(profile)) {
+    recordIssue(handle, 'regra', explainRejectedProfileKeyword(profile));
     return false;
   }
-  if (!skipEstablishmentKeywordRules && isBusinessFromEntity(raw)) {
-    recordIssue(handle, 'regra', explainCommercialOrEstablishment(raw));
+  if (!skipEstablishmentKeywordRules && isBusinessFromEntity(profile)) {
+    recordIssue(handle, 'regra', explainCommercialOrEstablishment(profile));
     return false;
   }
   const qualOpts = skipEstablishmentKeywordRules ? { skipEstablishmentKeywordRules: true } : undefined;
-  if (config.excludeBusinessProfiles && !qualifiesAsInfluencer(raw, config.minFollowersToSave, qualOpts)) {
-    recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave));
+  if (config.excludeBusinessProfiles && !qualifiesAsInfluencer(profile, config.minFollowersToSave, qualOpts)) {
+    recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(profile, config.minFollowersToSave));
     return false;
   }
   if (!config.excludeBusinessProfiles) {
-    if (!qualifiesAsInfluencer(raw, config.minFollowersToSave, qualOpts)) {
-      recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(raw, config.minFollowersToSave));
+    if (!qualifiesAsInfluencer(profile, config.minFollowersToSave, qualOpts)) {
+      recordIssue(handle, 'regra', explainNotQualifiesAsInfluencer(profile, config.minFollowersToSave));
       return false;
     }
   }
@@ -523,6 +526,8 @@ async function processOneProfile(
   };
   proc('Validando perfil…');
   const prefill = options?.prefillProfileSnap;
+  let knownFollowersFromGate: number | null =
+    prefill?.followers != null && prefill.followers > 0 ? prefill.followers : null;
   if (prefill?.minimal) {
     const pf = prefill.followers ?? null;
     const fol = pf ?? getFollowersFromEntity(prefill.minimal);
@@ -576,6 +581,7 @@ async function processOneProfile(
       return false;
     }
     const gateFollowers = await resolveFollowersForEarlyGate(page, gateSnap, config);
+    if (gateFollowers != null && gateFollowers > 0) knownFollowersFromGate = gateFollowers;
     if (gateSnap.minimalProfile) {
       const gateEntity = {
         handle,
@@ -739,7 +745,8 @@ async function processOneProfile(
             config,
             proc,
             'Validando regras (antes de Reels/Marcados)…',
-            skipEst
+            skipEst,
+            knownFollowersFromGate
           ),
       });
       if (fullResult.ok) {
@@ -796,7 +803,8 @@ async function processOneProfile(
       rawProfile = extracted.profile;
       posts = extracted.posts as Entity[];
     }
-    const raw = rawProfile as Record<string, unknown>;
+    let raw = rawProfile as Record<string, unknown>;
+    raw = enrichProfileWithFollowersHint(raw, knownFollowersFromGate);
     const followers = getFollowersFromEntity(raw);
 
     /**
@@ -811,7 +819,8 @@ async function processOneProfile(
         config,
         proc,
         'Validando regras (perfil final, antes da API)…',
-        skipEst
+        skipEst,
+        knownFollowersFromGate
       )
     ) {
       return false;
@@ -1291,6 +1300,34 @@ async function profileExtractionPipelineNewTab(
           'pt-BR'
         )} seguidores; @${handle} tem ${followersResolved != null ? followersResolved.toLocaleString('pt-BR') : '—'}.`;
         recordIssue(handle, 'regra', detail, { followers_count: followersResolved ?? undefined });
+        coletaLog(`${logCtx}: @${handle}: ${detail}`);
+        triedInSession.add(handleLower);
+        return { saved: 0, processed: 1 };
+      }
+    }
+
+    if (
+      config.excludeBusinessProfiles &&
+      config.minFollowersToSave > 0 &&
+      followersResolved != null
+    ) {
+      const entityForQual = enrichProfileWithFollowersHint(
+        {
+          handle,
+          username: handle,
+          ...(snapH.minimalProfile ?? {}),
+        } as Record<string, unknown>,
+        followersResolved
+      );
+      if (
+        !qualifiesAsInfluencer(entityForQual, config.minFollowersToSave, {
+          skipEstablishmentKeywordRules: skipEstList,
+        })
+      ) {
+        const detail = explainNotQualifiesAsInfluencer(entityForQual, config.minFollowersToSave);
+        recordIssue(handle, 'regra', `Antes de extrair o perfil completo: ${detail}`, {
+          followers_count: followersResolved,
+        });
         coletaLog(`${logCtx}: @${handle}: ${detail}`);
         triedInSession.add(handleLower);
         return { saved: 0, processed: 1 };

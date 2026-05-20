@@ -81,8 +81,6 @@ export function OriginGalleryLoadingState({ railShiftX = 0 }: { railShiftX?: num
 }
 
 /** Modo lista: largura da coluna só de mídia (legenda e perfil ficam à direita). */
-const LIST_ORIGIN_LEFT_COLUMN_FLEX = '0 0 40%'
-const LIST_ORIGIN_RIGHT_COLUMN_FLEX = '0 0 60%'
 
 const MEDIA_KIND_SHORT: Record<MediaKind, string> = {
   post: 'Feed',
@@ -166,7 +164,7 @@ function influencerLlmDescriptionText(post: PostItem): string | null {
   const rec = { llm } as Record<string, unknown>
   const summary = getProfilePersonaSummary(rec)
   if (summary) return summary
-  const row = getLlmDescriptionLine({ llm } as ProfileListItem)
+  const row = getLlmDescriptionLine({ llm } as unknown as ProfileListItem)
   if (!row) return null
   return row.tooltip ?? row.line
 }
@@ -671,17 +669,6 @@ export default function CampaignOriginGallery({
                 const followersLabel = formatFollowersShort(fc)
                 const postsPerWeekLabel = postsPerWeek != null ? `${formatPostsPerWeekShort(postsPerWeek)} posts/sem` : null
                 const openInfluencerDetail = () => runOpenInfluencerDetail(handle, postToConnectSnapshot(post))
-                const listMediaShellStyle: CSSProperties = {
-                  position: 'relative',
-                  width: '100%',
-                  flexShrink: 0,
-                  overflow: 'hidden',
-                  display: 'block',
-                  color: 'inherit',
-                  textDecoration: 'none',
-                  outline: 'none',
-                  ...(ct === 'reel' ? { aspectRatio: '1' } : { height: 320 }),
-                }
                 return (
                   <div
                     key={post.key}
@@ -690,6 +677,7 @@ export default function CampaignOriginGallery({
                     onClick={openInfluencerDetail}
                     onKeyDown={(e) => e.key === 'Enter' && openInfluencerDetail()}
                     aria-label={handle !== '—' ? `Ver perfil @${handle}` : undefined}
+                    className="campaign-origin-list-card"
                     style={{
                       borderRadius: 14,
                       overflow: 'hidden',
@@ -699,28 +687,11 @@ export default function CampaignOriginGallery({
                       cursor: handle !== '—' ? 'pointer' : 'default',
                     }}
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'row',
-                        alignItems: 'stretch',
-                        minHeight: 0,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          flex: LIST_ORIGIN_LEFT_COLUMN_FLEX,
-                          minWidth: 0,
-                          maxWidth: '40%',
-                          textAlign: 'left',
-                          overflow: 'hidden',
-                          borderRight: '1px solid var(--app-border-light, #f0f0f0)',
-                          background: 'var(--app-bg-secondary, #fafafa)',
-                        }}
-                      >
-                        <div style={{ ...listMediaShellStyle, display: 'block' }}>
+                    <div className="campaign-origin-list-card__body">
+                      <div className="campaign-origin-list-card__influencer">
+                        <div
+                          className={`campaign-origin-list-card__media${ct === 'reel' ? ' campaign-origin-list-card__media--reel' : ''}`}
+                        >
                           <PostPreviewMedia
                             fill
                             imageDisplaySrc={failed ? undefined : displayUrl}
@@ -837,18 +808,7 @@ export default function CampaignOriginGallery({
                           </div>
                         </div>
                       </div>
-                      <div
-                        style={{
-                          flex: LIST_ORIGIN_RIGHT_COLUMN_FLEX,
-                          minWidth: 0,
-                          maxWidth: '60%',
-                          padding: '14px 18px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 12,
-                          background: 'var(--app-bg, #fff)',
-                        }}
-                      >
+                      <div className="campaign-origin-list-card__caption">
                         <Text style={{ fontSize: 12, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--app-text)' }}>
                           {highlightKeywordInText(getCaptionSnippet(post, 99999) || '—', textQuery)}
                         </Text>

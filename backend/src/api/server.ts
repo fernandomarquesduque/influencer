@@ -36,6 +36,7 @@ import {
   searchProfiles,
   narrowHandlesByProfilesQuery,
   getProfileSummary,
+  getProfileEngagementByType,
   isSearchCacheWarmBlockedError,
   scheduleSearchCacheRewarm,
   scheduleSearchCacheWarmRetries,
@@ -719,7 +720,7 @@ async function performRequestCodeFlow(
   nickname: string,
   code: string,
   _userId: number | null,
-  flowOptions?: { client?: InstagramClient }
+  flowOptions?: { client?: InstagramClient; /** Extração acabou de rodar no mesmo fluxo (request-code-with-extract): evita 2ª visita ao perfil que costuma falhar no browser já em uso. */ trustFreshExtract?: boolean }
 ): Promise<{ sent: boolean; error?: string; followProfileUrl?: string; nao_segue_perfil?: boolean }> {
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[request-code] ${logTimestamp()} +${Date.now() - t0}ms ${msg}`);
@@ -751,8 +752,14 @@ async function performRequestCodeFlow(
 
         // Só confiamos no cache quando diz que segue (true). Quando false ou ausente, reabrimos o perfil e verificamos:
         // a API às vezes não envia friendship_status ou envia incorreto, e o usuário pode estar seguindo.
+        // Após request-code-with-extract, não reabrir se o cache já tem followsOfficialProfile (2ª visita no mesmo client costuma falhar).
+        const useCachedFollowOnly =
+          flowOptions?.trustFreshExtract === true && stored?.status === 'done' && followsFromExtract !== undefined;
         if (followsFromExtract === true) {
           logStep('Usando cache (segue perfil), pulando abertura de perfil.');
+        } else if (useCachedFollowOnly && followsFromExtract === false) {
+          logStep('Usando cache (não segue perfil), sem 2ª extração.');
+          return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
         } else {
           logStep(followsFromExtract === false ? 'Cache disse não seguir; reabrindo perfil para confirmar...' : 'Sem cache: abrindo perfil para verificar se segue...');
           const page = await client.newPage();
@@ -767,28 +774,39 @@ async function performRequestCodeFlow(
             logStep(`extractProfile concluído em ${Date.now() - tExtract}ms.`);
             logStep('Verificando perfil (username, segue oficial)...');
             if (!extracted) {
-              return { sent: false, error: 'Perfil não encontrado ou indisponível.' };
-            }
-            const profileEntity = extracted.profile as Record<string, unknown>;
-            const dataUser = (profileEntity?.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined;
-            const entityUsername = dataUser?.username != null ? String(dataUser.username).trim().toLowerCase() : null;
-            if (entityUsername == null || entityUsername !== nickNorm) {
-              return { sent: false, error: entityUsername == null ? 'Não foi possível verificar o perfil. Tente novamente.' : 'Resposta da API não corresponde ao perfil solicitado.' };
-            }
-            if (!isFollowingViewerFromEntity(profileEntity)) {
-              return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
-            }
-            logStep('Perfil OK.');
-            // Seguir de volta em background (não bloqueia envio do código)
-            const followBackEnabled = process.env.FOLLOW_BACK_ENABLED !== 'false';
-            if (followBackEnabled) {
-              void followUser(client, nickname)
-                .then((followResult) => {
-                  if (!followResult.ok) logStep(`Follow-back (em background) falhou: ${followResult.error ?? 'erro'}`);
-                  else if (followResult.alreadyFollowing) logStep('Follow-back (em background): já estávamos seguindo.');
-                  else logStep('Follow-back (em background): seguimos o influenciador.');
-                })
-                .catch((err) => logStep(`Follow-back em background falhou: ${err instanceof Error ? err.message : String(err)}`));
+              if (stored?.status === 'done' && followsFromExtract === false) {
+                logStep('2ª extração falhou; usando cache (não segue perfil).');
+                return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
+              }
+              return {
+                sent: false,
+                error:
+                  stored?.status === 'done'
+                    ? 'Não foi possível verificar o perfil. Tente novamente.'
+                    : 'Perfil não encontrado ou indisponível.',
+              };
+            } else {
+              const profileEntity = extracted.profile as Record<string, unknown>;
+              const dataUser = (profileEntity?.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined;
+              const entityUsername = dataUser?.username != null ? String(dataUser.username).trim().toLowerCase() : null;
+              if (entityUsername == null || entityUsername !== nickNorm) {
+                return { sent: false, error: entityUsername == null ? 'Não foi possível verificar o perfil. Tente novamente.' : 'Resposta da API não corresponde ao perfil solicitado.' };
+              }
+              if (!isFollowingViewerFromEntity(profileEntity)) {
+                return { sent: false, nao_segue_perfil: true, followProfileUrl: `https://www.instagram.com/${requiredProfile}/` };
+              }
+              logStep('Perfil OK.');
+              // Seguir de volta em background (não bloqueia envio do código)
+              const followBackEnabled = process.env.FOLLOW_BACK_ENABLED !== 'false';
+              if (followBackEnabled) {
+                void followUser(client, nickname)
+                  .then((followResult) => {
+                    if (!followResult.ok) logStep(`Follow-back (em background) falhou: ${followResult.error ?? 'erro'}`);
+                    else if (followResult.alreadyFollowing) logStep('Follow-back (em background): já estávamos seguindo.');
+                    else logStep('Follow-back (em background): seguimos o influenciador.');
+                  })
+                  .catch((err) => logStep(`Follow-back em background falhou: ${err instanceof Error ? err.message : String(err)}`));
+              }
             }
           } finally {
             // Fechar página em background para não travar o fluxo (page.close() pode demorar)
@@ -820,11 +838,18 @@ async function performRequestCodeFlow(
 
       logStep('Enviando código por Direct...');
       const tSend = Date.now();
-      let result = await sendVerificationCode(client, nickname, code);
+      const storedForSend = extractProfileResults.get(nickname.trim().toLowerCase());
+      const skipFollowerListCheck =
+        storedForSend?.status === 'done' &&
+        storedForSend.result &&
+        'followsOfficialProfile' in storedForSend.result &&
+        (storedForSend.result as { followsOfficialProfile?: boolean }).followsOfficialProfile === true;
+      const sendOpts = skipFollowerListCheck ? { skipFollowerListCheck: true as const } : undefined;
+      let result = await sendVerificationCode(client, nickname, code, sendOpts);
       for (let attempt = 1; !result.ok && attempt < maxAttempts; attempt++) {
         logStep(`sendVerificationCode tentativa ${attempt} retornou ok=false, nova tentativa em ${delayMs}ms...`);
         await new Promise((r) => setTimeout(r, delayMs));
-        result = await sendVerificationCode(client, nickname, code);
+        result = await sendVerificationCode(client, nickname, code, sendOpts);
       }
       logStep(`sendVerificationCode concluído em ${Date.now() - tSend}ms (ok=${result.ok}).`);
       if (!result.ok) {
@@ -1392,13 +1417,21 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
       res.status(400).json({ error: stored?.status === 'error' ? (stored as { error: string }).error : 'Erro na extração' });
       return;
     }
+    if (!stored.result.success) {
+      res.status(400).json({
+        error: stored.result.error ?? stored.result.rejectionReason ?? 'Falha ao extrair perfil',
+        rejectionReason: stored.result.rejectionReason,
+        followProfileUrl: stored.result.followProfileUrl,
+      });
+      return;
+    }
     logStep(`Extract pronto em ${Date.now() - t0}ms, enviando código...`);
 
     const userId = req.user ? Number(req.user.sub) : null;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
 
-    const flowPromise = performRequestCodeFlow(nickname, code, userId, { client: priorityClient });
+    const flowPromise = performRequestCodeFlow(nickname, code, userId, { client: priorityClient, trustFreshExtract: true });
     requestCodeFlushPromise = requestCodeFlushPromise.then(async () => {
       await flowPromise;
     });
@@ -2185,6 +2218,62 @@ function rateLimitDataApi(req: RequestWithAuth, res: Response, next: () => void)
   next();
 }
 
+/** Foto e bio para prévia pública (bio com @/telefone redigidos). */
+function pickPublicProfileDisplayFields(profile: Record<string, unknown>): Record<string, unknown> {
+  const data = profile.data != null && typeof profile.data === 'object' && !Array.isArray(profile.data)
+    ? (profile.data as Record<string, unknown>)
+    : undefined;
+  const user = data?.user != null && typeof data.user === 'object' && !Array.isArray(data.user)
+    ? (data.user as Record<string, unknown>)
+    : undefined;
+  const out: Record<string, unknown> = {};
+  const pic =
+    (typeof profile.profile_pic_url === 'string' && profile.profile_pic_url) ||
+    (typeof profile.hd_profile_pic_url === 'string' && profile.hd_profile_pic_url) ||
+    (typeof user?.profile_pic_url === 'string' && user.profile_pic_url) ||
+    (typeof user?.hd_profile_pic_url === 'string' && user.hd_profile_pic_url);
+  if (pic) {
+    out.profile_pic_url = pic;
+    const hd = profile.hd_profile_pic_url ?? user?.hd_profile_pic_url;
+    if (typeof hd === 'string' && hd) out.hd_profile_pic_url = hd;
+  }
+  const stable = profile.stable_profile_pic_url ?? user?.stable_profile_pic_url;
+  if (typeof stable === 'string' && stable.startsWith('http')) {
+    out.stable_profile_pic_url = stable;
+  }
+  const bioRaw = profile.biography ?? user?.biography;
+  if (typeof bioRaw === 'string' && bioRaw.trim()) {
+    out.biography = redactContactInfoInText(bioRaw.trim());
+  }
+  return out;
+}
+
+/** Prévia pública: handle, foto, bio, seguidores, métricas e LLM (sem nome completo). */
+function buildPublicProfilePreview(
+  handle: string,
+  profile: Record<string, unknown>,
+  engagement: Record<string, unknown>,
+  engagementByType: Awaited<ReturnType<typeof getProfileEngagementByType>>
+): Record<string, unknown> {
+  const followers = getFollowersFromProfile(profile);
+  const out: Record<string, unknown> = {
+    handle,
+    username: handle,
+    key: handle,
+    followers_count: followers > 0 ? followers : null,
+    _redacted: true,
+    _all_base_preview: true,
+    engagement,
+    engagementByType,
+    ...pickPublicProfileDisplayFields(profile),
+  };
+  const llm = profile.llm;
+  if (llm != null && typeof llm === 'object' && !Array.isArray(llm)) {
+    out.llm = llm;
+  }
+  return out;
+}
+
 /** Reduz perfil para versão sem dados sensíveis (público que atingiu limite). Mantém apenas bio e dados mínimos de exibição (foto, nome, handle). */
 function redactProfile(profile: Record<string, unknown>, opts?: { allBasePreview?: boolean }): Record<string, unknown> {
   const out = { ...profile };
@@ -2566,7 +2655,9 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
     };
     let restrictToHandles: string[] | undefined;
     let queryForSearch = query;
-    const canSearchWithoutCampaign = quantitativosOnly || (req.user && (req.user.scope === 'adm' || req.user.scope === 'assinante'));
+    const canSearchWithoutCampaign =
+      quantitativosOnly ||
+      (req.user && (req.user.scope === 'adm' || req.user.scope === 'assinante' || req.user.scope === 'influencer'));
     if (!quantitativosOnly && req.user) {
       const raw = (req.headers[X_CAMPAIGN_ID] ?? req.headers['x-campaign-id']) as string | undefined;
       const campaignId = typeof raw === 'string' ? raw.trim() : '';
@@ -2646,13 +2737,91 @@ app.get('/api/me/credits', async (req: RequestWithAuth, res: Response) => {
 
 /** Preço por crédito em centavos (ex.: 100 = R$ 1,00). */
 const CREDITS_PRICE_CENTS = Math.max(1, Number(process.env.CREDITS_PRICE_CENTS) || 100);
+/** Dias entre a criação da assinatura e o vencimento da 1ª cobrança (trial; 0 = sem trial). */
+const BUSCA_PLAN_TRIAL_DAYS = Math.min(
+  120,
+  Math.max(0, Number(process.env.BUSCA_PLAN_TRIAL_DAYS ?? '7') || 7)
+);
 /** Preço por influenciador ativado no relatório (R$ 2,00). */
 const REPORT_PRICE_CENTS_ACTIVATED = 200;
 /** Preço por influenciador não ativado no relatório (R$ 1,00). */
 const REPORT_PRICE_CENTS_NOT_ACTIVATED = 100;
 
+function addDaysLocalYyyyMmDd(days: number): string {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function luhnValid(cardDigits: string): boolean {
+  let sum = 0;
+  let alt = false;
+  for (let i = cardDigits.length - 1; i >= 0; i--) {
+    const ch = cardDigits.charCodeAt(i) - 48;
+    if (ch < 0 || ch > 9) return false;
+    let n = ch;
+    if (alt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+
+function parseCardExpiry(exp: string): { month: string; year: string } | null {
+  const s = exp.replace(/\s/g, '');
+  const m = /^(\d{2})\/(\d{2,4})$/.exec(s);
+  if (!m) return null;
+  const monthNum = Number(m[1]);
+  if (monthNum < 1 || monthNum > 12) return null;
+  const yRaw = m[2];
+  const year = yRaw.length === 2 ? `20${yRaw}` : yRaw;
+  if (!/^\d{4}$/.test(year)) return null;
+  const now = new Date();
+  const curYm = now.getFullYear() * 100 + (now.getMonth() + 1);
+  const expYm = Number(year) * 100 + monthNum;
+  if (expYm < curYm) return null;
+  return { month: String(monthNum).padStart(2, '0'), year };
+}
+
+function planPaymentInTrialWindow(row: PaymentRow): boolean {
+  if (!row.plan_first_due_date || row.status !== 'PENDING') return false;
+  const due = row.plan_first_due_date.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) return false;
+  const today = addDaysLocalYyyyMmDd(0);
+  return due >= today;
+}
+
+/** Id da assinatura vinculada à cobrança (GET /payments/:id), quando o Asaas expõe o campo. */
+function asaasPaymentLinkedSubscriptionId(pay: { subscription?: unknown }): string | null {
+  const s = pay.subscription;
+  if (typeof s === 'string' && s.trim()) return s.trim();
+  if (s && typeof s === 'object' && s !== null && 'id' in s) {
+    const id = (s as { id?: unknown }).id;
+    if (typeof id === 'string' && id.trim()) return id.trim();
+  }
+  return null;
+}
+
+function paymentRowPlanFields(row: PaymentRow) {
+  const dueRaw = row.plan_first_due_date?.trim().slice(0, 10) ?? null;
+  const planFirstInvoiceDue = dueRaw && /^\d{4}-\d{2}-\d{2}$/.test(dueRaw) ? dueRaw : null;
+  return {
+    planId: row.plan_id?.trim() || null,
+    planFirstInvoiceDue,
+    asaasSubscriptionId: row.asaas_subscription_id?.trim() || null,
+  };
+}
+
 /** Converte linha payment → corpo igual ao POST /me/payments (modal de PIX/boleto). */
 function paymentRowToCreditsChargePayload(row: PaymentRow) {
+  const plan = paymentRowPlanFields(row);
   return {
     paymentId: row.id,
     asaasPaymentId: row.asaas_payment_id,
@@ -2664,6 +2833,7 @@ function paymentRowToCreditsChargePayload(row: PaymentRow) {
     invoiceUrl: row.invoice_url,
     bankSlipUrl: row.bank_slip_url,
     pixCopyPaste: row.pix_copy_paste,
+    ...plan,
   };
 }
 
@@ -2711,7 +2881,7 @@ async function resolveAsaasCustomerId(params: ResolveAsaasCustomerParams): Promi
     const msg = e instanceof Error ? e.message : String(e);
     return {
       ok: false,
-      message: `Falha ao buscar cliente no Asaas: ${msg}`,
+      message: `Falha ao buscar cliente no provedor de pagamentos: ${msg}`,
       gatewayDetails: {
         step: 'findCustomersByExternalReference',
         externalRef,
@@ -2735,7 +2905,7 @@ async function resolveAsaasCustomerId(params: ResolveAsaasCustomerParams): Promi
     return {
       ok: false,
       message:
-        'Asaas não devolveu id de cliente após criar (resposta sem id ou listagem inesperada). Confira ASAAS_BASE_URL e a chave da API.',
+        'O provedor de pagamentos não devolveu id de cliente após criar (resposta sem id ou listagem inesperada). Confira a configuração da API e a chave.',
       gatewayDetails: {
         step: 'createCustomer',
         externalRef,
@@ -2749,7 +2919,7 @@ async function resolveAsaasCustomerId(params: ResolveAsaasCustomerParams): Promi
     const msg = e instanceof Error ? e.message : String(e);
     return {
       ok: false,
-      message: `Falha ao criar cliente no Asaas: ${msg}`,
+      message: `Falha ao criar cliente no provedor de pagamentos: ${msg}`,
       gatewayDetails: {
         step: 'createCustomer',
         externalRef,
@@ -2767,6 +2937,14 @@ function jsonAsaasCustomerGatewayError(r: ResolveAsaasCustomerErr): { error: str
   return { error: r.message, gatewayDetails: r.gatewayDetails };
 }
 
+function respondPaymentsUnavailable(res: Response): void {
+  const reason = asaas.paymentsUnavailableReason();
+  const showDetail =
+    reason != null && (process.env.ASAAS_DEBUG === '1' || process.env.NODE_ENV !== 'production');
+  const suffix = showDetail ? ` (${reason})` : '';
+  res.status(503).json({ error: `Pagamentos temporariamente indisponíveis${suffix}` });
+}
+
 /**
  * Status Asaas equivalente a “pago” para liberar crédito/acesso (alinha webhooks PAYMENT_CONFIRMED e PAYMENT_RECEIVED).
  * - Cartão: CONFIRMED = aprovado e capturado; RECEIVED se aparecer.
@@ -2782,6 +2960,22 @@ function asaasRemoteStatusIsPaid(status: string | undefined): boolean {
     u === 'DONE' ||
     u === 'RECEIVED_IN_CASH'
   );
+}
+
+/** 1ª cobrança da assinatura em estado terminal negativo — não criar usuário no checkout convidado. PENDING (ex.: trial) é aceito). */
+function isAsaasPlanFirstPaymentRejected(status: string | undefined): boolean {
+  const u = (status ?? '').trim().toUpperCase();
+  if (!u) return true;
+  const rejected = new Set([
+    'REFUSED',
+    'FAILED',
+    'CANCELLED',
+    'DELETED',
+    'CHARGEBACK_REQUESTED',
+    'CHARGEBACK_DISPUTE',
+    'AWAITING_CHARGEBACK_REVERSAL',
+  ]);
+  return rejected.has(u);
 }
 
 /** Evita liberar crédito se `asaas_payment_id` apontar para outra cobrança (ex. listagem errada no POST). */
@@ -2893,6 +3087,7 @@ app.get('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
       pixCopyPaste: r.pix_copy_paste,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
+      ...paymentRowPlanFields(r),
     }));
     res.json({ payments });
   } catch (e) {
@@ -2938,11 +3133,19 @@ app.get('/api/me/subscription', async (req: RequestWithAuth, res: Response) => {
     const active = paymentsDb.hasActivePlanSubscription(userId);
     const latest = paymentsDb.getLatestPlanPayment(userId);
     const pendingAfter = paymentsDb.getFirstPendingForUser(userId);
+    const inTrial = Boolean(
+      active && latest && latest.status === 'PENDING' && planPaymentInTrialWindow(latest)
+    );
     res.json({
       active,
       planId: latest?.plan_id ?? null,
       subscriptionId: latest?.asaas_subscription_id ?? null,
       hasPendingPlanPayment: Boolean(pendingAfter?.plan_id),
+      inTrial,
+      planFirstInvoiceDue:
+        inTrial && latest?.plan_first_due_date
+          ? latest.plan_first_due_date.trim().slice(0, 10)
+          : null,
     });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -2983,6 +3186,7 @@ app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
       pixCopyPaste: row.pix_copy_paste,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      ...paymentRowPlanFields(row),
     });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -3007,14 +3211,29 @@ app.delete('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) =
       res.status(400).json({ error: 'Só é possível remover cobranças pendentes.' });
       return;
     }
+    const subId = row.asaas_subscription_id?.trim() || null;
     const asaasId = row.asaas_payment_id?.trim() || null;
-    if (asaasId && asaas.isAsaasConfigured()) {
-      try {
-        await asaas.deleteAsaasPayment(asaasId);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        res.status(502).json({ error: msg || 'Não foi possível cancelar no gateway de pagamento.' });
-        return;
+    if (asaas.isAsaasConfigured()) {
+      if (subId) {
+        try {
+          await asaas.deleteAsaasSubscription(subId);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          res.status(502).json({
+            error: msg || 'Não foi possível cancelar a assinatura no provedor de pagamentos.',
+          });
+          return;
+        }
+      }
+      if (asaasId) {
+        try {
+          await asaas.deleteAsaasPayment(asaasId);
+        } catch (e) {
+          console.warn(
+            '[payments] deleteAsaasPayment (parcela já removida com assinatura?):',
+            e instanceof Error ? e.message : e
+          );
+        }
       }
     }
     if (!paymentsDb.deleteByIdForUser(id, userId)) {
@@ -3022,6 +3241,24 @@ app.delete('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) =
       return;
     }
     res.status(204).end();
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/**
+ * Verifica se já existe usuário com o e-mail (usado no passo 1 do checkout de plano).
+ * Evita preencher dados de cartão para depois descobrir duplicidade na assinatura.
+ */
+app.post('/api/auth/email-registered', (req: Request, res: Response) => {
+  try {
+    const email = (req.body?.email ?? '').toString().trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ error: 'E-mail inválido' });
+      return;
+    }
+    const registered = Boolean(authDb.getByUsername(email));
+    res.status(200).json({ registered });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -3293,7 +3530,7 @@ app.post('/api/auth/resend-verification', authOptional, async (req: RequestWithA
 app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) => {
   try {
     if (!asaas.isAsaasConfigured()) {
-      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      respondPaymentsUnavailable(res);
       return;
     }
     const body = req.body as { email?: string; password?: string; name?: string; credits?: number; billingType?: string; cpfCnpj?: string };
@@ -3443,19 +3680,32 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
   }
 });
 
-/** Checkout de plano: cadastro (opcional) + assinatura mensal Asaas (cartão de crédito). */
+/**
+ * Checkout de plano: assinatura Asaas (cartão).
+ * - Com JWT: fluxo do usuário já logado.
+ * - Sem JWT: envie `email`, `password` e `name`. A conta local só é criada após o Asaas aceitar o cartão
+ *   (ou período de teste com 1ª cobrança pendente — não é recusa).
+ */
 app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Response) => {
   try {
     if (!asaas.isAsaasConfigured()) {
-      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      respondPaymentsUnavailable(res);
       return;
     }
     const body = req.body as {
       planId?: string;
+      cpfCnpj?: string;
+      cardHolderName?: string;
+      cardNumber?: string;
+      cardExpiry?: string;
+      cardCcv?: string;
+      postalCode?: string;
+      addressNumber?: string;
       email?: string;
       password?: string;
       name?: string;
-      cpfCnpj?: string;
+      /** DDD + número (10 ou 11 dígitos) — obrigatório no Asaas em creditCardHolderInfo.phone */
+      holderPhone?: string;
     };
     const planId = (body?.planId ?? '').toString().trim();
     const plan = getBuscaPlanById(planId);
@@ -3469,23 +3719,72 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
       return;
     }
 
-    let userId: number;
-    let authUser: NonNullable<ReturnType<typeof authDb.getById>>;
-    let issuedToken: string | null = null;
+    const cardHolderName = (body?.cardHolderName ?? '').toString().trim();
+    const cardDigits = (body?.cardNumber ?? '').toString().replace(/\D/g, '');
+    const cardExpiryRaw = (body?.cardExpiry ?? '').toString().trim();
+    const ccv = (body?.cardCcv ?? '').toString().replace(/\D/g, '');
+    /** Asaas exige CEP e número no titular; o formulário não coleta — placeholders genéricos. */
+    let postalCodeDigits = (body?.postalCode ?? '').toString().replace(/\D/g, '');
+    let holderAddressNumber = (body?.addressNumber ?? '').toString().trim();
+    if (postalCodeDigits.length !== 8) {
+      postalCodeDigits = '01001000';
+    }
+    if (!holderAddressNumber) {
+      holderAddressNumber = 'S/N';
+    }
+
+    if (!cardHolderName || cardHolderName.length < 3) {
+      res.status(400).json({ error: 'Informe o nome impresso no cartão.' });
+      return;
+    }
+    if (cardDigits.length < 13 || cardDigits.length > 19 || !luhnValid(cardDigits)) {
+      res.status(400).json({ error: 'Número do cartão inválido.' });
+      return;
+    }
+    const exp = parseCardExpiry(cardExpiryRaw);
+    if (!exp) {
+      res.status(400).json({ error: 'Validade inválida. Use MM/AA ou MM/AAAA.' });
+      return;
+    }
+    if (ccv.length < 3 || ccv.length > 4) {
+      res.status(400).json({ error: 'CVV inválido.' });
+      return;
+    }
+
+    const holderPhoneDigits = (body?.holderPhone ?? '').toString().replace(/\D/g, '');
+    if (holderPhoneDigits.length !== 10 && holderPhoneDigits.length !== 11) {
+      res.status(400).json({
+        error: 'Informe o telefone do titular com DDD (10 ou 11 dígitos, sem código do país).',
+      });
+      return;
+    }
+
+    let userId!: number;
+    let displayName: string;
+    let email: string;
+    let externalRef: string;
+    /** Cadastro convidado: preenchido só após o gateway aceitar; senha em memória até createUser. */
+    let guestPasswordPlain: string | undefined;
+    let guestNameTrim: string | undefined;
 
     if (req.user) {
       userId = Number(req.user.sub);
-      const row = authDb.getById(userId);
-      if (!row) {
+      const authRow = authDb.getById(userId);
+      if (!authRow) {
         res.status(401).json({ error: 'Usuário não encontrado' });
         return;
       }
-      authUser = row;
+      displayName =
+        authRow.profile_handle != null && String(authRow.profile_handle).trim() !== ''
+          ? `@${authRow.profile_handle}`
+          : authRow.username;
+      email = authRow.username.includes('@') ? authRow.username : `user${userId}@payments.influencer.local`;
+      externalRef = `user_${userId}`;
     } else {
-      const email = (body?.email ?? '').toString().trim().toLowerCase();
+      const emailTrim = (body?.email ?? '').toString().trim().toLowerCase();
       const password = (body?.password ?? '').toString();
-      const name = (body?.name ?? '').toString().trim() || email;
-      if (!email || !email.includes('@')) {
+      const nameTrim = (body?.name ?? '').toString().trim();
+      if (!emailTrim || !emailTrim.includes('@')) {
         res.status(400).json({ error: 'E-mail é obrigatório e deve ser válido' });
         return;
       }
@@ -3493,65 +3792,33 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
         res.status(400).json({ error: 'A senha deve ter no mínimo 6 caracteres' });
         return;
       }
-      const existing = authDb.getByUsername(email);
-      if (existing) {
-        res.status(409).json({ error: 'Já existe uma conta com este e-mail. Faça login e assine em Meus pagamentos.' });
+      if (!nameTrim || nameTrim.length < 2) {
+        res.status(400).json({ error: 'Informe seu nome ou marca (mín. 2 caracteres).' });
         return;
       }
-      const passwordHash = hashPassword(password);
-      userId = authDb.createUser(email, passwordHash, 'assinante' as AuthScope, null, undefined, 0);
-      const created = authDb.getById(userId);
-      if (!created) {
-        res.status(500).json({ error: 'Erro ao criar conta' });
+      if (authDb.getByUsername(emailTrim)) {
+        res.status(409).json({
+          error: 'Já existe uma conta com este e-mail. Use a opção de login no checkout.',
+        });
         return;
       }
-      authUser = created;
-      const verificationToken = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
-      authDb.setEmailVerification(userId, verificationToken, expiresAt);
-      const frontBase = process.env.FRONTEND_BASE_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
-      const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
-      void sendVerificationEmail({
-        to: email,
-        subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
-        verifyUrl,
-        bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
-      }).catch(() => {});
-
-      const secret = getJwtSecret();
-      issuedToken = signJwt(
-        { sub: String(userId), username: authUser.username, scope: 'assinante' as AuthScope, profile_handle: authUser.profile_handle ?? undefined },
-        secret
-      );
+      guestPasswordPlain = password;
+      guestNameTrim = nameTrim;
+      displayName = nameTrim;
+      email = emailTrim;
+      externalRef = `plan_pre_${crypto.randomUUID().replace(/-/g, '')}`;
     }
 
-    const pendingExisting = paymentsDb.getFirstPendingForUser(userId);
-    if (pendingExisting) {
-      res.status(409).json({
-        error: 'Já existe uma cobrança pendente. Conclua ou cancele em Meus pagamentos antes de assinar.',
-        payment: paymentRowToCreditsChargePayload(pendingExisting),
-        ...(issuedToken
-          ? {
-              token: issuedToken,
-              user: {
-                id: authUser.id,
-                username: authUser.username,
-                scope: authUser.scope,
-                profile_handle: authUser.profile_handle,
-              },
-            }
-          : {}),
-      });
-      return;
+    if (req.user) {
+      const pendingExisting = paymentsDb.getFirstPendingForUser(userId);
+      if (pendingExisting) {
+        res.status(409).json({
+          error: 'Já existe uma cobrança pendente. Conclua ou cancele em Meus pagamentos antes de assinar.',
+          payment: paymentRowToCreditsChargePayload(pendingExisting),
+        });
+        return;
+      }
     }
-
-    const displayName =
-      (body?.name ?? '').toString().trim() ||
-      (authUser.profile_handle ? `@${authUser.profile_handle}` : authUser.username);
-    const email = authUser.username.includes('@')
-      ? authUser.username
-      : `user${userId}@payments.influencer.local`;
-    const externalRef = `user_${userId}`;
 
     const customerRes = await resolveAsaasCustomerId({
       externalRef,
@@ -3570,17 +3837,22 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
     } catch (updateErr) {
       console.warn('[plan-subscribe] Asaas updateCustomer:', updateErr);
     }
-    try {
-      authDb.setBillingCpfCnpj(userId, cpfDigits);
-    } catch (saveDocErr) {
-      console.warn('[plan-subscribe] setBillingCpfCnpj:', saveDocErr);
+    if (req.user) {
+      try {
+        authDb.setBillingCpfCnpj(userId, cpfDigits);
+      } catch (saveDocErr) {
+        console.warn('[plan-subscribe] setBillingCpfCnpj:', saveDocErr);
+      }
     }
 
-    const nextDue = new Date();
-    const nextDueStr = nextDue.toISOString().slice(0, 10);
+    const nextDueStr = addDaysLocalYyyyMmDd(BUSCA_PLAN_TRIAL_DAYS);
     const credits = plan.credits;
     const valueBrl = plan.priceBrl;
     const amountCents = credits * CREDITS_PRICE_CENTS;
+
+    const subscriptionExtRef = req.user
+      ? `plan_${planId}_user_${userId}_${Date.now()}`
+      : `plan_${planId}_guest_${crypto.randomUUID().replace(/-/g, '')}_${Date.now()}`;
 
     const subscription = await asaas.createSubscription({
       customer: asaasCustomerId,
@@ -3589,7 +3861,23 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
       nextDueDate: nextDueStr,
       cycle: 'MONTHLY',
       description: `${plan.name} - Busca Influencer (mensal)`,
-      externalReference: `plan_${planId}_user_${userId}_${Date.now()}`,
+      externalReference: subscriptionExtRef,
+      creditCard: {
+        holderName: cardHolderName,
+        number: cardDigits,
+        expiryMonth: exp.month,
+        expiryYear: exp.year,
+        ccv,
+      },
+      creditCardHolderInfo: {
+        name: displayName,
+        email,
+        cpfCnpj: cpfDigits,
+        postalCode: postalCodeDigits,
+        addressNumber: holderAddressNumber,
+        phone: holderPhoneDigits,
+        ...(holderPhoneDigits.length === 11 ? { mobilePhone: holderPhoneDigits } : {}),
+      },
     });
     const subscriptionId = subscription?.id ?? null;
     if (!subscriptionId) {
@@ -3602,6 +3890,80 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
     const invoiceUrl = asaasPayment?.invoiceUrl ?? null;
     const bankSlipUrl = asaasPayment?.bankSlipUrl ?? null;
     const remoteStatus = (asaasPayment?.status ?? 'PENDING').toUpperCase();
+
+    let subscriptionIdToStore = subscriptionId;
+    if (asaasPaymentId && asaas.isAsaasConfigured()) {
+      try {
+        const payDetail = await asaas.getPayment(asaasPaymentId);
+        const linkedSub = asaasPaymentLinkedSubscriptionId(payDetail);
+        if (linkedSub && linkedSub !== subscriptionId) {
+          console.warn(
+            '[plan-subscribe] Cobrança vincula assinatura',
+            linkedSub,
+            'POST /subscriptions retornou',
+            subscriptionId
+          );
+          subscriptionIdToStore = linkedSub;
+        }
+      } catch (e) {
+        console.warn('[plan-subscribe] getPayment pós-assinatura:', e instanceof Error ? e.message : e);
+      }
+      try {
+        const subRow = await asaas.getSubscription(subscriptionIdToStore);
+        if (!subRow?.id) {
+          console.warn('[plan-subscribe] GET /subscriptions/:id sem id — confira ambiente Asaas');
+        }
+      } catch (e) {
+        console.warn('[plan-subscribe] getSubscription:', e instanceof Error ? e.message : e);
+      }
+    }
+
+    if (!asaasPaymentId) {
+      res.status(502).json({
+        error: 'Não foi possível confirmar a cobrança no gateway. Tente novamente em instantes ou em Meus pagamentos.',
+      });
+      return;
+    }
+    if (isAsaasPlanFirstPaymentRejected(remoteStatus)) {
+      res.status(402).json({
+        error: 'Cartão recusado ou cobrança não autorizada. Confira os dados do cartão ou use outro cartão.',
+      });
+      return;
+    }
+
+    if (!req.user) {
+      const passwordHash = hashPassword(guestPasswordPlain!);
+      userId = authDb.createUser(
+        email,
+        passwordHash,
+        'assinante' as AuthScope,
+        null,
+        guestNameTrim,
+        0
+      );
+      const created = authDb.getById(userId);
+      if (!created) {
+        res.status(500).json({ error: 'Erro ao criar conta após confirmação do pagamento' });
+        return;
+      }
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+      authDb.setEmailVerification(userId, verificationToken, expiresAt);
+      const frontBase = process.env.FRONTEND_BASE_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
+      const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
+      void sendVerificationEmail({
+        to: email,
+        subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
+        verifyUrl,
+        bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+      }).catch(() => {});
+      try {
+        authDb.setBillingCpfCnpj(userId, cpfDigits);
+      } catch (saveDocErr) {
+        console.warn('[plan-subscribe] setBillingCpfCnpj (guest):', saveDocErr);
+      }
+    }
+
     const localStatus =
       remoteStatus === 'RECEIVED' || remoteStatus === 'CONFIRMED' || remoteStatus === 'RECEIVED_IN_CASH'
         ? 'CONFIRMED'
@@ -3619,7 +3981,8 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
       bankSlipUrl,
       pixCopyPaste: null,
       planId,
-      asaasSubscriptionId: subscriptionId,
+      asaasSubscriptionId: subscriptionIdToStore,
+      planFirstDueDate: nextDueStr,
     });
 
     if (localStatus === 'CONFIRMED' && asaasPaymentId) {
@@ -3629,20 +3992,22 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
       }
     }
 
-    res.status(201).json({
-      ...(issuedToken
-        ? {
-            token: issuedToken,
-            user: {
-              id: authUser.id,
-              username: authUser.username,
-              scope: authUser.scope,
-              profile_handle: authUser.profile_handle,
-              email_verified: authUser.email_verified === 1 ? true : false,
+    const authRowFinal = authDb.getById(userId);
+    const tokenGuest =
+      !req.user && authRowFinal
+        ? signJwt(
+            {
+              sub: String(userId),
+              username: authRowFinal.username,
+              scope: 'assinante' as AuthScope,
+              profile_handle: authRowFinal.profile_handle ?? undefined,
             },
-          }
-        : {}),
-      subscriptionId,
+            getJwtSecret()
+          )
+        : undefined;
+
+    res.status(201).json({
+      subscriptionId: subscriptionIdToStore,
       paymentId,
       asaasPaymentId,
       status: localStatus,
@@ -3654,6 +4019,19 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
       bankSlipUrl,
       pixCopyPaste: null,
       planId,
+      planFirstInvoiceDue: nextDueStr,
+      ...(tokenGuest && authRowFinal
+        ? {
+            token: tokenGuest,
+            user: {
+              id: authRowFinal.id,
+              username: authRowFinal.username,
+              scope: authRowFinal.scope,
+              profile_handle: authRowFinal.profile_handle,
+              email_verified: authRowFinal.email_verified === 1 ? true : false,
+            },
+          }
+        : {}),
     });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -3824,7 +4202,7 @@ app.post('/api/checkout/report-price-preview', async (req: Request, res: Respons
 app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAuth, res: Response) => {
   try {
     if (!asaas.isAsaasConfigured()) {
-      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      respondPaymentsUnavailable(res);
       return;
     }
     const body = req.body as { email?: string; password?: string; name?: string; cpfCnpj?: string; query?: ProfilesSearchQuery; desiredCount?: number; billingType?: string; expiresAt?: string };
@@ -4094,7 +4472,7 @@ app.post('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
       return;
     }
     if (!asaas.isAsaasConfigured()) {
-      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      respondPaymentsUnavailable(res);
       return;
     }
     const userId = Number(req.user.sub);
@@ -4938,7 +5316,7 @@ app.post('/api/campaigns/:id/create-payment', async (req: RequestWithAuth, res: 
       return;
     }
     if (!asaas.isAsaasConfigured()) {
-      res.status(503).json({ error: 'Pagamentos temporariamente indisponíveis' });
+      respondPaymentsUnavailable(res);
       return;
     }
     const campaignId = String(req.params.id ?? '').trim();
@@ -5310,22 +5688,37 @@ function normalizeHandle(h: string | undefined): string {
   return (h ?? '').replace(/^@/, '').trim().toLowerCase();
 }
 
-/** Base completa (`/campaigns/all/...`): redigir perfil/posts se anônimo ou se o handle não está em nenhuma campanha paga do usuário. */
-function shouldRedactAllBaseCampaignAccess(req: RequestWithAuth, profileHandle: string): boolean {
-  if (!req.user) return true;
+/** Acesso completo ao perfil (assinatura ativa, campanha paga com o handle, próprio perfil, favorito, adm). */
+function hasFullProfileDataAccess(req: RequestWithAuth, profileHandle: string): boolean {
   const handle = normalizeHandle(profileHandle);
-  if (!handle) return false;
-  if (canEditProfile(req.user, handle)) return false;
-  const userId = Number(req.user.sub);
-  const favoriteHandles = sqlite.getFavoriteHandles(userId);
-  if (favoriteHandles.some((h) => normalizeHandle(h) === handle)) return false;
-  const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
-  return !union.some((h) => normalizeHandle(String(h)) === handle);
+  if (!handle || !req.user) return false;
+  const user = req.user;
+  if (canEditProfile(user, handle)) return true;
+  const loggedHandle = normalizeHandle(user.profile_handle ?? '');
+  if (loggedHandle && loggedHandle === handle) return true;
+  const userId = Number(user.sub);
+  if (!Number.isFinite(userId)) return false;
+  const favorites = sqlite.getFavoriteHandles(userId);
+  if (favorites.some((h) => normalizeHandle(h) === handle)) return true;
+  if (user.scope === 'assinante' && paymentsDb.hasActivePlanSubscription(userId)) return true;
+  const campaignIdRaw = (req.headers[X_CAMPAIGN_ID] ?? req.headers['x-campaign-id']) as string | undefined;
+  const campaignId = typeof campaignIdRaw === 'string' ? campaignIdRaw.trim() : '';
+  if (campaignId && campaignId.toLowerCase() !== 'all' && isCampaignIdGuid(campaignId)) {
+    const handles = creditsCampaignsDb.getCampaignHandlesIfActiveAndPaid(campaignId, userId);
+    if (handles?.some((h) => normalizeHandle(h) === handle)) return true;
+  }
+  return false;
+}
+
+/** Prévia pública (hero + LLM): anônimo ou sem direito de ver dados completos — logado ou não. */
+function shouldUsePublicProfilePreview(req: RequestWithAuth, profileHandle: string): boolean {
+  return !hasFullProfileDataAccess(req, profileHandle);
 }
 
 /**
  * Middleware: autoriza acesso a dados de um perfil somente se (1) o usuário logado é o dono do perfil, ou
- * (2) o header X-Campaign-Id é enviado com um GUID de campanha do usuário que contenha o handle.
+ * (2) o header X-Campaign-Id é enviado com um GUID de campanha do usuário que contenha o handle, ou
+ * (3) o usuário é assinante com plano ativo (incl. período de trial da 1ª cobrança).
  * Preenche req.allowedCampaignId quando liberado via campanha.
  * getHandle: extrai o handle da requisição (ex.: req => req.params.handle ou req => req.query.profile).
  * requireHandle: se true, retorna 403 quando getHandle retorna vazio (ex.: GET /api/posts sem profile).
@@ -5377,6 +5770,11 @@ function requireProfileOrCampaign(
       next();
       return;
     }
+    if (req.user.scope === 'assinante' && paymentsDb.hasActivePlanSubscription(userId)) {
+      (req as RequestWithAuth).allowedCampaignId = undefined;
+      next();
+      return;
+    }
     const campaignIdRaw = (req.headers[X_CAMPAIGN_ID] ?? req.headers['x-campaign-id']) as string | undefined;
     const campaignId = typeof campaignIdRaw === 'string' ? campaignIdRaw.trim() : '';
     if (!campaignId) {
@@ -5387,10 +5785,7 @@ function requireProfileOrCampaign(
       return;
     }
     if (campaignId.toLowerCase() === 'all') {
-      const union = creditsCampaignsDb.getAllPaidHandlesUnion(userId);
-      const inPaid = union.some((h) => normalizeHandle(String(h)) === handle);
       (req as RequestWithAuth).allowedCampaignId = 'all';
-      (req as RequestWithAuth).allBaseOutsidePaidCampaigns = !inPaid;
       next();
       return;
     }
@@ -5610,8 +6005,20 @@ app.get('/api/campaigns/all/profiles/:handle', rateLimitDataApi, async (req: Req
     }
     const profile = value as Record<string, unknown>;
     res.setHeader('Cache-Control', 'no-store');
-    if (shouldRedactAllBaseCampaignAccess(req, handle)) {
-      res.json(redactProfile(profile, { allBasePreview: true }));
+    if (shouldUsePublicProfilePreview(req, handle)) {
+      const summary = await getProfileSummary(db, handle);
+      if (summary == null) {
+        res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
+        return;
+      }
+      res.json(
+        buildPublicProfilePreview(
+          handle,
+          summary.profile,
+          summary.engagement as unknown as Record<string, unknown>,
+          await getProfileEngagementByType(db, handle)
+        )
+      );
       return;
     }
     res.json(redactContactInfoInProfile(profile));
@@ -5685,7 +6092,7 @@ app.get('/api/campaigns/all/profiles/:handle/activation', rateLimitDataApi, asyn
       }
     }
     res.setHeader('Cache-Control', 'no-store');
-    if (shouldRedactAllBaseCampaignAccess(req, handle)) {
+    if (shouldUsePublicProfilePreview(req, handle)) {
       res.json({ _redacted: true, _all_base_preview: true });
       return;
     }
@@ -5763,18 +6170,18 @@ app.post('/api/admin/users/:userId/credits', requireScopes('adm'), async (req: R
   }
 });
 
-/** Dados de ativação do perfil. Só retorna dados completos se for o próprio influenciador ou com X-Campaign-Id. */
+/** Dados de ativação do perfil. Anônimo: vazio/redigido; logado: mesmas regras de acesso que GET /api/profiles/:handle. */
 app.get(
   '/api/profiles/:handle/activation',
   rateLimitDataApi,
   requireProfileOrCampaign((req) => req.params.handle, { requireAuth: false }),
   async (req: RequestWithAuth, res: Response) => {
     try {
-      if (!req.user) {
-        res.status(200).json({ _redacted: true });
+      const handle = normalizeHandle(req.params.handle);
+      if (shouldUsePublicProfilePreview(req, handle)) {
+        res.status(200).json({ _redacted: true, _all_base_preview: true });
         return;
       }
-      const handle = normalizeHandle(req.params.handle);
       const data = sqlite.getActivation(handle);
       if (data == null) {
         res.status(200).json({});
@@ -5899,29 +6306,44 @@ app.put('/api/profiles/:handle/activation', async (req: RequestWithAuth, res: Re
   }
 });
 
-/** Perfil por handle. Só retorna dados se for o próprio influenciador ou com X-Campaign-Id de campanha que contenha o perfil. */
+/** Perfil por handle. Anônimo ou sem campanha paga: prévia redigida (hero + engagement); acesso completo conforme assinatura/campanha/próprio perfil. */
 app.get(
   '/api/profiles/:handle',
   rateLimitDataApi,
-  requireProfileOrCampaign((req) => req.params.handle),
   async (req: RequestWithAuth, res: Response) => {
     try {
       const handle = normalizeHandle(req.params.handle);
-      const value = await db.get('profile', handle);
-      if (value == null) {
+      const summary = await getProfileSummary(db, handle);
+      if (summary == null) {
         res.status(404).json({ error: 'Perfil não encontrado', handle: req.params.handle });
         return;
       }
-      const profile = value as Record<string, unknown>;
       res.setHeader('Cache-Control', 'no-store');
-      res.json(redactContactInfoInProfile(profile));
+      if (shouldUsePublicProfilePreview(req, handle)) {
+        res.json(
+          buildPublicProfilePreview(
+            handle,
+            summary.profile,
+            summary.engagement as unknown as Record<string, unknown>,
+            await getProfileEngagementByType(db, handle)
+          )
+        );
+        return;
+      }
+      const prof = summary.profile as Record<string, unknown>;
+      const fc = getFollowersFromProfile(prof);
+      if (fc > 0) prof.followers_count = fc;
+      const out = redactContactInfoInProfile(prof) as Record<string, unknown>;
+      out.engagement = summary.engagement;
+      out.engagementByType = await getProfileEngagementByType(db, handle);
+      res.json(out);
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
   }
 );
 
-/** Resumo do perfil com engagement e BI. Só retorna dados completos se for o próprio influenciador ou com X-Campaign-Id. */
+/** Resumo do perfil com engagement e BI. Anônimo: preview redigido; logado: mesmas regras de acesso que GET /api/profiles/:handle. */
 app.get(
   '/api/profiles/:handle/summary',
   rateLimitDataApi,
@@ -5935,11 +6357,15 @@ app.get(
         return;
       }
       res.setHeader('Cache-Control', 'no-store');
-      if (!req.user) {
+      if (shouldUsePublicProfilePreview(req, handle)) {
         res.json({
-          profile: redactProfile(summary.profile, { allBasePreview: true }),
+          profile: buildPublicProfilePreview(
+            handle,
+            summary.profile,
+            summary.engagement as unknown as Record<string, unknown>,
+            await getProfileEngagementByType(db, handle)
+          ),
           engagement: summary.engagement,
-          bi: summary.bi,
         });
         return;
       }
@@ -5974,7 +6400,7 @@ function getContentTypeFromItem(key: string, value: Record<string, unknown>): st
   return 'post';
 }
 
-/** Posts/reels/marcados/highlights do perfil. Requer profile=@handle (próprio ou com X-Campaign-Id). */
+/** Posts/reels/marcados/highlights do perfil. Requer profile=@handle; acesso conforme requireProfileOrCampaign. */
 app.get(
   '/api/posts',
   rateLimitDataApi,
@@ -6006,12 +6432,8 @@ app.get(
         if (!item.content_type) item.content_type = getContentTypeFromItem(key, item);
         return { key, ...item };
       });
-      if (!req.user) {
-        res.json({ total, items: redactPostsItems(slice), _redacted: true, _all_base_preview: true });
-        return;
-      }
-      if ((req as RequestWithAuth).allBaseOutsidePaidCampaigns === true) {
-        res.json({ total, items: redactPostsItems(slice), _redacted: true });
+      if (profileFilter && shouldUsePublicProfilePreview(req, profileFilter)) {
+        res.json({ total: 0, items: [], _redacted: true, _all_base_preview: true });
         return;
       }
       res.json({ total, items: preparePostItemsForApiResponse(slice) });
@@ -6810,6 +7232,17 @@ async function runExtractAndStore(handle: string, runOptions?: RunOneExtractOpti
       });
       return;
     }
+    if (!result.success) {
+      const err =
+        result.error ??
+        (result.rejectionReason === 'nao_segue_perfil'
+          ? 'nao_segue_perfil'
+          : result.rejectionReason
+            ? `Perfil não qualificado: ${result.rejectionReason}`
+            : 'Falha ao extrair perfil (página ou API)');
+      extractProfileResults.set(handle, { status: 'error', error: err });
+      return;
+    }
     extractProfileResults.set(handle, { status: 'done', result });
     console.log(`[runExtractAndStore] ${logTimestamp()} @${handle} pronto em ${Date.now() - t0}ms (status=done)`);
   } catch (e) {
@@ -7063,6 +7496,12 @@ app.get('/api-docs', (_req: Request, res: Response) => {
     console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
     console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
     logS3StartupStatus({ envPath: BACKEND_ENV_PATH, backendRoot: BACKEND_ROOT });
+    const asaasReason = asaas.paymentsUnavailableReason();
+    if (asaasReason) {
+      console.warn(`[asaas] ${asaasReason} — endpoints de pagamento retornam 503 até configurar a chave.`);
+    } else {
+      console.log(`[asaas] API configurada (${asaas.isAsaasSandbox() ? 'sandbox' : 'produção'}).`);
+    }
     // Aquecer o browser em background para o primeiro extract-profile não esperar abrir o Chromium
     getApiExtractClient()
       .init()

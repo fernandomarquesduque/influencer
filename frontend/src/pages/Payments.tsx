@@ -3,7 +3,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Card, Table, Button, Typography, Spin, Alert, Tag } from 'antd'
+import { Card, Table, Button, Spin, Alert, Tag } from 'antd'
 import { useAuth } from '../contexts/AuthContext'
 import {
   fetchMyPayments,
@@ -12,9 +12,10 @@ import {
   type CreatePaymentForCreditsResponse,
 } from '../api'
 import PendingPaymentCard from '../components/PendingPaymentCard/PendingPaymentCard'
+import BuscaInfluencerPlansPanel, {
+  useBuscaPlansSubscriptionAccess,
+} from '../components/BuscaInfluencerPlansModal/BuscaInfluencerPlansPanel'
 import './Payments.css'
-
-const { Text } = Typography
 
 const STATUS_LABELS: Record<string, string> = {
   PENDING: 'Pendente',
@@ -64,18 +65,23 @@ export default function Payments() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, loading: authLoading } = useAuth()
+  const plansAccess = useBuscaPlansSubscriptionAccess(user?.scope === 'assinante')
   const [payments, setPayments] = useState<PaymentItem[]>([])
   const [pendingPayment, setPendingPayment] = useState<CreatePaymentForCreditsResponse | null>(null)
+  const [pendingLoading, setPendingLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const pendingCardRef = useRef<HTMLDivElement | null>(null)
 
   const loadPendingPayment = useCallback(async () => {
+    setPendingLoading(true)
     try {
       const p = await fetchMyPendingPayment()
       setPendingPayment(p)
     } catch {
       setPendingPayment(null)
+    } finally {
+      setPendingLoading(false)
     }
   }, [])
 
@@ -124,14 +130,32 @@ export default function Payments() {
   }
 
   const completedPayments = payments.filter((p) => p.status !== 'PENDING' && p.status !== 'OVERDUE')
+  const showPlansPanel =
+    user.scope === 'assinante' &&
+    !plansAccess.loading &&
+    !plansAccess.active &&
+    !pendingPayment &&
+    !pendingLoading
 
   return (
-    <div className="app-page" style={{ maxWidth: 960, margin: '0 auto', padding: 24 }}>
+    <div className="app-page payments-page" style={{ maxWidth: 960, margin: '0 auto', padding: 24 }}>
       {error && (
         <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} onClose={() => setError(null)} closable />
       )}
 
-      {pendingPayment ? (
+      {showPlansPanel ? (
+        <div className="payments-page__plans">
+          <BuscaInfluencerPlansPanel className="busca-plans-panel--inline-page" checkSubscription />
+        </div>
+      ) : null}
+
+      {pendingLoading ? (
+        <div ref={pendingCardRef} className="payments-page__pending-loader-wrap">
+          <Card className="payments-page__pending-loader" bordered>
+            <Spin size="large" tip="Carregando informações do plano…" />
+          </Card>
+        </div>
+      ) : pendingPayment ? (
         <div ref={pendingCardRef}>
           <PendingPaymentCard
             payment={pendingPayment}
@@ -141,20 +165,8 @@ export default function Payments() {
         </div>
       ) : null}
 
-      <Card title="Histórico de pagamentos" className="payments-history-card">
-        {loading ? (
-          <div style={{ padding: 48, textAlign: 'center' }}>
-            <Spin />
-          </div>
-        ) : completedPayments.length === 0 ? (
-          <div style={{ padding: '24px 20px' }}>
-            <Text type="secondary">
-              {pendingPayment
-                ? 'Nenhum pagamento concluído ainda. A fatura em aberto aparece acima.'
-                : 'Nenhum pagamento concluído ainda.'}
-            </Text>
-          </div>
-        ) : (
+      {completedPayments.length > 0 ? (
+        <Card title="Histórico de pagamentos" className="payments-history-card">
           <Table
             className="payments-history-table"
             dataSource={completedPayments}
@@ -164,6 +176,7 @@ export default function Payments() {
             bordered
             tableLayout="fixed"
             scroll={{ x: 'max-content' }}
+            loading={loading}
             columns={[
               {
                 title: 'Data',
@@ -236,8 +249,8 @@ export default function Payments() {
               },
             ]}
           />
-        )}
-      </Card>
+        </Card>
+      ) : null}
     </div>
   )
 }

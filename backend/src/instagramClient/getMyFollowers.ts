@@ -24,6 +24,55 @@ function withTimeout<T>(p: Promise<T>, ms: number, step: string): Promise<T> {
   ]);
 }
 
+/** Clica no link de seguidores no perfil (layout antigo e novo do Instagram web). */
+async function clickFollowersLinkOnProfile(page: Page): Promise<boolean> {
+  const selectors = [
+    'header a[href*="followers"]',
+    'main a[href*="followers"]',
+    'a[href*="/followers/"]',
+  ];
+  for (const sel of selectors) {
+    const link = page.locator(sel).first();
+    if ((await link.count()) === 0) continue;
+    try {
+      await link.waitFor({ state: 'visible', timeout: 6000 });
+      await link.click({ timeout: 6000 });
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  for (const name of [/seguidores/i, /followers/i]) {
+    const byRole = page.getByRole('link', { name }).first();
+    if ((await byRole.count()) === 0) continue;
+    try {
+      await byRole.click({ timeout: 6000 });
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return page
+    .evaluate(() => {
+      const tryClick = (el: Element | null) => {
+        if (!el || !(el instanceof HTMLAnchorElement)) return false;
+        el.click();
+        return true;
+      };
+      for (const a of document.querySelectorAll<HTMLAnchorElement>('header a[href*="followers"], main a[href*="followers"]')) {
+        if (tryClick(a)) return true;
+      }
+      for (const a of document.querySelectorAll<HTMLAnchorElement>('header a[role="link"], main a[role="link"]')) {
+        const t = (a.textContent ?? '').toLowerCase();
+        if (/\d/.test(t) && (t.includes('seguidor') || t.includes('follower'))) {
+          if (tryClick(a)) return true;
+        }
+      }
+      return false;
+    })
+    .catch(() => false);
+}
+
 /** Fecha modais de notificação (Ativar notificações, etc.) que atrapalham. */
 async function dismissModals(page: Page, maxAttempts = 2): Promise<void> {
   const notNow = [
@@ -160,15 +209,12 @@ export async function getMyFollowers(
     logStep(t0, 'Fechando modais de notificação (se houver)...');
     await withTimeout(dismissModals(page), 8000, 'dismissModals');
 
-    // Link "X seguidores" no perfil (href pode ser /user/followers/ ou /user/followers)
     logStep(t0, 'Procurando link "Seguidores"...');
-    const followersLink = page.locator('main a[href*="followers"]').first();
-    await withTimeout(followersLink.waitFor({ state: 'visible', timeout: 10000 }), 12_000, 'waitFor(link Seguidores)').catch(() => null);
-    if ((await followersLink.count()) === 0) {
+    const clickedFollowers = await withTimeout(clickFollowersLinkOnProfile(page), 14_000, 'click(Seguidores)');
+    if (!clickedFollowers) {
       return { usernames: [], error: 'Link "Seguidores" não encontrado no perfil (verifique se está no perfil correto e se a página carregou).' };
     }
-    logStep(t0, 'Clicando em "Seguidores"...');
-    await withTimeout(followersLink.click({ timeout: 8000 }), 10_000, 'click(Seguidores)');
+    logStep(t0, 'Clicou em "Seguidores".');
     await randomDelay(2000, 3500);
 
     // Esperar o dialog abrir
@@ -272,13 +318,11 @@ export async function openFollowersModal(
     }
     await dismissModals(page);
 
-    const followersLink = page.locator('main a[href*="followers"]').first();
-    await followersLink.waitFor({ state: 'visible', timeout: 10000 }).catch(() => null);
-    if ((await followersLink.count()) === 0) {
+    const clickedFollowers = await clickFollowersLinkOnProfile(page);
+    if (!clickedFollowers) {
       await page.close().catch(() => {});
       return { page: null, error: 'Link "Seguidores" não encontrado.' };
     }
-    await followersLink.click({ timeout: 5000 });
     await randomDelay(1800, 2800);
 
     const dialog = page.locator('div[role="dialog"]').first();
@@ -405,12 +449,10 @@ export async function isHandleMyFollower(
     }
     await dismissModals(page);
 
-    const followersLink = page.locator('main a[href*="followers"]').first();
-    await followersLink.waitFor({ state: 'visible', timeout: 10000 }).catch(() => null);
-    if ((await followersLink.count()) === 0) {
+    const clickedFollowers = await clickFollowersLinkOnProfile(page);
+    if (!clickedFollowers) {
       return { isFollower: false, error: 'Link "Seguidores" não encontrado.' };
     }
-    await followersLink.click({ timeout: 5000 });
     await randomDelay(1800, 2800);
 
     const dialog = page.locator('div[role="dialog"]').first();

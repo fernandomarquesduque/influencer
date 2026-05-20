@@ -9,6 +9,113 @@ import { collectBioRawText, getFollowersFromEntity, isPrivateFromEntity } from '
 const PROFILE_RESPONSE_URL = /graphql\/query/i;
 const TIMEOUT_MS = 25_000;
 
+/** Scripts em string — tsx injeta __name em arrow functions e quebra page.evaluate no browser. */
+const EVAL_SCROLL_LAZY = `
+  var dyN = Number(dy) || 0;
+  function tryScroll(el) {
+    if (!el) return false;
+    if (el.scrollHeight > el.clientHeight + 40) {
+      el.scrollTop += dyN;
+      return true;
+    }
+    return false;
+  }
+  var main = document.querySelector('main');
+  if (tryScroll(main instanceof HTMLElement ? main : null)) return;
+  var rMain = document.querySelector('[role="main"]');
+  if (tryScroll(rMain instanceof HTMLElement ? rMain : null)) return;
+  window.scrollBy(0, dyN);
+  document.documentElement.scrollTop += dyN;
+  document.body.scrollTop += dyN;
+`;
+
+const EVAL_IS_PRIVATE_PAGE = `
+  var raw = document.body ? document.body.innerText : '';
+  var n = raw.toLowerCase().normalize('NFD').replace(/\\p{M}/gu, '').replace(/\\s+/g, ' ');
+  if (n.indexOf('este perfil e privado') !== -1) return true;
+  if (n.indexOf('esta conta e privada') !== -1) return true;
+  if (n.indexOf('perfil e privado') !== -1) return true;
+  if (n.indexOf('conta e privada') !== -1) return true;
+  if (n.indexOf('this account is private') !== -1) return true;
+  var l = raw.toLowerCase();
+  if (l.indexOf('este perfil') !== -1 && l.indexOf('privado') !== -1) return true;
+  if (l.indexOf('this account') !== -1 && l.indexOf('private') !== -1) return true;
+  return false;
+`;
+
+const EVAL_IS_UNAVAILABLE_PAGE = `
+  var raw = document.body ? document.body.innerText : '';
+  var n = raw.toLowerCase().normalize('NFD').replace(/\\p{M}/gu, '').replace(/\\s+/g, ' ');
+  if (n.indexOf('esta pagina nao esta disponivel') !== -1) return true;
+  if (n.indexOf("this page isn't available") !== -1 || n.indexOf('this page is not available') !== -1) return true;
+  if (n.indexOf('sorry, this page') !== -1 || n.indexOf('sorry this page') !== -1) return true;
+  return false;
+`;
+
+const EVAL_READ_FOLLOWERS_DOM = `
+  function readFollowersLink(a) {
+    var txt = a.textContent || '';
+    if (!/\\bseguidores\\b/i.test(txt) && !/\\bfollowers?\\b/i.test(txt)) return null;
+    var span = a.querySelector('span[title]');
+    var t = span && span.getAttribute('title') ? span.getAttribute('title').trim() : '';
+    if (!t) return null;
+    var numStr = t.replace(/\\s/g, '').replace(/\\./g, '').replace(',', '.');
+    var n = parseFloat(numStr);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  }
+  var header = document.querySelector('header');
+  if (header) {
+    var links = header.querySelectorAll('a[role="link"], a[href*="/followers/"]');
+    for (var i = 0; i < links.length; i++) {
+      var n0 = readFollowersLink(links[i]);
+      if (n0 != null) return n0;
+    }
+  }
+  var main = document.querySelector('main');
+  if (main) {
+    var tops = [];
+    var firstSec = main.querySelector('section');
+    if (firstSec) tops.push(firstSec);
+    var children = Array.from(main.children).slice(0, 5);
+    for (var c = 0; c < children.length; c++) {
+      if (children[c] !== firstSec) tops.push(children[c]);
+    }
+    for (var t = 0; t < tops.length; t++) {
+      var root = tops[t];
+      var walked = 0;
+      var alinks = root.querySelectorAll('a[role="link"], a[href*="/followers/"], a._a6hd');
+      for (var j = 0; j < alinks.length; j++) {
+        if (walked++ > 50) break;
+        var n1 = readFollowersLink(alinks[j]);
+        if (n1 != null) return n1;
+      }
+    }
+  }
+  var secs = Array.from(document.querySelectorAll('body > section')).slice(0, 4);
+  for (var s = 0; s < secs.length; s++) {
+    var walked2 = 0;
+    var alinks2 = secs[s].querySelectorAll('a[role="link"], a._a6hd');
+    for (var k = 0; k < alinks2.length; k++) {
+      if (walked2++ > 40) break;
+      var n2 = readFollowersLink(alinks2[k]);
+      if (n2 != null) return n2;
+    }
+  }
+  return null;
+`;
+
+const EVAL_PROFILE_HEADER_TEXT = `
+  var bits = [];
+  var h = document.querySelector('header');
+  if (h) bits.push((h.textContent || '').slice(0, 6000));
+  var main = document.querySelector('main');
+  if (main) {
+    var ch = Array.from(main.children).slice(0, 3);
+    for (var i = 0; i < ch.length; i++) bits.push((ch[i].textContent || '').slice(0, 4000));
+  }
+  return bits.join(' ').slice(0, 14000);
+`;
+
 /** Respostas GraphQL são grandes; acúmulo ilimitado + várias abas → heap de vários GB. */
 const MAX_CAPTURED_GRAPHQL_BODIES = 72;
 const MAX_MINIMAL_USER_BODIES = 22;
@@ -33,24 +140,7 @@ function pushMinimalUserBody(capturedBodies: Record<string, unknown>[], body: Re
  * (isso deixava cada passo de scroll na casa de segundos ou minutos).
  */
 async function scrollInstagramProfileLazyStep(page: Page, deltaY: number): Promise<void> {
-  await page.evaluate((dy) => {
-    const dyN = Number(dy) || 0;
-    const tryScroll = (el: HTMLElement | null): boolean => {
-      if (!el) return false;
-      if (el.scrollHeight > el.clientHeight + 40) {
-        el.scrollTop += dyN;
-        return true;
-      }
-      return false;
-    };
-    const main = document.querySelector('main');
-    if (tryScroll(main instanceof HTMLElement ? main : null)) return;
-    const rMain = document.querySelector('[role="main"]');
-    if (tryScroll(rMain instanceof HTMLElement ? rMain : null)) return;
-    window.scrollBy(0, dyN);
-    document.documentElement.scrollTop += dyN;
-    document.body.scrollTop += dyN;
-  }, deltaY);
+  await page.evaluate(new Function('dy', EVAL_SCROLL_LAZY) as (dy: number) => void, deltaY);
 }
 
 function getIn(obj: unknown, path: string): unknown {
@@ -85,23 +175,7 @@ export const INSTAGRAM_PROFILE_PRIVATE_DETAIL =
  */
 export async function isInstagramPrivateProfilePage(page: Page): Promise<boolean> {
   try {
-    const hit = await page.evaluate(() => {
-      const raw = document.body?.innerText ?? '';
-      const n = raw
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/\p{M}/gu, '')
-        .replace(/\s+/g, ' ');
-      if (n.includes('este perfil e privado')) return true;
-      if (n.includes('esta conta e privada')) return true;
-      if (n.includes('perfil e privado')) return true;
-      if (n.includes('conta e privada')) return true;
-      if (n.includes('this account is private')) return true;
-      const l = raw.toLowerCase();
-      if (l.includes('este perfil') && l.includes('privado')) return true;
-      if (l.includes('this account') && l.includes('private')) return true;
-      return false;
-    });
+    const hit = await page.evaluate(new Function(EVAL_IS_PRIVATE_PAGE) as () => boolean);
     if (hit) return true;
     return await page
       .getByText(/este perfil.{0,24}privado/i)
@@ -118,19 +192,7 @@ export async function isInstagramPrivateProfilePage(page: Page): Promise<boolean
  */
 export async function isInstagramProfileUnavailablePage(page: Page): Promise<boolean> {
   try {
-    return await page.evaluate(() => {
-      const raw = document.body?.innerText ?? '';
-      const n = raw
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/\p{M}/gu, '')
-        .replace(/\s+/g, ' ');
-      if (n.includes('esta pagina nao esta disponivel')) return true;
-      if (n.includes("this page isn't available") || n.includes('this page is not available'))
-        return true;
-      if (n.includes('sorry, this page') || n.includes('sorry this page')) return true;
-      return false;
-    });
+    return await page.evaluate(new Function(EVAL_IS_UNAVAILABLE_PAGE) as () => boolean);
   } catch {
     return false;
   }
@@ -191,66 +253,13 @@ export async function readFollowersFromDOM(page: Page): Promise<number | null> {
   if (classicN != null) return classicN;
 
   /** Só topo do perfil — nunca `querySelectorAll` em todo o `main` (feed = milhares de nós, ~30s). */
-  const fromDomJs = await page.evaluate(() => {
-    const readFollowersLink = (a: Element): number | null => {
-      const txt = a.textContent ?? '';
-      if (!/\bseguidores\b/i.test(txt) && !/\bfollowers?\b/i.test(txt)) return null;
-      const span = a.querySelector('span[title]');
-      const t = span?.getAttribute('title')?.trim();
-      if (!t) return null;
-      const numStr = t.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
-      const n = parseFloat(numStr);
-      return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
-    };
-    const header = document.querySelector('header');
-    if (header) {
-      for (const a of header.querySelectorAll('a[role="link"], a[href*="/followers/"]')) {
-        const n = readFollowersLink(a);
-        if (n != null) return n;
-      }
-    }
-    const main = document.querySelector('main');
-    if (main) {
-      const tops: Element[] = [];
-      const firstSec = main.querySelector('section');
-      if (firstSec) tops.push(firstSec);
-      for (const c of Array.from(main.children).slice(0, 5)) {
-        if (c !== firstSec) tops.push(c);
-      }
-      for (const root of tops) {
-        let walked = 0;
-        for (const a of root.querySelectorAll('a[role="link"], a[href*="/followers/"], a._a6hd')) {
-          if (walked++ > 50) break;
-          const n = readFollowersLink(a);
-          if (n != null) return n;
-        }
-      }
-    }
-    for (const sec of Array.from(document.querySelectorAll('body > section')).slice(0, 4)) {
-      let walked = 0;
-      for (const a of sec.querySelectorAll('a[role="link"], a._a6hd')) {
-        if (walked++ > 40) break;
-        const n = readFollowersLink(a);
-        if (n != null) return n;
-      }
-    }
-    return null as number | null;
-  });
+  const fromDomJs = await page.evaluate(
+    new Function(EVAL_READ_FOLLOWERS_DOM) as () => number | null
+  );
   if (fromDomJs != null) return fromDomJs;
 
   /** textContent só em header + primeiros blocos do main — `innerText` no main inteiro trava o Chrome (~30s). */
-  const tinyText = await page.evaluate(() => {
-    const bits: string[] = [];
-    const h = document.querySelector('header');
-    if (h) bits.push((h.textContent ?? '').slice(0, 6000));
-    const main = document.querySelector('main');
-    if (main) {
-      for (const c of Array.from(main.children).slice(0, 3)) {
-        bits.push((c.textContent ?? '').slice(0, 4000));
-      }
-    }
-    return bits.join(' ').slice(0, 14_000);
-  });
+  const tinyText = await page.evaluate(new Function(EVAL_PROFILE_HEADER_TEXT) as () => string);
   const fromSnippet = parseFollowersFromText(tinyText.replace(/\s+/g, ' '));
   if (fromSnippet != null) return fromSnippet;
 

@@ -16,6 +16,7 @@ import {
   FOLLOWERS_SIZE_BUCKETS,
 } from './followersSizeBuckets.js';
 import { snapMainCategoryToTaxonomy } from '../lib/mainCategoryTaxonomy.js';
+import { getFollowersFromEntity } from '../utils/entityAccess.js';
 import { searchHandlesViaMeilisearch, buildMeilisearchFilterExpr } from '../search/meilisearchProfile.js';
 
 /**
@@ -207,11 +208,16 @@ function getDataUser(profile: Record<string, unknown>): Record<string, unknown> 
 
 /** Extrai seguidores do perfil (vários formatos da API). */
 function getFollowers(profile: Record<string, unknown>): number {
+  const fromEntity = getFollowersFromEntity(profile);
+  if (fromEntity > 0) return fromEntity;
   const fromPaths = getIn(
     profile,
     'followers_count',
+    'follower_count',
     'data.user.follower_count',
     'data.user.edge_followed_by.count',
+    'data.xdt_api__v1__feed__user_timeline_graphql_connection.feed_user.follower_count',
+    'data.xdt_api__v1__feed__user_timeline_graphql_connection.feed_user.edge_followed_by.count',
     'graphql.user.edge_followed_by.count'
   );
   if (fromPaths !== undefined && fromPaths !== null) return toNum(fromPaths);
@@ -2470,4 +2476,34 @@ export async function getProfileSummary(
     }
   }
   return { profile, engagement, bi };
+}
+
+/** ER por tipo de conteúdo (feed, reels, marcados) para prévia pública do perfil. */
+export async function getProfileEngagementByType(
+  db: CompositeStorage,
+  handle: string
+): Promise<{
+  posts: { er: number; count: number };
+  reels: { er: number; count: number };
+  tagged: { er: number; count: number };
+}> {
+  const key = handle.toLowerCase().replace(/^@/, '');
+  const profile = await db.get<Record<string, unknown>>('profile', key);
+  const followersCount = profile != null ? getFollowers(profile) : 0;
+  const postsRaw = await db.getByBucket<Record<string, unknown>>('post', key + ':');
+  const posts = postsRaw.map(({ value }) => value);
+  const byType = (type: string) =>
+    posts.filter((p) => {
+      const ct = typeof p.content_type === 'string' ? p.content_type.toLowerCase() : 'post';
+      return ct === type;
+    });
+  const toSlot = (list: Record<string, unknown>[]) => {
+    const e = computeEngagement(list, followersCount);
+    return { er: e.engagement_rate ?? 0, count: e.posts_count };
+  };
+  return {
+    posts: toSlot(byType('post')),
+    reels: toSlot(byType('reel')),
+    tagged: toSlot(byType('tagged')),
+  };
 }

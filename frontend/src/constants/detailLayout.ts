@@ -9,7 +9,6 @@ export const DETAIL_SECTION_ORDER = [
   'metricasMediakit',   // Métricas (blur como preços) — logo acima de valorEpublico
   'valorEpublico',      // Valor estimado (Feed, Reels, Story, Destaque) — preços
   'conteudoPerforma',   // Posts (Análise de Feed), Reels, Marcados
-  'metricasEstrategicas',
 ] as const
 
 export type DetailSectionId = typeof DETAIL_SECTION_ORDER[number]

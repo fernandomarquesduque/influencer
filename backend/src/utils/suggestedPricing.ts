@@ -4,6 +4,8 @@
  * Usado no GET /api/profiles/:handle/activation quando o usuário não informou preços.
  */
 
+import { getFollowersFromEntity } from './entityAccess.js';
+
 const PRICE_BUCKET_VALUES = [0, 50, 100, 250, 500, 1000, 2500, 5000, 15000] as const;
 
 const FORMAT_MULTIPLIER: Record<string, number> = {
@@ -74,14 +76,10 @@ export function suggestedPricingToActivationFormat(
 export function getFollowersFromProfile(profile: Record<string, unknown> | null | undefined): number {
   if (!profile || typeof profile !== 'object') return 0;
   const direct = profile.followers_count;
+  if (typeof direct === 'number' && Number.isFinite(direct) && direct > 0) return Math.max(0, direct);
+  const fromEntity = getFollowersFromEntity(profile);
+  if (fromEntity > 0) return fromEntity;
   if (typeof direct === 'number' && Number.isFinite(direct)) return Math.max(0, direct);
-  const data = profile.data as { user?: { follower_count?: number; edge_followed_by?: { count?: number } } } | undefined;
-  const user = data?.user;
-  if (user && typeof user.follower_count === 'number' && Number.isFinite(user.follower_count))
-    return Math.max(0, user.follower_count);
-  const edge = user?.edge_followed_by;
-  if (edge && typeof edge === 'object' && typeof (edge as { count?: number }).count === 'number')
-    return Math.max(0, (edge as { count: number }).count);
   return 0;
 }
 

@@ -45,6 +45,8 @@ export interface PaymentRow {
   /** Assinatura de plano Busca Influencer (Asaas). */
   plan_id?: string | null;
   asaas_subscription_id?: string | null;
+  /** YYYY-MM-DD: vencimento da 1ª cobrança (trial até esta data, inclusive). */
+  plan_first_due_date?: string | null;
 }
 
 export class PaymentsDb {
@@ -95,6 +97,9 @@ export class PaymentsDb {
     if (cols.length > 0 && !cols.some((c) => c.name === 'asaas_subscription_id')) {
       this.db.exec('ALTER TABLE payment ADD COLUMN asaas_subscription_id TEXT');
     }
+    if (cols.length > 0 && !cols.some((c) => c.name === 'plan_first_due_date')) {
+      this.db.exec('ALTER TABLE payment ADD COLUMN plan_first_due_date TEXT');
+    }
     try {
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_payment_campaign_id ON payment(campaign_id)');
     } catch {
@@ -123,6 +128,7 @@ export class PaymentsDb {
     campaignId?: string | null;
     planId?: string | null;
     asaasSubscriptionId?: string | null;
+    planFirstDueDate?: string | null;
   }): string {
     const id = crypto.randomUUID();
     const hasReport = params.reportDesiredCount != null && params.reportDesiredCount > 0;
@@ -131,8 +137,8 @@ export class PaymentsDb {
         `INSERT INTO payment (
           id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
           status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
-          report_query, report_desired_count, campaign_id, plan_id, asaas_subscription_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?, ?, ?)`
+          report_query, report_desired_count, campaign_id, plan_id, asaas_subscription_id, plan_first_due_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -150,7 +156,8 @@ export class PaymentsDb {
         hasReport ? params.reportDesiredCount : null,
         params.campaignId ?? null,
         params.planId ?? null,
-        params.asaasSubscriptionId ?? null
+        params.asaasSubscriptionId ?? null,
+        params.planFirstDueDate ?? null
       );
     return id;
   }
@@ -203,13 +210,24 @@ export class PaymentsDb {
       .all(userId, limit, offset) as PaymentRow[];
   }
 
-  /** Assinatura de plano com pelo menos uma cobrança confirmada. */
+  /**
+   * Assinante ativo: cobrança de plano confirmada, ou período de trial (1ª fatura pendente,
+   * dentro de plan_first_due_date — cartão já cadastrado no Asaas na criação).
+   */
   hasActivePlanSubscription(userId: number): boolean {
     const row = this.db
       .prepare(
         `SELECT 1 AS ok FROM payment
          WHERE user_id = ? AND plan_id IS NOT NULL AND plan_id != ''
-           AND status IN ('CONFIRMED', 'RECEIVED')
+           AND (
+             status IN ('CONFIRMED', 'RECEIVED')
+             OR (
+               status = 'PENDING'
+               AND plan_first_due_date IS NOT NULL
+               AND plan_first_due_date != ''
+               AND date(plan_first_due_date) >= date('now', 'localtime')
+             )
+           )
          LIMIT 1`
       )
       .get(userId) as { ok?: number } | undefined;
@@ -222,7 +240,7 @@ export class PaymentsDb {
       .prepare(
         `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
                 status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
-                report_query, report_desired_count, campaign_id, plan_id, asaas_subscription_id
+                report_query, report_desired_count, campaign_id, plan_id, asaas_subscription_id, plan_first_due_date
          FROM payment
          WHERE user_id = ? AND plan_id IS NOT NULL AND plan_id != ''
          ORDER BY created_at DESC LIMIT 1`
@@ -237,7 +255,7 @@ export class PaymentsDb {
       .prepare(
         `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
                 status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
-                report_query, report_desired_count, campaign_id
+                report_query, report_desired_count, campaign_id, plan_id, asaas_subscription_id, plan_first_due_date
          FROM payment WHERE user_id = ? AND status = 'PENDING' ORDER BY created_at DESC LIMIT 1`
       )
       .get(userId) as PaymentRow | undefined;

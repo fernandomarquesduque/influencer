@@ -8,7 +8,6 @@ import type { ProfileItem, ProfileListItem } from '../api'
 import { getLlmQualification } from '../utils/mapProfileListToPreviewItems'
 import {
   campaignLlmBadgeStyles,
-  getLlmContentPillarLabels,
   getLlmGenderBadge,
   getLlmMainCategoryLabel,
   getLlmProfileTypeBadge,
@@ -52,7 +51,6 @@ function buildLlmHeroStripItems(
   profileTypeBadge: LlmQualificationBadge | null,
   genderBadge: LlmQualificationBadge | null,
   mainCatLabel: string | null,
-  pillarLabels: string[],
   audienceType: string[],
 ): HeroInfoStripItem[] {
   const items: HeroInfoStripItem[] = []
@@ -64,9 +62,6 @@ function buildLlmHeroStripItems(
   }
   if (mainCatLabel) {
     items.push(llmStripItem('mainCategory', mainCatLabel, 'Categoria', <TagOutlined />, 'Categoria principal'))
-  }
-  for (const p of pillarLabels) {
-    items.push(llmStripItem(`pillar-${p}`, p, 'Pilar', <TagOutlined />, 'Pilar de conteúdo'))
   }
   if (audienceType.length > 0) {
     items.push(
@@ -87,6 +82,10 @@ export interface ProfileLlmDetailPanelProps {
   /** Faixa sem Card próprio (ex.: abaixo do hero do perfil). */
   variant?: 'card' | 'embedded'
   isMobile?: boolean
+  /** Quando a categoria já aparece no hero, omitir o cartão duplicado na faixa. */
+  hideMainCategoryInStrip?: boolean
+  /** Densidade da faixa de badges (ex.: modal compacto). */
+  stripDensity?: 'default' | 'compact'
 }
 
 function LlmPanelFrame({ embedded, children }: { embedded: boolean; children: ReactNode }) {
@@ -110,7 +109,14 @@ function LlmPanelFrame({ embedded, children }: { embedded: boolean; children: Re
   )
 }
 
-export function ProfileLlmDetailPanel({ profile, variant = 'card', isMobile = false }: ProfileLlmDetailPanelProps) {
+export function ProfileLlmDetailPanel({
+  profile,
+  variant = 'card',
+  isMobile = false,
+  hideMainCategoryInStrip = false,
+  stripDensity,
+}: ProfileLlmDetailPanelProps) {
+  const stripDensityResolved = stripDensity ?? (isMobile ? 'compact' : 'default')
   const rec = profile as Record<string, unknown> | undefined
   const llmRaw = rec?.llm
   const embedded = variant === 'embedded'
@@ -147,14 +153,18 @@ export function ProfileLlmDetailPanel({ profile, variant = 'card', isMobile = fa
   const profileTypeBadge = itemForBadges ? getLlmProfileTypeBadge(itemForBadges) : null
   const genderBadge = itemForBadges ? getLlmGenderBadge(itemForBadges) : null
   const mainCatLabel = itemForBadges ? getLlmMainCategoryLabel(itemForBadges) : null
-  const pillarLabels = itemForBadges ? getLlmContentPillarLabels(itemForBadges) : []
 
   const doneQual = getLlmQualification(rec ?? {})
   const personaSummary = q ? String(q.personaSummary ?? '').trim() : ''
   const subCategories = q ? strList(q.subCategories) : []
   const audienceType = q ? strList(q.audienceType) : []
 
-  const stripItems = buildLlmHeroStripItems(profileTypeBadge, genderBadge, mainCatLabel, pillarLabels, audienceType)
+  const stripItems = buildLlmHeroStripItems(
+    profileTypeBadge,
+    genderBadge,
+    hideMainCategoryInStrip ? null : mainCatLabel,
+    audienceType,
+  )
 
   const hasBody = Boolean(
     doneQual ||
@@ -202,7 +212,16 @@ export function ProfileLlmDetailPanel({ profile, variant = 'card', isMobile = fa
             style={{ marginBottom: 8 }}
           />
         ) : null}
-        <HeroInfoStrip className="profile-llm-hero-strip" items={stripItems} isMobile={isMobile} />
+        <HeroInfoStrip
+          className="profile-llm-hero-strip"
+          items={stripItems}
+          isMobile={isMobile}
+          stackOnMobile
+          fullWidth
+          density={stripDensityResolved}
+          marginTop={0}
+          marginBottom={0}
+        />
       </LlmPanelFrame>
     )
   }
@@ -215,7 +234,13 @@ export function ProfileLlmDetailPanel({ profile, variant = 'card', isMobile = fa
         )}
 
         {stripItems.length > 0 ? (
-          <HeroInfoStrip className="profile-llm-hero-strip" items={stripItems} isMobile={isMobile} />
+          <HeroInfoStrip
+            className="profile-llm-hero-strip"
+            items={stripItems}
+            isMobile={isMobile}
+            stackOnMobile
+            density={stripDensityResolved}
+          />
         ) : null}
 
         {personaSummary ? (

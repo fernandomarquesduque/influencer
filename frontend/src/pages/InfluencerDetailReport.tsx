@@ -13,6 +13,14 @@ import {
   TeamOutlined,
   FileTextOutlined,
   CalendarOutlined,
+  HeartOutlined,
+  EyeOutlined,
+  LineChartOutlined,
+  ThunderboltOutlined,
+  PieChartOutlined,
+  ClockCircleOutlined,
+  RiseOutlined,
+  PlayCircleOutlined,
 } from '@ant-design/icons'
 import { reportTokens as t } from './reportTokens'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
@@ -23,6 +31,8 @@ import { getPostStablePreviewUrl, type PostItem } from '../api'
 import ProfileAvatar from '../components/ProfileAvatar'
 import PostPreviewCard, { getPostCaptionOverlayLines } from '../components/PostPreviewCard'
 import { HeroInfoStrip, type HeroInfoStripItem } from '../components/HeroInfoStrip'
+import './ReportHeroCompact.css'
+import './InfluencerDetailStack.css'
 
 const s = t.spacing
 const c = t.colors
@@ -45,14 +55,18 @@ export interface ReportHeroProps {
   stableProfilePicUrl?: string
   /** Nome de exibição do perfil */
   name?: string
+  /** Categoria principal (LLM) — linha fina acima do nome */
+  categoryEyebrow?: string | null
   /** Handle/username para exibir como @handle */
   handle?: string
   /** Texto ou conteúdo (ex.: tags + descrição) exibido no lugar da BIO no card */
   headline: React.ReactNode
   /** Badge principal (ex.: "Top 90%") quando não há tier à direita */
   badgeLabel?: string
-  /** Tier + selo à direita na mesma linha do nome (ex.: "Nano Influencer" + "Top 90% · Em crescimento") */
+  /** Tier + selo à direita na mesma linha do nome (legado; preferir tierBadgeShort abaixo do avatar). */
   tierLabel?: string
+  /** Patamar curto abaixo da foto (ex.: "Nano"), fundo sólido sem degradê. */
+  tierBadgeShort?: string
   percentil?: number | null
   scoreSelo?: string
   highlights: { label: string; value: string }[]
@@ -72,10 +86,18 @@ export interface ReportHeroProps {
   typesTags?: React.ReactNode
   /** Prévia limitada: desfoca os números do hero (seguidores, ER, posts/sem). */
   blurHighlights?: boolean
+  /** Modal / prévia bloqueada: menos padding e bio em uma linha. */
+  compact?: boolean
+  /** Tooltip do selo de patamar (ex.: faixa de seguidores). */
+  tierBadgeTooltip?: string
+  /** Ação primária alinhada à faixa de métricas (ex.: Ativar Cadastro). */
+  heroAction?: React.ReactNode
+  /** Menos espaço abaixo do hero (ex.: card de localização logo em seguida). */
+  tightBottomSpacing?: boolean
 }
 
-const AVATAR_SIZE = 120
-const AVATAR_SIZE_MOBILE = 64
+const AVATAR_SIZE = 80
+const AVATAR_SIZE_MOBILE = 48
 
 function heroMetricMeta(label: string): { icon: React.ReactNode; bg: string; fg: string } {
   if (label === 'Seguidores') {
@@ -98,10 +120,12 @@ function ReportHeroMetricsStrip({
   highlights,
   blurHighlights,
   isMobile,
+  compact = false,
 }: {
   highlights: { label: string; value: string }[]
   blurHighlights: boolean
   isMobile: boolean
+  compact?: boolean
 }) {
   const items: HeroInfoStripItem[] = highlights.map(({ label, value }) => {
     const meta = heroMetricMeta(label)
@@ -125,6 +149,8 @@ function ReportHeroMetricsStrip({
       isMobile={isMobile}
       blur={blurHighlights}
       density="compact"
+      fullWidth={compact}
+      marginBottom={compact ? 0 : undefined}
     />
   )
 }
@@ -133,10 +159,12 @@ export function ReportHero({
   profilePic,
   stableProfilePicUrl,
   name,
+  categoryEyebrow,
   handle: handleProp,
   headline,
   badgeLabel,
   tierLabel: tierLabelProp,
+  tierBadgeShort,
   percentil,
   scoreSelo,
   highlights,
@@ -149,148 +177,222 @@ export function ReportHero({
   scoreTooltip: _scoreTooltip,
   typesTags,
   blurHighlights = false,
+  compact = false,
+  tierBadgeTooltip,
+  heroAction,
+  tightBottomSpacing = false,
 }: ReportHeroProps) {
   const atHandle = handleProp ? `@${handleProp.replace(/^@/, '')}` : ''
-  const avatarSize = isMobile ? AVATAR_SIZE_MOBILE : AVATAR_SIZE
-  const pad = isMobile ? s.sm : s.md
+  const avatarSize = isMobile ? AVATAR_SIZE_MOBILE : compact ? 96 : AVATAR_SIZE
+  const avatarRenderSize = compact ? 96 : avatarSize
+  const pad = compact ? s.sm : isMobile ? s.sm : s.md
   const gap = isMobile ? s.xs : s.sm
-  const showRightColumn = !isMobile && (tierLabelProp != null && (percentil != null || scoreSelo) || typesTags != null)
+  const showTypesColumn = !isMobile && typesTags != null
+  const tierUnderAvatarLabel = tierBadgeShort ?? badgeLabel ?? null
+  const showTierUnderAvatar = tierUnderAvatarLabel != null && tierUnderAvatarLabel !== '—'
 
-  const hasRightBadge = tierLabelProp != null && (percentil != null || scoreSelo)
+  const tierUnderAvatarTag = showTierUnderAvatar ? (
+    <Tag
+      className="report-hero-tier-badge"
+      style={{
+        background: c.primary,
+        color: 'var(--brand-white)',
+        border: 'none',
+        borderRadius: r.full,
+        padding: isMobile ? '2px 8px' : '3px 10px',
+        margin: 0,
+        marginTop: 6,
+        fontSize: isMobile ? 10 : 11,
+        fontWeight: 700,
+        lineHeight: 1.35,
+        maxWidth: '100%',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        boxShadow: 'none',
+      }}
+    >
+      {tierUnderAvatarLabel}
+    </Tag>
+  ) : null
+
   return (
-    <section className="report-hero" style={{ position: 'relative', width: '100%', boxSizing: 'border-box', paddingBottom: isMobile ? s.md : s.xl }} aria-label="Cabeçalho do relatório">
+    <section
+      className={`report-hero${compact ? ' report-hero--compact' : ''}`}
+      style={{
+        position: 'relative',
+        width: '100%',
+        boxSizing: 'border-box',
+        paddingBottom: 0,
+      }}
+      aria-label="Cabeçalho do relatório"
+    >
       <div
         className="report-hero-inner"
         style={{
-          borderRadius: isMobile ? r.lg : r.xl,
-          background: c.heroGradient,
+          borderRadius: compact ? 0 : isMobile ? r.lg : r.xl,
+          background: compact ? 'transparent' : c.heroGradient,
           position: 'relative',
           overflow: 'hidden',
           padding: pad,
-          boxShadow: sh.md,
+          boxShadow: compact ? 'none' : sh.md,
         }}
       >
-        <div style={{ position: 'absolute', inset: 0, background: c.heroBlob, pointerEvents: 'none' }} />
+        {!compact && <div style={{ position: 'absolute', inset: 0, background: c.heroBlob, pointerEvents: 'none' }} />}
 
-        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'center' : showRightColumn ? 'flex-start' : 'center', justifyContent: isMobile ? 'center' : undefined, gap: showRightColumn ? s.md : gap, flexWrap: 'wrap', position: 'relative', zIndex: 0, textAlign: isMobile ? 'center' : undefined }}>
-          {/* Coluna esquerda: avatar + conteúdo principal */}
-          <div style={{ display: 'flex', flex: showRightColumn ? 1 : undefined, flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'center' : 'center', gap, flexWrap: 'wrap', minWidth: 0 }}>
-            <div style={{ position: 'relative', flexShrink: 0, width: avatarSize, height: avatarSize }}>
-              <ProfileAvatar
-                src={profilePic}
-                stableBackgroundUrl={stableProfilePicUrl}
-                handle={handleProp}
-                alt={name || atHandle || 'Foto do perfil'}
-                size={avatarSize}
-                border="3px solid var(--brand-white)"
-                shadow={sh.md}
-                onImageError={onAvatarError}
-              />
+        <div
+          className="report-hero-main-row"
+          style={{
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            alignItems: isMobile ? 'center' : 'center',
+            justifyContent: isMobile ? 'center' : undefined,
+            gap: isMobile ? s.sm : s.lg,
+            flexWrap: 'nowrap',
+            position: 'relative',
+            zIndex: 0,
+            textAlign: isMobile ? 'center' : undefined,
+            width: '100%',
+          }}
+        >
+          {/* Avatar + nome + métricas */}
+          <div
+            style={{
+              display: 'flex',
+              flex: 1,
+              flexDirection: isMobile ? 'column' : 'row',
+              alignItems: isMobile ? 'center' : showTierUnderAvatar ? 'flex-start' : 'center',
+              gap,
+              flexWrap: 'wrap',
+              minWidth: 0,
+            }}
+          >
+            <div
+              className={[
+                'report-hero-avatar-col',
+                compact ? 'report-hero-avatar-col--compact' : undefined,
+                showTierUnderAvatar ? 'report-hero-tier-under-avatar' : undefined,
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                flexShrink: 0,
+                width: compact ? undefined : avatarSize,
+                marginRight: compact ? undefined : isMobile ? 0 : s.md,
+                marginBottom: isMobile ? s.sm : 0,
+              }}
+            >
+              <div className={compact ? 'report-hero-avatar-wrap' : undefined}>
+                <ProfileAvatar
+                  src={profilePic}
+                  stableBackgroundUrl={stableProfilePicUrl}
+                  handle={handleProp}
+                  alt={name || atHandle || 'Foto do perfil'}
+                  size={avatarRenderSize}
+                  border="3px solid var(--brand-white)"
+                  shadow={sh.md}
+                  onImageError={onAvatarError}
+                />
+              </div>
+              {showTierUnderAvatar
+                ? tierBadgeTooltip
+                  ? <Tooltip title={tierBadgeTooltip}>{tierUnderAvatarTag}</Tooltip>
+                  : tierUnderAvatarTag
+                : null}
             </div>
-            <div style={{ flex: isMobile ? undefined : 1, minWidth: 0, width: isMobile ? '100%' : undefined, textAlign: isMobile ? 'center' : undefined }}>
-              {(name || (hasRightBadge && !showRightColumn)) && (
-                <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: isMobile ? 'center' : showRightColumn ? 'flex-start' : 'space-between', gap: s.xs, marginBottom: 0 }}>
+            <div
+              className={compact ? 'report-hero-content' : undefined}
+              style={{ flex: isMobile ? undefined : 1, minWidth: 0, width: isMobile ? '100%' : undefined, textAlign: isMobile ? 'center' : undefined }}
+            >
+              {(name || categoryEyebrow?.trim()) && (
+                <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: isMobile ? 'center' : 'flex-start', gap: s.xs, marginBottom: 0 }}>
                   <div style={{ minWidth: 0, textAlign: isMobile ? 'center' : undefined, lineHeight: 1.25 }}>
-                    {name && <h1 style={{ ...typ.hero, color: c.text, margin: 0, marginBottom: 0, lineHeight: 1.2, fontSize: isMobile ? 18 : 20 }}>{name}</h1>}
-                  </div>
-                  {hasRightBadge && !showRightColumn && (
-                    <div style={{ flexShrink: 0 }}>
-                      <Tag
+                    {categoryEyebrow?.trim() ? (
+                      <div
                         style={{
-                          background: `linear-gradient(135deg, ${c.goldLight} 0%, var(--app-gold-border) 100%)`,
-                          color: 'var(--app-text)',
-                          border: `1px solid ${c.goldBorder}`,
-                          borderRadius: r.full,
-                          padding: isMobile ? '2px 8px' : '2px 10px',
+                          ...typ.caption,
+                          color: c.primary,
                           fontWeight: 700,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.06em',
+                          marginBottom: 6,
                           fontSize: isMobile ? 10 : 11,
-                          margin: 0,
-                          boxShadow: 'var(--app-gold-shadow)',
                         }}
                       >
-                        ⭐ {tierLabelProp}
-                      </Tag>
-                    </div>
-                  )}
-                </div>
-              )}
-              {hasRightBadge && !showRightColumn && (percentil != null || scoreSelo) && (
-                <div style={{ ...typ.caption, color: c.textSecondary, marginBottom: 0, marginTop: 0, fontSize: 11, textAlign: isMobile ? 'center' : 'right' }}>
-                  {percentil != null && (
-                    <Tooltip title={METRIC_TOOLTIPS.topPercentil} placement="top">
-                      <span style={{ fontWeight: 600, color: c.primary, cursor: 'help' }}>Top {percentil}%</span>
-                    </Tooltip>
-                  )}
-                  {percentil != null && scoreSelo && ' · '}
-                  {scoreSelo && (
-                    <Tooltip title={METRIC_TOOLTIPS.selo} placement="top">
-                      <span style={{ cursor: 'help' }}>{scoreSelo}</span>
-                    </Tooltip>
-                  )}
+                        {categoryEyebrow.trim()}
+                      </div>
+                    ) : null}
+                    {name && <h1 style={{ ...typ.hero, color: c.text, margin: 0, marginBottom: 0, lineHeight: 1.2, fontSize: isMobile ? 18 : 20 }}>{name}</h1>}
+                  </div>
                 </div>
               )}
               {headline != null && (
-                <div style={{ ...typ.body, color: c.textSecondary, margin: 0, marginTop: s.xs, marginBottom: 4, fontSize: isMobile ? 12 : 13, lineHeight: 1.35, display: '-webkit-box', overflow: 'hidden', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const }}>
+                <div
+                  className={compact ? 'report-hero-headline' : undefined}
+                  style={{
+                    ...typ.body,
+                    color: c.textSecondary,
+                    margin: 0,
+                    marginTop: compact ? undefined : s.xs,
+                    marginBottom: compact ? undefined : 4,
+                    fontSize: compact ? undefined : isMobile ? 12 : 13,
+                    lineHeight: compact ? undefined : 1.35,
+                    ...(compact
+                      ? {}
+                      : {
+                        display: '-webkit-box',
+                        overflow: 'hidden',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical' as const,
+                      }),
+                  }}
+                >
                   {typeof headline === 'string' ? <p style={{ margin: 0 }}>{headline}</p> : headline}
                 </div>
               )}
-              {!hasRightBadge && badgeLabel != null && (
-                <Tag style={{ background: c.primary, color: 'var(--brand-white)', border: 'none', borderRadius: r.full, padding: isMobile ? '2px 8px' : '2px 10px', marginBottom: 4, fontSize: 11 }}>{badgeLabel}</Tag>
-              )}
-              <ReportHeroMetricsStrip highlights={highlights} blurHighlights={blurHighlights} isMobile={isMobile} />
-              {secondaryMetrics && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.xs : s.sm, alignItems: 'center', justifyContent: isMobile ? 'center' : undefined, ...typ.bodySmall, color: c.textSecondary, marginBottom: scoreValue != null ? 4 : 6, fontSize: 12 }}>
-                  {secondaryMetrics}
-                </div>
-              )}
+              <div className="report-hero-metrics-row" style={{ marginTop: compact ? undefined : s.xs, width: '100%' }}>
+                <ReportHeroMetricsStrip highlights={highlights} blurHighlights={blurHighlights} isMobile={isMobile} compact={compact} />
+                {secondaryMetrics && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.xs : s.sm, alignItems: 'center', justifyContent: isMobile ? 'center' : undefined, ...typ.bodySmall, color: c.textSecondary, marginTop: 4, marginBottom: scoreValue != null ? 4 : 6, fontSize: 12 }}>
+                    {secondaryMetrics}
+                  </div>
+                )}
+                {typesTags != null && isMobile && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: s.sm }}>
+                    {typesTags}
+                  </div>
+                )}
+                {heroAction != null && isMobile && (
+                  <div className="report-hero-action" style={{ display: 'flex', justifyContent: 'center', marginTop: s.sm, width: '100%' }}>
+                    {heroAction}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          {/* Coluna direita: badge + percentil + tipos */}
-          {showRightColumn && (
-            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, minWidth: 120 }}>
-              {hasRightBadge && (
-                <>
-                  <Tag
-                    style={{
-                      background: `linear-gradient(135deg, ${c.goldLight} 0%, var(--app-gold-border) 100%)`,
-                      color: 'var(--app-text)',
-                      border: `1px solid ${c.goldBorder}`,
-                      borderRadius: r.full,
-                      padding: '2px 10px',
-                      fontWeight: 700,
-                      fontSize: 11,
-                      margin: 0,
-                      boxShadow: 'var(--app-gold-shadow)',
-                    }}
-                  >
-                    ⭐ {tierLabelProp}
-                  </Tag>
-                  {(percentil != null || scoreSelo) && (
-                    <div style={{ ...typ.caption, color: c.textSecondary, margin: 0, fontSize: 11, textAlign: 'right' }}>
-                      {percentil != null && (
-                        <Tooltip title={METRIC_TOOLTIPS.topPercentil} placement="top">
-                          <span style={{ fontWeight: 600, color: c.primary, cursor: 'help' }}>Top {percentil}%</span>
-                        </Tooltip>
-                      )}
-                      {percentil != null && scoreSelo && ' · '}
-                      {scoreSelo && (
-                        <Tooltip title={METRIC_TOOLTIPS.selo} placement="top">
-                          <span style={{ cursor: 'help' }}>{scoreSelo}</span>
-                        </Tooltip>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-              {typesTags != null && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
-                  {typesTags}
-                </div>
-              )}
+          {heroAction != null && !isMobile && (
+            <div
+              className="report-hero-action-col"
+              style={{
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                paddingLeft: s.sm,
+              }}
+            >
+              {heroAction}
+            </div>
+          )}
+          {showTypesColumn && (
+            <div className="report-hero-types-col" style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, minWidth: 120, alignSelf: 'flex-start' }}>
+              {typesTags}
             </div>
           )}
         </div>
-        {extraContent != null && extraContent}
+        {extraContent != null ? <div className="report-hero-extra">{extraContent}</div> : null}
       </div>
     </section>
   )
@@ -391,7 +493,7 @@ export function ScoreOverview({
         </div>
       )}
       {showCircleAndBar && (
-        <div style={{ marginBottom: s.md }}>
+        <div style={{ marginBottom: embedded ? 0 : s.md }}>
           <Progress
             percent={score}
             showInfo={false}
@@ -403,7 +505,7 @@ export function ScoreOverview({
         </div>
       )}
       {embedded && !tierInHero && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: s.sm, marginBottom: compact ? s.sm : s.md }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: s.sm, marginBottom: 0 }}>
           <Tag
             style={{
               background: `linear-gradient(135deg, ${c.goldLight} 0%, var(--app-gold-border) 100%)`,
@@ -464,10 +566,10 @@ export function ScoreOverview({
         </div>
       )}
       {explanation && !(embedded && hideExplanationInEmbedded) && (
-        <p style={{ ...typ.bodySmall, color: c.textSecondary, margin: 0, marginBottom: compact ? s.sm : s.lg, lineHeight: 1.45, fontSize: compact ? 12 : undefined }}>{explanation}</p>
+        <p style={{ ...typ.bodySmall, color: c.textSecondary, margin: 0, marginBottom: embedded ? 0 : (compact ? s.sm : s.lg), lineHeight: 1.45, fontSize: compact ? 12 : undefined }}>{explanation}</p>
       )}
       {embedded && scoreNarrativaFrase && (
-        <p style={{ ...typ.bodySmall, color: c.text, margin: 0, marginTop: compact ? 4 : 6, marginBottom: compact ? s.sm : 0, lineHeight: 1.45, fontSize: compact ? 12 : undefined, fontWeight: 500 }}>{scoreNarrativaFrase}</p>
+        <p style={{ ...typ.bodySmall, color: c.text, margin: 0, marginTop: embedded ? 0 : (compact ? 4 : 6), marginBottom: 0, lineHeight: 1.45, fontSize: compact ? 12 : undefined, fontWeight: 500 }}>{scoreNarrativaFrase}</p>
       )}
       {showPostsPerWeek && (
         <div
@@ -477,7 +579,7 @@ export function ScoreOverview({
             borderRadius: r.lg,
             border: embedded ? 'none' : `1px solid ${c.primaryMuted}`,
             width: '100%',
-            marginBottom: compact ? s.sm : s.lg,
+            marginBottom: embedded ? 0 : (compact ? s.sm : s.lg),
           }}
         >
           <Tooltip title={METRIC_TOOLTIPS.postsPorSemanaUltimas8} placement="top">
@@ -592,7 +694,7 @@ export function PatamarCardSection({
   growthProjectionNote: _growthProjectionNote,
 }: PatamarCardSectionProps) {
   return (
-    <Row gutter={[s.lg, s.lg]} style={{ marginBottom: s.lg }}>
+    <Row gutter={[s.lg, s.lg]} style={{ marginBottom: 0 }}>
       <Col xs={24}>
         <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
           {proximoPatamar && faltaParaProximo > 0 ? (
@@ -912,8 +1014,6 @@ export interface EngajamentoPorTipoSectionProps {
     tagged: { er: number; count: number }
   }
   rowGutter?: [number, number]
-  /** Narrativa: "Seu engajamento em reels é 2.3× maior que no feed" */
-  erByTypeNarrative?: string | null
 }
 
 const ER_EXPLICACAO =
@@ -922,7 +1022,31 @@ const ER_EXPLICACAO =
 const ER_ESCALA_EXPLICACAO =
   'Usamos uma escala de 0% a 6%+ para classificar a qualidade do engajamento em quatro faixas. Abaixo de 2% o engajamento é considerado baixo; entre 2% e 4% é bom; entre 4% e 6% é excelente; acima de 6% entramos na faixa viral, em que a audiência reage muito ao conteúdo.'
 
-export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg, s.lg], erByTypeNarrative }: EngajamentoPorTipoSectionProps) {
+/** Painel explicativo de ER — costuma ser o último bloco do relatório na página. */
+export function ErExplicacaoPanel({ rowGutter = [s.lg, s.lg] }: { rowGutter?: [number, number] }) {
+  const cardOQueEr = {
+    padding: s.sm,
+    background: c.cardBgSoft,
+    borderRadius: r.md,
+    border: `1px solid ${c.borderLight}`,
+    borderLeft: `2px solid ${c.primary}`,
+    boxShadow: 'none',
+  }
+  return (
+    <Row gutter={rowGutter}>
+      <Col xs={24}>
+        <div style={cardOQueEr}>
+          <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginBottom: 6 }}>O que é ER?</div>
+          <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, lineHeight: 1.5, marginBottom: 10 }}>{ER_EXPLICACAO}</div>
+          <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, lineHeight: 1.5, marginBottom: 8 }}>{ER_ESCALA_EXPLICACAO}</div>
+        </div>
+      </Col>
+    </Row>
+  )
+}
+
+export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg, s.lg] }: EngajamentoPorTipoSectionProps) {
+  const gridGap = Array.isArray(rowGutter) ? rowGutter[0] : rowGutter
   const getErBandaColor = (value: number) =>
     ER_QUALIDADE_BANDAS.find((b) => value >= b.min && value < b.max)?.color ?? ER_QUALIDADE_BANDAS[0].color
 
@@ -935,54 +1059,45 @@ export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg,
     height: '100%',
     cursor: 'help' as const,
   })
-  const cardOQueEr = {
-    padding: s.sm,
-    background: c.cardBgSoft,
-    borderRadius: r.md,
-    border: `1px solid ${c.borderLight}`,
-    borderLeft: `2px solid ${c.primary}`,
-    boxShadow: 'none',
+  const gridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    columnGap: gridGap,
+    rowGap: gridGap,
+    width: '100%',
   }
+
   return (
-    <div>
-      <Row gutter={rowGutter} style={{ marginBottom: rowGutter[1] ?? s.lg }}>
-        <Col xs={24}>
-          <div style={cardOQueEr}>
-            <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginBottom: 6 }}>O que é ER?</div>
-            <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, lineHeight: 1.5, marginBottom: 10 }}>{ER_EXPLICACAO}</div>
-            <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, lineHeight: 1.5, marginBottom: 8 }}>{ER_ESCALA_EXPLICACAO}</div>
+    <div className="detail-er-by-type-grid" style={gridStyle}>
+      <div className="detail-er-by-type-cell">
+        <Tooltip title={`${METRIC_TOOLTIPS.er} Qualidade: ${ER_QUALIDADE_BANDAS.map((b) => `${erBandaRangeLabel(b)} ${b.label}`).join(' · ')}`} placement="top">
+          <div className="detail-er-by-type-card" style={{ ...cardStyleByEr(engagementByType.posts.er), padding: `${s.sm}px ${s.lg}px` }}>
+            <ERGaugeChart
+              value={engagementByType.posts.er}
+              count={engagementByType.posts.count}
+              title="ER médio por Feed"
+            />
           </div>
-        </Col>
-      </Row>
-      <Row gutter={rowGutter}>
-        <Col xs={24} sm={12}>
-          <Tooltip title={`${METRIC_TOOLTIPS.er} Qualidade: ${ER_QUALIDADE_BANDAS.map((b) => `${erBandaRangeLabel(b)} ${b.label}`).join(' · ')}`} placement="top">
-            <div style={{ ...cardStyleByEr(engagementByType.posts.er), padding: `${s.sm}px ${s.lg}px` }}>
-              <ERGaugeChart
-                value={engagementByType.posts.er}
-                count={engagementByType.posts.count}
-                title="ER médio por Feed"
-              />
-            </div>
-          </Tooltip>
-        </Col>
-        <Col xs={24} sm={12}>
-          <Tooltip title={engagementByType.reels.erByViews != null ? METRIC_TOOLTIPS.erPorSeguidoresEViews : `${METRIC_TOOLTIPS.er} Qualidade: ${ER_QUALIDADE_BANDAS.map((b) => `${erBandaRangeLabel(b)} ${b.label}`).join(' · ')}`} placement="top">
-            <div style={{ ...cardStyleByEr(engagementByType.reels.er), padding: `${s.sm}px ${s.lg}px` }}>
-              <ERGaugeChart
-                value={engagementByType.reels.er}
-                count={engagementByType.reels.count}
-                title="ER médio por Reel"
-              />
-            </div>
-          </Tooltip>
-        </Col>
-      </Row>
-      {erByTypeNarrative && !/Seu feed engaja mais que reels/.test(erByTypeNarrative) && (
-        <div style={{ ...typ.bodySmall, color: c.primary, fontWeight: 600, marginTop: s.md, padding: s.sm, background: c.primaryMuted ?? `${c.primary}12`, borderRadius: r.md }}>
-          {erByTypeNarrative}
-        </div>
-      )}
+        </Tooltip>
+      </div>
+      <div className="detail-er-by-type-cell">
+        <Tooltip
+          title={
+            engagementByType.reels.erByViews != null
+              ? METRIC_TOOLTIPS.erPorSeguidoresEViews
+              : `${METRIC_TOOLTIPS.er} Qualidade: ${ER_QUALIDADE_BANDAS.map((b) => `${erBandaRangeLabel(b)} ${b.label}`).join(' · ')}`
+          }
+          placement="top"
+        >
+          <div className="detail-er-by-type-card" style={{ ...cardStyleByEr(engagementByType.reels.er), padding: `${s.sm}px ${s.lg}px` }}>
+            <ERGaugeChart
+              value={engagementByType.reels.er}
+              count={engagementByType.reels.count}
+              title="ER médio por Reel"
+            />
+          </div>
+        </Tooltip>
+      </div>
     </div>
   )
 }
@@ -990,7 +1105,115 @@ export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg,
 // ——— MetricasMediakitSection (espelho da página 2 do Mídia Kit: Métricas) ———
 const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
-const metricasCardBase = { padding: s.md, borderRadius: r.md, border: 'none', boxShadow: sh.sm, height: '100%' as const }
+const METRICAS_DASH_PURPLE = '#7b2cbf'
+const METRICAS_DASH_GREEN = '#00b894'
+const METRICAS_DASH_PURPLE_SOFT = 'rgba(123, 44, 191, 0.14)'
+const METRICAS_DASH_GREEN_SOFT = 'rgba(0, 184, 148, 0.14)'
+const METRICAS_DASH_CARD_SHADOW = '0 2px 12px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04)'
+
+type MetricasDashTheme = 'purple' | 'green'
+
+function metricasDashboardIconCircle(theme: MetricasDashTheme, children: React.ReactNode) {
+  const purple = theme === 'purple'
+  return (
+    <span
+      style={{
+        flexShrink: 0,
+        width: 48,
+        height: 48,
+        borderRadius: '50%',
+        background: purple ? METRICAS_DASH_PURPLE_SOFT : METRICAS_DASH_GREEN_SOFT,
+        color: purple ? METRICAS_DASH_PURPLE : METRICAS_DASH_GREEN,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 22,
+      }}
+      aria-hidden
+    >
+      {children}
+    </span>
+  )
+}
+
+function MetricasDashboardKpiCard({
+  theme,
+  icon,
+  value,
+  label,
+  desc,
+  isMobile,
+  valueColor,
+  extraBelowValue,
+}: {
+  theme: MetricasDashTheme
+  icon: React.ReactNode
+  value: React.ReactNode
+  label: string
+  desc: string
+  isMobile?: boolean
+  valueColor?: string
+  extraBelowValue?: React.ReactNode
+}) {
+  const valColor = valueColor ?? (theme === 'purple' ? METRICAS_DASH_PURPLE : METRICAS_DASH_GREEN)
+  return (
+    <div
+      style={{
+        background: c.cardBg,
+        borderRadius: 14,
+        boxShadow: METRICAS_DASH_CARD_SHADOW,
+        border: `1px solid color-mix(in srgb, ${c.borderLight} 70%, transparent)`,
+        padding: isMobile ? '16px 18px' : '20px 22px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: isMobile ? 14 : 16,
+        minHeight: isMobile ? 0 : 92,
+        boxSizing: 'border-box',
+      }}
+    >
+      {metricasDashboardIconCircle(theme, icon)}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: isMobile ? 22 : 26,
+            fontWeight: 700,
+            color: valColor,
+            lineHeight: 1.15,
+            letterSpacing: '-0.02em',
+          }}
+        >
+          {value}
+        </div>
+        <div style={{ fontSize: isMobile ? 14 : 15, fontWeight: 600, color: c.text, marginTop: 6 }}>{label}</div>
+        {extraBelowValue}
+        <div style={{ fontSize: 12, color: c.textMuted, marginTop: 4, lineHeight: 1.4 }}>{desc}</div>
+      </div>
+    </div>
+  )
+}
+
+function metricasIconWrap(accentColor: string, children: React.ReactNode) {
+  return (
+    <span
+      style={{
+        fontSize: 14,
+        color: accentColor,
+        lineHeight: 1,
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 26,
+        height: 26,
+        borderRadius: 7,
+        background: 'color-mix(in srgb, currentColor 12%, transparent)',
+      }}
+      aria-hidden
+    >
+      {children}
+    </span>
+  )
+}
 
 export interface MetricasMediakitSectionProps {
   formatShortNum: (n: number) => string
@@ -1004,12 +1227,16 @@ export interface MetricasMediakitSectionProps {
   maxEr: number
   cpmCpe: { cpmEstimate: number | null; cpeEstimate: number | null }
   strategicMetrics: StrategicMetrics | null
-  rowGutter?: [number, number]
   /** Quando informado, os dias da semana ficam clicáveis e abrem modal com os posts do dia. */
   postsByWeekday?: PostItem[][]
   getPostImageUrl?: (post: PostItem) => string | undefined
   getPostLink?: (post: PostItem) => string
   failedPostImages?: Set<string>
+  /** Layout responsivo da grade de KPIs (3 colunas no desktop). */
+  isMobile?: boolean
+  /** Blur na grade de métricas + melhor horário (mesmo padrão do valor estimado). */
+  blurMediakitPreview?: boolean
+  mediakitLockOverlay?: React.ReactNode
 }
 
 function postInteractions(p: PostItem): number {
@@ -1039,11 +1266,13 @@ export function MetricasMediakitSection({
   maxEr = 0,
   cpmCpe,
   strategicMetrics,
-  rowGutter = [s.lg, s.lg],
   postsByWeekday,
   getPostImageUrl,
   getPostLink,
   failedPostImages = new Set(),
+  isMobile = false,
+  blurMediakitPreview = false,
+  mediakitLockOverlay,
 }: MetricasMediakitSectionProps) {
   const [selectedWeekday, setSelectedWeekday] = useState<number | null>(null)
   const canOpenModal = Boolean(postsByWeekday && getPostImageUrl && getPostLink)
@@ -1062,179 +1291,330 @@ export function MetricasMediakitSection({
   const picoDayLabel = bestDayByErIndex >= 0 ? WEEKDAY_LABELS[bestDayByErIndex] : bestDay
   const cpeValue = cpmCpe.cpeEstimate != null && cpmCpe.cpeEstimate > 0 ? `R$ ${cpmCpe.cpeEstimate.toFixed(2)}` : '—'
   const cpmValue = cpmCpe.cpmEstimate != null && cpmCpe.cpmEstimate > 0 ? `R$ ${cpmCpe.cpmEstimate.toFixed(1)}` : null
-  // Primeira linha: Curtidas | Comentários | Views — Views só em reels/vídeos; curtidas/comentários de todos os posts (evita confusão "likes > views").
-  const metricsBase = [
-    { label: 'Curtidas', value: formatShortNum(totalLikes), desc: 'Total de curtidas (feed + reels)', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary },
-    { label: 'Comentários', value: formatShortNum(totalComments), desc: 'Total de comentários (feed + reels)', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.success },
-    ...(totalViews > 0 ? [{ label: 'Views (reels)', value: formatShortNum(totalViews), desc: 'Visualizações apenas em reels/vídeos. Curtidas e comentários acima são de todos os posts.', bg: c.cardBgSoft, border: `1px solid ${c.borderLight}`, accent: c.primary }] : []),
-  ]
-  const metrics = metricsBase
   const showViewsNote = totalViews > 0 && totalViews < totalLikes
-  const metricsColSpan = metrics.length === 2 ? 12 : 8 // 2 cards em uma linha (12+12), 3 cards (8+8+8)
+  const showCpmCol = Boolean(cpmValue && totalViews > 0)
   const picoErBanda = maxEr > 0 ? (ER_QUALIDADE_BANDAS.find((b) => maxEr >= b.min && maxEr < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]) : null
-  const converteQuadrants = [
-    { value: `${er.toFixed(1)}%`, label: 'Engajamento', desc: 'Interações (curtidas + comentários) em % dos seguidores.', bg: c.cardBgStrategic ?? c.primary + '18', accent: c.primary },
-    { value: `${Math.round(conversationRate)}%`, label: conversationLabel ?? 'Taxa comentários', desc: '% de comentários no total de interações; mais comentários costumam indicar maior conexão.', bg: c.successBg ?? c.success + '20', accent: c.success },
-    { value: maxEr > 0 ? `${maxEr.toFixed(1)}%` : '—', label: 'Pico Viral', desc: 'Maior ER em um único post; indica potencial de alcance quando o conteúdo viraliza.', bg: picoErBanda ? `${picoErBanda.color}14` : (c.warningBg ?? c.warning + '25'), accent: picoErBanda?.color ?? c.warning, qualityLabel: picoErBanda?.label },
-  ]
+  const conversationCardLabel = conversationLabel ?? 'Taxa comentários'
+  const picoQualityLine = picoErBanda ? (
+    <div style={{ fontSize: 12, fontWeight: 600, color: picoErBanda.color, marginTop: 4 }}>{picoErBanda.label}</div>
+  ) : undefined
 
-  return (
-    <div>
+  const dashboardShell: React.CSSProperties = {
+    background: c.cardBgSoft,
+    borderRadius: r.lg,
+    padding: isMobile ? s.md : s.lg,
+    marginBottom: 0,
+    boxSizing: 'border-box',
+  }
+  const dashGrid3: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'repeat(3, minmax(0, 1fr))',
+  }
+  const hasSecondaryKpis = totalViews > 0 || showCpmCol
+  const dashGridSecondary: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns:
+      !isMobile && totalViews > 0 && showCpmCol ? 'repeat(2, minmax(0, 1fr))' : 'minmax(0, 1fr)',
+  }
 
-
-
-      {/* KPIs: Curtidas | Comentários | Views (reels) — descrição deixa claro que views = só reels, curtidas = todos os posts */}
-      <Row gutter={rowGutter} style={{ marginBottom: s.lg }}>
-        {metrics.map((k) => (
-          <Col xs={24} sm={metricsColSpan} key={k.label}>
-            <div style={{ ...metricasCardBase, padding: s.sm, background: k.bg, border: k.border, textAlign: 'center', boxShadow: 'none' }}>
-              <div style={{ fontSize: 16, fontWeight: 600, color: k.accent }}>{k.value}</div>
-              <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginTop: 4 }}>{k.label}</div>
-              <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, marginTop: 2 }}>{k.desc}</div>
-            </div>
-          </Col>
-        ))}
-      </Row>
-      {showViewsNote && (
-        <div style={{ ...typ.caption, color: c.textMuted, marginBottom: s.lg, fontStyle: 'italic' }}>
-          Nota: views só em reels/vídeos; curtidas e comentários incluem feed e reels — por isso curtidas podem ser maiores que views.
-        </div>
-      )}
-
-      {/* CPE e CPM — CPM omitido quando não há views (API não fornece) */}
-      <Row gutter={rowGutter} style={{ marginBottom: s.lg }}>
-        <Col xs={24} sm={cpmValue && totalViews > 0 ? 12 : 24}>
-          <div style={{ ...metricasCardBase, padding: s.sm, background: c.successBg, border: `1px solid ${c.successBorder ?? c.success}`, textAlign: 'center', boxShadow: sh.sm }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: c.success }}>{cpeValue}</div>
-            <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginTop: 4 }}>CPE</div>
-            <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, marginTop: 2 }}>Valor estimado por curtida ou comentário.</div>
-          </div>
-        </Col>
-        {cpmValue && totalViews > 0 && (
-          <Col xs={24} sm={12}>
-            <div style={{ ...metricasCardBase, padding: s.sm, background: c.cardBgStrategic, border: `1px solid ${c.primaryMuted ?? c.primary}`, textAlign: 'center', boxShadow: sh.sm }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: c.primary }}>{cpmValue}</div>
-              <div style={{ ...typ.caption, fontWeight: 600, color: c.textSecondary, marginTop: 4 }}>CPM</div>
-              <div style={{ ...typ.caption, fontSize: 11, color: c.textMuted, marginTop: 2 }}>Custo por mil impressões (views); valor para alcançar 1.000 visualizações.</div>
-            </div>
-          </Col>
-        )}
-      </Row>
-
-      {/* Por que minha audiência converte — 3 quadrantes coloridos */}
-      <div style={{ marginBottom: s.lg }}>
-
-        <Row gutter={rowGutter}>
-          {converteQuadrants.map((q) => (
-            <Col xs={24} sm={8} key={q.label}>
-              <div style={{ ...metricasCardBase, background: q.bg, border: 'none', textAlign: 'center' }}>
-                <div style={{ fontSize: 20, fontWeight: 800, color: q.accent }}>{q.value}</div>
-                {'qualityLabel' in q && q.qualityLabel ? (
-                  <div style={{ ...typ.bodySmall, fontWeight: 600, color: q.accent, marginTop: 6 }}>Pico {q.qualityLabel}</div>
-                ) : (
-                  <div style={{ ...typ.bodySmall, fontWeight: 600, color: c.text, marginTop: 6 }}>{q.label}</div>
-                )}
-                <div style={{ ...typ.caption, color: c.textMuted, marginTop: 6 }}>{q.desc}</div>
-              </div>
-            </Col>
-          ))}
-        </Row>
+  const metricsDashboard = (
+    <div className="metricas-dashboard-shell" style={dashboardShell}>
+      <div className="metricas-dash-grid" style={dashGrid3}>
+        <MetricasDashboardKpiCard
+          theme="purple"
+          icon={<HeartOutlined aria-hidden />}
+          value={formatShortNum(totalLikes)}
+          label="Curtidas"
+          desc="Soma feed + reels"
+          isMobile={isMobile}
+        />
+        <MetricasDashboardKpiCard
+          theme="green"
+          icon={<CommentOutlined aria-hidden />}
+          value={formatShortNum(totalComments)}
+          label="Comentários"
+          desc="Soma feed + reels"
+          isMobile={isMobile}
+        />
+        <MetricasDashboardKpiCard
+          theme="green"
+          icon={<DollarOutlined aria-hidden />}
+          value={cpeValue}
+          label="CPE"
+          desc="Por curtida ou comentário."
+          isMobile={isMobile}
+        />
+        <MetricasDashboardKpiCard
+          theme="purple"
+          icon={<ThunderboltOutlined aria-hidden />}
+          value={`${er.toFixed(1)}%`}
+          label="Engajamento"
+          desc="Curtidas + comentários vs. seguidores."
+          isMobile={isMobile}
+        />
+        <MetricasDashboardKpiCard
+          theme="green"
+          icon={<PieChartOutlined aria-hidden />}
+          value={`${Math.round(conversationRate)}%`}
+          label={conversationCardLabel}
+          desc="Comentários sobre todas as interações."
+          isMobile={isMobile}
+        />
+        <MetricasDashboardKpiCard
+          theme="green"
+          icon={<RocketOutlined aria-hidden />}
+          value={maxEr > 0 ? `${maxEr.toFixed(1)}%` : '—'}
+          label="Pico Viral"
+          desc="Maior ER em um único post."
+          isMobile={isMobile}
+          extraBelowValue={picoQualityLine}
+        />
       </div>
+      {hasSecondaryKpis ? (
+        <div className="metricas-dash-grid-secondary" style={dashGridSecondary}>
+          {totalViews > 0 ? (
+            <MetricasDashboardKpiCard
+              theme="purple"
+              icon={<EyeOutlined aria-hidden />}
+              value={formatShortNum(totalViews)}
+              label="Views (reels)"
+              desc="Só vídeos/reels; curtidas acima incluem feed."
+              isMobile={isMobile}
+            />
+          ) : null}
+          {showCpmCol && cpmValue ? (
+            <MetricasDashboardKpiCard
+              theme="purple"
+              icon={<LineChartOutlined aria-hidden />}
+              value={cpmValue}
+              label="CPM"
+              desc="Custo por mil views (reels)."
+              isMobile={isMobile}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
 
-      {/* Melhor horário — gráfico em card */}
-      <Card size="small" style={{ marginBottom: s.lg, borderRadius: r.lg, overflow: 'hidden', border: `1px solid ${c.borderLight}`, boxShadow: sh.sm }}>
-        <div style={{ padding: s.md, borderBottom: `1px solid ${c.borderLight}` }}>
-          <div style={{ ...typ.bodySmall, fontWeight: 700, color: c.text }}>Melhor horário</div>
+  const bestTimeCard = (
+    <Card
+      size="small"
+      style={{
+        marginBottom: s.sm,
+        borderRadius: r.lg,
+        overflow: 'hidden',
+        border: `1px solid ${c.borderLight}`,
+        boxShadow: 'none',
+      }}
+    >
+      <div
+        style={{
+          padding: `${s.xs + 2}px ${s.sm}px`,
+          borderBottom: `1px solid ${c.borderLight}`,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: s.xs + 2,
+        }}
+      >
+        {metricasIconWrap(c.primary, <ClockCircleOutlined aria-hidden />)}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: c.text, fontSize: 12 }}>Melhor horário</div>
           {(picoDayLabel || (bestHour ?? 0) > 0) && (
-            <div style={{ ...typ.caption, color: c.primary, fontWeight: 600, marginTop: 4 }}>
+            <div style={{ color: c.primary, fontWeight: 600, marginTop: 2, fontSize: 10 }}>
               Pico: {[picoDayLabel, (bestHour ?? 0) > 0 ? `às ${bestHour}h` : ''].filter(Boolean).join(' · ')}
             </div>
           )}
-          <div style={{ ...typ.caption, color: c.textMuted, marginTop: 2 }}>
-            ER por dia da semana: (curtidas + comentários) ÷ seguidores × 100
+          <div style={{ color: c.textMuted, marginTop: 2, fontSize: 9, lineHeight: 1.3 }}>
+            ER por dia: (curtidas + comentários) ÷ seguidores × 100
           </div>
         </div>
-        <div style={{ padding: s.md, display: 'flex', alignItems: 'flex-end', gap: 8, minHeight: 100 }}>
-          {WEEKDAY_LABELS.map((label, d) => {
-            const erDay = erPerWeekday[d] ?? 0
-            const pct = maxErDay > 0 ? (erDay / maxErDay) * 100 : 0
-            const isBestEng = maxErDay > 0 && erDay >= maxErDay - 1e-6
-            const barHeight = erDay > 0 ? Math.max(14, Math.round((pct / 100) * 52)) : 0
-            const dayPosts = postsByWeekday?.[d] ?? []
-            const isClickable = canOpenModal
-            const content = (
-              <>
-                <div style={{ width: '100%', height: 56, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-                  {barHeight > 0 && (
-                    <div
-                      style={{
-                        width: '78%',
-                        minWidth: 20,
-                        height: barHeight,
-                        backgroundColor: isBestEng ? (c.gold ?? '#d4a574') : (c.primary ?? '#6366f1'),
-                        borderRadius: 6,
-                        border: isBestEng ? `2px solid ${c.gold ?? '#b8860b'}` : `1px solid ${c.borderLight}`,
-                        boxShadow: isBestEng ? '0 2px 8px rgba(212,165,116,0.5)' : '0 1px 4px rgba(0,0,0,0.12)',
-                        opacity: isBestEng ? 1 : 0.85,
-                      }}
-                    />
-                  )}
-                </div>
-                <div style={{ ...typ.caption, fontWeight: isBestEng ? 700 : 500, color: isBestEng ? (c.gold ?? '#b8860b') : c.text, marginTop: 8 }}>{label}</div>
-                {erDay > 0 && (
-                  <>
-                    <div style={{ ...typ.caption, fontSize: 11, color: c.textSecondary, marginTop: 2 }}>ER {erDay.toFixed(1)}%</div>
-                    {(() => {
-                      const banda = getErBanda(erDay)
-                      return (
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            marginTop: 4,
-                            fontSize: 9,
-                            fontWeight: 600,
-                            padding: '1px 4px',
-                            borderRadius: 3,
-                            background: `${banda.color}22`,
-                            color: banda.color,
-                            border: `1px solid ${banda.color}44`,
-                          }}
-                        >
-                          {banda.label}
-                        </span>
-                      )
-                    })()}
-                  </>
+      </div>
+      <div style={{ padding: `${s.xs}px ${s.sm}px`, display: 'flex', alignItems: 'flex-end', gap: 6, minHeight: 72 }}>
+        {WEEKDAY_LABELS.map((label, d) => {
+          const erDay = erPerWeekday[d] ?? 0
+          const pct = maxErDay > 0 ? (erDay / maxErDay) * 100 : 0
+          const isBestEng = maxErDay > 0 && erDay >= maxErDay - 1e-6
+          const barHeight = erDay > 0 ? Math.max(12, Math.round((pct / 100) * 40)) : 0
+          const dayPosts = postsByWeekday?.[d] ?? []
+          const isClickable = canOpenModal
+          const content = (
+            <>
+              <div style={{ width: '100%', height: 44, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                {barHeight > 0 && (
+                  <div
+                    style={{
+                      width: '78%',
+                      minWidth: 20,
+                      height: barHeight,
+                      backgroundColor: isBestEng ? (c.gold ?? '#d4a574') : (c.primary ?? '#6366f1'),
+                      borderRadius: 6,
+                      border: isBestEng ? `2px solid ${c.gold ?? '#b8860b'}` : `1px solid ${c.borderLight}`,
+                      boxShadow: isBestEng ? '0 2px 8px rgba(212,165,116,0.5)' : '0 1px 4px rgba(0,0,0,0.12)',
+                      opacity: isBestEng ? 1 : 0.85,
+                    }}
+                  />
                 )}
-              </>
-            )
-            return (
-              <div
-                key={label}
-                role={isClickable ? 'button' : undefined}
-                tabIndex={isClickable ? 0 : undefined}
-                onClick={isClickable ? () => setSelectedWeekday(d) : undefined}
-                onKeyDown={isClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedWeekday(d) } } : undefined}
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  minWidth: 0,
-                  cursor: isClickable ? 'pointer' : undefined,
-                  borderRadius: r.md,
-                  padding: isClickable ? 4 : 0,
-                  margin: isClickable ? -4 : 0,
-                  transition: 'background 0.15s ease',
-                }}
-                aria-label={isClickable ? `Posts de ${label} (${dayPosts.length} post${dayPosts.length !== 1 ? 's' : ''})` : undefined}
-              >
-                {content}
               </div>
-            )
-          })}
+              <div style={{ ...typ.caption, fontSize: 10, fontWeight: isBestEng ? 700 : 500, color: isBestEng ? (c.gold ?? '#b8860b') : c.text, marginTop: 4 }}>{label}</div>
+              {erDay > 0 && (
+                <>
+                  <div style={{ ...typ.caption, fontSize: 11, color: c.textSecondary, marginTop: 2 }}>ER {erDay.toFixed(1)}%</div>
+                  {(() => {
+                    const banda = getErBanda(erDay)
+                    return (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          marginTop: 4,
+                          fontSize: 9,
+                          fontWeight: 600,
+                          padding: '1px 4px',
+                          borderRadius: 3,
+                          background: `${banda.color}22`,
+                          color: banda.color,
+                          border: `1px solid ${banda.color}44`,
+                        }}
+                      >
+                        {banda.label}
+                      </span>
+                    )
+                  })()}
+                </>
+              )}
+            </>
+          )
+          return (
+            <div
+              key={label}
+              role={isClickable ? 'button' : undefined}
+              tabIndex={isClickable ? 0 : undefined}
+              onClick={isClickable ? () => setSelectedWeekday(d) : undefined}
+              onKeyDown={isClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedWeekday(d) } } : undefined}
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                minWidth: 0,
+                cursor: isClickable ? 'pointer' : undefined,
+                borderRadius: r.md,
+                padding: isClickable ? 4 : 0,
+                margin: isClickable ? -4 : 0,
+                transition: 'background 0.15s ease',
+              }}
+              aria-label={isClickable ? `Posts de ${label} (${dayPosts.length} post${dayPosts.length !== 1 ? 's' : ''})` : undefined}
+            >
+              {content}
+            </div>
+          )
+        })}
+      </div>
+    </Card>
+  )
+
+  const reachReelsCard =
+    (strategicMetrics?.reachMultiplier?.max != null && strategicMetrics.reachMultiplier.max >= 1) ||
+      (strategicMetrics?.reelsAmplification != null && strategicMetrics.reelsAmplification >= 1) ? (
+      <Card
+        size="small"
+        style={{
+          marginBottom: s.sm,
+          borderRadius: r.md,
+          borderLeft: `4px solid ${c.primary}`,
+          background: c.cardBgSoft,
+          boxShadow: 'none',
+          borderTop: `1px solid ${c.borderLight}`,
+          borderRight: `1px solid ${c.borderLight}`,
+          borderBottom: `1px solid ${c.borderLight}`,
+        }}
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm, alignItems: 'stretch' }}>
+          {strategicMetrics?.reachMultiplier?.max != null && strategicMetrics.reachMultiplier.max >= 1 && (
+            <span
+              style={{
+                ...typ.bodySmall,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: `${s.xs}px ${s.sm}px`,
+                background: c.primary + '20',
+                color: c.primary,
+                borderRadius: r.sm,
+                fontWeight: 600,
+                fontSize: 11,
+              }}
+            >
+              <RiseOutlined aria-hidden style={{ fontSize: 14 }} />
+              Reach até {strategicMetrics.reachMultiplier.max.toFixed(1)}× seguidores
+            </span>
+          )}
+          {strategicMetrics?.reelsAmplification != null && strategicMetrics.reelsAmplification >= 1 && (
+            <span
+              style={{
+                ...typ.bodySmall,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: `${s.xs}px ${s.sm}px`,
+                background: c.gold + '25',
+                color: c.gold,
+                borderRadius: r.sm,
+                fontWeight: 600,
+                fontSize: 11,
+              }}
+            >
+              <PlayCircleOutlined aria-hidden style={{ fontSize: 14 }} />
+              Reels: {strategicMetrics.reelsAmplification.toFixed(1)}× base em média
+            </span>
+          )}
         </div>
       </Card>
+    ) : null
+
+  const mediakitPreview = (
+    <>
+      {metricsDashboard}
+      {bestTimeCard}
+      {reachReelsCard}
+    </>
+  )
+
+  return (
+    <div>
+      {blurMediakitPreview ? (
+        <div
+          style={{
+            position: 'relative',
+            overflow: 'hidden',
+            borderRadius: r.lg,
+            minHeight: 80,
+            marginBottom: s.sm,
+          }}
+        >
+          <div style={{ filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }}>{mediakitPreview}</div>
+          {mediakitLockOverlay ? (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'rgba(0,0,0,0.4)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: s.sm,
+                pointerEvents: 'auto',
+                padding: s.lg,
+              }}
+            >
+              {mediakitLockOverlay}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        mediakitPreview
+      )}
 
       {/* Modal: posts do dia da semana */}
       {canOpenModal && (
@@ -1283,20 +1663,6 @@ export function MetricasMediakitSection({
         </Modal>
       )}
 
-      {/* Reach / Reels — card com bordas coloridas */}
-      {(strategicMetrics?.reachMultiplier?.max != null && strategicMetrics.reachMultiplier.max >= 1) || (strategicMetrics?.reelsAmplification != null && strategicMetrics.reelsAmplification >= 1) ? (
-        <Card size="small" style={{ marginBottom: s.lg, borderRadius: r.md, borderLeft: `4px solid ${c.primary}`, background: c.cardBgSoft, boxShadow: sh.sm }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm }}>
-            {strategicMetrics?.reachMultiplier?.max != null && strategicMetrics.reachMultiplier.max >= 1 && (
-              <span style={{ ...typ.bodySmall, padding: '6px 10px', background: c.primary + '20', color: c.primary, borderRadius: r.sm, fontWeight: 600 }}>Reach até {strategicMetrics.reachMultiplier.max.toFixed(1)}× seguidores</span>
-            )}
-            {strategicMetrics?.reelsAmplification != null && strategicMetrics.reelsAmplification >= 1 && (
-              <span style={{ ...typ.bodySmall, padding: '6px 10px', background: c.gold + '25', color: c.gold, borderRadius: r.sm, fontWeight: 600 }}>Reels: {strategicMetrics.reelsAmplification.toFixed(1)}× base em média</span>
-            )}
-          </div>
-        </Card>
-      ) : null}
-
     </div>
   )
 }
@@ -1334,7 +1700,7 @@ export function ValorEpublicoSection({
 
   const valorBlock = showPorTipo ? (
     <Row gutter={[s.lg, s.lg]} align="stretch">
-      <Col xs={24} sm={12} md={6}>
+      <Col xs={24} sm={12} md={6} style={{ display: 'flex' }}>
         <PricingHighlight
           variant="post"
           title="Valor estimado · Feed"
@@ -1345,10 +1711,10 @@ export function ValorEpublicoSection({
           hideCta={isMobile || hideCta}
           ctaLabel={ctaLabel}
           tooltip={METRIC_TOOLTIPS.valorEstimado}
-          style={{ height: '100%' }}
+          style={{ width: '100%', flex: 1, minWidth: 0 }}
         />
       </Col>
-      <Col xs={24} sm={12} md={6}>
+      <Col xs={24} sm={12} md={6} style={{ display: 'flex' }}>
         <PricingHighlight
           variant="reels"
           title="Valor estimado · Reels"
@@ -1357,10 +1723,10 @@ export function ValorEpublicoSection({
           porque={valorEstimadoPorTipo.reels.porque ?? ''}
           hideCta
           tooltip={METRIC_TOOLTIPS.valorEstimado}
-          style={{ height: '100%' }}
+          style={{ width: '100%', flex: 1, minWidth: 0 }}
         />
       </Col>
-      <Col xs={24} sm={12} md={6}>
+      <Col xs={24} sm={12} md={6} style={{ display: 'flex' }}>
         <PricingHighlight
           variant="story"
           title="Valor estimado · Story"
@@ -1369,10 +1735,10 @@ export function ValorEpublicoSection({
           porque={valorEstimadoPorTipo.stories.porque ?? ''}
           hideCta
           tooltip={METRIC_TOOLTIPS.valorEstimado}
-          style={{ height: '100%' }}
+          style={{ width: '100%', flex: 1, minWidth: 0 }}
         />
       </Col>
-      <Col xs={24} sm={12} md={6}>
+      <Col xs={24} sm={12} md={6} style={{ display: 'flex' }}>
         <PricingHighlight
           variant="destaque"
           title="Upgrade · Destaque (30 dias)"
@@ -1381,7 +1747,7 @@ export function ValorEpublicoSection({
           porque={valorEstimadoPorTipo.destaque.porque ?? ''}
           hideCta
           tooltip={METRIC_TOOLTIPS.valorEstimadoDestaque}
-          style={{ height: '100%' }}
+          style={{ width: '100%', flex: 1, minWidth: 0 }}
         />
       </Col>
     </Row>
@@ -1394,7 +1760,7 @@ export function ValorEpublicoSection({
       hideCta={isMobile || hideCta}
       ctaLabel={ctaLabel}
       tooltip={METRIC_TOOLTIPS.valorEstimado}
-      style={{ flex: 1, minHeight: 0 }}
+      style={{ flex: 1, minWidth: 0 }}
     />
   )
 
@@ -1501,7 +1867,9 @@ export function PricingHighlight({ variant, title = 'Valor estimado por feed', m
         boxShadow: variant ? 'var(--app-shadow-md)' : sh.sm,
         padding: s.md,
         background: theme.bg,
-        minHeight: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        boxSizing: 'border-box',
         transition: 'transform 0.2s ease, box-shadow 0.2s ease',
         ...styleProp,
       }}
@@ -1515,7 +1883,7 @@ export function PricingHighlight({ variant, title = 'Valor estimado por feed', m
       <div style={{ fontSize: 20, fontWeight: 700, color: theme.valueColor, marginBottom: 4, lineHeight: 1.2 }}>
         {min === 0 && max === 0 ? 'Incluído' : min === max ? `R$ ${min.toLocaleString('pt-BR')}` : `R$ ${min.toLocaleString('pt-BR')} – R$ ${max.toLocaleString('pt-BR')}`}
       </div>
-      <p style={{ ...typ.bodySmall, color: c.textSecondary, margin: 0, marginBottom: hideCta ? 0 : s.md, lineHeight: 1.35, fontSize: 12 }}>{porque}</p>
+      <p style={{ ...typ.bodySmall, color: c.textSecondary, margin: 0, marginBottom: hideCta ? 0 : s.md, lineHeight: 1.35, fontSize: 12, flex: 1 }}>{porque}</p>
       {!hideCta && onCta && <Button type="primary" size="large" icon={<RocketOutlined />} block style={{ borderRadius: r.md, background: theme.accent, borderColor: theme.accent, color: '#fff', minHeight: 44 }} onClick={onCta}>{ctaLabel}</Button>}
     </div>
   )
@@ -1608,105 +1976,6 @@ export function ExecutiveSummaryForBrandsSection({ data, benchmark, erAtual }: E
   )
 }
 
-// ——— Métricas estratégicas (nível agência) ———
-export interface StrategicMetricsSectionProps {
-  metrics: StrategicMetrics
-  /** Índice único: Estrutura + Consistência + Conversação + Frequência (0–100). */
-  monetizationReadinessScore?: number
-  /** Score de autoridade no nicho (0–100): % posts no nicho + performance hashtags + engajamento. */
-  nicheAuthorityScore?: number
-}
-
-export function StrategicMetricsSection({ metrics, monetizationReadinessScore, nicheAuthorityScore }: StrategicMetricsSectionProps) {
-  const dist = metrics.contentTypeDistribution
-  const hash = metrics.hashtagDensity
-  const tag = metrics.taggedDependency
-  const cap = metrics.captionDepthInsight
-  const conv = metrics.conversationDetail
-  const idist = metrics.interactionDistribution
-  const riskColor = metrics.commercialRisk === 'Alto' ? (c.danger ?? c.warning) : metrics.commercialRisk === 'Médio' ? c.warning : c.success
-  return (
-    <Card size="small" className="report-card strategic-metrics" style={{ borderRadius: r.xl, border: `1px solid ${c.borderLight}`, boxShadow: sh.md, overflow: 'hidden' }}>
-      <div style={{ padding: s.lg }}>
-        <div style={{ ...typ.caption, color: c.textMuted, marginBottom: s.md, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          Métricas que marcas olham
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: s.md }}>
-          {typeof monetizationReadinessScore === 'number' && (
-            <div style={{ ...typ.bodySmall, fontWeight: 700, color: c.primary }}>
-              Monetization Readiness: {monetizationReadinessScore}/100 — Estrutura + Consistência + Conversação + Frequência
-            </div>
-          )}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: s.sm }}>
-            <span style={{ ...typ.bodySmall, padding: '4px 8px', background: c.cardBgSoft, borderRadius: 6 }}>Comment rate: {(metrics.commentRatePct).toFixed(2)}%</span>
-            <span style={{ ...typ.bodySmall, padding: '4px 8px', background: c.cardBgSoft, borderRadius: 6 }}>Like/Comment: {metrics.likeCommentRatio}×</span>
-            <span style={{ ...typ.bodySmall, padding: '4px 8px', background: c.cardBgSoft, borderRadius: 6 }}>Comentários/likes: {(conv.commentToLikeRatio * 100).toFixed(2)}%</span>
-            <span style={{ ...typ.bodySmall, padding: '4px 8px', background: c.cardBgSoft, borderRadius: 6 }}>Comentários/seguidores: {conv.commentsPerFollowerPct.toFixed(2)}%</span>
-            <span style={{ ...typ.bodySmall, padding: '4px 8px', background: c.cardBgSoft, borderRadius: 6 }}>Média comentários/post: {conv.avgCommentsPerPost}</span>
-            {metrics.likeCommentAlert && (
-              <span style={{ ...typ.bodySmall, padding: '4px 8px', background: c.warning + '20', color: c.warning, borderRadius: 6, fontWeight: 600 }}>Proporção alta — audiência passiva</span>
-            )}
-          </div>
-          <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
-            Engajamento ponderado (comentários×3 + likes×1 + views×0,2): <strong style={{ color: c.primary }}>{metrics.weightedEngagementScore}/100</strong>
-          </div>
-          {metrics.engagementConsistencyLabel && (
-            <div style={{ ...typ.bodySmall, color: c.text }}>
-              Consistência: {metrics.engagementConsistencyLabel}
-            </div>
-          )}
-          {metrics.reachMultiplier.label && (
-            <div style={{ ...typ.bodySmall, color: c.primary, fontWeight: 600 }}>Amplificação real de alcance: {metrics.reachMultiplier.label}</div>
-          )}
-          {metrics.reelsAmplificationLabel && (
-            <div style={{ ...typ.bodySmall, color: c.textSecondary }}>Reels (média): {metrics.reelsAmplificationLabel}</div>
-          )}
-          <div style={{ ...typ.bodySmall, color: c.text }}>
-            <strong>Distribuição de alcance:</strong> {idist.pctFromFeed}% feed · {idist.pctFromReels}% reels · {idist.pctFromTagged}% marcado (autonomia da audiência)
-          </div>
-          <div style={{ ...typ.bodySmall, color: c.text }}>
-            <strong>Viral Dependence Index:</strong> {metrics.viralDependenceIndex}/100 — {metrics.viralDependenceLabel}
-          </div>
-          <div style={{ ...typ.bodySmall, color: c.text }}>
-            <strong>Estimated Conversion Potential:</strong> <span style={{ color: c.primary, fontWeight: 600 }}>{metrics.conversionPotentialScore}/100</span> (comment_rate × frequência × consistência)
-          </div>
-          {typeof nicheAuthorityScore === 'number' && (
-            <div style={{ ...typ.bodySmall, color: c.primary, fontWeight: 600 }}>
-              Niche Authority Score: {nicheAuthorityScore}/100 — % posts no nicho + performance hashtags + engajamento
-            </div>
-          )}
-          <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
-            Conteúdo: {dist.pctReels}% reels · {dist.pctCarousel}% carrossel · {dist.pctPhoto}% foto · {metrics.postsPerMonth} posts/mês
-            {metrics.avgIntervalDays != null && ` · ~${metrics.avgIntervalDays} dias entre posts`}
-          </div>
-          <div style={{ ...typ.bodySmall, color: c.textSecondary }}>
-            Hashtags: média {hash.avgPerPost} por post · {hash.pctWithHashtag}% dos posts com hashtag {hash.postsWithout > 0 && ` · ${hash.postsWithout} sem hashtag`}
-          </div>
-          <div style={{ ...typ.bodySmall, color: c.text }}>
-            <strong>ER próprio vs quando marcado:</strong> {tag.erOwn.toFixed(2)}% próprio · {tag.erTagged.toFixed(2)}% quando marcado {tag.ratio > 1 ? `(${(tag.ratio * 100).toFixed(0)}% do próprio)` : ''}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: s.sm, flexWrap: 'wrap' }}>
-            <span style={{ ...typ.bodySmall, fontWeight: 600, color: c.primary }}>Maturidade comercial: {metrics.commercialMaturityIndex}/100</span>
-            <span style={{ ...typ.bodySmall, fontWeight: 600, color: c.primary }}>Discoverability: {metrics.discoverabilityScore}/100</span>
-            <span style={{ ...typ.bodySmall, fontWeight: 600, color: c.primary }}>Audience Stability: {metrics.audienceStabilityScore}/100</span>
-          </div>
-          <div style={{ ...typ.bodySmall }}>
-            <span style={{ fontWeight: 600, color: riskColor }}>Risco de perda de parceria: {metrics.commercialRisk}</span>
-            {metrics.commercialRiskReasons.length > 0 && (
-              <span style={{ color: c.textSecondary }}> — {metrics.commercialRiskReasons.join('; ')}</span>
-            )}
-          </div>
-          {metrics.growthProjectionNote && (
-            <div style={{ ...typ.caption, color: c.textMuted }}>{metrics.growthProjectionNote}</div>
-          )}
-          {tag.insight && <div style={{ ...typ.bodySmall, color: c.text }}>{tag.insight}</div>}
-          {cap.insight && <div style={{ ...typ.bodySmall, color: c.text }}>{cap.insight}</div>}
-        </div>
-      </div>
-    </Card>
-  )
-}
-
 // ——— Plano de Ação 90 dias ———
 export interface PlanoAcao90DiasSectionProps {
   /** Itens para Semana 1 (ex.: Migrar para Criador, Tornar perfil público, Adicionar link) */
@@ -1773,22 +2042,27 @@ export function StickyCTA({
   primaryLabel,
   primarySubtext,
   explanation,
+  primaryIcon,
   onPrimary,
   secondaryLabel,
   onSecondary,
   visible,
   isMobile,
+  embeddedInModal = false,
 }: {
   primaryLabel: string
   primarySubtext?: string
   /** Texto explicando o que é um Mídia Kit */
   explanation?: string
+  primaryIcon?: React.ReactNode
   onPrimary: () => void
   secondaryLabel?: string
   onSecondary?: () => void
   visible: boolean
   /** Em mobile: esconde a descrição e mostra só o botão */
   isMobile?: boolean
+  /** Dentro do modal de detalhe: gruda no rodapé do painel rolável (evita sobrepor o conteúdo por `fixed` na viewport). */
+  embeddedInModal?: boolean
 }) {
   if (!visible) return null
   const defaultExplanation = 'Seu Mídia Kit organiza seus dados, comprova sua performance e aumenta sua credibilidade na hora de negociar com marcas'
@@ -1797,16 +2071,18 @@ export function StickyCTA({
   const paddingH = isMobile ? layout.contentPaddingMobile : layout.contentPadding
   return (
     <div
-      className="report-sticky-cta"
+      className={`report-sticky-cta${embeddedInModal ? ' report-sticky-cta--in-modal' : ''}`}
       style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
+        position: embeddedInModal ? 'relative' : 'fixed',
+        bottom: embeddedInModal ? undefined : 0,
+        left: embeddedInModal ? undefined : 0,
+        right: embeddedInModal ? undefined : 0,
+        width: embeddedInModal ? '100%' : undefined,
+        flexShrink: embeddedInModal ? 0 : undefined,
         background: 'var(--app-primary)',
         borderTop: '2px solid rgba(255,255,255,0.2)',
         boxShadow: '0 -4px 24px rgba(0,0,0,0.2), 0 -1px 0 rgba(255,255,255,0.08)',
-        zIndex: 10000,
+        zIndex: embeddedInModal ? 6 : 10000,
         display: 'flex',
         justifyContent: 'center',
         boxSizing: 'border-box',
@@ -1837,7 +2113,7 @@ export function StickyCTA({
             type="primary"
             className="report-sticky-cta__btn"
             size="large"
-            icon={<RocketOutlined />}
+            icon={primaryIcon ?? <RocketOutlined />}
             style={{
               borderRadius: r.md,
               background: 'var(--app-accent)',

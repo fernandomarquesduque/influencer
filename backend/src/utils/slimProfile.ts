@@ -1,5 +1,5 @@
 import type { Entity } from '../types/index.js';
-import { isBusinessFromEntity } from './entityAccess.js';
+import { getFollowersFromEntity, isBusinessFromEntity } from './entityAccess.js';
 import { inferCategoriesFromHashtags } from './inferCategoriesFromHashtags.js';
 import { sanitizeText } from './sanitizeText.js';
 
@@ -111,10 +111,16 @@ function deepFindCount(obj: unknown, edgeKey: string, seen = new Set<unknown>())
   return undefined;
 }
 
-/** Extrai user do raw: primeiro tenta data.user (Polaris), depois timeline (edges[0].node.user). */
+/** Extrai user do raw: data.user, feed_user da timeline ou edges[0].node.user. */
 function extractUserFromRaw(raw: unknown): Record<string, unknown> | null {
   const fromPolaris = getIn(raw, 'data.user');
   if (fromPolaris != null && typeof fromPolaris === 'object') return fromPolaris as Record<string, unknown>;
+  const feedUser = getIn(
+    raw,
+    'data.xdt_api__v1__feed__user_timeline_graphql_connection.feed_user',
+    'data.feed_user_timeline.feed_user'
+  );
+  if (feedUser != null && typeof feedUser === 'object') return feedUser as Record<string, unknown>;
   const edges = getIn(
     raw,
     'data.xdt_api__v1__feed__user_timeline_graphql_connection.edges'
@@ -127,6 +133,30 @@ function extractUserFromRaw(raw: unknown): Record<string, unknown> | null {
   const user = (node as Record<string, unknown>).user;
   if (user == null || typeof user !== 'object') return null;
   return user as Record<string, unknown>;
+}
+
+/** Preenche follower_count no entity (API ou DOM) para persistência e cálculo de ER. */
+export function injectFollowerCountIntoProfileEntity(profile: Record<string, unknown>, count: number): void {
+  if (!Number.isFinite(count) || count <= 0) return;
+  const n = Math.floor(count);
+  profile.followers_count = n;
+  profile.follower_count = n;
+  const user = extractUserFromRaw(profile);
+  if (user) {
+    user.follower_count = n;
+    const edge = user.edge_followed_by;
+    if (edge != null && typeof edge === 'object') {
+      (edge as Record<string, unknown>).count = n;
+    } else {
+      user.edge_followed_by = { count: n };
+    }
+    const data = profile.data;
+    if (data == null || typeof data !== 'object') {
+      profile.data = { user };
+    } else {
+      (data as Record<string, unknown>).user = user;
+    }
+  }
 }
 
 /** Coleta hashtags e textos de legenda dos posts para inferir categorias. */
@@ -249,12 +279,14 @@ export function buildSlimProfile(
     rawProfile._collected_at ?? rawProfile.collected_at ?? new Date().toISOString()
   );
 
+  const fromEntity = getFollowersFromEntity(rawProfile);
   const followersCount =
-    toNum(dataUser?.follower_count) ??
-    toNum(user?.follower_count) ??
-    toNum(deepFind(rawProfile, ['followers_count', 'follower_count'])) ??
-    deepFindCount(rawProfile, 'edge_followed_by') ??
-    followersFromDiscovery ?? 0;
+    (fromEntity > 0 ? fromEntity : 0) ||
+    toNum(dataUser?.follower_count) ||
+    toNum(user?.follower_count) ||
+    toNum(deepFind(rawProfile, ['followers_count', 'follower_count'])) ||
+    deepFindCount(rawProfile, 'edge_followed_by') ||
+    (followersFromDiscovery > 0 ? followersFromDiscovery : 0);
 
   const mutual_followers_count = toNum(dataUser?.mutual_followers_count ?? user?.mutual_followers_count);
 

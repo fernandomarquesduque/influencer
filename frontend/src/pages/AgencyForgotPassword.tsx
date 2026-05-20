@@ -27,7 +27,7 @@ export default function AgencyForgotPassword() {
   const [passwordForm] = Form.useForm<{ password: string; confirm: string }>()
   const [otp, setOtp] = useState('')
 
-  const goLogin = () => navigate('/agencia/login')
+  const goLogin = () => navigate('/login')
 
   const onRequestCode = async (values: { email: string }) => {
     const e = values.email.trim().toLowerCase()
@@ -83,7 +83,7 @@ export default function AgencyForgotPassword() {
     try {
       await completeAgencyPasswordReset(resetToken, values.password)
       message.success('Senha alterada. Faça login com a nova senha.')
-      navigate('/agencia/login', { replace: true })
+      navigate('/login', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível alterar a senha.')
     } finally {

@@ -8,6 +8,14 @@ import { getBuscaPlanById } from '../constants/buscaPlans'
 import { useAuth } from '../contexts/AuthContext'
 import './CheckoutPlan.css'
 
+function checkoutDisplayTrialDays(): number {
+  const raw = import.meta.env.VITE_BUSCA_PLAN_TRIAL_DAYS
+  if (raw === undefined || raw === '') return 7
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return 7
+  return Math.min(120, Math.max(0, n))
+}
+
 export default function CheckoutPlan() {
   const { planId } = useParams<{ planId: string }>()
   const navigate = useNavigate()
@@ -49,6 +57,7 @@ export default function CheckoutPlan() {
             features: [...plan.features],
             featured: plan.featured,
             credits: plan.credits,
+            trialDays: checkoutDisplayTrialDays(),
           }}
           onCancel={goBack}
           onSuccess={() => navigate('/app/payments', { replace: true, state: { openPendingPayment: true } })}

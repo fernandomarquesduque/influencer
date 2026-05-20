@@ -5,7 +5,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { fetchMySubscription } from '../api'
 
 const PAYMENTS_PATH = '/app/payments'
-const SEARCH_PATH = '/search'
+import { isSearchRoute, isSearchLandingHome } from '../constants/searchRoute'
+const PROFILE_PATH = '/app/profile'
 
 type RequireActiveSubscriptionProps = {
   children: ReactNode
@@ -20,9 +21,11 @@ export function RequireActiveSubscription({ children }: RequireActiveSubscriptio
 
   const isPaymentsPage =
     location.pathname === PAYMENTS_PATH || location.pathname.startsWith(`${PAYMENTS_PATH}/`)
-  const isSearchPage =
-    location.pathname === SEARCH_PATH || location.pathname.startsWith(`${SEARCH_PATH}/`)
-  const exempt = isAdm || user?.scope !== 'assinante' || isPaymentsPage || isSearchPage
+  const isSearchPage = isSearchRoute(location.pathname)
+  const isSearchLanding = isSearchLandingHome(location.pathname, location.search, location.hash)
+  const isProfilePage =
+    location.pathname === PROFILE_PATH || location.pathname.startsWith(`${PROFILE_PATH}/`)
+  const exempt = isAdm || user?.scope !== 'assinante' || isPaymentsPage || isSearchPage || isProfilePage
 
   useEffect(() => {
     if (authLoading) return
@@ -52,7 +55,7 @@ export function RequireActiveSubscription({ children }: RequireActiveSubscriptio
     }
   }, [authLoading, user, exempt])
 
-  if (authLoading || (!exempt && checking)) {
+  if ((authLoading && !isSearchLanding) || (!exempt && checking)) {
     return (
       <div style={{ padding: 48, textAlign: 'center' }}>
         <Spin size="large" />

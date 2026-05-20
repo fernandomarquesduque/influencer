@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Avatar, Spin } from 'antd'
 import { UserOutlined } from '@ant-design/icons'
 import { queueRefreshProfile } from '../api'
@@ -46,12 +46,25 @@ export default function ProfileAvatar({
   const [imageError, setImageError] = useState(false)
   const [stableBgReady, setStableBgReady] = useState(!hasStableBg)
   const queuedForCurrentSrcRef = useRef(false)
+  const imgRef = useRef<HTMLImageElement>(null)
+
+  const markImageReadyIfComplete = useCallback(() => {
+    const img = imgRef.current
+    if (img?.complete && img.naturalWidth > 0) {
+      setImageLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     setImageLoading(hasSrc)
     setImageError(false)
     queuedForCurrentSrcRef.current = false
   }, [src])
+
+  useEffect(() => {
+    if (!hasSrc) return
+    markImageReadyIfComplete()
+  }, [hasSrc, src, markImageReadyIfComplete])
 
   useEffect(() => {
     if (!hasSrc && hasStableBg && stableBackgroundUrl) {
@@ -84,6 +97,9 @@ export default function ProfileAvatar({
 
   const stableBgLoading = !hasSrc && hasStableBg && !stableBgReady
   const showPendingOnly = !hasSrc && !hasStableBg && pending
+  const showLoader = hasSrc
+    ? imageLoading && !imageError && !(hasStableBg && stableBgReady)
+    : stableBgLoading
 
   const loaderOverlay = (
     <div
@@ -122,7 +138,7 @@ export default function ProfileAvatar({
           title={alt || undefined}
         >
           <div aria-hidden style={stableBgStyle} />
-          {stableBgLoading ? loaderOverlay : null}
+          {showLoader ? loaderOverlay : null}
         </div>
       )
     }
@@ -172,6 +188,7 @@ export default function ProfileAvatar({
     >
       {stableBgStyle ? <div aria-hidden style={stableBgStyle} /> : null}
       <img
+        ref={imgRef}
         src={src}
         alt={alt}
         aria-hidden={alt === ''}
@@ -184,7 +201,9 @@ export default function ProfileAvatar({
           position: 'relative',
           zIndex: 1,
         }}
-        onLoad={() => setImageLoading(false)}
+        onLoad={() => {
+          setImageLoading(false)
+        }}
         onError={() => {
           setImageLoading(false)
           setImageError(true)
@@ -195,7 +214,7 @@ export default function ProfileAvatar({
           onRefreshQueued?.(normalizedHandle)
         }}
       />
-      {imageLoading ? loaderOverlay : null}
+      {showLoader ? loaderOverlay : null}
       {imageError && !stableBackgroundUrl && (
         <Avatar
           size={size}

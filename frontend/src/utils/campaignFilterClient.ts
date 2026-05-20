@@ -360,7 +360,14 @@ function postToProfileListItemForBoost(post: PostItem): ProfileListItem {
     followers_count: typeof fc === 'number' && Number.isFinite(fc) ? fc : 0,
     llm: inf?.llm as ProfileListItem['llm'],
     engagement: {
-      avg_likes: typeof post.metrics?.likes === 'number' ? post.metrics.likes : undefined,
+      posts_count: 0,
+      total_likes: 0,
+      total_comments: 0,
+      total_views: 0,
+      avg_likes: typeof post.metrics?.likes === 'number' ? post.metrics.likes : 0,
+      avg_comments: 0,
+      avg_views: 0,
+      engagement_rate: 0,
     },
     categories: [],
   } as ProfileListItem
@@ -580,6 +587,16 @@ export function profileListItemsFromOriginPosts(posts: PostItem[]): ProfileListI
       full_name: inf?.full_name,
       followers_count: inf?.followers_count ?? 0,
       llm: inf?.llm as ProfileListItem['llm'],
+      engagement: {
+        posts_count: 0,
+        total_likes: 0,
+        total_comments: 0,
+        total_views: 0,
+        avg_likes: 0,
+        avg_comments: 0,
+        avg_views: 0,
+        engagement_rate: 0,
+      },
     })
   }
   return [...byHandle.values()]

@@ -89,7 +89,7 @@
     var href = (target.getAttribute('href') || '').trim().toLowerCase()
     if (!href) return
 
-    if (href.indexOf('/app/create') === 0 || href.indexOf('/search') === 0) {
+    if (href.indexOf('/app/create') === 0 || href === '/' || href.indexOf('/?') === 0 || href.indexOf('/search') === 0) {
       track('Lead', { content_name: 'blog_cta' })
       return
     }

@@ -622,13 +622,13 @@ export default function BuyCreditsModal({
 
             {buyBillingType === 'BOLETO' && !hasBoletoLink && hasInvoice && (
               <Button type="primary" size="large" block icon={<BankOutlined />} onClick={openInvoice} style={{ marginBottom: 12 }}>
-                Abrir boleto / fatura no Asaas
+                Abrir boleto / fatura
               </Button>
             )}
 
             {hasInvoice && (hasPixPayload || hasBoletoLink) && (
               <Button type="default" block onClick={openInvoice} style={{ marginTop: 8 }}>
-                Ver fatura no Asaas
+                Ver fatura
               </Button>
             )}
 

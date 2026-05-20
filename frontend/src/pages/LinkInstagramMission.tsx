@@ -21,7 +21,7 @@ export default function LinkInstagramMission() {
       <div style={{ maxWidth: 480, margin: '40px auto', padding: 24 }}>
         <Card>
           <p>Faça login para vincular o Instagram da empresa e ganhar 10 créditos.</p>
-          <Button type="primary" onClick={() => navigate('/login')}>Entrar</Button>
+          <Button type="primary" onClick={() => navigate('/influencer/login')}>Entrar</Button>
         </Card>
       </div>
     )

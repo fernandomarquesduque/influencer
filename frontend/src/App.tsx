@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { SEARCH_ROUTE_PATH } from './constants/searchRoute'
 import { AuthProvider } from './contexts/AuthContext'
 import { CreditsProvider } from './contexts/CreditsContext'
 import { PendingPaymentCelebrationProvider } from './contexts/PendingPaymentCelebrationContext'
@@ -73,6 +74,12 @@ function MetaPixelSpaPageViewBridge() {
   return null
 }
 
+/** Legado: /search → / (preserva query e hash). */
+function SearchLegacyRedirect() {
+  const { search, hash } = useLocation()
+  return <Navigate to={{ pathname: SEARCH_ROUTE_PATH, search, hash }} replace />
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -81,21 +88,23 @@ export default function App() {
           <MetaPixelSpaPageViewBridge />
           <FocusScrollHandler />
           <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/agencia/login" element={<AgencyLogin />} />
+            <Route path="/login" element={<AgencyLogin />} />
+            <Route path="/influencer/login" element={<Login />} />
+            <Route path="/agencia/login" element={<Navigate to="/login" replace />} />
             <Route path="/agencia/esqueci-senha" element={<AgencyForgotPassword />} />
             <Route path="/premium" element={<Premium />} />
-            <Route path="/search" element={<Layout />}>
+            <Route path="/" element={<Layout />}>
               <Route index element={<CampaignInfluencers />} />
             </Route>
+            <Route path="/search/*" element={<SearchLegacyRedirect />} />
             <Route path="/checkout" element={<><Logo size="large" height={36} variant="default" style={{ flexShrink: 0 }} alt="Relatório de Influencer" /><CheckoutCredits /></>} />
             <Route path="/checkout/plan/:planId" element={<CheckoutPlan />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/missions/reward" element={<MissionReward />} />
-            <Route path="/" element={<Home />} />
+            <Route path="/home" element={<Home />} />
 
             <Route path="/app" element={<Layout />}>
-              <Route index element={<MyCampaigns />} />
+              <Route index element={<SearchLegacyRedirect />} />
               <Route path="campaigns" element={<MyCampaigns />} />
               <Route path="campaigns/create" element={<ListAndDetailModal />} />
               <Route path="campaigns/all" element={<AllCampaignsRedirect />} />

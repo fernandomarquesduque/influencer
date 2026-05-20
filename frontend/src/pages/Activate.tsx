@@ -1196,10 +1196,10 @@ export default function Activate() {
                     await deleteAccount(isAdm && handle ? handle : undefined)
                     message.success('Conta excluída.')
                     if (isAdm && handle) {
-                      navigate('/app', { replace: true })
+                      navigate('/', { replace: true })
                     } else {
                       logout()
-                      navigate('/login', { replace: true })
+                      navigate('/influencer/login', { replace: true })
                     }
                   } catch (e) {
                     message.error(e instanceof Error ? e.message : 'Não deu pra excluir. Tenta de novo.')

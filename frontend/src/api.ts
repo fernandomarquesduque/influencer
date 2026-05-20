@@ -139,6 +139,25 @@ export interface ProfilesResponse {
   items: ProfileItem[]
 }
 
+/** ER por tipo (feed, reels, marcados) na prévia pública do perfil. */
+export interface ProfileEngagementByType {
+  posts: { er: number; count: number }
+  reels: { er: number; count: number; erByViews?: number }
+  tagged: { er: number; count: number; erByViews?: number }
+}
+
+export function getProfilePreviewEngagement(profile: ProfileItem | null | undefined): EngagementStats | undefined {
+  const raw = (profile as Record<string, unknown> | null | undefined)?.engagement
+  return raw != null && typeof raw === 'object' ? (raw as EngagementStats) : undefined
+}
+
+export function getProfilePreviewEngagementByType(
+  profile: ProfileItem | null | undefined
+): ProfileEngagementByType | undefined {
+  const raw = (profile as Record<string, unknown> | null | undefined)?.engagementByType
+  return raw != null && typeof raw === 'object' ? (raw as ProfileEngagementByType) : undefined
+}
+
 /** Engajamento calculado a partir dos posts do perfil. */
 export interface EngagementStats {
   posts_count: number
@@ -244,6 +263,8 @@ export interface ProfilesSearchQuery {
   /** Filtros sobre classificação LLM (`llm.qualification`); multiselect = OR no mesmo campo. */
   llmProfileType?: string[]
   llmMainCategory?: string[]
+  llmSubCategories?: string[]
+  llmContentPillars?: string[]
   llmGender?: string[]
   llmLanguage?: string[]
   llmAudienceType?: string[]
@@ -502,6 +523,10 @@ export interface PaymentItem {
   pixCopyPaste: string | null
   createdAt: string
   updatedAt: string
+  /** Presente quando a cobrança veio de checkout de plano (assinatura). */
+  planId?: string | null
+  planFirstInvoiceDue?: string | null
+  asaasSubscriptionId?: string | null
 }
 
 export interface MyPaymentsResponse {
@@ -550,7 +575,7 @@ export async function fetchPaymentIfExists(id: string, options?: { signal?: Abor
   return res.json()
 }
 
-/** Cancela cobrança pendente no Asaas e remove do histórico local. */
+/** Cancela cobrança pendente no gateway e remove do histórico local. */
 export async function deleteMyPendingPayment(id: string, options?: { signal?: AbortSignal }): Promise<void> {
   const res = await fetch(`${API_BASE}/me/payments/${encodeURIComponent(id)}`, {
     method: 'DELETE',
@@ -582,9 +607,13 @@ export interface MySubscriptionStatus {
   planId: string | null
   subscriptionId: string | null
   hasPendingPlanPayment: boolean
+  /** Primeira fatura ainda não paga, dentro do período de trial (cartão já cadastrado). */
+  inTrial?: boolean
+  /** YYYY-MM-DD — vencimento da 1ª cobrança quando em trial. */
+  planFirstInvoiceDue?: string | null
 }
 
-/** Assinatura de plano aprovada (primeira cobrança confirmada). */
+/** Assinatura de plano e trial (via data da 1ª cobrança no gateway). */
 export async function fetchMySubscription(options?: { signal?: AbortSignal }): Promise<MySubscriptionStatus> {
   const res = await fetch(`${API_BASE}/me/subscription`, {
     headers: { ...authHeaders() },
@@ -608,6 +637,10 @@ export interface CreatePaymentForCreditsResponse {
   invoiceUrl: string | null
   bankSlipUrl: string | null
   pixCopyPaste: string | null
+  planId?: string | null
+  planFirstInvoiceDue?: string | null
+  /** Id da assinatura no gateway (quando o pagamento é 1ª parcela de plano). */
+  asaasSubscriptionId?: string | null
 }
 
 /** POST /me/payments retornou 409 — já existe cobrança pendente. */
@@ -653,15 +686,48 @@ export async function registerAndCreatePayment(
 export interface SubscribeToPlanResponse extends CreatePaymentForCreditsResponse {
   subscriptionId: string
   planId: string
+  /** YYYY-MM-DD — vencimento da 1ª cobrança (após período grátis). */
+  planFirstInvoiceDue?: string
+  /** Preenchido no fluxo convidado: JWT após o gateway aceitar o cartão (conta criada só então). */
   token?: string
-  user?: { id: number; username: string; scope: string; profile_handle: string | null; email_verified?: boolean }
+  user?: {
+    id: number
+    username: string
+    scope: string
+    profile_handle: string | null
+    email_verified?: boolean
+  }
 }
 
-/** Assinatura mensal de plano (Asaas subscription cartão). Guest ou logado. */
+/** `true` se já existe conta com este e-mail (ex.: checkout plano — passo cadastro). */
+export async function checkEmailRegistered(
+  email: string,
+  options?: { signal?: AbortSignal }
+): Promise<{ registered: boolean }> {
+  const res = await fetch(`${API_BASE}/auth/email-registered`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    signal: options?.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || 'Falha ao verificar e-mail')
+  }
+  return data as { registered: boolean }
+}
+
+/** Assinatura mensal de plano (cartão). Com JWT: usuário logado. Sem JWT: informe email, password e name (cadastro só após aprovação no pagamento). */
 export async function subscribeToPlan(
   params: {
     planId: string
     cpfCnpj: string
+    cardHolderName: string
+    cardNumber: string
+    cardExpiry: string
+    cardCcv: string
+    /** DDD + número (10 ou 11 dígitos) — exigido no titular do cartão */
+    holderPhone: string
     email?: string
     password?: string
     name?: string
@@ -674,9 +740,16 @@ export async function subscribeToPlan(
     body: JSON.stringify({
       planId: params.planId,
       cpfCnpj: params.cpfCnpj.replace(/\D/g, ''),
-      email: params.email?.trim().toLowerCase(),
-      password: params.password,
-      name: params.name?.trim() || undefined,
+      cardHolderName: params.cardHolderName.trim(),
+      cardNumber: params.cardNumber.replace(/\D/g, ''),
+      cardExpiry: params.cardExpiry.trim(),
+      cardCcv: params.cardCcv.replace(/\D/g, ''),
+      holderPhone: params.holderPhone.replace(/\D/g, ''),
+      ...(params.email != null && params.email.trim() !== ''
+        ? { email: params.email.trim().toLowerCase() }
+        : {}),
+      ...(params.password != null ? { password: params.password } : {}),
+      ...(params.name != null && params.name.trim() !== '' ? { name: params.name.trim() } : {}),
     }),
     signal: options?.signal,
   })

@@ -22,7 +22,7 @@ Cada artigo ataca uma intenção de busca específica, com título em pergunta, 
 
 - Mesmo layout e cores da Landing React (`Landing.tsx` + tema light).
 - Formulários enviam para `/app/create?u=NICKNAME`; o app React lê o parâmetro `u` na página de criação.
-- Links: Entrar → `/login`, Cadastrar → `/app/create`, Logo → `/`.
+- Links: Entrar (marcas) → `/login`, Entrar (influenciador nos artigos) → `/influencer/login`, Cadastrar → `/app/create`, Logo → `/`.
 
 ## SEO
 

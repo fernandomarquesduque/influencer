@@ -18,7 +18,7 @@ try {
     Write-Host "Criando/atualizando usuario: $Username (pasta: $crawlDir)" -ForegroundColor Cyan
     npm run create-admin:server
     if ($LASTEXITCODE -ne 0) { throw "create-admin:server falhou" }
-    Write-Host "Pronto. Faca login em https://influencer.creait.com.br/login com usuario e senha informados." -ForegroundColor Green
+    Write-Host "Pronto. Faca login em https://influencer.creait.com.br/influencer/login (ou /login para area de marcas) com usuario e senha informados." -ForegroundColor Green
 } finally {
     Pop-Location
 }

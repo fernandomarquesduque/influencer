@@ -23,14 +23,14 @@ export function RequireAuth({ children, requireLogin = true, requireAdm = false 
   }
 
   if (requireLogin && !token) {
-    return <Navigate to="/login" state={{ from: location }} replace />
+    return <Navigate to="/" state={{ from: location }} replace />
   }
 
   /** Área admin: só `scope === 'adm'`; demais perfis vão para /app (logado) ou /login (sem sessão). */
   if (requireAdm && user?.scope !== 'adm') {
     return (
       <Navigate
-        to={token ? '/app' : '/login'}
+        to={token ? '/' : '/'}
         state={!token ? { from: location } : undefined}
         replace
       />

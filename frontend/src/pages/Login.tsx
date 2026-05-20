@@ -1,14 +1,21 @@
-import { useState } from 'react'
-import { App, Form, Input, Button, Typography, Space, Divider } from 'antd'
+import { useEffect, useState } from 'react'
+import { App, Form, Input, Button, Typography, Space, Divider, Spin } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { UserOutlined, LockOutlined, LoginOutlined, MessageOutlined, UserAddOutlined, CheckOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import Logo from '../components/Logo'
 import { trackMetaPixel } from '../utils/metaPixel'
+import { SEARCH_ROUTE_PATH } from '../constants/searchRoute'
 
 const { Title, Text } = Typography
 
 type AccessMode = 'password' | 'dm'
+
+function influencerProfilePath(handle: string | null | undefined): string | null {
+  const h = handle?.replace(/^@/, '').trim().toLowerCase()
+  if (!h) return null
+  return `/app/influencer/${encodeURIComponent(h)}`
+}
 
 function Login() {
   const { message } = App.useApp()
@@ -17,12 +24,30 @@ function Login() {
   const [nickname, setNickname] = useState('')
   const [failedAttempts, setFailedAttempts] = useState(0)
   const [form] = Form.useForm()
-  const { login } = useAuth()
+  const { login, user, loading: authLoading } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/app'
+  const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? SEARCH_ROUTE_PATH
 
   const normalizedNick = nickname.replace(/^@/, '').trim()
+
+  useEffect(() => {
+    if (authLoading) return
+    if (!user) return
+    const profilePath = user.scope === 'influencer' ? influencerProfilePath(user.profile_handle) : null
+    navigate(profilePath ?? from, { replace: true })
+  }, [authLoading, user, navigate, from])
+
+  if (authLoading || user) {
+    return (
+      <div
+        className="login-page influencer-login-page"
+        style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      >
+        <Spin size="large" />
+      </div>
+    )
+  }
 
   const onFinish = async (values: { password: string }) => {
     if (!normalizedNick) {
@@ -34,7 +59,8 @@ function Login() {
     try {
       await login(normalizedNick, values.password)
       message.success('Login realizado com sucesso')
-      navigate(from, { replace: true })
+      const profilePath = influencerProfilePath(normalizedNick)
+      navigate(profilePath ?? from, { replace: true })
     } catch {
       message.error('Usuário ou senha errados. Confere e tenta de novo.')
       form.setFields([

@@ -25,6 +25,12 @@ export function HeroInfoStrip({
   blur = false,
   variant = 'inline',
   density = 'default',
+  /** Só na faixa LLM: em mobile empilha ícone acima do texto e reduz fontes (mais largura por célula). */
+  stackOnMobile = false,
+  /** Ocupa 100% da largura com células distribuídas (ex.: badges LLM no modal). */
+  fullWidth = false,
+  marginTop,
+  marginBottom,
 }: {
   items: HeroInfoStripItem[]
   isMobile?: boolean
@@ -32,6 +38,10 @@ export function HeroInfoStrip({
   blur?: boolean
   variant?: 'inline' | 'stat'
   density?: HeroInfoStripDensity
+  stackOnMobile?: boolean
+  fullWidth?: boolean
+  marginTop?: number
+  marginBottom?: number
 }) {
   if (items.length === 0) return null
 
@@ -40,17 +50,25 @@ export function HeroInfoStrip({
     variant === 'stat' ? 'hero-info-strip--stat' : 'hero-info-strip--inline',
     density === 'compact' ? 'hero-info-strip--compact' : '',
     isMobile ? 'hero-info-strip--mobile' : '',
+    isMobile && stackOnMobile ? 'hero-info-strip--stack-mobile' : '',
+    fullWidth ? 'hero-info-strip--full-width' : '',
     className ?? '',
   ]
     .filter(Boolean)
     .join(' ')
 
   return (
-    <MotionDiv className={rootClass} blur={blur} fitContent={density === 'compact'}>
+    <MotionDiv
+      className={rootClass}
+      blur={blur}
+      fitContent={density === 'compact' && !(isMobile && stackOnMobile) && !fullWidth}
+      marginTop={marginTop}
+      marginBottom={marginBottom}
+    >
       {variant === 'stat' ? (
         <StatGrid items={items} isMobile={isMobile} density={density} />
       ) : (
-        <InlineRow items={items} isMobile={isMobile} density={density} />
+        <InlineRow items={items} isMobile={isMobile} density={density} stackOnMobile={stackOnMobile} fullWidth={fullWidth} />
       )}
     </MotionDiv>
   )
@@ -60,11 +78,15 @@ function MotionDiv({
   className,
   blur,
   fitContent,
+  marginTop,
+  marginBottom,
   children,
 }: {
   className: string
   blur: boolean
   fitContent: boolean
+  marginTop?: number
+  marginBottom?: number
   children: ReactNode
 }) {
   return (
@@ -72,8 +94,8 @@ function MotionDiv({
       className={className}
       style={{
         position: 'relative',
-        marginTop: s.xs,
-        marginBottom: s.md,
+        marginTop: marginTop ?? s.xs,
+        marginBottom: marginBottom ?? s.md,
         width: fitContent ? 'fit-content' : '100%',
         maxWidth: fitContent ? '100%' : undefined,
         ...(blur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
@@ -179,23 +201,51 @@ function InlineRow({
   items,
   isMobile,
   density,
+  stackOnMobile,
+  fullWidth = false,
 }: {
   items: HeroInfoStripItem[]
   isMobile: boolean
   density: HeroInfoStripDensity
+  stackOnMobile: boolean
+  fullWidth?: boolean
 }) {
   const compact = density === 'compact'
-  const iconSize = isMobile ? (compact ? 28 : 34) : compact ? 32 : 40
-  const iconFont = isMobile ? (compact ? 12 : 15) : compact ? 13 : 17
+  const stacked = isMobile && stackOnMobile
+  const iconSize = stacked
+    ? compact ? 22 : 24
+    : isMobile
+      ? compact ? 28 : 32
+      : compact ? 32 : 40
+  const iconFont = stacked
+    ? compact ? 11 : 12
+    : isMobile
+      ? compact ? 12 : 14
+      : compact ? 13 : 17
   const cellStyle: CSSProperties = {
-    gap: isMobile ? (compact ? 6 : 8) : compact ? 7 : 10,
-    padding: isMobile
-      ? compact
-        ? '5px 8px'
-        : '10px 8px'
-      : compact
-        ? '6px 10px'
-        : '12px 14px',
+    flexDirection: stacked ? 'column' : 'row',
+    alignItems: 'center',
+    justifyContent: stacked ? 'flex-start' : undefined,
+    gap: stacked ? (compact ? 4 : 5) : isMobile ? (compact ? 6 : 8) : compact ? 7 : 10,
+    padding: fullWidth
+      ? stacked
+        ? compact
+          ? '10px 8px'
+          : '12px 10px'
+        : compact
+          ? '12px 10px'
+          : '14px 12px'
+      : stacked
+        ? compact
+          ? '6px 5px'
+          : '7px 6px'
+        : isMobile
+          ? compact
+            ? '5px 8px'
+            : '8px 6px'
+          : compact
+            ? '6px 10px'
+            : '12px 14px',
   }
 
   return (
@@ -204,7 +254,7 @@ function InlineRow({
         const cell = (
           <div className="hero-info-strip-cell" style={cellStyle}>
             <StripIcon icon={icon} iconBg={iconBg} iconFg={iconFg} iconSize={iconSize} iconFont={iconFont} />
-            <MetricText isMobile={isMobile} compact={compact} value={value} label={label} />
+            <MetricText isMobile={isMobile} compact={compact} stacked={stacked} value={value} label={label} />
           </div>
         )
         return (
@@ -221,33 +271,53 @@ function InlineRow({
 function MetricText({
   isMobile,
   compact,
+  stacked,
   value,
   label,
 }: {
   isMobile: boolean
   compact: boolean
+  stacked: boolean
   value: string
   label: string
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 0 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: stacked ? 'center' : 'flex-start',
+        textAlign: stacked ? 'center' : 'left',
+        minWidth: 0,
+        width: stacked ? '100%' : undefined,
+      }}
+    >
       <strong
         style={{
-          fontSize: isMobile ? (compact ? 11 : 13) : compact ? 13 : 15,
+          fontSize: stacked
+            ? compact ? 10 : 11
+            : isMobile
+              ? compact ? 11 : 12
+              : compact ? 13 : 15,
           fontWeight: 700,
           color: c.text,
-          lineHeight: 1.25,
+          lineHeight: 1.2,
           wordBreak: 'break-word',
+          hyphens: stacked ? ('auto' as const) : undefined,
         }}
       >
         {value}
       </strong>
       <span
         style={{
-          fontSize: isMobile ? (compact ? 9 : 10) : compact ? 10 : 11,
+          fontSize: stacked
+            ? compact ? 8 : 9
+            : isMobile
+              ? compact ? 9 : 10
+              : compact ? 10 : 11,
           color: c.textSecondary,
-          lineHeight: 1.3,
-          marginTop: compact ? 1 : 2,
+          lineHeight: 1.25,
+          marginTop: compact ? 1 : isMobile ? 2 : 2,
         }}
       >
         {label}

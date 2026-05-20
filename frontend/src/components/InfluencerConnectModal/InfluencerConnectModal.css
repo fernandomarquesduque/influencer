@@ -14,8 +14,42 @@
 }
 
 .influencer-connect-modal__body {
-  padding: 28px 24px 24px;
+  padding: 28px 28px 24px;
   background: var(--app-bg, #fff);
+}
+
+.influencer-connect-modal__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.influencer-connect-modal__info {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.influencer-connect-modal__form-col {
+  min-width: 0;
+  padding-left: 28px;
+  border-left: 1px solid var(--app-border, #eee);
+}
+
+@media (max-width: 680px) {
+  .influencer-connect-modal__layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .influencer-connect-modal__form-col {
+    padding-left: 0;
+    border-left: none;
+    padding-top: 4px;
+    border-top: 1px solid var(--app-border, #eee);
+  }
 }
 
 .influencer-connect-modal__eyebrow {
@@ -32,7 +66,7 @@
   border: 1px solid color-mix(in srgb, var(--app-primary, #68278f) 14%, var(--app-border, #eee));
   border-radius: 12px;
   padding: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 0;
 }
 
 .influencer-connect-modal__head {
@@ -136,8 +170,8 @@
   font-size: 12px;
   line-height: 1.5;
   color: var(--app-text, #222);
-  margin: 0 0 16px;
-  max-width: 36em;
+  margin: 0;
+  max-width: none;
 }
 
 .influencer-connect-modal__form .ant-form-item {
@@ -186,9 +220,9 @@
 }
 
 .influencer-connect-modal__hint {
-  margin-top: 14px;
+  margin-top: auto;
   font-size: 11px;
   line-height: 1.45;
   color: var(--app-text-secondary, #888);
-  text-align: center;
+  text-align: left;
 }

@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { SEARCH_ROUTE_PATH } from '../constants/searchRoute'
 import { Card, Typography, Button, Spin, Empty, Statistic, Row, Col, Tooltip } from 'antd'
 import {
   FolderOpenOutlined,
@@ -135,7 +136,7 @@ export default function MyCampaigns() {
         </Title>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button
-            onClick={() => navigate('/search')}
+            onClick={() => navigate(SEARCH_ROUTE_PATH)}
             title="Base completa"
             aria-label="Base completa"
             style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 12px' }}
@@ -163,7 +164,7 @@ export default function MyCampaigns() {
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description="Você ainda não tem campanhas. Faça uma busca e compre um relatório para ver a lista aqui."
         >
-          <Button type="primary" onClick={() => navigate('/search')}>
+          <Button type="primary" onClick={() => navigate(SEARCH_ROUTE_PATH)}>
             Fazer uma busca
           </Button>
         </Empty>

@@ -605,11 +605,6 @@ function CoverPage(props: CoverPageProps) {
             )
           })}
         </View>
-        {showViewsNote && (
-          <Text style={{ fontSize: 7, color: pal.textMuted, fontStyle: 'italic', marginBottom: 8 }}>
-            Nota: views só em reels/vídeos; curtidas e comentários incluem feed e reels.
-          </Text>
-        )}
 
         {/* CPE e CPM — CPM omitido quando não há views (API não fornece) */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 13 }}>

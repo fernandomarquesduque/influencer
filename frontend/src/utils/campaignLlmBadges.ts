@@ -1,5 +1,4 @@
-import type { ProfileListItem } from '../api'
-import { snapMainCategoryToTaxonomy } from '@repo/llmMainCategoryTaxonomy'
+import type { ProfileListItem, ProfileItem } from '../api'
 import { getLlmQualification } from './mapProfileListToPreviewItems'
 
 export type LlmQualificationBadge = { key: string; text: string; title: string }
@@ -11,6 +10,25 @@ export function getLlmMainCategoryLabel(item: ProfileListItem): string | null {
   const mainCategory = String(q.mainCategory ?? '').trim()
   if (!mainCategory || mainCategory === '-') return null
   return mainCategory
+}
+
+/**
+ * Categoria principal LLM para o hero do detalhe do perfil (mesma lógica do painel: qualificação presente mesmo se status !== done).
+ */
+export function getLlmMainCategoryLabelForDetailHero(profile: ProfileItem | null | undefined): string | null {
+  if (!profile) return null
+  const rec = profile as unknown as Record<string, unknown>
+  const llmRaw = rec.llm
+  if (llmRaw == null || typeof llmRaw !== 'object' || Array.isArray(llmRaw)) return null
+  const lo = llmRaw as Record<string, unknown>
+  const qRaw = lo.qualification
+  if (qRaw == null || typeof qRaw !== 'object' || Array.isArray(qRaw)) return null
+  const q = qRaw as Record<string, unknown>
+  const item = {
+    ...(profile as unknown as ProfileListItem),
+    llm: { ...lo, status: 'done', qualification: q },
+  } as ProfileListItem
+  return getLlmMainCategoryLabel(item)
 }
 
 /** Pilares de conteúdo para exibir ao lado da categoria principal. */

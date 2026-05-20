@@ -1,0 +1,169 @@
+/**
+ * Espaçamento vertical/horizontal unificado na página e no modal de detalhe do influenciador.
+ * Defina --influencer-detail-gap no container `.influencer-detail-stack`.
+ */
+.influencer-detail-stack {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: var(--influencer-detail-gap, 16px);
+  box-sizing: border-box;
+}
+
+/* Filhos diretos: só o gap do stack (evita margens extras no modal) */
+.influencer-detail-stack > * {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.influencer-detail-stack .section-h2 {
+  margin-top: 0 !important;
+  margin-bottom: var(--influencer-detail-gap, 16px) !important;
+}
+
+/* Faixas de métricas / LLM dentro do stack */
+.influencer-detail-stack .hero-info-strip,
+.influencer-detail-stack .report-hero-metrics,
+.influencer-detail-stack .profile-llm-detail-panel--embedded,
+.influencer-detail-stack .report-hero {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+/* ER (Feed/Reels) + alcance — mesmo gap do stack */
+.detail-er-alcance-cluster {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: var(--influencer-detail-gap, 16px);
+}
+
+.detail-er-by-type-grid,
+.detail-alcance-grid {
+  display: grid;
+  width: 100%;
+  column-gap: var(--influencer-detail-gap, 16px);
+  row-gap: var(--influencer-detail-gap, 16px);
+}
+
+.detail-er-by-type-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detail-er-by-type-cell,
+.detail-alcance-cell {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.detail-er-by-type-cell > span,
+.detail-er-by-type-cell .ant-tooltip-disabled-compatible-wrapper {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.detail-er-by-type-card {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.detail-alcance-cell > * {
+  width: 100%;
+}
+
+.detail-alcance-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Gauge não invade a célula vizinha no modal */
+.detail-er-by-type-cell .er-gauge-chart {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.detail-er-by-type-cell .er-gauge-chart__row {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.detail-er-by-type-cell .er-gauge-chart__row > div:first-child {
+  max-width: 100%;
+}
+
+/* Grade de KPIs (Métricas) */
+.influencer-detail-stack .metricas-dashboard-shell {
+  margin-bottom: 0 !important;
+}
+
+.influencer-detail-stack .metricas-dash-grid,
+.influencer-detail-stack .metricas-dash-grid-secondary {
+  gap: var(--influencer-detail-gap, 16px);
+}
+
+.influencer-detail-stack .metricas-dash-grid-secondary {
+  margin-top: var(--influencer-detail-gap, 16px);
+}
+
+/* Modal: reforça gap e respiro nas faixas horizontais */
+.influencer-detail-modal .influencer-detail-stack {
+  --influencer-detail-gap: 16px;
+}
+
+.influencer-detail-modal .detail-er-alcance-cluster {
+  gap: 16px !important;
+}
+
+.influencer-detail-modal .detail-er-by-type-grid,
+.influencer-detail-modal .detail-alcance-grid {
+  column-gap: 16px !important;
+  row-gap: 16px !important;
+}
+
+.influencer-detail-modal .profile-llm-hero-strip .hero-info-strip-cell {
+  padding: 10px 12px !important;
+  gap: 8px;
+}
+
+.influencer-detail-modal .profile-llm-hero-strip .hero-info-strip-divider {
+  margin: 8px 0 !important;
+}
+
+.influencer-detail-modal .report-hero--compact .report-hero-metrics .hero-info-strip-cell {
+  padding: 10px 12px !important;
+}
+
+.influencer-detail-modal .report-hero--compact .report-hero-inner {
+  padding: clamp(10px, 2cqi, 14px) clamp(10px, 2.5cqi, 16px);
+}
+
+/* Conteúdo extra do hero (nota / progresso) — mesmo ritmo vertical */
+.influencer-detail-stack .report-hero-extra {
+  display: flex;
+  flex-direction: column;
+  gap: var(--influencer-detail-gap, 16px);
+  width: 100%;
+  margin-top: var(--influencer-detail-gap, 16px);
+}
+
+.influencer-detail-stack .report-hero-extra > * {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+@media (max-width: 767.98px) {
+  .detail-alcance-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .detail-er-by-type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .influencer-detail-modal .influencer-detail-stack {
+    --influencer-detail-gap: 12px;
+  }
+}
