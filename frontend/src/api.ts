@@ -1605,12 +1605,11 @@ export interface RequestCodeResponse {
 }
 
 /**
- * Extract + request-code em uma única chamada (sem polling). Processo todo no backend.
+ * Extract + request-code em uma única chamada (sem polling). Sempre fast: signupLight, sem destaques.
  * Usado no fluxo de cadastro (/app/create) para evitar gap entre extract e envio do código.
  */
 export async function requestCodeWithExtract(
-  nickname: string,
-  options?: { fast?: boolean }
+  nickname: string
 ): Promise<RequestCodeResponse & { success?: boolean }> {
   const handle = nickname.replace(/^@/, '').trim()
   const res = await fetch(`${API_BASE}/auth/request-code-with-extract`, {
@@ -1619,7 +1618,7 @@ export async function requestCodeWithExtract(
     body: JSON.stringify({
       nickname: handle,
       handle,
-      ...(options?.fast ? { fast: true } : {}),
+      fast: true,
     }),
   })
   const body = await res.json().catch(() => ({})) as { error?: string; followProfileUrl?: string; sent?: boolean; code?: string }

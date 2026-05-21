@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Form, Input, Button, message, Collapse, Checkbox } from 'antd'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth, type AuthUser } from '../contexts/AuthContext'
@@ -509,6 +509,7 @@ export default function Auth() {
   const [rejectionInfo, setRejectionInfo] = useState<ExtractProfileResult | null>(null)
   const [form] = Form.useForm()
   const [compactHeight, setCompactHeight] = useState(false)
+  const requestCodeInFlight = useRef(false)
 
   useEffect(() => {
     const mq = window.matchMedia('(max-height: 780px)')
@@ -521,8 +522,6 @@ export default function Auth() {
   const fromState = (location.state as { nickname?: string })?.nickname
   const fromQuery = searchParams.get('u') || searchParams.get('@')
   const savedNickname = fromState || (fromQuery ? fromQuery.replace(/^@/, '').trim().toLowerCase() : undefined)
-  /** Dev ou ?fast=1: pula delays humanos na extração + envio do código. */
-  const requestCodeFast = searchParams.get('fast') === '1' || import.meta.env.DEV
   useEffect(() => {
     if (savedNickname && form) {
       form.setFieldsValue({ nickname: savedNickname })
@@ -530,14 +529,17 @@ export default function Auth() {
   }, [savedNickname, form])
 
   const onRequestCode = async (values: { nickname: string; acceptTerms?: boolean }) => {
-    const n = (values.nickname ?? '').replace(/^@/, '').trim()
+    const n = (values.nickname ?? '').replace(/^@/, '').trim().toLowerCase()
     if (!n) return
+    if (requestCodeInFlight.current) return
+    requestCodeInFlight.current = true
     setRejectionInfo(null)
     setLoading(true)
     setShowInstallLoader(true)
     trackMetaPixel('Lead', { source: 'auth_request_code' })
+    const hadCodeStep = step === 'code'
     try {
-      const data = await requestCodeWithExtract(n, { fast: requestCodeFast })
+      const data = await requestCodeWithExtract(n)
       if (data.rejectionReason === 'nao_segue_perfil') {
         setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
         return
@@ -546,7 +548,11 @@ export default function Auth() {
       setStep('code')
       form.setFieldValue('code', data.code ?? '')
       if (data.sent) {
-        message.success('Código enviado! Olha no Direct do Instagram.')
+        message.success(
+          hadCodeStep
+            ? 'Novo código enviado! Use só o último Direct (o código anterior não vale mais).'
+            : 'Código enviado! Olha no Direct do Instagram.'
+        )
       } else if (data.code) {
         message.warning(data.error ?? 'DM não foi. Usa o código que apareceu aí em baixo.')
       } else if (data.error) {
@@ -557,13 +563,14 @@ export default function Auth() {
       message.error(err)
       setRejectionInfo({ success: false, handle: n, error: err })
     } finally {
+      requestCodeInFlight.current = false
       setLoading(false)
       setShowInstallLoader(false)
     }
   }
 
   const onVerify = async (values: { code: string }) => {
-    const code = (values.code ?? '').trim()
+    const code = String(values.code ?? '').replace(/\D/g, '')
     if (!code || !nickname) return
     setLoading(true)
     try {
@@ -604,14 +611,16 @@ export default function Auth() {
   }
 
   const retryRequestCode = async (handle: string) => {
-    const n = handle.replace(/^@/, '').trim()
+    const n = handle.replace(/^@/, '').trim().toLowerCase()
     if (!n) return
+    if (requestCodeInFlight.current) return
+    requestCodeInFlight.current = true
     setRejectionInfo(null)
     setLoading(true)
     setShowInstallLoader(true)
     trackMetaPixel('Lead', { source: 'auth_retry_request_code' })
     try {
-      const data = await requestCodeWithExtract(n, { fast: requestCodeFast })
+      const data = await requestCodeWithExtract(n)
       if (data.rejectionReason === 'nao_segue_perfil') {
         setRejectionInfo({ success: false, handle: n, rejectionReason: 'nao_segue_perfil', followProfileUrl: data.followProfileUrl })
         return
@@ -620,7 +629,7 @@ export default function Auth() {
       setStep('code')
       form.setFieldValue('code', data.code ?? '')
       if (data.sent) {
-        message.success('Código enviado! Olha no Direct do Instagram.')
+        message.success('Novo código enviado! Use só o último Direct (o código anterior não vale mais).')
       } else if (data.code) {
         message.warning(data.error ?? 'DM não foi. Usa o código que apareceu aí em baixo.')
       } else if (data.error) {
@@ -631,6 +640,7 @@ export default function Auth() {
       message.error(err)
       setRejectionInfo({ success: false, handle: n, error: err })
     } finally {
+      requestCodeInFlight.current = false
       setLoading(false)
       setShowInstallLoader(false)
     }
@@ -781,7 +791,8 @@ export default function Auth() {
                   >
                     <p style={{ margin: 0, color: '#4b5563', fontSize: compactHeight ? 12 : 14, lineHeight: 1.5 }}>
                       Enviamos um código de 6 números no <strong style={{ color: '#7c3aed' }}>Direct</strong> para{' '}
-                      <strong style={{ color: '#7c3aed' }}>@{nickname}</strong>. Confira sua DM e cole o código abaixo.
+                      <strong style={{ color: '#7c3aed' }}>@{nickname}</strong>. Use a{' '}
+                      <strong>última</strong> mensagem do Busca Influencer no fim da conversa (códigos antigos não valem).
                     </p>
                   </div>
                   <Form form={form} name="verify" onFinish={onVerify} layout="vertical" requiredMark={false}>
@@ -797,7 +808,7 @@ export default function Auth() {
                       <Input
                         placeholder="000000"
                         size={compactHeight ? 'middle' : 'large'}
-                        type="number"
+                        inputMode="numeric"
                         maxLength={6}
                         autoComplete="one-time-code"
                         style={{ letterSpacing: compactHeight ? 8 : 10, textAlign: 'center', fontSize: compactHeight ? 17 : 20, fontWeight: 600, borderRadius: compactHeight ? 10 : 12, borderColor: 'var(--app-border)' }}

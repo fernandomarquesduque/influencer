@@ -10,13 +10,135 @@ const DEBUG = process.env.DM_DEBUG === 'true';
 
 export type DmSendOptions = {
   skipFollowerListCheck?: boolean;
-  /** Sem delays humanos, timeouts menores, uma tentativa de envio (cadastro/dev). */
+  /** Menos delays; 2 tentativas de envio; espera mínima após digitar (cadastro 2FA). */
   fast?: boolean;
 };
 
 function dmDelay(minMs: number, maxMs: number, fast?: boolean): Promise<void> {
   if (fast) return Promise.resolve();
   return randomDelay(minMs, maxMs);
+}
+
+/** Após preencher o composer, o Instagram precisa de um tick para habilitar Enviar (crítico no fast). */
+async function waitAfterMessageFill(page: Page, fast?: boolean): Promise<void> {
+  if (fast) {
+    await page.waitForTimeout(450);
+    return;
+  }
+  await randomDelay(80, 180);
+}
+
+const SEND_BUTTON_SELECTORS = [
+  'div[role="button"]:has(svg[aria-label="Enviar"])',
+  'div[role="button"]:has(svg[aria-label="Send"])',
+  'button:has(svg[aria-label="Enviar"])',
+  'button:has(svg[aria-label="Send"])',
+  'div[role="button"]:has-text("Enviar")',
+  'div[role="button"]:has-text("Send")',
+  'button:has-text("Enviar")',
+  'button:has-text("Send")',
+];
+
+async function isSendControlEnabled(btn: ReturnType<Page['locator']>): Promise<boolean> {
+  if ((await btn.count()) === 0) return false;
+  const ariaDisabled = await btn.getAttribute('aria-disabled');
+  if (ariaDisabled === 'true') return false;
+  const disabled = await btn.getAttribute('disabled');
+  if (disabled != null) return false;
+  return btn.isEnabled().catch(() => true);
+}
+
+/** Clica Enviar no painel da conversa (evita botão da lista lateral). */
+async function tryClickSendButton(
+  page: Page,
+  t0: number,
+  fast: boolean
+): Promise<boolean> {
+  const scopes: { root: ReturnType<Page['locator']>; label: string }[] = [];
+  const main = page.locator('div[role="main"]').first();
+  if ((await main.count()) > 0) scopes.push({ root: main, label: 'main' });
+  scopes.push({ root: page.locator('body'), label: 'page' });
+
+  for (const { root, label: scopeLabel } of scopes) {
+    for (let i = 0; i < SEND_BUTTON_SELECTORS.length; i++) {
+      const sel = SEND_BUTTON_SELECTORS[i];
+      const candidates = root.locator(sel);
+      const n = await candidates.count();
+      for (let j = n - 1; j >= 0; j--) {
+        const btn = candidates.nth(j);
+        try {
+          await btn.waitFor({ state: 'visible', timeout: dmTimeout(2000, fast) });
+          if (!(await isSendControlEnabled(btn))) {
+            logStep(t0, `Enviar [${scopeLabel}] ${sel} #${j} desabilitado`);
+            continue;
+          }
+          const tSend = Date.now();
+          await btn.click({ timeout: dmTimeout(2000, fast) });
+          logStep(t0, `Botão Enviar [${scopeLabel}] ${sel} #${j} OK em ${Date.now() - tSend}ms`);
+          log(`botão Enviar clicado: ${scopeLabel} ${sel}`);
+          return true;
+        } catch {
+          logStep(t0, `Botão Enviar [${scopeLabel}] ${sel} #${j} falhou`);
+        }
+      }
+    }
+    try {
+      const icons = root.locator('svg[aria-label="Enviar"], svg[aria-label="Send"]');
+      const iconCount = await icons.count();
+      if (iconCount > 0) {
+        const icon = icons.nth(iconCount - 1);
+        const tSvg = Date.now();
+        await icon.click({ force: true, timeout: dmTimeout(2000, fast) });
+        logStep(t0, `Botão Enviar [${scopeLabel}] svg force #${iconCount - 1} OK em ${Date.now() - tSvg}ms`);
+        return true;
+      }
+    } catch {
+      logStep(t0, `Botão Enviar [${scopeLabel}] svg force falhou`);
+    }
+  }
+  return false;
+}
+
+async function tryPressEnterToSend(
+  messageInput: ReturnType<Page['locator']>,
+  t0: number
+): Promise<boolean> {
+  try {
+    await messageInput.press('Enter');
+    logStep(t0, 'Enter no composer (fallback envio)');
+    return true;
+  } catch {
+    logStep(t0, 'Enter no composer falhou');
+    return false;
+  }
+}
+
+async function fillDirectMessage(
+  messageInput: ReturnType<Page['locator']>,
+  textToSend: string,
+  fast: boolean
+): Promise<void> {
+  await messageInput.click();
+  await dmDelay(30, 80, fast);
+  if (!textToSend.trim()) return;
+  try {
+    await messageInput.fill(textToSend);
+  } catch {
+    await messageInput.pressSequentially(textToSend, { delay: fast ? 8 : 15 });
+  }
+  // Dispara input para o React do Instagram habilitar Enviar quando fill não basta
+  try {
+    await messageInput.evaluate((el, text) => {
+      const node = el as HTMLElement;
+      node.focus();
+      if (node.isContentEditable) {
+        node.textContent = text;
+        node.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
+      }
+    }, textToSend);
+  } catch {
+    // ignore
+  }
 }
 
 function dmTimeout(ms: number, fast?: boolean): number {
@@ -255,10 +377,10 @@ export async function sendDirectMessage(
 
     // Esperar a conversa carregar e fechar modais de novo
     await dmDelay(150, 350, fast);
-    logStep(t0, `Aguardando URL /direct/ (timeout ${fast ? '1.5' : '4'}s)...`);
+    logStep(t0, `Aguardando URL /direct/ (timeout ${fast ? '2.5' : '4'}s)...`);
     try {
       const tUrl = Date.now();
-      await page.waitForURL(/\/direct\//, { timeout: fast ? 1500 : 4000 }).catch(() => { });
+      await page.waitForURL(/\/direct\//, { timeout: fast ? 2500 : 4000 }).catch(() => { });
       logStep(t0, `URL /direct/ OK em ${Date.now() - tUrl}ms`);
     } catch {
       // ignore
@@ -297,19 +419,7 @@ export async function sendDirectMessage(
       'textarea[placeholder*="Mensagem"]',
       '[contenteditable="true"]',
     ];
-    // Botão Enviar: div[role="button"] com texto costuma funcionar primeiro (DOM atual do Instagram)
-    const sendSelectors = [
-      'div[role="button"]:has-text("Enviar")',
-      'div[role="button"]:has-text("Send")',
-      'button:has(svg[aria-label="Enviar"]), button:has(svg[aria-label="Send"])',
-      'div[role="button"]:has(svg[aria-label="Enviar"]), div[role="button"]:has(svg[aria-label="Send"])',
-      'button:has-text("Enviar")',
-      'button:has-text("Send")',
-      'svg[aria-label="Enviar"]',
-      'svg[aria-label="Send"]',
-    ];
-
-    const maxSendAttempts = fast ? 1 : 3;
+    const maxSendAttempts = fast ? 2 : 3;
     let lastError: string | undefined;
 
     for (let attempt = 1; attempt <= maxSendAttempts; attempt++) {
@@ -348,60 +458,24 @@ export async function sendDirectMessage(
       try {
         logStep(t0, 'Clicando no campo e preenchendo mensagem...');
         const tFill = Date.now();
-        await messageInput.click();
-        await dmDelay(30, 80, fast);
-        if (textToSend.trim()) {
-          try {
-            await messageInput.fill(textToSend);
-          } catch {
-            await messageInput.pressSequentially(textToSend, { delay: fast ? 0 : 15 });
-          }
-        }
+        await fillDirectMessage(messageInput, textToSend, fast);
         logStep(t0, `Mensagem preenchida em ${Date.now() - tFill}ms`);
-        await dmDelay(40, 100, fast);
+        await waitAfterMessageFill(page, fast);
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
         logStep(t0, `Erro ao preencher: ${lastError}`);
         continue;
       }
 
-      // Botão Enviar fica habilitado logo após digitar; espera curta e clica
-      await dmDelay(50, 120, fast);
       logStep(t0, 'Procurando botão Enviar...');
-      let sendClicked = false;
-      for (let i = 0; i < sendSelectors.length; i++) {
-        const sel = sendSelectors[i];
-        try {
-          const btn = page.locator(sel).first();
-          const tSend = Date.now();
-          await btn.waitFor({ state: 'visible', timeout: dmTimeout(1500, fast) });
-          await btn.click();
-          logStep(t0, `Botão Enviar seletor ${i + 1}/${sendSelectors.length} OK em ${Date.now() - tSend}ms`);
-          sendClicked = true;
-          log(`botão Enviar clicado: ${sel}`);
-          break;
-        } catch {
-          logStep(t0, `Botão Enviar seletor ${i + 1}/${sendSelectors.length} falhou`);
-          continue;
-        }
-      }
+      let sendClicked = await tryClickSendButton(page, t0, fast);
       if (!sendClicked) {
-        // Última tentativa: clicar em qualquer svg Enviar/Send com force (pode estar coberto)
-        logStep(t0, 'Tentando svg force como fallback...');
-        try {
-          const tSvg = Date.now();
-          const sendIcon = page.locator('svg[aria-label="Enviar"], svg[aria-label="Send"]').first();
-          await sendIcon.click({ force: true, timeout: dmTimeout(2000, fast) });
-          logStep(t0, `Botão Enviar (svg force) OK em ${Date.now() - tSvg}ms`);
-          sendClicked = true;
-          log('botão Enviar clicado (svg force)');
-        } catch {
-          logStep(t0, 'Botão Enviar (svg force) falhou');
-          // ignore
-        }
+        logStep(t0, 'Tentando Enter no composer...');
+        sendClicked = await tryPressEnterToSend(messageInput, t0);
       }
       if (sendClicked) {
-        await dmDelay(150, 300, fast);
+        if (fast) await page.waitForTimeout(350);
+        else await dmDelay(150, 300, fast);
         logStep(t0, `Concluído em ${Date.now() - t0}ms (ok=true).`);
         logStep(t0, 'Fechando página...');
         return { ok: true };

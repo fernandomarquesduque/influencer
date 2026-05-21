@@ -936,7 +936,7 @@ app.post('/api/auth/request-code', async (req: RequestWithAuth, res: Response) =
     const fast = req.body?.fast === true || req.body?.fast === 'true';
     const userId = req.user ? Number(req.user.sub) : null;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
+    authDb.saveProfileVerification(nickname, code, userId);
 
     const flowPromise = performRequestCodeFlow(nickname, code, userId, fast ? { fast: true } : undefined);
     requestCodeFlushPromise = requestCodeFlushPromise.then(async () => {
@@ -1445,8 +1445,9 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
       res.status(400).json({ error: 'Informe o nickname do Instagram' });
       return;
     }
-    const fast = req.body?.fast === true || req.body?.fast === 'true';
-    logStep(`Cadastro: extração imediata (fora da fila) + envio de código para @${nickname}${fast ? ' [fast]' : ''}`);
+    /** Cadastro 2FA: sempre signupLight (só perfil) + DM rápido; nunca coleta destaques. */
+    const fast = true;
+    logStep(`Cadastro: extração imediata (fora da fila) + envio de código para @${nickname} [fast]`);
 
     const authStatePath = resolveAuthStatePath(process.env.INSTAGRAM_AUTH_STATE ?? process.env.AUTH_STATE_PATH ?? 'data/instagram-auth.json');
     if (!existsSync(authStatePath)) {
@@ -1487,12 +1488,19 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
 
     const userId = req.user ? Number(req.user.sub) : null;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    authDb.saveProfileVerification(nickname, code, userId, new Date(Date.now() + 15 * 60 * 1000).toISOString());
+    authDb.saveProfileVerification(nickname, code, userId);
+    const exposeCode =
+      process.env.NODE_ENV === 'development' || process.env.AUTH_RETURN_CODE_IN_RESPONSE === 'true';
+    logStep(
+      exposeCode
+        ? `Código gravado para @${nickname}: ${code} (use este no formulário; válido 15 min)`
+        : `Código gravado para @${nickname} (válido 15 min) — use o último DM do bot`
+    );
 
     const flowPromise = performRequestCodeFlow(nickname, code, userId, {
       client: priorityClient,
       trustFreshExtract: true,
-      ...(fast ? { fast: true } : {}),
+      fast: true,
     });
     requestCodeFlushPromise = requestCodeFlushPromise.then(async () => {
       await flowPromise;
@@ -1507,7 +1515,7 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
       return;
     }
     logStep(`Concluído em ${Date.now() - t0}ms`);
-    res.status(200).json({ sent: true, code: process.env.NODE_ENV === 'development' ? code : undefined });
+    res.status(200).json({ sent: true, ...(exposeCode ? { code } : {}) });
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     logStep(`ERRO: ${errMsg}`);
@@ -1518,15 +1526,22 @@ app.post('/api/auth/request-code-with-extract', requireScopesOrPublic('adm'), as
 /** Valida com o código recebido no Instagram. Se não estiver logado, o 2FA faz o login (retorna token + user). */
 app.post('/api/auth/verify-profile', (req: RequestWithAuth, res: Response) => {
   try {
-    const nickname = (req.body?.nickname ?? req.body?.handle ?? '').toString().trim().replace(/^@/, '');
-    const code = (req.body?.code ?? '').toString().trim();
+    const nickname = (req.body?.nickname ?? req.body?.handle ?? '').toString().trim().replace(/^@/, '').toLowerCase();
+    const code = (req.body?.code ?? '').toString().trim().replace(/\D/g, '');
     if (!nickname || !code) {
       res.status(400).json({ error: 'Informe o nickname e o código' });
       return;
     }
     const verified = authDb.getProfileVerification(nickname, code);
     if (verified === null) {
-      res.status(400).json({ error: 'Código inválido ou expirado. Solicite um novo código.' });
+      const rejectReason = authDb.getProfileVerificationRejectReason(nickname, code);
+      const error =
+        rejectReason === 'superseded'
+          ? 'Este código não é o mais recente. Confira o último Direct que você recebeu ou solicite um novo código.'
+          : rejectReason === 'expired'
+            ? 'Código expirado. Solicite um novo código.'
+            : 'Código inválido ou expirado. Solicite um novo código.';
+      res.status(400).json({ error, rejectReason: rejectReason ?? 'invalid' });
       return;
     }
     authDb.clearProfileVerification(nickname);

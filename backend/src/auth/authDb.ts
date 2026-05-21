@@ -212,24 +212,80 @@ export class AuthDb {
     }
   }
 
+  /** SQL: linha ainda válida (suporta expires_at antigo em ISO ou datetime SQLite). */
+  private static readonly VERIFICATION_NOT_EXPIRED = `(
+    (expires_at NOT LIKE '%T%' AND expires_at > datetime('now'))
+    OR (
+      expires_at LIKE '%T%'
+      AND datetime(replace(substr(replace(replace(expires_at, 'Z', ''), '.000', ''), 1, 19), 'T', ' ')) > datetime('now')
+    )
+  )`;
+
   /** Salva ou substitui código de verificação (userId null = 2FA como login, sem conta prévia). */
-  saveProfileVerification(handle: string, code: string, userId: number | null, expiresAt: string): void {
+  saveProfileVerification(handle: string, code: string, userId: number | null): void {
     const h = handle.replace(/^@/, '').trim().toLowerCase();
-    if (!h) throw new Error('Handle inválido');
+    const c = this.normalizeVerificationCode(code);
+    if (!h || !c) throw new Error('Handle ou código inválido');
     this.db.prepare(
-      `INSERT OR REPLACE INTO auth_profile_verification (handle, code, user_id, expires_at) VALUES (?, ?, ?, ?)`
-    ).run(h, code, userId, expiresAt);
+      `INSERT OR REPLACE INTO auth_profile_verification (handle, code, user_id, expires_at)
+       VALUES (?, ?, ?, datetime('now', '+15 minutes'))`
+    ).run(h, c, userId);
+  }
+
+  /** Código ativo gravado para o handle (debug / suporte). */
+  getActiveProfileVerificationCode(handle: string): string | null {
+    const h = handle.replace(/^@/, '').trim().toLowerCase();
+    const row = this.db.prepare(
+      `SELECT code FROM auth_profile_verification WHERE handle = ? AND ${AuthDb.VERIFICATION_NOT_EXPIRED}`
+    ).get(h) as { code: string } | undefined;
+    return row?.code ?? null;
+  }
+
+  private normalizeVerificationCode(code: string): string {
+    return code.replace(/\D/g, '');
   }
 
   /** Se handle+code válidos e não expirados, retorna o user_id da linha (null = pedido sem login). Senão null. */
   getProfileVerification(handle: string, code: string): number | null | 'valid_no_user' {
     const h = handle.replace(/^@/, '').trim().toLowerCase();
+    const c = this.normalizeVerificationCode(code);
+    if (!c) return null;
     const row = this.db.prepare(
-      `SELECT user_id FROM auth_profile_verification WHERE handle = ? AND code = ? AND expires_at > datetime('now')`
-    ).get(h, code.trim()) as { user_id: number | null } | undefined;
+      `SELECT user_id FROM auth_profile_verification WHERE handle = ? AND code = ? AND ${AuthDb.VERIFICATION_NOT_EXPIRED}`
+    ).get(h, c) as { user_id: number | null } | undefined;
     if (row === undefined) return null;
     if (row.user_id === null) return 'valid_no_user';
     return row.user_id;
+  }
+
+  /**
+   * Motivo da rejeição ao validar código (para mensagem clara no 2FA).
+   * superseded = pediu código de novo; só vale o último enviado no Direct.
+   */
+  getProfileVerificationRejectReason(
+    handle: string,
+    code: string
+  ): 'invalid' | 'superseded' | 'expired' | null {
+    const h = handle.replace(/^@/, '').trim().toLowerCase();
+    const c = this.normalizeVerificationCode(code);
+    if (!h || !c) return 'invalid';
+    const row = this.db.prepare(
+      `SELECT code, expires_at FROM auth_profile_verification WHERE handle = ?`
+    ).get(h) as { code: string; expires_at: string } | undefined;
+    if (row === undefined) return 'invalid';
+    const stillValid = this.db
+      .prepare(
+        `SELECT 1 FROM auth_profile_verification WHERE handle = ? AND code = ? AND ${AuthDb.VERIFICATION_NOT_EXPIRED}`
+      )
+      .get(h, row.code) as { 1: number } | undefined;
+    if (stillValid === undefined) {
+      const anyValid = this.db
+        .prepare(`SELECT 1 FROM auth_profile_verification WHERE handle = ? AND ${AuthDb.VERIFICATION_NOT_EXPIRED}`)
+        .get(h) as { 1: number } | undefined;
+      if (anyValid === undefined) return 'expired';
+    }
+    if (row.code !== c) return 'superseded';
+    return null;
   }
 
   /** Usuário por username ou profile_handle (handle do influencer, normalizado, sem @). */

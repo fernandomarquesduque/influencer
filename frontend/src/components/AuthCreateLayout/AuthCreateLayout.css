@@ -148,6 +148,10 @@
 }
 
 .auth-create__hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(12px, 2vh, 18px);
   text-align: center;
   width: 100%;
   position: relative;
@@ -164,7 +168,7 @@
   color: #6226a7;
   font-size: 12px;
   font-weight: 700;
-  margin-bottom: clamp(14px, 2.5vh, 20px);
+  flex-shrink: 0;
 }
 
 .auth-create__badge .anticon {
@@ -173,7 +177,8 @@
 
 .auth-create__title-wrap {
   position: relative;
-  display: inline-block;
+  display: block;
+  width: 100%;
   max-width: 100%;
 }
 
@@ -212,7 +217,7 @@
 }
 
 .auth-create__subtitle {
-  margin: clamp(10px, 2vh, 14px) auto 0;
+  margin: 0 auto;
   max-width: 400px;
   font-size: clamp(0.875rem, 2.2vw, 1rem);
   line-height: 1.55;
