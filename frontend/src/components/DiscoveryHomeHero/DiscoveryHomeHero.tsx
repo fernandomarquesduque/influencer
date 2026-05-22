@@ -2,15 +2,19 @@ import {
   ArrowRightOutlined,
   DownOutlined,
   InstagramOutlined,
+  LoginOutlined,
   StarFilled,
   StarOutlined,
 } from '@ant-design/icons'
 import type { CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
+import AppAccountMenu from '../AppAccountMenu'
+import { useAuth } from '../../contexts/AuthContext'
 import { INFLUENCER_LANDING_PATH } from '../../constants/landingPaths'
 import { SEARCH_ROUTE_PATH } from '../../constants/searchRoute'
 import { trackAppUiClick } from '../../utils/metaPixel'
 import BuscaSearchBar from './BuscaSearchBar'
+import '../AppAccountMenu/AppAccountMenu.css'
 import './DiscoveryHomeHero.css'
 
 export type DiscoveryHomeHeroVariant = 'full' | 'compact'
@@ -108,6 +112,7 @@ export default function DiscoveryHomeHero({
   showInfluencerPanel = variant === 'full',
 }: DiscoveryHomeHeroProps) {
   const navigate = useNavigate()
+  const { user, loading: authLoading } = useAuth()
   const isCompact = variant === 'compact'
   const placeholder =
     searchPlaceholder ??
@@ -120,6 +125,11 @@ export default function DiscoveryHomeHero({
 
   const goToInfluencerLanding = () => {
     trackAppUiClick('hero_sou_influenciador', { target_path: INFLUENCER_LANDING_PATH })
+  }
+
+  const goToAgencyLogin = () => {
+    trackAppUiClick('hero_agency_login', { target_path: '/login' })
+    navigate('/login')
   }
 
   return (
@@ -146,6 +156,25 @@ export default function DiscoveryHomeHero({
           ))}
         </div>
       ) : null}
+
+      {authLoading ? null : user ? (
+        <AppAccountMenu
+          className="discovery-home-hero__account-menu app-account-menu-btn"
+          showLabel
+          includeGuestMenu={false}
+          ariaLabel="Menu da conta"
+        />
+      ) : (
+        <button
+          type="button"
+          className="discovery-home-hero__login-entry"
+          onClick={goToAgencyLogin}
+          aria-label="Entrar na área da marca"
+        >
+          <LoginOutlined aria-hidden />
+          Entrar
+        </button>
+      )}
 
       <div className="discovery-home-hero__inner">
         {isCompact ? (

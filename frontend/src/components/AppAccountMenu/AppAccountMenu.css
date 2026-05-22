@@ -1,0 +1,179 @@
+.app-account-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: min(42vw, 220px);
+  padding: 0.45rem 0.75rem 0.45rem 0.65rem;
+  border: 1px solid #d9d9d9;
+  border-radius: 999px;
+  background: #fff;
+  color: #595959;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.app-account-menu-btn:hover {
+  color: #262626;
+  background: #fafafa;
+  border-color: #c7c7c7;
+}
+
+.app-account-menu-btn:focus-visible {
+  outline: 2px solid var(--app-primary, #722ed1);
+  outline-offset: 2px;
+}
+
+.app-account-menu-btn__user {
+  flex-shrink: 0;
+  font-size: 17px;
+}
+
+.app-account-menu-btn__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-account-menu-btn__chevron {
+  flex-shrink: 0;
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.discovery-home-hero__account-menu.app-account-menu-btn {
+  position: absolute;
+  top: clamp(0.75rem, 2.5vw, 1.25rem);
+  right: clamp(0.75rem, 2.5vw, 1.25rem);
+  z-index: 2;
+  border-color: color-mix(in srgb, var(--app-primary, #68278f) 22%, #e5e7eb);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--app-primary, #68278f);
+  box-shadow: 0 2px 10px rgba(104, 39, 143, 0.08);
+  max-width: min(52vw, 260px);
+}
+
+.discovery-home-hero__account-menu.app-account-menu-btn:hover {
+  background: #fff;
+  border-color: color-mix(in srgb, var(--app-primary, #68278f) 35%, #e5e7eb);
+  color: var(--app-primary, #68278f);
+}
+
+.ant-dropdown-menu.app-account-menu-dropdown {
+  max-height: min(85vh, 560px);
+  overflow-y: auto;
+}
+
+.app-account-menu-admin-routes-title.ant-dropdown-menu-item-disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.app-account-menu-admin-routes-title .ant-dropdown-menu-title-content {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--app-text-tertiary, #8c8c8c);
+}
+
+.app-account-menu-admin-route-item .ant-dropdown-menu-title-content {
+  font-size: 13px;
+}
+
+.app-account-menu-identity-item {
+  height: auto !important;
+  padding: 0 !important;
+  margin: 4px 8px 8px !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.app-account-menu-identity-item:hover {
+  background: var(--app-card-bg-soft, #f5f5f5) !important;
+}
+
+.app-account-menu-identity-item .ant-dropdown-menu-item-icon {
+  display: none !important;
+}
+
+.app-account-menu-identity-item .ant-dropdown-menu-title-content {
+  margin-inline-start: 0 !important;
+  flex: 1;
+  min-width: 0;
+}
+
+.app-account-menu-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  min-width: 240px;
+  max-width: min(88vw, 300px);
+  background: linear-gradient(135deg, rgba(104, 39, 143, 0.06) 0%, rgba(255, 255, 255, 0) 72%);
+  border: 1px solid color-mix(in srgb, var(--app-primary, #68278f) 12%, #e5e7eb);
+  border-radius: 12px;
+  box-sizing: border-box;
+}
+
+.app-account-menu-preview__avatar {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--app-primary, #68278f) 0%, #4c1d95 100%) !important;
+  color: #fff !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(104, 39, 143, 0.25);
+}
+
+.app-account-menu-preview__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-account-menu-preview__name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--app-text, #1a1a2e);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-account-menu-preview__email,
+.app-account-menu-preview__nickname {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--app-text-secondary, #6b7280);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-account-menu-preview__nickname {
+  color: var(--app-primary, #68278f);
+  font-weight: 500;
+}
+
+.app-account-menu-preview__badge {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--app-primary, #68278f);
+  background: color-mix(in srgb, var(--app-primary, #68278f) 10%, #fff);
+  border-radius: 999px;
+}

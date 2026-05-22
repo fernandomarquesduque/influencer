@@ -298,12 +298,7 @@ export function getTopPosts(
     const likes = toNum(post.metrics?.likes)
     const comments = toNum(post.metrics?.comments)
     // Interações = só curtidas + comentários (nunca view_count para posts/reels/marcados)
-    let interactions = likes + comments
-    // Destaques costumam ter só view_count; usa como "interações" para ordenar e exibir ER
-    if (interactions === 0 && post.content_type === 'highlight') {
-      const views = toNum(post.metrics?.view_count)
-      if (views > 0) interactions = views
-    }
+    const interactions = likes + comments
     const erPost = followersCount > 0 ? (interactions / followersCount) * 100 : 0
     const conversationRatio = interactions > 0 ? comments / interactions : 0
     return {
@@ -759,7 +754,7 @@ export interface ValorEstimadoInsight {
   porque: string
 }
 
-/** Valor estimado por tipo de conteúdo: post (feed), reels, stories, destaque (highlights). */
+/** Valor estimado por tipo de conteúdo: post (feed), reels, stories, destaque (upgrade 30d no perfil). */
 export interface ValorEstimadoPorTipo {
   post: ValorEstimadoInsight
   reels: ValorEstimadoInsight

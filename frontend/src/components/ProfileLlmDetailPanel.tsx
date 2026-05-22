@@ -13,6 +13,7 @@ import {
   getLlmProfileTypeBadge,
   type LlmQualificationBadge,
 } from '../utils/campaignLlmBadges'
+import { formatFacetLabel } from '../utils/facetLabels'
 import { HeroInfoStrip, type HeroInfoStripItem } from './HeroInfoStrip'
 
 const { Text, Paragraph } = Typography
@@ -67,7 +68,7 @@ function buildLlmHeroStripItems(
     items.push(
       llmStripItem(
         'audience',
-        audienceType.join(', '),
+        audienceType.map((a) => formatFacetLabel(a)).join(', '),
         'Público-alvo',
         <TeamOutlined />,
         'Público-alvo do perfil',

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useMemo } from 'react'
+import { useEffect, useRef, useMemo, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Button, Typography } from 'antd'
-import { TrophyOutlined, MailOutlined, InstagramOutlined } from '@ant-design/icons'
+import { TrophyOutlined, MailOutlined, InstagramOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { SEARCH_ROUTE_PATH } from '../constants/searchRoute'
 import './MissionReward.css'
 
 const { Title, Text } = Typography
@@ -44,18 +45,30 @@ export default function MissionReward() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const type = searchParams.get('type') || 'email'
-  const credits = Number(searchParams.get('credits')) || (type === 'instagram' ? 10 : 5)
+  const credits = Number(searchParams.get('credits')) || 10
   const playedRef = useRef(false)
+  const [countdown, setCountdown] = useState(5)
 
   useEffect(() => {
     if (playedRef.current) return
     playedRef.current = true
   }, [])
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (countdown <= 1) {
+        navigate(SEARCH_ROUTE_PATH, { replace: true })
+      } else {
+        setCountdown((n) => n - 1)
+      }
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [countdown, navigate])
+
   const isEmail = type === 'email'
-  const title = isEmail ? 'E-mail validado!' : 'Instagram vinculado!'
+  const title = isEmail ? 'E-mail confirmado!' : 'Instagram vinculado!'
   const subtitle = isEmail
-    ? 'Missão 1 concluída. Você ganhou créditos de boas-vindas.'
+    ? 'Sua conta está ativa. Você já pode usar a plataforma.'
     : 'Missão 2 concluída. Perfil da empresa vinculado à sua conta.'
 
   return (
@@ -67,15 +80,37 @@ export default function MissionReward() {
         </div>
         <Title level={2} style={{ marginBottom: 8 }}>{title}</Title>
         <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>{subtitle}</Text>
-        <div className="mission-reward-credits">
-          <TrophyOutlined style={{ marginRight: 8, fontSize: 28 }} />
-          <span className="mission-reward-credits-value">+{credits} créditos</span>
-        </div>
-        <p style={{ marginTop: 24, color: 'var(--app-text-secondary)', fontSize: 14 }}>
-          Os créditos já estão na sua conta. Use-os para gerar relatórios de influenciadores.
-        </p>
-        <Button type="primary" size="large" onClick={() => navigate('/app')} style={{ marginTop: 24 }}>
-          Ir para Minhas campanhas
+        {isEmail ? (
+          <div className="mission-reward-success-badge">
+            <CheckCircleOutlined style={{ marginRight: 8, fontSize: 22 }} />
+            <span>Conta verificada</span>
+          </div>
+        ) : (
+          <>
+            <div className="mission-reward-credits">
+              <TrophyOutlined style={{ marginRight: 8, fontSize: 28 }} />
+              <span className="mission-reward-credits-value">+{credits} créditos</span>
+            </div>
+            <p style={{ marginTop: 24, color: 'var(--app-text-secondary)', fontSize: 14 }}>
+              Os créditos já estão na sua conta. Use-os para gerar relatórios de influenciadores.
+            </p>
+          </>
+        )}
+        {isEmail && (
+          <p style={{ marginTop: 24, color: 'var(--app-text-secondary)', fontSize: 14 }}>
+            Explore influenciadores, monte campanhas e gere relatórios quando precisar.
+          </p>
+        )}
+        <Button
+          type="primary"
+          size="large"
+          block
+          className="mission-reward-enter-btn"
+          aria-live="polite"
+          onClick={() => navigate(SEARCH_ROUTE_PATH, { replace: true })}
+          style={{ marginTop: 28, minHeight: 48, fontWeight: 600 }}
+        >
+          Entrar ({countdown})
         </Button>
       </div>
     </div>

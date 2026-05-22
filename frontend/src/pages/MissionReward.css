@@ -72,3 +72,18 @@
 .mission-reward-credits-value {
   font-variant-numeric: tabular-nums;
 }
+
+.mission-reward-success-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #f0f5ff 0%, #d6e4ff 100%);
+  border-radius: 999px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1d39c4;
+}
+
+.mission-reward-enter-btn {
+  font-variant-numeric: tabular-nums;
+}

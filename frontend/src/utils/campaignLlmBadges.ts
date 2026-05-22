@@ -1,4 +1,5 @@
 import type { ProfileListItem, ProfileItem } from '../api'
+import { formatFacetLabel } from './facetLabels'
 import { getLlmQualification } from './mapProfileListToPreviewItems'
 
 export type LlmQualificationBadge = { key: string; text: string; title: string }
@@ -9,7 +10,7 @@ export function getLlmMainCategoryLabel(item: ProfileListItem): string | null {
   if (!q) return null
   const mainCategory = String(q.mainCategory ?? '').trim()
   if (!mainCategory || mainCategory === '-') return null
-  return mainCategory
+  return formatFacetLabel(mainCategory)
 }
 
 /**
@@ -68,7 +69,7 @@ export function getLlmContentPillarLabels(item: ProfileListItem): string[] {
     if (mainNorm && k === mainNorm) continue
     if (seen.has(k)) continue
     seen.add(k)
-    out.push(s)
+    out.push(formatFacetLabel(s))
   }
   return out
 }
@@ -81,7 +82,7 @@ export function getLlmProfileTypeBadge(item: ProfileListItem): LlmQualificationB
   if (!profileType || profileType.toLowerCase() === 'unknown') return null
   return {
     key: 'profileType',
-    text: profileType.charAt(0).toUpperCase() + profileType.slice(1).toLowerCase(),
+    text: formatFacetLabel(profileType),
     title: 'Tipo de perfil',
   }
 }
@@ -94,7 +95,7 @@ export function getLlmGenderBadge(item: ProfileListItem): LlmQualificationBadge 
   if (!gender || gender.toLowerCase() === 'unknown') return null
   return {
     key: 'gender',
-    text: gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase(),
+    text: formatFacetLabel(gender),
     title: 'Gênero inferido',
   }
 }

@@ -37,6 +37,12 @@ function releaseLock() {
   window.scrollTo(0, saved.scrollY)
 }
 
+/** Força liberação do scroll (ex.: troca de rota com lock órfão). */
+export function resetPageScrollLock(): void {
+  lockCount = 0
+  releaseLock()
+}
+
 /** Impede rolagem da página atrás de modais/drawers (com contador para vários abertos). */
 export function useLockPageScroll(locked: boolean) {
   useEffect(() => {
@@ -44,7 +50,7 @@ export function useLockPageScroll(locked: boolean) {
     lockCount += 1
     if (lockCount === 1) applyLock()
     return () => {
-      lockCount -= 1
+      lockCount = Math.max(0, lockCount - 1)
       if (lockCount === 0) releaseLock()
     }
   }, [locked])

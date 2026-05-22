@@ -69,7 +69,6 @@ export interface MediaKitCacheEntry {
   posts: PostItem[]
   reels: PostItem[]
   tagged: PostItem[]
-  highlights: PostItem[]
   activation: ProfileActivation | null
   reportInsights: ReturnType<typeof buildReportInsights> | null
   profilePicDataUrl: string | null
@@ -133,7 +132,6 @@ export async function prepareMediaKitCache(
   const posts = allItems.filter((p) => ct(p) === 'post')
   const reels = allItems.filter((p) => ct(p) === 'reel')
   const tagged = allItems.filter((p) => ct(p) === 'tagged')
-  const highlights = allItems.filter((p) => ct(p) === 'highlight')
   const activation = (activationRes && typeof activationRes === 'object' ? activationRes : {}) as ProfileActivation
 
   onProgress('Calculando dados...')
@@ -275,7 +273,6 @@ export async function prepareMediaKitCache(
     posts,
     reels,
     tagged,
-    highlights,
     activation: Object.keys(activation).length ? activation : null,
     reportInsights,
     profilePicDataUrl,
@@ -298,7 +295,6 @@ export async function downloadMediaKitPdfToDevice(handle: string, theme: ThemeMo
       profile={cached.profile}
       posts={cached.posts}
       reels={cached.reels ?? []}
-      highlights={cached.highlights ?? []}
       activation={cached.activation}
       reportInsights={cached.reportInsights}
       profilePicDataUrl={cached.profilePicDataUrl}

@@ -6,6 +6,7 @@ import { useState, type CSSProperties, type ReactNode } from 'react'
 import { FileImageOutlined } from '@ant-design/icons'
 import { Tooltip } from 'antd'
 import type { PostItem } from '../api'
+import { profileRefFromMediaUrl, queueMediaRefreshForProfile } from '../utils/queueMediaRefreshForProfile'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { getErBanda } from './ERGaugeChart'
 import { reportTokens as t } from '../pages/reportTokens'
@@ -46,6 +47,8 @@ export interface PostPreviewMediaProps {
   stableBackgroundUrl?: string
   imageUnavailable?: boolean
   onImageError?: () => void
+  /** Re-extração + S3 quando a capa falhar (`profile_ref` ou handle). */
+  profileRefForRefresh?: string
   /** Ex.: `4 / 5` (feed), `1` (quadrado), {@link INSTAGRAM_REEL_ASPECT_RATIO} (Reels). Ignorado se `fill`. */
   aspectRatio?: string
   /** Ocupa 100% do pai com posicionamento absoluto na imagem. */
@@ -65,6 +68,7 @@ export function PostPreviewMedia({
   stableBackgroundUrl,
   imageUnavailable,
   onImageError,
+  profileRefForRefresh,
   aspectRatio = '4 / 5',
   fill,
   overlayLines,
@@ -159,7 +163,14 @@ export function PostPreviewMedia({
           src={imageDisplaySrc}
           alt=""
           loading="lazy"
-          onError={onImageError}
+          onError={() => {
+            const ref =
+              profileRefForRefresh ||
+              profileRefFromMediaUrl(imageDisplaySrc) ||
+              profileRefFromMediaUrl(stableBackgroundUrl)
+            queueMediaRefreshForProfile(ref)
+            onImageError?.()
+          }}
           style={{
             ...mediaLayerFill,
             zIndex: 1,
@@ -208,6 +219,7 @@ export interface PostPreviewCardProps {
   stableBackgroundUrl?: string
   imageUnavailable?: boolean
   onImageError?: () => void
+  profileRefForRefresh?: string
   /** Padrão visual: 4/5 (feed). Use `1` para grade quadrada compacta. */
   mediaAspectRatio?: string
   overlayLines?: string[]
@@ -238,6 +250,7 @@ export default function PostPreviewCard({
   stableBackgroundUrl,
   imageUnavailable,
   onImageError,
+  profileRefForRefresh,
   mediaAspectRatio = '4 / 5',
   overlayLines,
   imageTopBadges,
@@ -264,6 +277,7 @@ export default function PostPreviewCard({
         stableBackgroundUrl={stableBackgroundUrl}
         imageUnavailable={imageUnavailable}
         onImageError={onImageError}
+        profileRefForRefresh={profileRefForRefresh}
         aspectRatio={mediaAspectRatio}
         overlayLines={overlayLines}
         topBadges={imageTopBadges}

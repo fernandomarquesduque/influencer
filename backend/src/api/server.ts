@@ -42,7 +42,13 @@ import {
   scheduleSearchCacheWarmRetries,
   warmSearchCache,
   getLlmQualification,
+  hasCompletedLlmProfile,
   matchesQuery,
+  combineSearchRelevance,
+  userQueryToFtsMatchExpression,
+  ftsRowsToRankMap,
+  mergeFtsRankMaps,
+  userQueryToFtsMatchExpressions,
   getPostSearchableNormalized,
   getPostTimestamp,
   computePostsPerWeek,
@@ -115,6 +121,22 @@ import {
   shouldIncludeHandleInApi,
 } from '../utils/profilePublicDto.js';
 import { profileAvatarMediaPath } from '../utils/profileMediaUrls.js';
+import {
+  REFRESH_MIN_INTERVAL_MS,
+  clearExtractRefreshPriority,
+  dequeueExtractRefreshHandle,
+  enqueueExtractRefresh,
+  getExtractRefreshQueueSnapshot,
+  isExtractRefreshPriority,
+  isHandleInExtractRefreshQueue,
+  setExtractRefreshProcessingHandle,
+  shiftNextExtractRefreshHandle,
+} from './extractRefreshQueue.js';
+import { getAdminMediaS3Audit, listAdminMediaS3FilteredHandles, type AdminMediaS3Filter } from './adminMediaS3.js';
+import {
+  isProfileNotFoundExtractError,
+  removeInfluencerNotFoundOnInstagram,
+} from './removeInfluencerNotFoundOnInstagram.js';
 
 const require = createRequire(import.meta.url);
 const openApiRocksdb = require('./openapi-rocksdb.json');
@@ -261,13 +283,7 @@ const extractProfileResults = new Map<
 /** Promise que resolve quando todos os envios de código 2FA (request-code) em andamento terminarem. A fila de extract/refresh espera isso para dar prioridade absoluta ao 2FA. */
 let requestCodeFlushPromise: Promise<void> = Promise.resolve();
 
-/** Fila de handles para re-extração quando imagem falha (renovar URLs). Uma execução por vez, em série com extract-profile. */
-const refreshProfileQueue: string[] = [];
-const refreshProfileQueueSet = new Set<string>();
-/** Handles enfileirados com priority=true (admin); ao processar, não aplica o intervalo de 60 min. */
-const refreshPriorityHandles = new Set<string>();
 /** Só enfileirar/executar refresh se a última extração do perfil foi há mais de 60 min (evita re-extração em loop quando cache ainda serve dado antigo). */
-const REFRESH_MIN_INTERVAL_MS = 60 * 60 * 1000;
 
 function getApiExtractClient(): InstagramClient {
   if (!apiExtractClient) {
@@ -504,13 +520,16 @@ async function runSupplementReelsAndTagged(
 
 /** Processa o próximo handle da fila de refresh (re-extração por falha de imagem). Uma execução por vez. Só executa se última extração foi há mais de 60 min. */
 function processNextRefresh(): void {
-  if (refreshProfileQueue.length === 0) return;
-  const handle = refreshProfileQueue.shift()!;
+  const snap = getExtractRefreshQueueSnapshot();
+  if (snap.length === 0) return;
+  const handle = shiftNextExtractRefreshHandle();
+  if (!handle) return;
+  setExtractRefreshProcessingHandle(handle);
   apiExtractQueue = apiExtractQueue
     .then(() => requestCodeFlushPromise)
     .then(async () => {
-      const isPriority = refreshPriorityHandles.has(handle);
-      if (isPriority) refreshPriorityHandles.delete(handle);
+      const isPriority = isExtractRefreshPriority(handle);
+      if (isPriority) clearExtractRefreshPriority(handle);
       if (!isPriority) {
         const profile = await db.loadByHandle(handle);
         const collectedAt = profile && typeof (profile as { _collected_at?: string })._collected_at === 'string'
@@ -532,12 +551,19 @@ function processNextRefresh(): void {
       if (result.saved) console.log(`[API] Refresh de imagens concluído: @${handle}`);
       else if (result.error) {
         console.error(`[API] Refresh @${handle} falhou:`, result.error);
-        if (result.error === 'Perfil não encontrado' || String(result.error).includes('Perfil não encontrado')) {
+        if (isProfileNotFoundExtractError(result.error)) {
           try {
-            await db.deleteProfileCompletely(handle);
-            console.log(`[API] Perfil @${handle} excluído completamente (não existe mais no Instagram).`);
+            const removed = await removeInfluencerNotFoundOnInstagram(handle, {
+              db,
+              sqlite,
+              creditsCampaignsDb,
+              authDb,
+            });
+            console.log(
+              `[API] @${handle} removido (não existe no Instagram): S3=${removed.s3ObjectsRemoved} objeto(s), banco=${removed.dbRemoved ? 'ok' : 'falhou'}.`
+            );
           } catch (err) {
-            console.error(`[API] Erro ao excluir perfil @${handle}:`, err instanceof Error ? err.message : err);
+            console.error(`[API] Erro ao remover @${handle}:`, err instanceof Error ? err.message : err);
           }
         }
       } else if (result.rejectionReason) console.warn(`[API] Refresh @${handle} rejeitado:`, result.rejectionReason);
@@ -546,7 +572,8 @@ function processNextRefresh(): void {
       console.error(`[API] Refresh @${handle} erro:`, err instanceof Error ? err.stack : err);
     })
     .finally(() => {
-      refreshProfileQueueSet.delete(handle.toLowerCase());
+      setExtractRefreshProcessingHandle(null);
+      dequeueExtractRefreshHandle(handle);
       processNextRefresh();
     });
 }
@@ -663,17 +690,33 @@ app.get('/api/auth/me', (req: RequestWithAuth, res: Response) => {
     profileHandle && String(profileHandle).trim()
       ? profileRefDb.getOrCreateRef(String(profileHandle).replace(/^@/, '').trim().toLowerCase())
       : null;
+  const scopeFromDb = dbUser?.scope as AuthScope | undefined;
+  const scope = scopeFromDb && ['adm', 'assinante', 'influencer', 'public'].includes(scopeFromDb)
+    ? scopeFromDb
+    : req.user.scope;
+  const username = dbUser?.username ?? req.user.username;
+  const profile_handle = dbUser?.profile_handle ?? profileHandle;
+  let token: string | undefined;
+  if (scopeFromDb && scopeFromDb !== req.user.scope) {
+    const secret = getJwtSecret();
+    token = signJwt(
+      { sub: String(userId), username, scope, profile_handle: profile_handle ?? undefined },
+      secret
+    );
+  }
   res.json({
     user: {
       id: userId,
-      username: req.user.username,
-      scope: req.user.scope,
+      username,
+      scope,
       profile_ref,
+      profile_handle: profile_handle ?? null,
       display_name,
       ...(profile_activated !== undefined && { profile_activated }),
       ...(email_verified !== undefined && { email_verified: email_verified === true }),
       ...(billing_cpf_cnpj && { billing_cpf_cnpj }),
     },
+    ...(token && { token }),
   });
 });
 
@@ -3388,9 +3431,9 @@ app.post('/api/auth/register-assinante', async (req: Request, res: Response) => 
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
+      subject: 'Bem-vindo! Confirme seu e-mail',
       verifyUrl,
-      bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+      bodyText: 'Obrigado por se cadastrar. Sua conta foi criada com sucesso. Confirme seu e-mail para começar a usar a plataforma.',
     });
     if (!emailResult.sent && emailResult.error) {
       console.warn('[register-assinante] E-mail não enviado:', emailResult.error);
@@ -3532,10 +3575,9 @@ app.post('/api/auth/forgot-password/complete', async (req: Request, res: Respons
   }
 });
 
-const MISSION_EMAIL_CREDITS = 5;
 const MISSION_INSTAGRAM_CREDITS = 10;
 
-/** Valida e-mail pelo token (link no e-mail). Concede 5 créditos (missão 1) e retorna sucesso para o front exibir confete. */
+/** Valida e-mail pelo token (link no e-mail). Marca conta como verificada. */
 app.get('/api/auth/verify-email', (req: Request, res: Response) => {
   try {
     const token = (req.query?.token ?? '').toString().trim();
@@ -3565,14 +3607,13 @@ app.get('/api/auth/verify-email', (req: Request, res: Response) => {
     const userRow = authDb.getById(userId);
     if (userRow?.email_verified === 1) {
       console.log('[verify-email] Usuário já validado, retornando sucesso (idempotente).');
-      res.status(200).json({ success: true, credits: MISSION_EMAIL_CREDITS });
+      res.status(200).json({ success: true });
       return;
     }
 
     authDb.setEmailVerified(userId);
-    creditsCampaignsDb.addCredits(userId, MISSION_EMAIL_CREDITS, 'mission_email', undefined);
-    console.log('[verify-email] E-mail validado e créditos concedidos, userId=', userId);
-    res.status(200).json({ success: true, credits: MISSION_EMAIL_CREDITS });
+    console.log('[verify-email] E-mail validado, userId=', userId);
+    res.status(200).json({ success: true });
   } catch (e) {
     console.error('[verify-email] Erro:', e);
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -3604,9 +3645,9 @@ app.post('/api/auth/resend-verification', authOptional, async (req: RequestWithA
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
+      subject: 'Bem-vindo! Confirme seu e-mail',
       verifyUrl,
-      bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+      bodyText: 'Obrigado por se cadastrar. Sua conta foi criada com sucesso. Confirme seu e-mail para começar a usar a plataforma.',
     });
     if (!emailResult.sent && emailResult.error) {
       console.warn('[resend-verification] E-mail não enviado:', emailResult.error);
@@ -3668,9 +3709,9 @@ app.post('/api/checkout/register-and-pay', async (req: Request, res: Response) =
     const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailResult = await sendVerificationEmail({
       to: email,
-      subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
+      subject: 'Bem-vindo! Confirme seu e-mail',
       verifyUrl,
-      bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+      bodyText: 'Obrigado por se cadastrar. Sua conta foi criada com sucesso. Confirme seu e-mail para começar a usar a plataforma.',
     });
     if (!emailResult.sent && emailResult.error) {
       console.warn('[register-and-pay] E-mail não enviado:', emailResult.error);
@@ -4044,9 +4085,9 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
       const verifyUrl = `${frontBase.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
       void sendVerificationEmail({
         to: email,
-        subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
+        subject: 'Bem-vindo! Confirme seu e-mail',
         verifyUrl,
-        bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+        bodyText: 'Obrigado por se cadastrar. Sua conta foi criada com sucesso. Confirme seu e-mail para começar a usar a plataforma.',
       }).catch(() => {});
       try {
         authDb.setBillingCpfCnpj(userId, cpfDigits);
@@ -4405,9 +4446,9 @@ app.post('/api/checkout/pay-for-report', authOptional, async (req: RequestWithAu
         const verifyUrlGuest = `${frontBaseGuest.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationTokenGuest)}`;
         const emailResultGuest = await sendVerificationEmail({
           to: email,
-          subject: '✨ 5 créditos: valide seu e-mail e comece a usar',
+          subject: 'Bem-vindo! Confirme seu e-mail',
           verifyUrl: verifyUrlGuest,
-          bodyText: 'Confirme seu e-mail agora e ganhe 5 créditos para gerar seus primeiros relatórios de influenciadores — sem custo.',
+          bodyText: 'Obrigado por se cadastrar. Sua conta foi criada com sucesso. Confirme seu e-mail para começar a usar a plataforma.',
         });
         if (!emailResultGuest.sent && emailResultGuest.error) {
           console.warn('[checkout-guest] E-mail não enviado:', emailResultGuest.error);
@@ -6698,14 +6739,33 @@ const POST_MATCHES_MAX_SCAN_HANDLES = Math.max(
 /** Posts além de offset+limit antes de parar o scan (1 post/perfil → poucos perfis bastam). */
 const POST_MATCHES_EARLY_STOP_BUFFER = 4;
 
-type PostMatchRowScratch = { key: string; value: Record<string, unknown>; ts: number; ct: string };
+type PostMatchRowScratch = {
+  key: string;
+  value: Record<string, unknown>;
+  ts: number;
+  ct: string;
+  relevance: number;
+};
 
 function postMatchTaggedRank(ct: string): number {
   return ct === 'tagged' ? 1 : 0;
 }
 
 /** true se `a` deve substituir `b` como melhor post do perfil. */
-function isBetterPostMatchRow(a: PostMatchRowScratch, b: PostMatchRowScratch): boolean {
+function postMatchEngagementScore(value: Record<string, unknown>): number {
+  const metrics = value.metrics as Record<string, unknown> | undefined;
+  const likes = Number(metrics?.likes ?? value.like_count ?? 0);
+  const comments = Number(metrics?.comments ?? value.comment_count ?? 0);
+  return (Number.isFinite(likes) ? likes : 0) + (Number.isFinite(comments) ? comments : 0) * 2;
+}
+
+function isBetterPostMatchRow(a: PostMatchRowScratch, b: PostMatchRowScratch, sortByRelevance: boolean): boolean {
+  if (sortByRelevance && a.relevance !== b.relevance) return a.relevance > b.relevance;
+  if (sortByRelevance && a.relevance === b.relevance) {
+    const engA = postMatchEngagementScore(a.value);
+    const engB = postMatchEngagementScore(b.value);
+    if (engB !== engA) return engA > engB;
+  }
   const rankA = postMatchTaggedRank(a.ct);
   const rankB = postMatchTaggedRank(b.ct);
   if (rankA !== rankB) return rankA < rankB;
@@ -6853,41 +6913,44 @@ function postMatchNarrowCacheSet(key: string, handles: string[]): void {
   }
 }
 
-function postMatchesQueryToFtsExpression(q: string): string | null {
-  const t = q.trim().toLowerCase().replace(/\s+/g, ' ');
-  if (!t) return null;
-  const words = t.split(' ').map((w) => w.trim()).filter((w) => w.length >= 2);
-  if (words.length === 0) return null;
-  const parts = words.map((w) => {
-    if (/^[a-z0-9_]+$/i.test(w)) return `content:${w}*`;
-    const esc = w.replace(/"/g, '""');
-    return `content:"${esc}"*`;
-  });
-  return parts.join(' AND ');
-}
-
 /**
  * Pré-filtra handles pelo índice FTS (legendas/posts agregados no SQLite).
- * Se há expressão FTS válida e zero linhas, retorna [] — não varrer todos os perfis no RocksDB (caso típico: termo sem match).
- * Ordem: relevância da FTS (bm25 ascendente na query).
+ * FTS com OR entre tokens (qualquer palavra); BM25 ordena quem bate mais termos.
+ * Se zero linhas no índice, retorna [] (nenhum token relacionado no corpus).
  */
-function scopeHandlesForPostCaptionSearch(handlesUniverse: string[], qRaw: string): string[] {
+function scopeHandlesForPostCaptionSearch(
+  handlesUniverse: string[],
+  qRaw: string
+): { handles: string[]; ftsRankByHandle: Map<string, number> } {
   const trimmed = qRaw.trim();
-  if (!trimmed) return handlesUniverse;
-  const expr = postMatchesQueryToFtsExpression(trimmed);
-  if (!expr) return handlesUniverse;
-  const fts = db.searchProfileHandlesFts(expr, postMatchesFtsHandleLimitForQuery(trimmed));
-  if (fts.length === 0) return [];
+  if (!trimmed) {
+    return { handles: handlesUniverse, ftsRankByHandle: new Map() };
+  }
+  const limit = postMatchesFtsHandleLimitForQuery(trimmed);
+  const exprs = userQueryToFtsMatchExpressions(trimmed);
+  if (exprs.length === 0) {
+    return { handles: handlesUniverse, ftsRankByHandle: new Map() };
+  }
+  const rankMaps: Map<string, number>[] = [];
+  for (const expr of exprs) {
+    const rows = db.searchProfileHandlesFts(expr, limit);
+    if (rows.length === 0) continue;
+    rankMaps.push(ftsRowsToRankMap(rows));
+  }
+  if (rankMaps.length === 0) {
+    return { handles: [], ftsRankByHandle: new Map() };
+  }
+  const ftsRankByHandle = mergeFtsRankMaps(rankMaps);
   const universe = new Set(handlesUniverse.map((h) => normalizeHandle(h)).filter(Boolean));
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const row of fts) {
-    const h = normalizeHandle(row.handle);
-    if (!h || !universe.has(h) || seen.has(h)) continue;
+  const byRank = [...ftsRankByHandle.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [h] of byRank) {
+    if (!universe.has(h) || seen.has(h)) continue;
     seen.add(h);
     out.push(h);
   }
-  return out;
+  return { handles: out, ftsRankByHandle };
 }
 
 /** Filtros de perfil na query string (LLM, porte, geo, etc.) — `q` aqui é só legenda dos posts (tratado à parte). */
@@ -6953,7 +7016,8 @@ function narrowPostMatchHandlesByProfileFilters(
 async function runPostMatchesForHandles(
   req: RequestWithAuth,
   res: Response,
-  normHandles: string[]
+  normHandles: string[],
+  ftsRankByHandle: Map<string, number> = new Map()
 ): Promise<void> {
   try {
     const handleSet = new Set(normHandles.map((h) => normalizeHandle(h)));
@@ -6992,6 +7056,12 @@ async function runPostMatchesForHandles(
 
       const buildFilteredSorted = (): PostMatchesCachedRow[] => {
         const sorted = [...bestPerHandle.values()].sort((a, b) => {
+          if (qRaw) {
+            if (b.relevance !== a.relevance) return b.relevance - a.relevance;
+            const engDiff =
+              postMatchEngagementScore(b.value) - postMatchEngagementScore(a.value);
+            if (engDiff !== 0) return engDiff;
+          }
           const rankA = postMatchTaggedRank(a.ct);
           const rankB = postMatchTaggedRank(b.ct);
           if (rankA !== rankB) return rankA - rankB;
@@ -7009,15 +7079,17 @@ async function runPostMatchesForHandles(
           const item = value as Record<string, unknown>;
           const ct = getContentTypeFromItem(key, item);
           if (!qRaw && ct === 'tagged') continue;
+          let relevance = 0;
           if (qRaw) {
             const searchable = getPostSearchableNormalized(item);
-            const { match } = matchesQuery(searchable, qRaw);
-            if (!match) continue;
+            const mq = matchesQuery(searchable, qRaw);
+            if (!mq.match) continue;
+            relevance = combineSearchRelevance(mq.relevance, ftsRankByHandle.get(h));
           }
           const ts = getPostTimestamp(item) ?? 0;
-          const candidate: PostMatchRowScratch = { key, value: item, ts, ct };
+          const candidate: PostMatchRowScratch = { key, value: item, ts, ct, relevance };
           const prev = bestPerHandle.get(h);
-          if (!prev || isBetterPostMatchRow(candidate, prev)) {
+          if (!prev || isBetterPostMatchRow(candidate, prev, Boolean(qRaw))) {
             bestPerHandle.set(h, candidate);
           }
         }
@@ -7192,13 +7264,13 @@ app.get('/api/campaigns/all/post-matches', rateLimitDataApi, async (req: Request
       return;
     }
     const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
-    const scopedHandles = scopeHandlesForPostCaptionSearch(handles, qRaw);
-    if (scopedHandles.length === 0) {
+    const scoped = scopeHandlesForPostCaptionSearch(handles, qRaw);
+    if (scoped.handles.length === 0) {
       res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
       return;
     }
-    const narrowedAll = narrowPostMatchHandlesByProfileFilters(req, scopedHandles);
-    await runPostMatchesForHandles(req, res, narrowedAll);
+    const narrowedAll = narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
+    await runPostMatchesForHandles(req, res, narrowedAll, scoped.ftsRankByHandle);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -7227,13 +7299,13 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
     }
     const normalizedHandles = Array.from(new Set(handles.map((h) => normalizeHandle(h))));
     const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
-    const scopedHandles = scopeHandlesForPostCaptionSearch(normalizedHandles, qRaw);
-    if (scopedHandles.length === 0) {
+    const scoped = scopeHandlesForPostCaptionSearch(normalizedHandles, qRaw);
+    if (scoped.handles.length === 0) {
       res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
       return;
     }
-    const narrowed = narrowPostMatchHandlesByProfileFilters(req, scopedHandles);
-    await runPostMatchesForHandles(req, res, narrowed);
+    const narrowed = narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
+    await runPostMatchesForHandles(req, res, narrowed, scoped.ftsRankByHandle);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -7410,6 +7482,11 @@ async function runExtractAndStore(handle: string, runOptions?: RunOneExtractOpti
           : result.rejectionReason
             ? `Perfil não qualificado: ${result.rejectionReason}`
             : 'Falha ao extrair perfil (página ou API)');
+      if (isProfileNotFoundExtractError(err)) {
+        await removeInfluencerNotFoundOnInstagram(handle, { db, sqlite, creditsCampaignsDb, authDb }).catch(
+          (e) => console.error(`[runExtractAndStore] remove @${handle}:`, e instanceof Error ? e.message : e)
+        );
+      }
       extractProfileResults.set(handle, { status: 'error', error: err });
       return;
     }
@@ -7421,7 +7498,10 @@ async function runExtractAndStore(handle: string, runOptions?: RunOneExtractOpti
     let error = isLoginRelated
       ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta backend: npm run login'
       : msg;
-    if (msg === 'Perfil não encontrado') {
+    if (isProfileNotFoundExtractError(msg)) {
+      await removeInfluencerNotFoundOnInstagram(handle, { db, sqlite, creditsCampaignsDb, authDb }).catch(
+        (e) => console.error(`[runExtractAndStore] remove @${handle}:`, e instanceof Error ? e.message : e)
+      );
       error = 'Perfil não encontrado. Se o perfil existir, a sessão do Instagram pode ter expirado. Execute na pasta backend: npm run login';
     }
     extractProfileResults.set(handle, { status: 'error', error });
@@ -7511,8 +7591,8 @@ app.post('/api/crawl/extract-profile', requireScopesOrPublic('adm'), (req: Reque
     });
 });
 
-/** Enfileira re-extração do perfil (renovar URLs de imagem). Adm ou influencer. Com priority=true (só adm) coloca na frente da fila e ignora o intervalo de 60 min. */
-app.post('/api/crawl/queue-refresh', requireScopes('adm', 'influencer'), async (req: Request, res: Response) => {
+/** Enfileira re-extração do perfil (renovar URLs de imagem). Público (rate limit); priority=true só adm. */
+app.post('/api/crawl/queue-refresh', rateLimitDataApi, async (req: Request, res: Response) => {
   const priority = req.body?.priority === true;
   if (priority && (req as RequestWithAuth).user?.scope !== 'adm') {
     res.status(403).json({ error: 'Apenas administradores podem forçar atualização prioritária.' });
@@ -7537,7 +7617,7 @@ app.post('/api/crawl/queue-refresh', requireScopes('adm', 'influencer'), async (
     }
   }
   handle = handle.replace(/^@/, '').toLowerCase();
-  if (refreshProfileQueueSet.has(handle)) {
+  if (isHandleInExtractRefreshQueue(handle)) {
     res.status(202).json({ queued: false, handle, message: 'Perfil já está na fila de atualização.' });
     return;
   }
@@ -7558,18 +7638,114 @@ app.post('/api/crawl/queue-refresh', requireScopes('adm', 'influencer'), async (
       }
     }
   }
-  if (priority) {
-    refreshProfileQueue.unshift(handle);
-    refreshPriorityHandles.add(handle);
-  } else {
-    refreshProfileQueue.push(handle);
-  }
-  refreshProfileQueueSet.add(handle);
+  const enq = enqueueExtractRefresh(handle, priority);
   processNextRefresh();
   res.status(202).json({
-    queued: true,
-    handle,
-    message: priority ? 'Perfil na fila com prioridade para re-extração.' : 'Perfil na fila para re-extração (renovar imagens). Uma execução por vez.',
+    queued: enq.queued,
+    handle: enq.handle,
+    message: enq.message,
+  });
+});
+
+app.get('/api/admin/media-s3/audit', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
+  try {
+    const filterRaw = String(req.query.filter ?? 'any').trim().toLowerCase();
+    const filter: AdminMediaS3Filter =
+      filterRaw === 'avatar' || filterRaw === 'covers' ? filterRaw : 'any';
+    const data = await getAdminMediaS3Audit(db, profileRefDb, {
+      limit: Number(req.query.limit),
+      offset: Number(req.query.offset),
+      filter,
+      q: String(req.query.q ?? ''),
+      refresh: req.query.refresh === '1' || req.query.refresh === 'true',
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.get('/api/admin/extract-queue', requireScopes('adm'), (_req: RequestWithAuth, res: Response) => {
+  const snap = getExtractRefreshQueueSnapshot();
+  res.json({
+    pending: snap.pending,
+    priority_handles: snap.priorityHandles,
+    processing_handle: snap.processing_handle,
+    length: snap.length,
+    extract_blocked_until: apiExtractBlockedUntil > Date.now() ? apiExtractBlockedUntil : null,
+  });
+});
+
+app.post('/api/admin/extract-queue', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
+  const priority = req.body?.priority !== false;
+  const enqueueAllFiltered = req.body?.enqueue_all_filtered === true || req.body?.all_filtered === true;
+
+  let list: string[] = [];
+  if (enqueueAllFiltered) {
+    const filterRaw = String(req.body?.filter ?? 'any').trim().toLowerCase();
+    const filter: AdminMediaS3Filter =
+      filterRaw === 'avatar' || filterRaw === 'covers' ? filterRaw : 'any';
+    const { handles, total } = await listAdminMediaS3FilteredHandles(db, profileRefDb, {
+      filter,
+      q: String(req.body?.q ?? ''),
+      refresh: req.body?.refresh === true,
+      excludeInQueue: req.body?.exclude_in_queue !== false,
+    });
+    list = handles;
+    if (total === 0) {
+      res.status(202).json({
+        added: 0,
+        skipped: 0,
+        total: 0,
+        results: [],
+        message: 'Nenhum perfil com LLM concluído e pendência S3 para enfileirar com os filtros atuais.',
+      });
+      return;
+    }
+  } else {
+    const raw = req.body?.handles ?? req.body?.handle;
+    list = Array.isArray(raw)
+      ? raw.map((x) => String(x).trim()).filter(Boolean)
+      : typeof raw === 'string' && raw.trim()
+        ? [raw.trim()]
+        : [];
+  }
+
+  if (list.length === 0) {
+    res.status(400).json({ error: 'Envie "handles", "handle" ou "enqueue_all_filtered": true.' });
+    return;
+  }
+  const results: { handle: string; queued: boolean; message: string }[] = [];
+  let added = 0;
+  const trackResults = !enqueueAllFiltered;
+  for (const item of list) {
+    let handle = resolveProfileParam(item) ?? item.replace(/^@/, '').trim().toLowerCase();
+    if (!handle) {
+      if (trackResults) results.push({ handle: item, queued: false, message: 'Identificador inválido.' });
+      continue;
+    }
+    if (isHandleInExtractRefreshQueue(handle)) {
+      if (trackResults) results.push({ handle, queued: false, message: 'Já na fila.' });
+      continue;
+    }
+    const profile = (await db.loadByHandle(handle)) as Record<string, unknown> | null;
+    if (!profile || !hasCompletedLlmProfile(profile)) {
+      if (trackResults) {
+        results.push({ handle, queued: false, message: 'Sem classificação LLM concluída.' });
+      }
+      continue;
+    }
+    const enq = enqueueExtractRefresh(handle, priority);
+    if (trackResults) results.push(enq);
+    if (enq.queued) added++;
+  }
+  if (added > 0) processNextRefresh();
+  res.status(202).json({
+    added,
+    skipped: list.length - added,
+    total: list.length,
+    results: enqueueAllFiltered ? undefined : results,
   });
 });
 

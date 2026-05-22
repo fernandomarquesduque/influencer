@@ -1,7 +1,7 @@
 /**
  * Galeria estilo Instagram: posts/reels onde o termo de busca aparece (dados atuais do índice).
  */
-import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
 import { Typography, Spin, Empty, Tooltip } from 'antd'
 import './CampaignOriginGallery.css'
 import {
@@ -23,6 +23,9 @@ import InfluencerTierPill from './InfluencerTierPill'
 import {
   getLlmTripleBadgesFromLlmRoot,
 } from '../utils/campaignLlmBadges'
+import HighlightedSearchText from './HighlightedSearchText'
+import { getCaptionSnippetForSearch } from '../utils/queryRelevance'
+import { queueMediaRefreshFromPost } from '../utils/queueMediaRefreshForProfile'
 import type { InfluencerConnectSnapshot } from './InfluencerConnectModal/InfluencerConnectModal'
 import { getLlmDescriptionLine, getProfilePersonaSummary } from '../utils/mapProfileListToPreviewItems'
 import { formatFacetLabel } from '../utils/facetLabels'
@@ -212,47 +215,15 @@ function postToConnectSnapshot(post: PostItem): InfluencerConnectSnapshot {
   }
 }
 
-function getCaptionSnippet(post: PostItem, max = 140): string {
+function getCaptionDisplayText(post: PostItem, searchQuery: string, hasSearch: boolean): string {
   const c = post.content?.caption_text ?? ''
   const t = typeof c === 'string' ? c.trim() : ''
   if (!t) return ''
-  if (t.length <= max) return t
-  return `${t.slice(0, max)}…`
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/** Destaca ocorrências da palavra/frase (case insensitive), inclusive dentro de hashtags (#modafeminina). */
-function highlightKeywordInText(text: string, keyword: string): ReactNode {
-  const q = keyword.trim()
-  if (!q || !text) return text
-  try {
-    const re = new RegExp(`(${escapeRegExp(q)})`, 'gi')
-    const parts = text.split(re)
-    return parts.map((part, i) => {
-      if (part.toLowerCase() === q.toLowerCase()) {
-        return (
-          <mark
-            key={i}
-            style={{
-              backgroundColor: 'rgba(250, 204, 21, 0.48)',
-              color: 'inherit',
-              padding: '0 2px',
-              borderRadius: 3,
-              fontWeight: 600,
-            }}
-          >
-            {part}
-          </mark>
-        )
-      }
-      return <span key={i}>{part}</span>
-    })
-  } catch {
-    return text
+  if (hasSearch && searchQuery.trim()) {
+    return getCaptionSnippetForSearch(t, searchQuery, 220)
   }
+  if (t.length <= 140) return t
+  return `${t.slice(0, 140)}…`
 }
 
 /** Categoria principal — lê `qualification` mesmo sem `status: done` (como o resumo LLM). */
@@ -389,6 +360,11 @@ export default function CampaignOriginGallery({
     },
     [campaignId, onOpenInfluencerDetail]
   )
+
+  const handlePostImageError = useCallback((post: PostItem) => {
+    queueMediaRefreshFromPost(post)
+    setFailedPostImages((prev) => new Set(prev).add(post.key))
+  }, [])
 
   const reload = useCallback(
     async (signal?: AbortSignal) => {
@@ -589,7 +565,7 @@ export default function CampaignOriginGallery({
                         imageDisplaySrc={failed ? undefined : displayUrl}
                         stableBackgroundUrl={stableBg}
                         imageUnavailable={failed || !displayUrl}
-                        onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
+                        onImageError={() => handlePostImageError(post)}
                       />
                       <OriginMediaCategoryPill inf={post.influencer} contentType={ct} />
                     </div>
@@ -616,10 +592,9 @@ export default function CampaignOriginGallery({
                         <ProfileAvatar
                           src={bar.avatarSrc}
                           stableBackgroundUrl={bar.avatarStable}
-                          handle={handle !== '—' ? handle : undefined}
+                          handle={bar.profileRef || undefined}
                           size={32}
                           fallbackIconSize={16}
-                          queueOnError={false}
                         />
                         {getInfluencerTierShort(followersCount) !== '—' ? (
                           <div style={{ marginTop: 6, display: 'flex', justifyContent: 'center', width: '100%' }}>
@@ -689,7 +664,7 @@ export default function CampaignOriginGallery({
                             imageDisplaySrc={failed ? undefined : displayUrl}
                             stableBackgroundUrl={stableBg}
                             imageUnavailable={failed || !displayUrl}
-                            onImageError={() => setFailedPostImages((prev) => new Set(prev).add(post.key))}
+                            onImageError={() => handlePostImageError(post)}
                           />
                           <OriginMediaCategoryPill inf={post.influencer} contentType={ct} />
                         </div>
@@ -727,10 +702,9 @@ export default function CampaignOriginGallery({
                               <ProfileAvatar
                                 src={bar.avatarSrc}
                                 stableBackgroundUrl={bar.avatarStable}
-                                handle={handle !== '—' ? handle : undefined}
+                                handle={bar.profileRef || undefined}
                                 size={56}
                                 fallbackIconSize={24}
-                                queueOnError={false}
                               />
                               {getInfluencerTierShort(fc) !== '—' ? (
                                 <div style={{ marginTop: 6, display: 'flex', justifyContent: 'center', width: '100%' }}>
@@ -802,7 +776,10 @@ export default function CampaignOriginGallery({
                       </div>
                       <div className="campaign-origin-list-card__caption">
                         <Text style={{ fontSize: 12, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--app-text)' }}>
-                          {highlightKeywordInText(getCaptionSnippet(post, 99999) || '—', textQuery)}
+                          <HighlightedSearchText
+                            text={getCaptionDisplayText(post, textQuery, hasSearchTerm) || '—'}
+                            query={hasSearchTerm ? textQuery : ''}
+                          />
                         </Text>
                         {post.metrics && (post.metrics.likes != null || post.metrics.comments != null) ? (
                           <Text style={{ fontSize: 12, display: 'block', color: 'var(--app-text-secondary)' }}>

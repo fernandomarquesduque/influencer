@@ -1,0 +1,30 @@
+---
+description: E-mails transacionais (boas-vindas, verificação, senha)
+globs: backend/src/email/**,backend/src/api/server.ts
+alwaysApply: false
+---
+
+# E-mails transacionais
+
+## Tom e conteúdo
+
+- E-mail de cadastro = **boas-vindas + confirmar e-mail**, sem prometer créditos ou missões.
+- Assunto e `bodyText` definidos em `server.ts`; HTML em `sendVerificationEmail.ts`.
+- Evitar travessão `—` nos textos; preferir frases curtas com ponto.
+
+## HTML compatível com clientes
+
+- Cores **sólidas** (`#68278f`), sem `linear-gradient` em botões (Outlook deixa o botão branco).
+- Botão bulletproof: `bgcolor` no `<td>` + `background-color` no `<a>` + texto `#ffffff`.
+- Texto com contraste: títulos `#1a1a2e`, corpo `#374151`.
+
+## Exemplo de assunto/corpo
+
+```typescript
+subject: 'Bem-vindo! Confirme seu e-mail',
+bodyText: 'Obrigado por se cadastrar. Sua conta foi criada com sucesso. Confirme seu e-mail para começar a usar a plataforma.',
+```
+
+## Verificação de e-mail (API)
+
+- `GET /api/auth/verify-email` marca e-mail verificado; **não** conceder créditos de missão automaticamente.

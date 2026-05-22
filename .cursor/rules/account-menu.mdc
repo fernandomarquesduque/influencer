@@ -1,0 +1,35 @@
+---
+description: Menu da conta (top bar e hero) — estrutura e UX
+globs: frontend/src/hooks/useAppAccountMenuItems.tsx,frontend/src/components/AppAccountMenu/**,frontend/src/constants/adminRouteMenu.ts
+alwaysApply: false
+---
+
+# Menu da conta
+
+## Ordem dos itens (usuário logado)
+
+1. Preview de perfil (`AccountMenuProfilePreview`) — clicável, abre o perfil
+2. Configurações
+3. Assinatura (omitir para `scope: influencer`)
+4. Administração (só `scope === adm`, telas `/app/admin/*`)
+5. Sair
+6. Divisor
+7. **Sou Influencer** (sempre por último)
+
+## Preview de perfil
+
+- Não usar o rótulo genérico "Meu Perfil".
+- Usar `AccountMenuProfilePreview`: avatar com iniciais, nome, e-mail, `@nickname` e badge do scope.
+- Estilos em `AppAccountMenu.css` (classe `app-account-menu-preview`).
+
+## Administração (admin)
+
+- Lista fixa em `adminRouteMenu.ts`: dashboard, usuários, menções, purge, fila de mensagens, mídia S3 (`/app/admin/media-s3`).
+- Submenu Ant Design com label `Administração` — só incluído quando `isAdm` (`user.scope === 'adm'`).
+- Evitar `type: 'group'` ou item `disabled` como cabeçalho no `Dropdown` (itens somem).
+- Influenciador → detalhe do perfil; demais → `/app/profile`.
+
+## Dropdown
+
+- `menu.className: 'app-account-menu-dropdown'` para scroll em listas longas.
+- Botão da top bar: exibir `accountLabel` ao lado do ícone quando logado.

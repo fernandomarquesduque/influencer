@@ -71,7 +71,7 @@ export interface ExtractSingleProfileResult {
   postsSaved?: number;
 }
 
-/** Opções para a extração. forRefresh = true pula todas as validações (só reextrai e salva, ex.: renovar imagens). fastMode = true usa delays mínimos (extract-profile API). client + storage habilitam coleta de destaques em background. */
+/** Opções para a extração. forRefresh = true pula todas as validações (só reextrai e salva, ex.: renovar imagens). fastMode = true usa delays mínimos (extract-profile API). */
 export interface ExtractSingleProfileOptions {
   forRefresh?: boolean;
   fastMode?: boolean;
@@ -107,7 +107,8 @@ export async function extractSingleProfileWithPage(
     client: options?.client,
     storage:
       !signupLight && options?.client && storage && typeof storage.saveMedia === 'function' ? storage : undefined,
-    extractHighlights: !signupLight,
+    /** Destaques desligados: UI não usa; abrir cada highlight no IG é lento. */
+    extractHighlights: false,
   };
   const extracted = await extractProfile(page, cleanHandle, 'seed', '', config, extractOpts);
   if (!extracted) {
@@ -179,7 +180,7 @@ export async function extractSingleProfileWithPage(
     );
     const mergedRefresh = mergeProfilePreservingLlm(existingRefresh, slim as Record<string, unknown>);
     await storage.save(mergedRefresh as Entity & { handle: string });
-    logStep('salvando posts, reels, marcados e highlights...');
+    logStep('salvando posts, reels e marcados...');
     const postsSaved = await saveAllMedia(collectedAt);
     logStep(`pronto (${postsSaved} itens).`);
     return { success: true, saved: true, handle: cleanHandle, followers, postsSaved, followsOfficialProfile };
@@ -288,7 +289,7 @@ export async function extractSingleProfileWithPage(
   );
   const mergedSave = mergeProfilePreservingLlm(existingSave, slim as Record<string, unknown>);
   await storage.save(mergedSave as Entity & { handle: string });
-  logStep('salvando posts, reels, marcados e highlights...');
+  logStep('salvando posts, reels e marcados...');
   const postsSaved = await saveAllMedia(collectedAt);
   logStep(`pronto (${postsSaved} itens).`);
   return {

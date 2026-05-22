@@ -11,9 +11,11 @@ export type BuscaInfluencerPlansModalProps = {
 export default function BuscaInfluencerPlansModal({ open, onClose }: BuscaInfluencerPlansModalProps) {
   useLockPageScroll(open)
 
+  if (!open) return null
+
   return (
     <Modal
-      open={open}
+      open
       onCancel={onClose}
       footer={null}
       centered

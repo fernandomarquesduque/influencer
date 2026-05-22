@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button, Spin } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { CheckOutlined, CrownOutlined, WhatsAppOutlined, CreditCardOutlined } from '@ant-design/icons'
@@ -28,6 +28,12 @@ export function useBuscaPlansSubscriptionAccess(enabled: boolean) {
   const [loading, setLoading] = useState(enabled)
   const [active, setActive] = useState(!enabled)
   const [hasPendingSubscription, setHasPendingSubscription] = useState(false)
+  const [refreshNonce, setRefreshNonce] = useState(0)
+
+  const refresh = useCallback(() => {
+    if (!enabled) return
+    setRefreshNonce((n) => n + 1)
+  }, [enabled])
 
   useEffect(() => {
     if (!enabled) {
@@ -64,9 +70,9 @@ export function useBuscaPlansSubscriptionAccess(enabled: boolean) {
     return () => {
       cancelled = true
     }
-  }, [enabled, user])
+  }, [enabled, user, refreshNonce])
 
-  return { loading, active, hasPendingSubscription }
+  return { loading, active, hasPendingSubscription, refresh }
 }
 
 export default function BuscaInfluencerPlansPanel({

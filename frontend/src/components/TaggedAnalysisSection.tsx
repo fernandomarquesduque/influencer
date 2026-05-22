@@ -34,6 +34,8 @@ export interface TaggedAnalysisSectionProps {
   gap?: number
   /** Quando true, não renderiza o título da seção (para exibir o título fora do blur). */
   contentOnly?: boolean
+  profileRefForRefresh?: string
+  onPostImageError?: (postKey: string) => void
 }
 
 export function TaggedAnalysisSection({
@@ -45,6 +47,8 @@ export function TaggedAnalysisSection({
   getPostLink,
   gap = s.xl,
   contentOnly = false,
+  profileRefForRefresh,
+  onPostImageError,
 }: TaggedAnalysisSectionProps) {
   const engagement = useMemo(
     () => computeEngagementFromPosts(tagged, followersCount),
@@ -269,6 +273,8 @@ export function TaggedAnalysisSection({
               getLink={(p) => getPostLink(p as PostItem)}
               failedImages={failedPostImages}
               formatShortNum={formatShortNum}
+              profileRefForRefresh={profileRefForRefresh}
+              onPostImageError={onPostImageError}
               showAuthor
               showCardFooter
             />
@@ -294,6 +300,8 @@ export function TaggedAnalysisSection({
                 getLink={(p) => getPostLink(p as PostItem)}
                 failedImages={failedPostImages}
                 formatShortNum={formatShortNum}
+                profileRefForRefresh={profileRefForRefresh}
+                onPostImageError={onPostImageError}
                 showAuthor
                 showCardFooter
               />

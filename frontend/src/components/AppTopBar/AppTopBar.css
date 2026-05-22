@@ -112,11 +112,23 @@
 
 .app-top-bar-account-btn__user {
   font-size: 17px;
+  flex-shrink: 0;
+}
+
+.app-top-bar-account-btn__label {
+  max-width: min(28vw, 140px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .app-top-bar-account-btn__chevron {
   font-size: 10px;
   opacity: 0.75;
+  flex-shrink: 0;
 }
 
 .app-top-bar-spacer {

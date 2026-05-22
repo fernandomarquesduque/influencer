@@ -39,14 +39,16 @@ function Login() {
 
   const normalizedNick = nickname.replace(/^@/, '').trim()
 
+  const redirectInfluencerPath =
+    user?.scope === 'influencer' ? influencerProfilePath(user.profile_handle) : null
+
   useEffect(() => {
     if (authLoading) return
-    if (!user) return
-    const profilePath = user.scope === 'influencer' ? influencerProfilePath(user.profile_handle) : null
-    navigate(profilePath ?? from, { replace: true })
-  }, [authLoading, user, navigate, from])
+    if (!redirectInfluencerPath) return
+    navigate(redirectInfluencerPath, { replace: true })
+  }, [authLoading, redirectInfluencerPath, navigate])
 
-  if (authLoading || user) {
+  if (authLoading || redirectInfluencerPath) {
     return (
       <div
         className="login-page influencer-login-page"

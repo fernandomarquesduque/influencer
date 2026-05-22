@@ -40,7 +40,7 @@ export class CompositeStorage {
   }
 
   /**
-   * Remove o perfil completamente (RocksDB + SQLite). Usado quando o refresh falha com "Perfil não encontrado".
+   * Remove o perfil do RocksDB + ativação/candidaturas (S3 e demais SQLite: ver removeInfluencerNotFoundOnInstagram).
    */
   async deleteProfileCompletely(profileHandle: string): Promise<void> {
     const handle = profileHandle.toLowerCase().replace(/^@/, '');

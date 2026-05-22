@@ -1,5 +1,5 @@
 import type { FollowersSizeKey } from '@repo/followersSizeBuckets'
-import { resolveMediaUrl } from './constants/profilePaths'
+import { isProfileRef, resolveMediaUrl } from './constants/profilePaths'
 
 /** Em produção sob subpasta (ex.: /influencer) use VITE_API_BASE=/influencer/api */
 const API_BASE = (import.meta.env.VITE_API_BASE as string) || '/api'
@@ -2084,20 +2084,23 @@ export async function extractProfileToBackend(handleOrUrl: string): Promise<Extr
 
 /** Enfileira re-extração do perfil para renovar URLs de imagem. priority=true (só adm) coloca na frente da fila e ignora intervalo de 60 min. */
 export async function queueRefreshProfile(
-  handle: string,
+  profileRefOrHandle: string,
   options?: { priority?: boolean }
 ): Promise<{ queued: boolean; handle: string; message: string }> {
-  const h = handle.replace(/^@/, '').trim()
-  if (!h) return { queued: false, handle: h, message: 'Handle vazio.' }
+  const id = profileRefOrHandle.replace(/^@/, '').trim()
+  if (!id) return { queued: false, handle: id, message: 'Identificador vazio.' }
+  const body = isProfileRef(id)
+    ? { profile_ref: id, priority: options?.priority === true }
+    : { handle: id, priority: options?.priority === true }
   const res = await fetch(`${API_BASE}/crawl/queue-refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ handle: h, priority: options?.priority === true }),
+    body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
-  if (res.status === 400) return { queued: false, handle: h, message: data.error || 'Requisição inválida' }
-  if (res.status === 403) return { queued: false, handle: h, message: data.error || 'Sem permissão.' }
-  return { queued: !!data.queued, handle: h, message: data.message || (data.queued ? 'Na fila.' : 'Já na fila.') }
+  if (res.status === 400) return { queued: false, handle: id, message: data.error || 'Requisição inválida' }
+  if (res.status === 403) return { queued: false, handle: id, message: data.error || 'Sem permissão.' }
+  return { queued: !!data.queued, handle: id, message: data.message || (data.queued ? 'Na fila.' : 'Já na fila.') }
 }
 
 /** Valores/tarifas (8 tipos de entrega). */
@@ -2210,8 +2213,8 @@ export async function resendVerificationEmail(options?: { signal?: AbortSignal }
   return { email_sent: (data as { email_sent?: boolean }).email_sent }
 }
 
-/** Valida e-mail pelo token (link no e-mail). Backend concede 5 créditos (missão 1). */
-export async function verifyEmailByToken(token: string, options?: { signal?: AbortSignal }): Promise<{ success: true; credits: number }> {
+/** Valida e-mail pelo token (link no e-mail). */
+export async function verifyEmailByToken(token: string, options?: { signal?: AbortSignal }): Promise<{ success: true }> {
   const res = await fetch(`${API_BASE}/auth/verify-email?token=${encodeURIComponent(token)}`, { signal: options?.signal })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((data as { error?: string }).error || 'Link inválido ou expirado')
@@ -2286,6 +2289,135 @@ export async function fetchAdminUnregisteredMentionsReport(): Promise<AdminUnreg
     throw new Error(err?.error || 'Falha ao gerar relatório de menções')
   }
   return (await res.json()) as AdminUnregisteredMentionsReport
+}
+
+export type AdminMediaS3Filter = 'avatar' | 'covers' | 'any'
+
+export type AdminMediaS3MissingRow = {
+  handle: string
+  profile_ref: string
+  full_name?: string
+  followers_count?: number
+  missing_avatar: boolean
+  posts_with_media: number
+  posts_missing_stable_cover: number
+  collected_at?: string
+  in_extract_queue: boolean
+}
+
+export type AdminMediaS3AuditSummary = {
+  total_profiles: number
+  llm_done_profiles?: number
+  missing_avatar: number
+  missing_covers: number
+  missing_any: number
+  extract_queue_length: number
+}
+
+export type AdminMediaS3AuditResponse = {
+  generated_at: string
+  summary: AdminMediaS3AuditSummary
+  total: number
+  items: AdminMediaS3MissingRow[]
+}
+
+export async function fetchAdminMediaS3Audit(opts?: {
+  limit?: number
+  offset?: number
+  filter?: AdminMediaS3Filter
+  q?: string
+  refresh?: boolean
+}): Promise<AdminMediaS3AuditResponse> {
+  const params = new URLSearchParams()
+  if (opts?.limit != null) params.set('limit', String(opts.limit))
+  if (opts?.offset != null) params.set('offset', String(opts.offset))
+  if (opts?.filter) params.set('filter', opts.filter)
+  if (opts?.q?.trim()) params.set('q', opts.q.trim())
+  if (opts?.refresh) params.set('refresh', '1')
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/admin/media-s3/audit${qs ? `?${qs}` : ''}`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err?.error || 'Falha ao auditar mídia S3')
+  }
+  return (await res.json()) as AdminMediaS3AuditResponse
+}
+
+export type AdminExtractQueueStatus = {
+  pending: string[]
+  priority_handles: string[]
+  /** @ em extração agora (fora de `pending`). */
+  processing_handle?: string | null
+  length: number
+  extract_blocked_until: number | null
+}
+
+export async function fetchAdminExtractQueue(): Promise<AdminExtractQueueStatus> {
+  const res = await fetch(`${API_BASE}/admin/extract-queue`, { headers: { ...authHeaders() } })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err?.error || 'Falha ao carregar fila de extração')
+  }
+  return (await res.json()) as AdminExtractQueueStatus
+}
+
+export async function adminEnqueueExtractQueue(handles: string[]): Promise<{
+  added: number
+  skipped: number
+  results: { handle: string; queued: boolean; message: string }[]
+}> {
+  const res = await fetch(`${API_BASE}/admin/extract-queue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ handles, priority: true }),
+  })
+  const data = (await res.json().catch(() => ({}))) as {
+    added?: number
+    skipped?: number
+    results?: { handle: string; queued: boolean; message: string }[]
+    error?: string
+  }
+  if (!res.ok) throw new Error(data.error || 'Falha ao enfileirar extração')
+  return {
+    added: data.added ?? 0,
+    skipped: data.skipped ?? 0,
+    results: data.results ?? [],
+  }
+}
+
+/** Enfileira todos os perfis pendentes que batem com filtro/busca da auditoria (não só a página atual). */
+export async function adminEnqueueAllFilteredExtractQueue(opts?: {
+  filter?: AdminMediaS3Filter
+  q?: string
+  refresh?: boolean
+}): Promise<{ added: number; skipped: number; total: number; message?: string }> {
+  const res = await fetch(`${API_BASE}/admin/extract-queue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      enqueue_all_filtered: true,
+      filter: opts?.filter ?? 'any',
+      q: opts?.q ?? '',
+      refresh: opts?.refresh === true,
+      priority: true,
+    }),
+  })
+  const data = (await res.json().catch(() => ({}))) as {
+    added?: number
+    skipped?: number
+    total?: number
+    message?: string
+    error?: string
+  }
+  if (!res.ok) throw new Error(data.error || 'Falha ao enfileirar todos')
+  return {
+    added: data.added ?? 0,
+    skipped: data.skipped ?? 0,
+    total: data.total ?? 0,
+    message: data.message,
+  }
 }
 
 export interface AdminUser {

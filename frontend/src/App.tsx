@@ -46,6 +46,7 @@ import AdminUsers from './pages/AdminUsers'
 import AdminDashboard from './pages/AdminDashboard'
 import AdminMentionReport from './pages/AdminMentionReport'
 import AdminBulkPurgeInfluencers from './pages/AdminBulkPurgeInfluencers'
+import AdminMediaS3 from './pages/AdminMediaS3'
 import ListAndDetailModal from './pages/ListAndDetailModal'
 import MyCampaigns from './pages/MyCampaigns'
 import CampaignInfluencers from './pages/CampaignInfluencers'
@@ -114,7 +115,7 @@ export default function App() {
               <Route path="profile" element={<Profile />} />
               <Route path="projects" element={<Projects />} />
               <Route path="projects/:projectId" element={<Projects />} />
-              <Route path="bulk-message" element={<BulkMessage />} />
+              <Route path="bulk-message" element={<Navigate to="/app/admin/direct-queue" replace />} />
               <Route path="create" element={<Auth />} />
               <Route path="create/password" element={<AuthPassword />} />
               <Route path="missions/link-instagram" element={<LinkInstagramMission />} />
@@ -153,6 +154,22 @@ export default function App() {
                   </RequireAuth>
                 }
               />
+              <Route
+                path="admin/direct-queue"
+                element={
+                  <RequireAuth requireAdm>
+                    <BulkMessage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="admin/media-s3"
+                element={
+                  <RequireAuth requireAdm>
+                    <AdminMediaS3 />
+                  </RequireAuth>
+                }
+              />
             </Route>
 
             <Route path="/extraction" element={<Extraction />} />
@@ -165,6 +182,8 @@ export default function App() {
               element={<Navigate to="/app/admin/reports/unregistered-mentions" replace />}
             />
             <Route path="/admin/influencers/bulk-purge" element={<Navigate to="/app/admin/influencers/bulk-purge" replace />} />
+            <Route path="/admin/direct-queue" element={<Navigate to="/app/admin/direct-queue" replace />} />
+            <Route path="/admin/media-s3" element={<Navigate to="/app/admin/media-s3" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </PendingPaymentCelebrationProvider>

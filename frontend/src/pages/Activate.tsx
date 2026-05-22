@@ -44,6 +44,7 @@ import { useAuth } from '../contexts/AuthContext'
 import ProfileAvatar from '../components/ProfileAvatar'
 import './Activate.css'
 import { trackMetaPixel } from '../utils/metaPixel'
+import { isProfileRef } from '../constants/profilePaths'
 
 const { Title, Text } = Typography
 
@@ -346,7 +347,8 @@ function PricingLevelSegmented({
 }
 
 export default function Activate() {
-  const { handle } = useParams<{ handle: string }>()
+  const { profileRef: profileRefParam } = useParams<{ profileRef: string }>()
+  const profileRef = (profileRefParam ?? '').trim()
   const navigate = useNavigate()
   const { canEditProfile, logout, refreshUser, isAdm, loading: authLoading } = useAuth()
   const [form] = Form.useForm()
@@ -366,22 +368,22 @@ export default function Activate() {
   const [profile, setProfile] = useState<ProfileItem | null>(null)
 
   useEffect(() => {
-    if (!handle) return
+    if (!profileRef) return
     if (authLoading) return
-    if (!canEditProfile(handle)) {
+    if (!canEditProfile(profileRef)) {
       navigate('/app', { replace: true })
       return
     }
     let cancelled = false
     setLoading(true)
     Promise.all([
-      fetchProfile(handle).catch(() => null),
-      fetchProfileActivation(handle).catch(() => ({})),
+      fetchProfile(profileRef).catch(() => null),
+      fetchProfileActivation(profileRef).catch(() => ({})),
     ]).then(([profile, activation]) => {
       if (cancelled) return
       if (profile) {
         setProfile(profile)
-        setProfileName((profile.full_name as string) || (profile.username as string) || handle)
+        setProfileName((profile.full_name as string) || (profile.username as string) || profileRef)
         setFollowersCount((profile as ProfileItem).followers_count ?? 0)
         const pic = getProfilePicUrl(profile)
         const picUrl = pic ? proxyImageUrl(pic) : undefined
@@ -454,7 +456,7 @@ export default function Activate() {
       }
       let valuesToSet = formValuesFromAct
       try {
-        const raw = localStorage.getItem(ACTIVATE_DRAFT_KEY(handle))
+        const raw = localStorage.getItem(ACTIVATE_DRAFT_KEY(profileRef))
         if (raw) {
           const parsed = JSON.parse(raw) as Record<string, unknown> | null
           if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
@@ -487,7 +489,7 @@ export default function Activate() {
     return () => {
       cancelled = true
     }
-  }, [handle, form, canEditProfile, navigate, authLoading])
+  }, [profileRef, form, canEditProfile, navigate, authLoading])
 
   useEffect(() => {
     window.location.hash = `#step-${step}`
@@ -627,19 +629,19 @@ export default function Activate() {
   }
 
   const onFinish = async (values: Record<string, unknown>) => {
-    if (!handle) return
+    if (!profileRef) return
     setSaving(true)
     try {
-      await saveProfileActivation(handle, buildPayload(values))
+      await saveProfileActivation(profileRef, buildPayload(values))
       trackMetaPixel('CompleteRegistration', { source: 'activate_submit_success' })
       await refreshUser()
       try {
-        localStorage.removeItem(ACTIVATE_DRAFT_KEY(handle))
+        localStorage.removeItem(ACTIVATE_DRAFT_KEY(profileRef))
       } catch {
         // ignora falha ao limpar rascunho
       }
       message.success('Cadastro ativado.')
-      navigate(`/app/influencer/${encodeURIComponent(handle)}/media-kit`, { replace: true })
+      navigate(`/app/influencer/${encodeURIComponent(profileRef)}/media-kit`, { replace: true })
     } catch {
       message.error('Não deu pra salvar. Tenta de novo.')
     } finally {
@@ -647,7 +649,7 @@ export default function Activate() {
     }
   }
 
-  if (!handle) {
+  if (!profileRef) {
     return (
       <div style={{ padding: 24 }}>
         <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
@@ -685,13 +687,17 @@ export default function Activate() {
     { title: 'Contato', description: '' },
   ]
 
+  const igHandle = String(profile.username ?? profile.handle ?? '').replace(/^@/, '').trim()
+  const igLabel = igHandle && !isProfileRef(igHandle) ? `@${igHandle}` : ''
+  const profileSubtitle = [igLabel, profileName].filter(Boolean).join(' · ')
+
   return (
     <div style={{ maxWidth: 720, margin: '0 auto' }}>
       <div>
         <Button
           type="link"
           icon={<ArrowLeftOutlined />}
-          onClick={() => navigate(`/app/influencer/${encodeURIComponent(handle)}`)}
+          onClick={() => navigate(`/app/influencer/${encodeURIComponent(profileRef)}`)}
           style={{ marginBottom: 16 }}
         >
           Voltar ao perfil
@@ -708,7 +714,7 @@ export default function Activate() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 24 }}>
             <ProfileAvatar
               src={profilePic}
-              handle={handle}
+              handle={profileRef}
               size={72}
               border="3px solid var(--app-placeholder-bg)"
               fallbackIconSize={32}
@@ -718,8 +724,7 @@ export default function Activate() {
                 Perfil do influencer
               </Title>
               <Text type="secondary" style={{ fontSize: 14 }}>
-                @{handle}
-                {profileName ? ` · ${profileName}` : ''}
+                {profileSubtitle}
               </Text>
 
             </div>
@@ -735,12 +740,12 @@ export default function Activate() {
             form={form}
             layout="vertical"
             onValuesChange={() => {
-              if (!handle) return
+              if (!profileRef) return
               if (saveDraftTimerRef.current) clearTimeout(saveDraftTimerRef.current)
               saveDraftTimerRef.current = setTimeout(() => {
                 try {
                   const values = form.getFieldsValue()
-                  localStorage.setItem(ACTIVATE_DRAFT_KEY(handle), JSON.stringify(values))
+                  localStorage.setItem(ACTIVATE_DRAFT_KEY(profileRef), JSON.stringify(values))
                 } catch {
                   // ignora falha ao salvar rascunho
                 }
@@ -1182,10 +1187,10 @@ export default function Activate() {
             type="button"
             onClick={() => {
               Modal.confirm({
-                title: isAdm && handle ? 'Excluir conta desse influenciador?' : 'Excluir sua conta pra valer?',
+                title: isAdm && profileRef ? 'Excluir conta desse influenciador?' : 'Excluir sua conta pra valer?',
                 content:
-                  isAdm && handle
-                    ? `Tudo do @${handle} some (perfil, cadastro, posts). Não dá pra desfazer.`
+                  isAdm && profileRef
+                    ? `Tudo do @${profileRef} some (perfil, cadastro, posts). Não dá pra desfazer.`
                     : 'Tudo seu some (perfil, cadastro, posts). Não dá pra desfazer.',
                 okText: 'Sim, excluir',
                 okType: 'danger',
@@ -1193,9 +1198,9 @@ export default function Activate() {
                 onOk: async () => {
                   setDeleting(true)
                   try {
-                    await deleteAccount(isAdm && handle ? handle : undefined)
+                    await deleteAccount(isAdm && profileRef ? profileRef : undefined)
                     message.success('Conta excluída.')
-                    if (isAdm && handle) {
+                    if (isAdm && profileRef) {
                       navigate('/', { replace: true })
                     } else {
                       logout()
@@ -1220,7 +1225,7 @@ export default function Activate() {
               textDecoration: 'none',
             }}
           >
-            {isAdm && handle ? 'Excluir conta do influenciador' : 'Excluir minha conta'}
+            {isAdm && profileRef ? 'Excluir conta do influenciador' : 'Excluir minha conta'}
           </button>
         </div>
       </div>

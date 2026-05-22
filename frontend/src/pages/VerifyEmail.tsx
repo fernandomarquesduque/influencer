@@ -17,10 +17,10 @@ export default function VerifyEmail() {
     }
     let cancelled = false
     verifyEmailByToken(token)
-      .then((data) => {
+      .then(() => {
         if (cancelled) return
         setStatus('success')
-        navigate(`/missions/reward?type=email&credits=${data.credits}`, { replace: true })
+        navigate('/missions/reward?type=email', { replace: true })
       })
       .catch((e) => {
         if (cancelled) return
@@ -51,7 +51,7 @@ export default function VerifyEmail() {
   return (
     <div style={{ maxWidth: 400, margin: '60px auto', padding: 24, textAlign: 'center' }}>
       <Spin size="large" />
-      <p style={{ marginTop: 16 }}>Redirecionando para sua recompensa...</p>
+      <p style={{ marginTop: 16 }}>Redirecionando...</p>
     </div>
   )
 }

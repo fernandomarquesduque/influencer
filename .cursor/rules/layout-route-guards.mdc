@@ -1,0 +1,30 @@
+---
+description: Guards de rota no Layout e redirecionamentos
+globs: frontend/src/Layout.tsx,frontend/src/constants/searchRoute.ts
+alwaysApply: false
+---
+
+# Guards de rota (`Layout.tsx`)
+
+## `scope: adm`
+
+- Não aplicar redirecionamentos restritivos de influenciador/assinante.
+- Pode acessar `/app/admin/*` e demais rotas do menu admin.
+
+## `scope: assinante`
+
+- Permitir `isSearchRoute(path)`, toda área `/app/*` e rotas avulsas do menu (`isStandaloneNavRoute`).
+- Não redirecionar para `/app` (vira `/` via `SearchLegacyRedirect`) em rotas legítimas como `/app/projects`.
+
+## `scope: influencer`
+
+- Permitir busca, `/app/*`, `isStandaloneNavRoute` e `/activate/:ref`.
+- Só redirecionar para o próprio perfil quando a rota não for permitida.
+
+## Não-adm em `/app/admin`
+
+- Redirecionar para `/app` (não expor telas admin no menu para quem não é `adm`).
+
+## Menu vs guard
+
+- Itens do menu devem apontar para rotas que o guard do Layout permite para aquele `scope`, senão o usuário volta para `/` ou perfil.

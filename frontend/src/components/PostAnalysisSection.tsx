@@ -48,6 +48,8 @@ export interface PostAnalysisSectionProps {
   cardStyle?: React.CSSProperties
   /** Quando true, não renderiza o título da seção (para exibir o título fora do blur). */
   contentOnly?: boolean
+  profileRefForRefresh?: string
+  onPostImageError?: (postKey: string) => void
 }
 
 export function PostAnalysisSection({
@@ -65,6 +67,8 @@ export function PostAnalysisSection({
   gap = s.xl,
   cardStyle = { borderRadius: r, border: 'none', boxShadow: t.shadowLegacy, padding: s.lg, background: c.cardBg },
   contentOnly = false,
+  profileRefForRefresh,
+  onPostImageError,
 }: PostAnalysisSectionProps) {
   const [galleryModalOpen, setGalleryModalOpen] = useState(false)
   if (!reportInsights && !postsLoading) return null
@@ -266,6 +270,8 @@ export function PostAnalysisSection({
                     getLink={(p) => getPostLink(p as PostItem)}
                     failedImages={failedPostImages}
                     formatShortNum={formatShortNum}
+                    profileRefForRefresh={profileRefForRefresh}
+                    onPostImageError={onPostImageError}
                   />
                   <Modal
                     title="Todo o feed"
@@ -290,6 +296,8 @@ export function PostAnalysisSection({
                       getLink={(p) => getPostLink(p as PostItem)}
                       failedImages={failedPostImages}
                       formatShortNum={formatShortNum}
+                      profileRefForRefresh={profileRefForRefresh}
+                      onPostImageError={onPostImageError}
                     />
                   </Modal>
                 </>

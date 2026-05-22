@@ -700,7 +700,7 @@ export default function Auth() {
                       type="primary"
                       size="large"
                       className="auth-create__submit"
-                      onClick={() => navigate(`/activate/${user.profile_handle}`)}
+                      onClick={() => navigate(`/activate/${encodeURIComponent(user.profile_ref || user.profile_handle || '')}`)}
                     >
                       Continuar
                       <ArrowRightOutlined className="auth-create__submit-arrow" />

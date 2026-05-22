@@ -38,6 +38,8 @@ export interface ReelsAnalysisSectionProps {
   lastReelAmplificationLabel?: string | null
   /** Quando true, não renderiza o título da seção (para exibir o título fora do blur). */
   contentOnly?: boolean
+  profileRefForRefresh?: string
+  onPostImageError?: (postKey: string) => void
 }
 
 export function ReelsAnalysisSection({
@@ -51,6 +53,8 @@ export function ReelsAnalysisSection({
   cardStyle: _cardStyle = { borderRadius: r, border: 'none', boxShadow: t.shadowLegacy, padding: s.lg, background: c.cardBg },
   lastReelAmplificationLabel,
   contentOnly = false,
+  profileRefForRefresh,
+  onPostImageError,
 }: ReelsAnalysisSectionProps) {
   const engagement = useMemo(
     () => computeEngagementFromPosts(reels, followersCount),
@@ -384,6 +388,8 @@ export function ReelsAnalysisSection({
               getLink={(p) => getPostLink(p as PostItem)}
               failedImages={failedPostImages}
               formatShortNum={formatShortNum}
+              profileRefForRefresh={profileRefForRefresh}
+              onPostImageError={onPostImageError}
             />
             <Modal
               title="Todos os reels"
@@ -407,6 +413,8 @@ export function ReelsAnalysisSection({
                 getLink={(p) => getPostLink(p as PostItem)}
                 failedImages={failedPostImages}
                 formatShortNum={formatShortNum}
+                profileRefForRefresh={profileRefForRefresh}
+                onPostImageError={onPostImageError}
               />
             </Modal>
           </Col>

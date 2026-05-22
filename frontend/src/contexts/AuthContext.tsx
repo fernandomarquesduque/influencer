@@ -65,8 +65,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await res.json().catch(() => ({}))
       if (res.ok && data?.user) {
         const u = data.user
+        const nextToken = typeof data?.token === 'string' ? data.token : token
+        if (nextToken !== token) {
+          localStorage.setItem(AUTH_TOKEN_KEY, nextToken)
+          setAuthToken(nextToken)
+        }
         setState((s) => ({
           ...s,
+          token: nextToken,
           user: {
             id: u.id,
             username: u.username,

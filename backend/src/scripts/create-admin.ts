@@ -17,8 +17,8 @@ const existing = authDb.getByUsername(username);
 const hash = hashPassword(password);
 
 if (existing) {
-  authDb.updateUser(existing.id, { password_hash: hash });
-  console.log(`Senha do usuário ${username} (id=${existing.id}) atualizada com sucesso.`);
+  authDb.updateUser(existing.id, { password_hash: hash, scope: 'adm' });
+  console.log(`Usuário ${username} (id=${existing.id}): senha atualizada e scope definido como adm.`);
   console.log('Faça login na aplicação com esse usuário e a nova senha.');
 } else {
   const id = authDb.createUser(username, hash, 'adm', null);

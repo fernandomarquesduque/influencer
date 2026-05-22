@@ -1419,7 +1419,6 @@ export interface MediaKitData {
   profile: ProfileItem | null
   posts: PostItem[]
   reels?: PostItem[]
-  highlights?: PostItem[]
   activation: ProfileActivation | null
   reportInsights: ReportInsights | null
   profilePicDataUrl?: string | null
@@ -1435,7 +1434,6 @@ export function MediaKitDocument({
   profile,
   posts,
   reels = [],
-  highlights = [],
   activation,
   reportInsights,
   profilePicDataUrl,
@@ -1557,7 +1555,6 @@ export function MediaKitDocument({
 
   const contentBreakdown: string[] = []
   if (reels.length > 0) contentBreakdown.push(`Reels: ${reels.length}`)
-  if (highlights.length > 0) contentBreakdown.push(`Destaques: ${highlights.length}`)
   const postsSub = contentBreakdown.length > 0 ? contentBreakdown.join(' · ') : undefined
 
   const kpis: { label: string; value: string; sub?: string }[] = [

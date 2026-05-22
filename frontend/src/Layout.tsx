@@ -6,52 +6,49 @@ import { useAuth } from './contexts/AuthContext'
 import MissionsBar from './components/MissionsBar/MissionsBar'
 import { RequireActiveSubscription } from './components/RequireActiveSubscription'
 import AppTopBar from './components/AppTopBar/AppTopBar'
-import { isSearchRoute, isSearchLandingHome } from './constants/searchRoute'
+import { isSearchRoute, isSearchLandingHome, isStandaloneNavRoute } from './constants/searchRoute'
+import { cleanupAppUiBlockers } from './utils/cleanupAppUiBlockers'
 
 const { Content } = AntLayout
 
 export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, isAdm } = useAuth()
   const myProfileRef = user?.profile_ref?.trim() ?? ''
   const myProfilePath = myProfileRef ? `/app/influencer/${encodeURIComponent(myProfileRef)}` : ''
   const isOnActivate = myProfileRef && location.pathname === `/activate/${encodeURIComponent(myProfileRef)}`
+  const path = location.pathname
+  const isAppArea = path === '/app' || path.startsWith('/app/')
   const allowedForInfluencer =
-    isSearchRoute(location.pathname) ||
-    location.pathname.startsWith('/app/influencer') ||
-    location.pathname.startsWith('/app/create') ||
-    location.pathname.startsWith('/app/projects') ||
+    isAdm ||
+    isSearchRoute(path) ||
+    isAppArea ||
+    isStandaloneNavRoute(path) ||
     isOnActivate
 
   useEffect(() => {
-    if (user?.scope === 'influencer' && myProfileRef && !allowedForInfluencer) {
-      navigate(myProfilePath, { replace: true })
-    }
-  }, [user?.scope, myProfileRef, myProfilePath, allowedForInfluencer, navigate])
+    if (isAdm || user?.scope !== 'influencer' || !myProfileRef || allowedForInfluencer) return
+    navigate(myProfilePath, { replace: true })
+  }, [isAdm, user?.scope, myProfileRef, myProfilePath, allowedForInfluencer, navigate])
 
   useEffect(() => {
-    if (user?.scope === 'assinante') {
-      const base = '/app'
-      const path = location.pathname
-      const allowed =
-        path === base || path === `${base}/` ||
-        path.startsWith(`${base}/campaigns`) ||
-        path.startsWith(`${base}/influencer`) ||
-        path.startsWith(`${base}/payments`) ||
-        path.startsWith(`${base}/profile`) ||
-        path.startsWith(`${base}/missions`) ||
-        isSearchRoute(path)
-      if (!allowed) navigate(base, { replace: true })
-    }
-  }, [user?.scope, location.pathname, navigate])
+    if (isAdm || user?.scope !== 'assinante') return
+    const allowed = isSearchRoute(path) || isAppArea || isStandaloneNavRoute(path)
+    if (!allowed) navigate('/app', { replace: true })
+  }, [isAdm, user?.scope, path, isAppArea, navigate])
 
   useEffect(() => {
-    if (!user) return
-    if (location.pathname.startsWith('/app/admin') && user.scope !== 'adm') {
+    if (!user || isAdm) return
+    if (path.startsWith('/app/admin') && user.scope !== 'adm') {
       navigate('/app', { replace: true })
     }
-  }, [user, location.pathname, navigate])
+  }, [user, isAdm, path, navigate])
+
+  useEffect(() => {
+    cleanupAppUiBlockers()
+    return () => cleanupAppUiBlockers()
+  }, [path])
 
   const missionsBarPath = location.pathname.replace(/\/$/, '') || '/'
   const isSearchLanding = isSearchLandingHome(location.pathname, location.search, location.hash)

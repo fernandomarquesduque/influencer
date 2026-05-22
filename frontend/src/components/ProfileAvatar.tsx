@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Avatar, Spin } from 'antd'
 import { UserOutlined } from '@ant-design/icons'
-import { queueRefreshProfile } from '../api'
+import { profileRefFromMediaUrl, queueMediaRefreshForProfile } from '../utils/queueMediaRefreshForProfile'
 
 interface ProfileAvatarProps {
   src?: string
@@ -208,10 +208,12 @@ export default function ProfileAvatar({
           setImageLoading(false)
           setImageError(true)
           onImageError?.()
-          if (!queueOnError || queuedForCurrentSrcRef.current || !normalizedHandle) return
+          const refreshKey =
+            normalizedHandle || profileRefFromMediaUrl(src) || profileRefFromMediaUrl(stableBackgroundUrl)
+          if (!queueOnError || queuedForCurrentSrcRef.current || !refreshKey) return
           queuedForCurrentSrcRef.current = true
-          queueRefreshProfile(normalizedHandle).catch(() => {})
-          onRefreshQueued?.(normalizedHandle)
+          queueMediaRefreshForProfile(refreshKey)
+          onRefreshQueued?.(refreshKey)
         }}
       />
       {showLoader ? loaderOverlay : null}

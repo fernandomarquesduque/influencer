@@ -9,6 +9,7 @@ import { getCostTier } from './pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
 import { snapMainCategoryToTaxonomy } from '@repo/llmMainCategoryTaxonomy'
+import { matchesQuery } from './queryRelevance'
 
 type CostTier = 'low' | 'medium' | 'high' | 'very_high'
 
@@ -412,20 +413,6 @@ function getSearchableTextFromItem(item: ProfileListItem): string {
   const categories = (item.categories ?? []).map((c) => String(c).trim().toLowerCase()).filter(Boolean)
   const parts = [handle, fullName, bio, ...categories]
   return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ')
-}
-
-function matchesQuery(searchableText: string, q: string): { match: boolean; relevance: number } {
-  const qTrim = q.trim().toLowerCase().replace(/\s+/g, ' ')
-  if (!qTrim) return { match: true, relevance: 0 }
-  const search = searchableText
-  if (qTrim.includes(' ')) {
-    if (search.includes(qTrim)) return { match: true, relevance: 2 }
-    const words = qTrim.split(' ').filter((w) => w.length > 0)
-    const allWordsMatch = words.every((word) => search.includes(word))
-    return { match: allWordsMatch, relevance: allWordsMatch ? 1 : 0 }
-  }
-  if (search.includes(qTrim)) return { match: true, relevance: 2 }
-  return { match: false, relevance: 0 }
 }
 
 /** Normaliza chaves de filtro da URL/UI (`mid` → `medio`; `subnano` legado → `nano`). */

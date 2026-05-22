@@ -9,6 +9,27 @@ export function isSearchRoute(pathname: string): boolean {
   return pathname === SEARCH_LEGACY_PATH || pathname.startsWith(`${SEARCH_LEGACY_PATH}/`)
 }
 
+/** Rotas fora de `/app` listadas no menu de navegação (não passam pelo guard de assinante). */
+const STANDALONE_NAV_PREFIXES = [
+  '/home',
+  '/login',
+  '/influencer/login',
+  '/agencia/',
+  '/premium',
+  '/checkout',
+  '/verify-email',
+  '/missions/',
+  '/extraction',
+  '/extract-profile',
+  '/activate/',
+] as const
+
+export function isStandaloneNavRoute(pathname: string): boolean {
+  return STANDALONE_NAV_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(prefix)
+  )
+}
+
 function getMergedSearchParams(search: string, hash: string): URLSearchParams {
   const merged = new URLSearchParams()
   const qs = search?.replace(/^\?/, '').trim()

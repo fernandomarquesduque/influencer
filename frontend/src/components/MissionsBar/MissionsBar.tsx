@@ -69,7 +69,7 @@ export default function MissionsBar() {
               </span>
               {hasPending && (
                 <div style={{ fontSize: 11, color: 'var(--app-text-tertiary)', marginTop: 1 }}>
-                  Até 15 créditos para seus relatórios
+                  Confirme o e-mail e vincule o Instagram da empresa
                 </div>
               )}
             </div>
@@ -101,9 +101,11 @@ export default function MissionsBar() {
               <span style={{ fontSize: 13, color: m1Done ? 'var(--app-text-secondary)' : 'var(--app-text)', fontWeight: 500 }}>
                 {m1Done ? 'E-mail validado' : 'Valide seu e-mail'}
               </span>
-              <span style={{ fontSize: 12, color: m1Done ? 'var(--ant-color-success)' : 'var(--app-primary)', fontWeight: 700, marginLeft: 6 }}>
-                {m1Done ? '· +5 na conta' : '→ 5 créditos'}
-              </span>
+              {!m1Done && (
+                <span style={{ fontSize: 12, color: 'var(--app-primary)', fontWeight: 600, marginLeft: 6 }}>
+                  · pendente
+                </span>
+              )}
             </div>
             {!m1Done && (
               <Button

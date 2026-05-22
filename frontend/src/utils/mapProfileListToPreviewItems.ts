@@ -3,6 +3,7 @@
  * usado pelo mesmo layout do dashboard — campo `size` via `followersCountToSizeKey` (mesmo módulo que o crawl).
  */
 import type { ProfileListItem, ProfilePreviewItem } from '../api'
+import { formatFacetLabel } from './facetLabels'
 import { followersCountToSizeKey } from '@repo/followersSizeBuckets'
 import { getProfilePicUrl, getStableProfilePicUrl, proxyImageUrl } from '../api'
 
@@ -144,7 +145,7 @@ export function mapProfileListItemToPreviewItem(
       .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
       .slice(0, 6)
     : []
-  const audience = audienceArr.join(' / ') || '-'
+  const audience = audienceArr.map((a) => formatFacetLabel(a)).join(' / ') || '-'
 
   const followers = Number(item.followers_count ?? 0)
   const size: ProfilePreviewItem['size'] = followersCountToSizeKey(followers)

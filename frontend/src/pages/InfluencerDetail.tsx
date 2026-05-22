@@ -27,6 +27,7 @@ import {
 import { Link } from 'react-router-dom'
 import { fetchProfile, fetchCampaignProfile, fetchProfileSummary, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, getProfileRef, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, adminPurgeInfluencer, fetchMySubscription, type ProfileItem, type PostItem, type ProfileActivation, type EngagementStats } from '../api'
 import { isProfileRef } from '../constants/profilePaths'
+import { queueMediaRefreshForProfile } from '../utils/queueMediaRefreshForProfile'
 import { computeEngagementFromPosts } from '../utils/engagement'
 import {
   getFollowersCountFromProfile,
@@ -259,6 +260,13 @@ export default function InfluencerDetail({
   const isProfileLocked = isPreviewLocked || isRedacted
   const isLimitedView = isProfileLocked
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
+  const handlePostImageError = useCallback(
+    (postKey: string) => {
+      queueMediaRefreshForProfile(profileRef)
+      setFailedPostImages((prev) => new Set(prev).add(postKey))
+    },
+    [profileRef]
+  )
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const [showActivationCta, setShowActivationCta] = useState(false)
   const [editLlmOpen, setEditLlmOpen] = useState(false)
@@ -569,7 +577,6 @@ export default function InfluencerDetail({
       posts: posts.filter((p) => ct(p) === 'post'),
       reels: posts.filter((p) => ct(p) === 'reel'),
       tagged: posts.filter((p) => ct(p) === 'tagged'),
-      highlights: posts.filter((p) => ct(p) === 'highlight'),
     }
   }, [posts])
 
@@ -1245,6 +1252,8 @@ export default function InfluencerDetail({
                                 getPostImageUrl={getPostImageUrl}
                                 getPostLink={getPostLink}
                                 failedPostImages={failedPostImages}
+                                profileRefForRefresh={profileRef}
+                                onPostImageError={handlePostImageError}
                                 isMobile={isMobile}
                                 blurMediakitPreview={showMetricsBlur && !showMediakitMetricsBlur}
                                 mediakitLockOverlay={
@@ -1415,7 +1424,7 @@ export default function InfluencerDetail({
                                     ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                                   }}
                                 >
-                                  <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={ownPosts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={stackGap} cardStyle={cardStyle} contentOnly={!hasActivationData} />
+                                  <PostAnalysisSection reportInsights={reportInsights} engagement={engagement} postsCount={ownPosts.length} postsLoading={postsLoading} canShowProof={canShowProof} categories={categories} allHashtags={allHashtags} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={stackGap} cardStyle={cardStyle} contentOnly={!hasActivationData} profileRefForRefresh={profileRef} onPostImageError={handlePostImageError} />
                                 </div>
                                 {showMetricsBlur && (
                                   <div
@@ -1489,6 +1498,8 @@ export default function InfluencerDetail({
                                     cardStyle={cardStyle}
                                     lastReelAmplificationLabel={reportInsights?.strategicMetrics?.lastReelAmplificationLabel}
                                     contentOnly={!hasActivationData}
+                                    profileRefForRefresh={profileRef}
+                                    onPostImageError={handlePostImageError}
                                   />
                                 </div>
                                 {showMetricsBlur && (
@@ -1551,7 +1562,7 @@ export default function InfluencerDetail({
                                     ...(showMetricsBlur ? { filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' } : {}),
                                   }}
                                 >
-                                  <TaggedAnalysisSection tagged={mediaByType.tagged} followersCount={followersCount} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={stackGap} contentOnly={!hasActivationData} />
+                                  <TaggedAnalysisSection tagged={mediaByType.tagged} followersCount={followersCount} failedPostImages={failedPostImages} formatShortNum={formatShortNum} getPostImageUrl={getPostImageUrl} getPostLink={getPostLink} gap={stackGap} contentOnly={!hasActivationData} profileRefForRefresh={profileRef} onPostImageError={handlePostImageError} />
                                 </div>
                                 {showMetricsBlur && (
                                   <div

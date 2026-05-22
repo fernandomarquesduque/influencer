@@ -19,6 +19,27 @@ import { snapMainCategoryToTaxonomy } from '../lib/mainCategoryTaxonomy.js';
 import { getFollowersFromEntity } from '../utils/entityAccess.js';
 import { estimateFollowersFromPosts, resolveFollowersCountForProfile } from '../utils/followersResolve.js';
 import { searchHandlesViaMeilisearch, buildMeilisearchFilterExpr } from '../search/meilisearchProfile.js';
+import {
+  matchesQuery,
+  combineSearchRelevance,
+  userQueryToFtsMatchExpression,
+  userQueryToFtsMatchExpressions,
+  ftsRowsToRankMap,
+  mergeFtsRankMaps,
+  foldSearchText,
+} from '../search/queryRelevance.js';
+
+export {
+  matchesQuery,
+  scoreQueryMatch,
+  userQueryToFtsMatchExpression,
+  combineSearchRelevance,
+  tokenizeQueryWords,
+  foldSearchText,
+  ftsRowsToRankMap,
+  userQueryToFtsMatchExpressions,
+  mergeFtsRankMaps,
+} from '../search/queryRelevance.js';
 
 /**
  * Cache em memória só dos perfis (RocksDB). Posts não entram no heap: engajamento/hashtags vêm do SQLite
@@ -546,7 +567,7 @@ function getPostTextForSearch(post: Record<string, unknown>): string {
 
 /** Texto do post normalizado (minúsculas) para aplicar `matchesQuery` (ex.: origem na campanha). */
 export function getPostSearchableNormalized(post: Record<string, unknown>): string {
-  return getPostTextForSearch(post).toLowerCase().replace(/\s+/g, ' ');
+  return foldSearchText(getPostTextForSearch(post));
 }
 
 /** Máximo de posts usados para montar o texto pesquisável (evita custo com perfis com muitos posts). */
@@ -579,7 +600,7 @@ function getSearchableText(
   for (let i = 0; i < Math.min(posts.length, MAX_POSTS_FOR_SEARCH); i++) {
     parts.push(getPostTextForSearch(posts[i]!));
   }
-  return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ');
+  return foldSearchText(parts.filter(Boolean).join(' '));
 }
 
 /** Texto pesquisável só do perfil (sem posts). Usado para early match e evitar custo com posts quando desnecessário. */
@@ -603,36 +624,14 @@ function getSearchableTextProfileOnly(
     ...categories.map((c) => c.replace(/\s+/g, ' ')),
   ];
   addLlmQualificationSearchParts(profile, parts);
-  return parts.filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ');
-}
-
-/**
- * Verifica se o texto pesquisável atende à query q.
- * - Se q tem espaços: primeiro exige match da frase completa (relevância 2); senão exige que todas as palavras apareçam (relevância 1, tipo LIKE %palavra%).
- * - Se q não tem espaços: match por contém (relevância 2).
- * Retorna { match, relevance }.
- */
-export function matchesQuery(searchableText: string, q: string): { match: boolean; relevance: number } {
-  const qTrim = q.trim().toLowerCase().replace(/\s+/g, ' ');
-  if (!qTrim) return { match: true, relevance: 0 };
-  const search = searchableText;
-
-  if (qTrim.includes(' ')) {
-    if (search.includes(qTrim)) return { match: true, relevance: 2 };
-    const words = qTrim.split(' ').filter((w) => w.length > 0);
-    const allWordsMatch = words.every((word) => search.includes(word));
-    return { match: allWordsMatch, relevance: allWordsMatch ? 1 : 0 };
-  }
-
-  if (search.includes(qTrim)) return { match: true, relevance: 2 };
-  return { match: false, relevance: 0 };
+  return foldSearchText(parts.filter(Boolean).join(' '));
 }
 
 /** Texto pesquisável a partir de um ProfileListItem (para filtro q em cima de lista em cache). Usa _searchable_text se existir (bio + legendas + hashtags + etc.). */
 function getSearchableTextFromItem(item: ProfileListItem): string {
   const precomputed = (item as Record<string, unknown>)._searchable_text;
   if (typeof precomputed === 'string' && precomputed.trim()) {
-    return precomputed.trim().toLowerCase().replace(/\s+/g, ' ');
+    return foldSearchText(precomputed);
   }
   const handle = (item.handle ?? item.key ?? '').toLowerCase().replace(/^@/, '');
   const fullName = (item.full_name ?? '').trim();
@@ -1154,19 +1153,6 @@ export function buildProfileSearchIndexPayload(
   };
 }
 
-/** Constrói expressão FTS5 (coluna `content`): tokens com AND e prefixo `*`. */
-export function userQueryToFtsMatchExpression(q: string): string | null {
-  const t = q.trim().toLowerCase().replace(/\s+/g, ' ');
-  if (!t) return null;
-  const words = t.split(' ').map((w) => w.trim()).filter((w) => w.length >= 2);
-  if (words.length === 0) return null;
-  const parts = words.map((w) => {
-    if (/^[a-z0-9_]+$/i.test(w)) return `content:${w}*`;
-    const esc = w.replace(/"/g, '""');
-    return `content:"${esc}"*`;
-  });
-  return parts.join(' AND ');
-}
 
 /** Monta filtro LLM para o atalho SQL (`llm_qualification_json` + `llm_brand_level`). */
 function buildGlobalAuxLlmSqlFromQuery(query: ProfilesSearchQuery): GlobalAuxSqlLlmFilter | null {
@@ -1944,7 +1930,7 @@ export async function searchProfiles(
       if (q) {
         const mq = matchesQuery(aux.search_blob, q);
         if (!mq.match) continue;
-        searchRelevance = ftsRankByHandle?.get(handle) ?? mq.relevance;
+        searchRelevance = combineSearchRelevance(mq.relevance, ftsRankByHandle?.get(handle));
       }
 
       if (!restrictToHandles && categoriesFilter.length > 0) {

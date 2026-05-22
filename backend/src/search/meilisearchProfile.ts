@@ -111,6 +111,12 @@ function ensureIndexSettingsOnce(): void {
     try {
       await c.index(INDEX_ID).updateSettings({
         searchableAttributes: ['search_text'],
+        typoTolerance: {
+          enabled: true,
+          minWordSizeForTypos: { oneTypo: 4, twoTypos: 8 },
+          disableOnWords: [],
+          disableOnAttributes: [],
+        },
         filterableAttributes: [
           'followers_count',
           'engagement_rate',

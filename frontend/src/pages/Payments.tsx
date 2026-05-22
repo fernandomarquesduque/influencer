@@ -65,7 +65,11 @@ export default function Payments() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, loading: authLoading } = useAuth()
-  const plansAccess = useBuscaPlansSubscriptionAccess(user?.scope === 'assinante')
+  const {
+    loading: plansAccessLoading,
+    active: plansAccessActive,
+    refresh: refreshPlansAccess,
+  } = useBuscaPlansSubscriptionAccess(user?.scope === 'assinante')
   const [payments, setPayments] = useState<PaymentItem[]>([])
   const [pendingPayment, setPendingPayment] = useState<CreatePaymentForCreditsResponse | null>(null)
   const [pendingLoading, setPendingLoading] = useState(true)
@@ -100,7 +104,8 @@ export default function Payments() {
 
   const refreshAll = useCallback(async () => {
     await Promise.all([loadPayments(), loadPendingPayment()])
-  }, [loadPayments, loadPendingPayment])
+    refreshPlansAccess()
+  }, [loadPayments, loadPendingPayment, refreshPlansAccess])
 
   useEffect(() => {
     if (user) void refreshAll()
@@ -130,12 +135,10 @@ export default function Payments() {
   }
 
   const completedPayments = payments.filter((p) => p.status !== 'PENDING' && p.status !== 'OVERDUE')
+  const showPlansWhenNoPending =
+    user.scope === 'assinante' && !pendingPayment && !pendingLoading
   const showPlansPanel =
-    user.scope === 'assinante' &&
-    !plansAccess.loading &&
-    !plansAccess.active &&
-    !pendingPayment &&
-    !pendingLoading
+    showPlansWhenNoPending && (plansAccessLoading || !plansAccessActive)
 
   return (
     <div className="app-page payments-page" style={{ maxWidth: 960, margin: '0 auto', padding: 24 }}>

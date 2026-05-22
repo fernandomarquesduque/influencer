@@ -1,0 +1,7 @@
+.search-highlight-mark {
+  background-color: rgba(250, 204, 21, 0.48);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 3px;
+  font-weight: 600;
+}

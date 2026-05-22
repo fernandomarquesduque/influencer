@@ -5,6 +5,7 @@ import type { ProfileListItem, ProfilesSearchQuery, ProfilePreviewItem } from '.
 import { fetchProfilesPreview } from '../../api'
 import { mapProfileListToPreviewItems } from '../../utils/mapProfileListToPreviewItems'
 import ProfileAvatar from '../ProfileAvatar'
+import { profileRefFromMediaUrl } from '../../utils/queueMediaRefreshForProfile'
 import InfluencerTierPill from '../InfluencerTierPill'
 import { sizeBucketKeyToTierLabel } from '../../utils/influencerTier'
 import './InfluencerPreviewTable.css'
@@ -227,11 +228,14 @@ export default function InfluencerPreviewTable({
                     <div className="iprv-avatar-wrap">
                       <ProfileAvatar
                         src={item.profilePicUrl || undefined}
-                        handle={null}
+                        handle={
+                          (fromCampaign && campaignProfiles?.[idx]?.profile_ref) ||
+                          profileRefFromMediaUrl(item.profilePicUrl) ||
+                          undefined
+                        }
                         size={avatarSize}
                         border="2px solid #ece9ff"
                         shadow="none"
-                        queueOnError={false}
                       />
                     </div>
                     <div className="iprv-tier-under-avatar">

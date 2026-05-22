@@ -630,7 +630,7 @@ export interface ExtractProfileOptions {
   storage?: ExtractProfileStorageForHighlights;
   /**
    * Quando true, coleta destaques (DOM + abrir cada highlight / background job).
-   * Padrão false: não busca destaques na extração do perfil — use `collectHighlightsInBackground` num job separado.
+   * Padrão false: extração de perfil não coleta destaques (economia de tempo no Playwright).
    */
   extractHighlights?: boolean;
 }

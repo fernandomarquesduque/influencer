@@ -194,7 +194,6 @@ export default function InfluencerConnectModal({
                     border="2px solid rgba(104, 39, 143, 0.12)"
                     shadow="0 4px 16px rgba(0,0,0,0.08)"
                     fallbackIconSize={36}
-                    queueOnError={false}
                   />
                 </div>
                 <div className="influencer-connect-modal__title-block">

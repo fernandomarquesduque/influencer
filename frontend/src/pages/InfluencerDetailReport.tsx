@@ -416,7 +416,11 @@ export function ReportHero({
             </div>
           )}
         </div>
-        {extraContent != null ? <div className="report-hero-extra">{extraContent}</div> : null}
+        {extraContent != null ? (
+          <div className="report-hero-extra" style={{ position: 'relative', zIndex: 0, marginTop: s.md }}>
+            {extraContent}
+          </div>
+        ) : null}
       </div>
     </section>
   )
@@ -970,6 +974,8 @@ export function ProofCarousel({
   getLink,
   failedImages,
   formatShortNum,
+  profileRefForRefresh,
+  onPostImageError,
   /** Quando true, exibe "Postado por @username" (ex.: na seção de marcados). */
   showAuthor = false,
   /** Interações, ER e dicas abaixo da mídia. Default false: só a capa, sem texto sobre a imagem. */
@@ -981,6 +987,8 @@ export function ProofCarousel({
   getLink: (post: unknown) => string
   failedImages: Set<string>
   formatShortNum: (n: number) => string
+  profileRefForRefresh?: string
+  onPostImageError?: (postKey: string) => void
   showAuthor?: boolean
   showCardFooter?: boolean
 }) {
@@ -1008,6 +1016,13 @@ export function ProofCarousel({
             imageDisplaySrc={displaySrc}
             stableBackgroundUrl={stableBg}
             imageUnavailable={failed || !displaySrc}
+            profileRefForRefresh={
+              profileRefForRefresh ||
+              (typeof (post as { profile_ref?: string }).profile_ref === 'string'
+                ? (post as { profile_ref?: string }).profile_ref
+                : undefined)
+            }
+            onImageError={() => onPostImageError?.(key)}
             mediaAspectRatio="4 / 5"
             hideFooter={!showCardFooter}
             interactionsLabel={showCardFooter ? `${formatShortNum(interactions)} interações` : undefined}
@@ -1256,6 +1271,8 @@ export interface MetricasMediakitSectionProps {
   getPostImageUrl?: (post: PostItem) => string | undefined
   getPostLink?: (post: PostItem) => string
   failedPostImages?: Set<string>
+  profileRefForRefresh?: string
+  onPostImageError?: (postKey: string) => void
   /** Layout responsivo da grade de KPIs (3 colunas no desktop). */
   isMobile?: boolean
   /** Blur na grade de métricas + melhor horário (mesmo padrão do valor estimado). */
@@ -1294,6 +1311,8 @@ export function MetricasMediakitSection({
   getPostImageUrl,
   getPostLink,
   failedPostImages = new Set(),
+  profileRefForRefresh,
+  onPostImageError,
   isMobile = false,
   blurMediakitPreview = false,
   mediakitLockOverlay,
@@ -1672,6 +1691,11 @@ export function MetricasMediakitSection({
                     imageDisplaySrc={displaySrc}
                     stableBackgroundUrl={stableBg}
                     imageUnavailable={failed || !displaySrc}
+                    profileRefForRefresh={
+                      profileRefForRefresh ||
+                      (typeof post.profile_ref === 'string' ? post.profile_ref : undefined)
+                    }
+                    onImageError={() => onPostImageError?.(key)}
                     mediaAspectRatio="4 / 5"
                     overlayLines={overlayLines.length > 0 ? overlayLines : undefined}
                     interactionsLabel={`${formatShortNum(interactions)} interações`}

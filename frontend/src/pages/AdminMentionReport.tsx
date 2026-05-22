@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Button, Card, List, Space, Typography, message } from 'antd'
 import { ArrowLeftOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons'
 import { fetchAdminUnregisteredMentionsReport, type AdminUnregisteredMentionsReport } from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import './AdminDashboard.css'
 
 function formatInt(n: number): string {
@@ -10,8 +11,17 @@ function formatInt(n: number): string {
 }
 
 export default function AdminMentionReport() {
+  const { isAdm } = useAuth()
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<AdminUnregisteredMentionsReport | null>(null)
+
+  if (!isAdm) {
+    return (
+      <div className="admin-dashboard">
+        <Typography.Text type="danger">Acesso negado. Apenas administradores.</Typography.Text>
+      </div>
+    )
+  }
 
   const run = useCallback(async () => {
     setLoading(true)
