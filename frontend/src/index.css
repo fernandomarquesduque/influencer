@@ -29,32 +29,6 @@ body {
   overflow-y: visible;
 }
 
-.app-layout-content::before,
-.app-layout-content::after {
-  content: '';
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(80px);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.app-layout-content::before {
-  top: -120px;
-  right: -120px;
-  width: 400px;
-  height: 400px;
-  background: var(--app-bg-blob1);
-}
-
-.app-layout-content::after {
-  bottom: -100px;
-  left: -100px;
-  width: 350px;
-  height: 350px;
-  background: var(--app-bg-blob2);
-}
-
 .app-page {
   position: relative;
   z-index: 1;
@@ -954,7 +928,7 @@ select,
   color: inherit;
 }
 
-/* Páginas sem Layout (Login, Premium) */
+/* Páginas sem Layout — use <AppPageBackdrop /> como primeiro filho */
 .app-standalone-page {
   min-height: 100vh;
   position: relative;
@@ -962,70 +936,18 @@ select,
   background: var(--app-bg);
 }
 
-.app-standalone-page::before,
-.app-standalone-page::after {
-  content: '';
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(80px);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.app-standalone-page::before {
-  top: -120px;
-  right: -120px;
-  width: 400px;
-  height: 400px;
-  background: var(--app-bg-blob1);
-}
-
-.app-standalone-page::after {
-  bottom: -100px;
-  left: -100px;
-  width: 350px;
-  height: 350px;
-  background: var(--app-bg-blob2);
-}
-
 .app-standalone-page .app-page {
   position: relative;
   z-index: 1;
 }
 
-/* Modal fullscreen (detalhe do influenciador) */
+/* Modal fullscreen (detalhe do influenciador) — use <AppPageBackdrop /> */
 .app-fullscreen-modal {
   position: fixed;
   inset: 0;
   z-index: 1000;
   background: var(--app-bg);
   overflow: auto;
-}
-
-.app-fullscreen-modal::before,
-.app-fullscreen-modal::after {
-  content: '';
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(80px);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.app-fullscreen-modal::before {
-  top: -120px;
-  right: -120px;
-  width: 400px;
-  height: 400px;
-  background: var(--app-bg-blob1);
-}
-
-.app-fullscreen-modal::after {
-  bottom: -100px;
-  left: -100px;
-  width: 350px;
-  height: 350px;
-  background: var(--app-bg-blob2);
 }
 
 /* Relatório premium: microanimações e hierarquia */

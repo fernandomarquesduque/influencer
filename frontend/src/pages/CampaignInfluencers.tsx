@@ -1372,8 +1372,7 @@ export default function CampaignInfluencers() {
   const originCaptionSearchHidesBIPanel =
     campaignMainTab === 'origin' &&
     !!query.q?.trim() &&
-    (originGallerySearchLoading || originSearchSettledEmpty) &&
-    searchFacets == null
+    (originGallerySearchLoading || originSearchSettledEmpty)
   const influencersCaptionSearchHidesBIPanel =
     campaignMainTab === 'influencers' &&
     !!query.q?.trim() &&
@@ -1384,16 +1383,7 @@ export default function CampaignInfluencers() {
         postCaptionSearch.handles.size === 0))
   const campaignHidesBIPanel = originCaptionSearchHidesBIPanel || influencersCaptionSearchHidesBIPanel
   const showCampaignLeftColumn =
-    !isMobile &&
-    ((isAllCampaignsView && !pendingPayment) || !campaignHidesBIPanel)
-  /** Com só o logo à esquerda, o conteúdo da coluna principal fica deslocado à direita do centro da viewport. */
-  const originGalleryViewportShiftX =
-    !isMobile &&
-    isAllCampaignsView &&
-    !pendingPayment &&
-    campaignHidesBIPanel
-      ? (CAMPAIGN_BI_PANEL_WIDTH_PX + CAMPAIGN_MAIN_COLUMN_GAP_PX) / 2
-      : 0
+    !isMobile && !campaignHidesBIPanel && (isAllCampaignsView ? !pendingPayment : true)
   const selectedSizeFilter = (query.sizeFilter ?? []) as string[]
   const hasActiveFilters =
     (query.q?.trim()?.length ?? 0) > 0 ||
@@ -1725,7 +1715,7 @@ export default function CampaignInfluencers() {
           showScrollHint={false}
         />
       ) : !hasActiveSearchQ && facets == null && loading ? (
-        <OriginGalleryLoadingState railShiftX={0} />
+        <OriginGalleryLoadingState />
       ) : !hasActiveSearchQ && facets == null && !loading && !campaignInfo?.pendingPayment ? (
         <div className="campaign-origin-search-loader">
           <div className="campaign-origin-search-loader__inner">
@@ -1749,7 +1739,7 @@ export default function CampaignInfluencers() {
             minWidth: 0,
           }}
         >
-          {showAllCampaignsFixedChrome ? (
+          {showAllCampaignsFixedChrome && !campaignHidesBIPanel ? (
             <div className="campaign-split-layout__rail-spacer" aria-hidden />
           ) : null}
           {showCampaignLeftColumn ? (
@@ -1834,11 +1824,15 @@ export default function CampaignInfluencers() {
                       mediaKinds={selectedOriginMediaKinds.length ? selectedOriginMediaKinds : undefined}
                       onLoadingChange={setOriginGallerySearchLoading}
                       onOriginSearchSettled={({ empty }) => setOriginSearchSettledEmpty(empty)}
-                      viewportCenterShiftX={originGalleryViewportShiftX}
                       facetBoostQuery={query}
                       onLoadedPostsForFacets={handleOriginPostsForFacets}
                       onOpenInfluencerDetail={openInfluencerFromCard}
                       captionFilterReady={originCaptionPostMatchesReady}
+                      onSearchSuggestion={(term) => {
+                        const t = term.trim()
+                        setSearchInput(t)
+                        updateFilter({ q: t || undefined })
+                      }}
                     />
                   ) : null
                 ) : (
@@ -1950,16 +1944,9 @@ export default function CampaignInfluencers() {
                     )}
                     <div style={{ minWidth: 0 }}>
                       {data.length === 0 && query.q?.trim() && postCaptionSearchLoading ? (
-                        <OriginGalleryLoadingState railShiftX={originGalleryViewportShiftX} />
+                        <OriginGalleryLoadingState />
                       ) : data.length === 0 ? (
-                        <div
-                          className="campaign-origin-search-loader"
-                          style={
-                            originGalleryViewportShiftX !== 0
-                              ? { transform: `translateX(-${originGalleryViewportShiftX}px)` }
-                              : undefined
-                          }
-                        >
+                        <div className="campaign-origin-search-loader">
                           <div className="campaign-origin-search-loader__inner">
                             <Empty description="Nenhum perfil nesta campanha." />
                           </div>

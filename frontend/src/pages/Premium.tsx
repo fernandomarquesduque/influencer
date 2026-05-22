@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom'
 import { Card, Button, Typography } from 'antd'
 import { CrownOutlined, ArrowLeftOutlined, DollarOutlined } from '@ant-design/icons'
+import AppPageBackdrop from '../components/AppPageBackdrop'
 
 const { Title, Paragraph } = Typography
 
 export default function Premium() {
   return (
     <div className="app-standalone-page">
+      <AppPageBackdrop />
       <div className="app-page" style={{ maxWidth: 560, margin: '0 auto', paddingTop: 48, paddingBottom: 48 }}>
         <Card styles={{ body: { padding: 32 } }}>
           <div style={{ textAlign: 'center', marginBottom: 24 }}>

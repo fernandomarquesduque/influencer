@@ -6,6 +6,7 @@ import { useAuth } from './contexts/AuthContext'
 import MissionsBar from './components/MissionsBar/MissionsBar'
 import { RequireActiveSubscription } from './components/RequireActiveSubscription'
 import AppTopBar from './components/AppTopBar/AppTopBar'
+import AppPageBackdrop from './components/AppPageBackdrop'
 import { isSearchRoute, isSearchLandingHome, isStandaloneNavRoute } from './constants/searchRoute'
 import { cleanupAppUiBlockers } from './utils/cleanupAppUiBlockers'
 
@@ -64,6 +65,7 @@ export default function Layout() {
     >
       {showTopBar ? <AppTopBar /> : null}
       <Content className="app-layout-content" style={{ overflowX: 'hidden' }}>
+        <AppPageBackdrop />
         {user && showMissionsBar ? <MissionsBar /> : null}
         <div className="app-page">
           <RequireActiveSubscription>

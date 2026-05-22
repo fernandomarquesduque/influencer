@@ -2,7 +2,8 @@
  * Galeria estilo Instagram: posts/reels onde o termo de busca aparece (dados atuais do índice).
  */
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
-import { Typography, Spin, Empty, Tooltip } from 'antd'
+import { Typography, Tooltip } from 'antd'
+import OriginSearchEmptyState from './OriginSearchEmptyState'
 import './CampaignOriginGallery.css'
 import {
   fetchCampaignPostMatches,
@@ -50,7 +51,7 @@ const ORIGIN_LOADER_SLIDES = [
   },
 ] as const
 
-export function OriginGalleryLoadingState({ railShiftX = 0 }: { railShiftX?: number }) {
+export function OriginGalleryLoadingState() {
   const [slide, setSlide] = useState(0)
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -65,7 +66,6 @@ export function OriginGalleryLoadingState({ railShiftX = 0 }: { railShiftX?: num
       role="status"
       aria-live="polite"
       aria-busy="true"
-      style={railShiftX !== 0 ? { transform: `translateX(-${railShiftX}px)` } : undefined}
     >
       <div className="campaign-origin-search-loader__inner">
         <div className="campaign-origin-search-loader__orbit" aria-hidden>
@@ -282,7 +282,6 @@ export default function CampaignOriginGallery({
   /** Perfis dos posts já carregados (acumulado na paginação) — pai calcula facets no cliente. */
   onLoadedPostsForFacets,
   /** Base completa com só o logo à esquerda: desloca o loader/empty para o centro da viewport (metade da coluna + gap). */
-  viewportCenterShiftX = 0,
   /** Mesmos filtros de perfil da URL (LLM, porte, geo, etc.) — backend restringe handles antes de casar legendas. */
   profileFilters,
   /** Prioridade dos facets do painel BI (porte, LLM, etc.) — só reordena posts no cliente. */
@@ -290,6 +289,7 @@ export default function CampaignOriginGallery({
   /** Se definido, substitui o `window.open` ao abrir o perfil a partir do card (ex.: convidado sem login). */
   onOpenInfluencerDetail,
   captionFilterReady = true,
+  onSearchSuggestion,
 }: {
   campaignId: string
   /** Termo da URL / busca; vazio = todo conteúdo indexado dos perfis da campanha. */
@@ -303,7 +303,6 @@ export default function CampaignOriginGallery({
   /** Após a primeira página com termo: `empty` se não houver posts (pai pode ocultar o painel lateral). */
   onOriginSearchSettled?: (payload: { empty: boolean }) => void
   onLoadedPostsForFacets?: (posts: PostItem[]) => void
-  viewportCenterShiftX?: number
   profileFilters?: Partial<ProfilesSearchQuery>
   facetBoostQuery?: Partial<ProfilesSearchQuery>
   onOpenInfluencerDetail?: (profileRef: string, snapshot?: InfluencerConnectSnapshot) => void
@@ -312,12 +311,17 @@ export default function CampaignOriginGallery({
    * para não duplicar a mesma busca pesada no backend.
    */
   captionFilterReady?: boolean
+  /** Clique em chip de sugestão no empty state. */
+  onSearchSuggestion?: (term: string) => void
 }) {
   const [items, setItems] = useState<PostItem[]>([])
   const [total, setTotal] = useState(0)
   const [scanMeta, setScanMeta] = useState<PostsResponse['scanMeta']>()
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  /** Offset da próxima página na ordenação do servidor (não usar `items.length` — a lista é reordenada no cliente). */
+  const [serverOffset, setServerOffset] = useState(0)
+  const [loadMoreExhausted, setLoadMoreExhausted] = useState(false)
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const profileFiltersRef = useRef(profileFilters)
@@ -372,6 +376,8 @@ export default function CampaignOriginGallery({
         setItems([])
         setTotal(0)
         setScanMeta(undefined)
+        setServerOffset(0)
+        setLoadMoreExhausted(false)
         setLoading(false)
         setLoadingMore(false)
         return
@@ -381,6 +387,7 @@ export default function CampaignOriginGallery({
         return
       }
       setFailedPostImages(new Set())
+      setLoadMoreExhausted(false)
       setLoading(true)
       try {
         const res = await fetchCampaignPostMatches(
@@ -397,12 +404,14 @@ export default function CampaignOriginGallery({
         if (signal?.aborted) return
         setItems(sorted)
         setTotal(res.total)
+        setServerOffset(res.items.length)
         setScanMeta(res.scanMeta)
         onLoadedPostsForFacetsRef.current?.(sorted)
       } catch (e) {
         if (signal?.aborted || (e as { name?: string }).name === 'AbortError') return
         setItems([])
         setTotal(0)
+        setServerOffset(0)
         setScanMeta(undefined)
       } finally {
         if (!signal?.aborted) setLoading(false)
@@ -429,11 +438,12 @@ export default function CampaignOriginGallery({
   }, [reload])
 
   const loadMore = useCallback(async () => {
-    if (!hasSearchTerm) return
+    if (!hasSearchTerm || loadMoreExhausted) return
     const partialMore =
       scanMeta?.partial === true && scanMeta.handlesScanned < scanMeta.handlesTotal
-    if ((items.length >= total && !partialMore) || loadingMore || loading) return
+    if ((serverOffset >= total && !partialMore) || loadingMore || loading) return
     setLoadingMore(true)
+    const offset = serverOffset
     try {
       const res = await fetchCampaignPostMatches(
         campaignId,
@@ -441,27 +451,52 @@ export default function CampaignOriginGallery({
           q: textQuery.trim() || undefined,
           mediaKinds: mediaKinds?.length ? mediaKinds : undefined,
           limit: PAGE,
-          offset: items.length,
+          offset,
         },
         { profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
       )
+      let prevLen = 0
+      let mergedLen = 0
       setItems((prev) => {
+        prevLen = prev.length
         const byKey = new Map(prev.map((p) => [p.key, p]))
         for (const p of res.items) byKey.set(p.key, p)
-        return sortPostsByCampaignFacetBoost([...byKey.values()], facetBoostQuery ?? {})
+        const next = sortPostsByCampaignFacetBoost([...byKey.values()], facetBoostQuery ?? {})
+        mergedLen = next.length
+        return next
       })
+      const nextServerOffset = offset + res.items.length
+      setServerOffset(nextServerOffset)
       setTotal((t) => Math.max(t, res.total))
       setScanMeta(res.scanMeta)
+      const noProgress = res.items.length === 0 || mergedLen <= prevLen
+      const caughtUp = nextServerOffset >= res.total && !partialMore
+      if (noProgress || caughtUp) setLoadMoreExhausted(true)
     } catch {
-      /* ignore */
+      setLoadMoreExhausted(true)
     } finally {
       setLoadingMore(false)
     }
-  }, [campaignId, textQuery, kindsKey, items.length, total, loadingMore, loading, hasSearchTerm, facetBoostForApi, facetBoostQuery, scanMeta])
+  }, [
+    campaignId,
+    textQuery,
+    kindsKey,
+    serverOffset,
+    total,
+    loadingMore,
+    loading,
+    hasSearchTerm,
+    loadMoreExhausted,
+    facetBoostForApi,
+    facetBoostQuery,
+    scanMeta,
+  ])
 
+  const partialScanMore =
+    scanMeta?.partial === true && scanMeta.handlesScanned < scanMeta.handlesTotal
   const hasMoreItems =
-    items.length < total ||
-    (scanMeta?.partial === true && scanMeta.handlesScanned < scanMeta.handlesTotal)
+    !loadMoreExhausted &&
+    (serverOffset < total || partialScanMore)
 
   const onLoadingChangeRef = useRef(onLoadingChange)
   onLoadingChangeRef.current = onLoadingChange
@@ -491,21 +526,20 @@ export default function CampaignOriginGallery({
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [items.length, total, hasMoreItems, loadMore, loading, loadingMore])
-
-  const emptyShiftStyle =
-    viewportCenterShiftX !== 0 ? ({ transform: `translateX(-${viewportCenterShiftX}px)` } as const) : undefined
+  }, [serverOffset, total, hasMoreItems, loadMore, loading, loadingMore])
 
   return (
     <div style={{ minWidth: 0 }}>
       {loading && displayItems.length === 0 ? (
-        <OriginGalleryLoadingState railShiftX={viewportCenterShiftX} />
+        <OriginGalleryLoadingState />
       ) : !hasSearchTerm ? (
-        <Empty description="Digite uma palavra para iniciar a busca." />
+        <OriginSearchEmptyState variant="prompt" onSuggestionClick={onSearchSuggestion} />
       ) : displayItems.length === 0 ? (
-        <div style={emptyShiftStyle}>
-          <Empty description="Nenhum post encontrado com esse termo." />
-        </div>
+        <OriginSearchEmptyState
+          variant="no-results"
+          searchQuery={textQuery}
+          onSuggestionClick={onSearchSuggestion}
+        />
       ) : (
         <>
           {viewMode === 'grid' ? (
@@ -801,23 +835,25 @@ export default function CampaignOriginGallery({
               })}
             </div>
           )}
-          {hasMoreItems && (
-            <div
-              ref={loadMoreSentinelRef}
-              style={{ minHeight: 1, marginTop: 16 }}
-              aria-hidden
-            />
-          )}
-          {loadingMore && (
-            <div style={{ textAlign: 'center', marginTop: 12 }}>
-              <Spin size="small" />
+          {hasMoreItems || loadingMore ? (
+            <div className="campaign-origin-load-footer">
+              {hasMoreItems ? (
+                <div ref={loadMoreSentinelRef} className="campaign-origin-load-sentinel" aria-hidden />
+              ) : null}
+              {loadingMore ? (
+                <div
+                  className="campaign-origin-load-more"
+                  role="status"
+                  aria-live="polite"
+                  aria-label="Carregando mais publicações"
+                >
+                  <span className="campaign-origin-load-more__dot" />
+                  <span className="campaign-origin-load-more__dot" />
+                  <span className="campaign-origin-load-more__dot" />
+                </div>
+              ) : null}
             </div>
-          )}
-          <Text style={{ display: 'block', marginTop: 12, fontSize: 12, color: 'var(--app-text-secondary)' }}>
-            {items.length} de {total}
-            {scanMeta?.partial ? '+' : ''} {total === 1 && !scanMeta?.partial ? 'item' : 'itens'}
-            {scanMeta?.partial ? ' (busca parcial)' : ''}
-          </Text>
+          ) : null}
         </>
       )}
     </div>

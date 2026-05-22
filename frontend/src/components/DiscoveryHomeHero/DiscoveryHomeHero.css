@@ -604,11 +604,6 @@
   background: transparent;
 }
 
-.app-layout--no-top-bar .app-layout-content::before,
-.app-layout--no-top-bar .app-layout-content::after {
-  display: none;
-}
-
 .app-layout--no-top-bar .discovery-home-hero {
   min-height: 100dvh;
 }
