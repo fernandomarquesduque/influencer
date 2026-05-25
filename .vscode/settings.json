@@ -1,5 +1,8 @@
 {
     "npm.packageManager": "npm",
     "debug.javascript.autoAttachFilter": "onlyWithFlag",
-    "terminal.integrated.defaultProfile.windows": "PowerShell"
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "terminal.integrated.env.windows": {
+        "PATH": "C:\\Program Files\\nodejs;${env:PATH}"
+    }
 }

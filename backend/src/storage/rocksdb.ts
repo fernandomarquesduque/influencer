@@ -246,6 +246,31 @@ export class RocksDBStorage {
   }
 
   /**
+   * Remove posts/reels/marcados do handle que não estão no conjunto da extração atual.
+   * Grava os novos itens antes de chamar — evita janela com zero posts durante refresh.
+   */
+  async deletePostKeysExcept(profileHandle: string, keepLogicalKeys: ReadonlySet<string>): Promise<number> {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '');
+    const prefix = handle + ':';
+    const db = await this.getDb();
+    const fullPrefix = dbKey('post', prefix);
+    const limitKey = fullPrefix.slice(0, -1) + String.fromCharCode(fullPrefix.charCodeAt(fullPrefix.length - 1) + 1);
+    const toDelete: string[] = [];
+    const stream = db.iterator({ gte: fullPrefix, lt: limitKey });
+    try {
+      for await (const [fullKey] of stream) {
+        const logical = parseKey(fullKey, 'post');
+        if (logical != null && !keepLogicalKeys.has(logical)) toDelete.push(fullKey);
+      }
+    } finally {
+      await stream.close();
+    }
+    if (toDelete.length === 0) return 0;
+    await db.batch(toDelete.map((k) => ({ type: 'del' as const, key: k })));
+    return toDelete.length;
+  }
+
+  /**
    * Salva itens de mídia no bucket "post" (key = profileHandle:mediaKind:shortcode).
    * Deve receber apenas itens normalizados (buildNormalizedPost); não persistir JSON bruto da API.
    * Inclui content_type no valor para filtro na API.

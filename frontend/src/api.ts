@@ -1,5 +1,6 @@
 import type { FollowersSizeKey } from '@repo/followersSizeBuckets'
 import { isProfileRef, resolveMediaUrl } from './constants/profilePaths'
+import { stripCampaignFacetBoostFromQuery } from './utils/campaignFilterClient'
 
 /** Em produção sob subpasta (ex.: /influencer) use VITE_API_BASE=/influencer/api */
 const API_BASE = (import.meta.env.VITE_API_BASE as string) || '/api'
@@ -12,6 +13,34 @@ export function setAuthToken(token: string | null): void {
 
 export function authHeaders(): Record<string, string> {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {}
+}
+
+/** Erro 429 da API (`code: RATE_LIMIT`) — distinto de busca sem resultados. */
+export type ApiClientErrorCode = 'RATE_LIMIT'
+
+export function isRateLimitError(e: unknown): e is Error & { code: 'RATE_LIMIT'; retryAfterSeconds?: number } {
+  return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'RATE_LIMIT'
+}
+
+export function rateLimitRetryAfterSeconds(e: unknown): number {
+  if (!isRateLimitError(e)) return 60
+  const n = e.retryAfterSeconds
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.min(120, Math.round(n)) : 60
+}
+
+async function throwForRateLimitedResponse(res: Response): Promise<never> {
+  const err = await res.json().catch(() => ({}))
+  const msg =
+    (err as { error?: string }).error ||
+    'Muitas requisições. Aguarde um minuto antes de tentar novamente.'
+  const retryHeader = res.headers.get('Retry-After')
+  const retryAfterSeconds = retryHeader
+    ? Math.max(1, parseInt(retryHeader, 10) || 60)
+    : 60
+  throw Object.assign(new Error(msg), {
+    code: 'RATE_LIMIT' as ApiClientErrorCode,
+    retryAfterSeconds,
+  })
 }
 
 /** Header obrigatório no backend para acessar dados de perfil de outro influenciador (em contexto de campanha). */
@@ -305,6 +334,8 @@ export interface ProfilesSearchQuery {
   llmAudienceType?: string[]
   llmToneOfVoice?: string[]
   llmRiskLevel?: string[]
+  /** Sentimento predominante nas legendas analisadas: positivo | negativo | misto. */
+  llmPostSentiment?: string[]
   llmIsFamilySafe?: boolean
   llmIsAdultContent?: boolean
   sort?: ProfilesSort
@@ -338,6 +369,8 @@ export interface LlmSearchFacets {
   brandSafety: {
     level: { name: string; count: number }[]
   }
+  /** Sentimento predominante nas legendas (`post.llm.sentiment`). */
+  postSentiment?: { name: string; count: number }[]
 }
 
 /** Sumarização dos resultados para filtros (hashtags, engajamento, ativação, tipo de conteúdo, faixas de preço). */
@@ -470,6 +503,7 @@ export function profilesSearchQueryToParams(query: Partial<ProfilesSearchQuery>)
   llmJoin('llmAudienceType', query.llmAudienceType)
   llmJoin('llmToneOfVoice', query.llmToneOfVoice)
   llmJoin('llmRiskLevel', query.llmRiskLevel)
+  llmJoin('llmPostSentiment', query.llmPostSentiment)
   if (query.llmIsFamilySafe === true) params.set('llmFamilySafe', '1')
   if (query.llmIsFamilySafe === false) params.set('llmFamilySafe', '0')
   if (query.llmIsAdultContent === true) params.set('llmAdultContent', '1')
@@ -480,7 +514,7 @@ export function profilesSearchQueryToParams(query: Partial<ProfilesSearchQuery>)
 /** Remove busca por palavra na legenda (`q`) e campos só de UI/paginação de perfis ao reutilizar filtros em `post-matches`. */
 export function profileFiltersForCampaignPostApis(query: Partial<ProfilesSearchQuery>): Partial<ProfilesSearchQuery> {
   const { q: _q, originMediaKinds: _om, limit: _l, offset: _o, sort: _s, ...rest } = query
-  return rest
+  return stripCampaignFacetBoostFromQuery(rest)
 }
 
 export async function fetchProfilesSearch(
@@ -1286,7 +1320,12 @@ export async function adminAddCredits(
 export async function fetchCampaignProfiles(
   campaignId: string,
   query: Partial<ProfilesSearchQuery>,
-  options?: { signal?: AbortSignal; includeFacets?: boolean }
+  options?: {
+    signal?: AbortSignal
+    includeFacets?: boolean
+    /** Prioridade de facets do painel BI (só ordenação no back; não estreita o conjunto). */
+    facetBoost?: Partial<ProfilesSearchQuery>
+  }
 ): Promise<ProfilesSearchResponse> {
   const params = new URLSearchParams()
   if (query.q?.trim()) params.set('q', query.q.trim())
@@ -1315,6 +1354,17 @@ export async function fetchCampaignProfiles(
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))
   if (options?.includeFacets === false) params.set('includeFacets', 'false')
+  const reservedProfileKeys = new Set(['limit', 'offset', 'includeFacets', 'facetBoostSort'])
+  if (options?.facetBoost) {
+    const boostParams = profilesSearchQueryToParams(options.facetBoost)
+    let hasBoost = false
+    boostParams.forEach((value, key) => {
+      if (reservedProfileKeys.has(key)) return
+      params.set(key, value)
+      hasBoost = true
+    })
+    if (hasBoost) params.set('facetBoostSort', '1')
+  }
   const llmJoinCamp = (key: string, arr?: string[]) => {
     if (arr?.length) params.set(key, arr.join(','))
   }
@@ -1476,6 +1526,7 @@ export async function fetchCampaignPostMatches(
     headers: { ...authHeaders() },
     signal: options?.signal,
   })
+  if (res.status === 429) await throwForRateLimitedResponse(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error((err as { error?: string }).error || 'Falha ao carregar posts da campanha')
@@ -1490,7 +1541,12 @@ export async function fetchCampaignPostMatches(
 export async function fetchCampaignPostSearchHandles(
   campaignId: string,
   params: { q: string; mediaKinds?: MediaKind[] },
-  options?: { signal?: AbortSignal; profileFilters?: Partial<ProfilesSearchQuery> }
+  options?: {
+    signal?: AbortSignal
+    profileFilters?: Partial<ProfilesSearchQuery>
+    /** Prioridade de facets (ex.: celebridade primeiro no scan de legendas). */
+    facetBoost?: Partial<ProfilesSearchQuery>
+  }
 ): Promise<{ handles: string[]; totalPosts: number }> {
   const q = params.q.trim()
   if (!q) return { handles: [], totalPosts: 0 }

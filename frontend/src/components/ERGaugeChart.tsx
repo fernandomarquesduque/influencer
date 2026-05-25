@@ -132,7 +132,7 @@ export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
         </div>
         <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'row', gap: s.md, alignItems: 'center', minWidth: 0, justifyContent: 'center' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 auto', minWidth: 90, alignItems: 'center', textAlign: 'center' }}>
-            <div style={{ ...typ.caption, color: c.textMuted, fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>{title}</div>
+            <div className="er-gauge-chart__title" style={{ ...typ.caption, color: c.textMuted, fontSize: 13, fontWeight: 600 }}>{title}</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: bandaAtual.color, margin: 0, lineHeight: 1.2 }}>{value.toFixed(2)}%</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '0 0 auto', alignItems: 'flex-end', textAlign: 'right' }}>

@@ -2,12 +2,13 @@ import type { Request, Response } from 'express';
 import {
   getLlmQualification,
   hasCompletedLlmProfile,
-  scheduleSearchCacheRewarm,
+  scheduleSearchCacheRewarmDebounced,
   warmSearchCache,
 } from '../profilesSearch.js';
 import type { CompositeStorage } from '../../storage/compositeStorage.js';
 import type { Entity } from '../../types/index.js';
 import { resyncInfluencerS3AfterDbMediaReset } from '../../storage/s3InfluencerImage.js';
+import { buildExpectedPostKeySet, pruneStalePostMediaAfterSave } from '../../storage/postMediaKeys.js';
 import { buildNormalizedPost } from '../../utils/slimPost.js';
 import type { SlimProfile } from '../../utils/slimProfile.js';
 import { mergeProfilePreservingLlm } from '../../utils/preserveLlmOnProfileMerge.js';
@@ -233,7 +234,8 @@ export function createCollectorController(storage: CompositeStorage) {
 
         await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
 
-        await warmSearchCache(storage);
+        await storage.finalizeSearchAfterHandlePersist(handle);
+        scheduleSearchCacheRewarmDebounced(storage);
 
         const payload: CollectorIngestResponse = {
           ok: true,
@@ -302,7 +304,6 @@ export function createCollectorController(storage: CompositeStorage) {
             : null;
         const slimMerge = mergeProfilePreservingLlm(existingRec, { ...flatProfile, handle });
 
-        await storage.deletePostsByHandle(handle);
         await resyncInfluencerS3AfterDbMediaReset(slimMerge as SlimProfile, {
           posts,
           reels,
@@ -325,7 +326,11 @@ export function createCollectorController(storage: CompositeStorage) {
           savedTagged = await storage.saveMedia(handle, 'tagged', tagged, collectedAt, skip);
         }
 
-        await warmSearchCache(storage);
+        const keepKeys = buildExpectedPostKeySet(handle, posts, reels, tagged, []);
+        await pruneStalePostMediaAfterSave(storage, handle, keepKeys);
+
+        await storage.finalizeSearchAfterHandlePersist(handle);
+        scheduleSearchCacheRewarmDebounced(storage);
 
         const payload: CollectorIngestFullResponse = {
           ok: true,
@@ -622,7 +627,7 @@ export function createCollectorController(storage: CompositeStorage) {
         await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
         // Nao await warmSearchCache aqui: recarrega profile+post inteiro do disco e pode levar minutos,
         // fazendo o qualify abortar o POST (QUALIFY_INGEST_TIMEOUT_MS). Rewarm em background mantem o mesmo destino final.
-        scheduleSearchCacheRewarm(storage);
+        scheduleSearchCacheRewarmDebounced(storage);
 
         res.status(200).json({
           ok: true,
@@ -634,6 +639,117 @@ export function createCollectorController(storage: CompositeStorage) {
         res.status(500).json({
           error: e instanceof Error ? e.message : String(e),
           code: 'COLLECTOR_LLM_INGEST_ERROR',
+        });
+      }
+    },
+
+    /**
+     * Persiste sentimento LLM por post/reel (bucket `post`, chave handle:kind:shortcode).
+     * Body: { handle, model?, items: [{ kind, shortcode, sentiment, confidence? }] }
+     */
+    async ingestPostSentiments(req: Request, res: Response): Promise<void> {
+      try {
+        const body = req.body as Record<string, unknown> | null;
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+          res.status(400).json({
+            error: 'Body deve ser objeto JSON com { handle, items }.',
+            code: 'COLLECTOR_POST_SENTIMENT_INVALID_BODY',
+          });
+          return;
+        }
+        const handle = String(body.handle ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/^@/, '');
+        if (!handle) {
+          res.status(400).json({
+            error: 'Campo handle é obrigatório.',
+            code: 'COLLECTOR_POST_SENTIMENT_MISSING_HANDLE',
+          });
+          return;
+        }
+        const itemsRaw = body.items;
+        if (!Array.isArray(itemsRaw) || itemsRaw.length === 0) {
+          res.status(400).json({
+            error: 'Campo items deve ser um array não vazio.',
+            code: 'COLLECTOR_POST_SENTIMENT_MISSING_ITEMS',
+          });
+          return;
+        }
+        const model = String(body.model ?? 'qualify-post-sentiment').trim() || 'qualify-post-sentiment';
+        const analyzedAt = new Date().toISOString();
+        let updated = 0;
+        let skipped = 0;
+        const errors: string[] = [];
+
+        for (const row of itemsRaw.slice(0, 80)) {
+          if (row == null || typeof row !== 'object' || Array.isArray(row)) {
+            skipped++;
+            continue;
+          }
+          const o = row as Record<string, unknown>;
+          const kind = String(o.kind ?? 'post')
+            .trim()
+            .toLowerCase();
+          const mediaKind = kind === 'reel' || kind === 'tagged' ? kind : 'post';
+          const shortcode = String(o.shortcode ?? '').trim();
+          if (!shortcode) {
+            skipped++;
+            continue;
+          }
+          const sentimentToken = String(o.sentiment ?? '')
+            .trim()
+            .toLowerCase()
+            .split(/\s+/)[0]
+            ?.replace(/[^a-z]/g, '') ?? '';
+          let sentiment: 'positivo' | 'negativo' | null = null;
+          if (sentimentToken === 'positivo' || sentimentToken === 'positive' || sentimentToken === 'pos') {
+            sentiment = 'positivo';
+          } else if (sentimentToken === 'negativo' || sentimentToken === 'negative' || sentimentToken === 'neg') {
+            sentiment = 'negativo';
+          }
+          if (!sentiment) {
+            skipped++;
+            continue;
+          }
+          const key = `${handle}:${mediaKind}:${shortcode}`;
+          const existing = await storage.get<Record<string, unknown>>('post', key);
+          if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+            errors.push(`${key}: post não encontrado`);
+            skipped++;
+            continue;
+          }
+          const confRaw = Number(o.confidence);
+          const confidence = Number.isFinite(confRaw) ? Math.max(0, Math.min(1, confRaw)) : undefined;
+          const prevLlm =
+            existing.llm != null && typeof existing.llm === 'object' && !Array.isArray(existing.llm)
+              ? (existing.llm as Record<string, unknown>)
+              : {};
+          const nextLlm: Record<string, unknown> = {
+            ...prevLlm,
+            sentiment,
+            analyzedAt,
+            model,
+          };
+          if (confidence != null) nextLlm.confidence = confidence;
+          await storage.set('post', key, { ...existing, llm: nextLlm }, { skipSearchInvalidation: true });
+          updated++;
+        }
+
+        if (updated > 0) scheduleSearchCacheRewarmDebounced(storage);
+
+        res.status(200).json({
+          ok: true,
+          handle,
+          updated,
+          skipped,
+          errors: errors.length > 0 ? errors.slice(0, 20) : undefined,
+        });
+      } catch (e) {
+        console.error('[collectorController.ingestPostSentiments]', e instanceof Error ? e.stack : e);
+        res.status(500).json({
+          error: e instanceof Error ? e.message : String(e),
+          code: 'COLLECTOR_POST_SENTIMENT_INGEST_ERROR',
         });
       }
     },

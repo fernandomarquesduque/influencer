@@ -1,12 +1,14 @@
 /**
  * Galeria estilo Instagram: posts/reels onde o termo de busca aparece (dados atuais do índice).
  */
-import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
 import { Typography, Tooltip } from 'antd'
 import OriginSearchEmptyState from './OriginSearchEmptyState'
 import './CampaignOriginGallery.css'
 import {
   fetchCampaignPostMatches,
+  isRateLimitError,
+  rateLimitRetryAfterSeconds,
   getPostCoverDisplayUrl,
   getPostStablePreviewUrl,
   type PostItem,
@@ -30,11 +32,43 @@ import { queueMediaRefreshFromPost } from '../utils/queueMediaRefreshForProfile'
 import type { InfluencerConnectSnapshot } from './InfluencerConnectModal/InfluencerConnectModal'
 import { getLlmDescriptionLine, getProfilePersonaSummary } from '../utils/mapProfileListToPreviewItems'
 import { formatFacetLabel } from '../utils/facetLabels'
-import { sortPostsByCampaignFacetBoost, pickCampaignFacetBoostFromQuery, hasCampaignFacetBoost } from '../utils/campaignFilterClient'
+import {
+  pickCampaignFacetBoostFromQuery,
+  hasCampaignFacetBoost,
+  sortPostsByCampaignFacetBoost,
+  sortPostsByFacetDiversity,
+} from '../utils/campaignFilterClient'
 
 const { Text } = Typography
 
-const PAGE = 24
+/** Primeira página maior para facetas de porte/gênero mais completas. */
+const PAGE = 36
+
+/** Após a 1ª página, busca mais N páginas em background para enriquecer facets do painel BI. */
+const FACET_GROWTH_PREFETCH_PAGES = 2
+
+function mergePostMatchPage(
+  prev: PostItem[],
+  pageItems: PostItem[],
+  opts: {
+    facetBoostForApi: Partial<ProfilesSearchQuery> | undefined
+    facetBoostQuery: Partial<ProfilesSearchQuery> | undefined
+    hasSearchTerm: boolean
+  }
+): PostItem[] {
+  const seen = new Set(prev.map((p) => p.key))
+  const rawAppended = pageItems.filter((p) => !seen.has(p.key))
+  const appended =
+    opts.facetBoostForApi && opts.facetBoostQuery
+      ? sortPostsByCampaignFacetBoost(rawAppended, opts.facetBoostQuery)
+      : rawAppended
+  const mergedRaw = [...prev, ...appended]
+  if (opts.facetBoostForApi && opts.facetBoostQuery) {
+    return sortPostsByCampaignFacetBoost(mergedRaw, opts.facetBoostQuery)
+  }
+  if (opts.hasSearchTerm) return sortPostsByFacetDiversity(mergedRaw)
+  return mergedRaw
+}
 
 const ORIGIN_LOADER_SLIDES = [
   {
@@ -300,8 +334,8 @@ export default function CampaignOriginGallery({
   mediaKinds?: MediaKind[]
   /** Primeira página da busca: `true` enquanto carrega, `false` ao terminar (erro ou sucesso). */
   onLoadingChange?: (loading: boolean) => void
-  /** Após a primeira página com termo: `empty` se não houver posts (pai pode ocultar o painel lateral). */
-  onOriginSearchSettled?: (payload: { empty: boolean }) => void
+  /** Após a primeira página com termo: `empty` se não houver posts; `rateLimited` se 429 (não é “sem resultado”). */
+  onOriginSearchSettled?: (payload: { empty: boolean; rateLimited?: boolean }) => void
   onLoadedPostsForFacets?: (posts: PostItem[]) => void
   profileFilters?: Partial<ProfilesSearchQuery>
   facetBoostQuery?: Partial<ProfilesSearchQuery>
@@ -319,20 +353,22 @@ export default function CampaignOriginGallery({
   const [scanMeta, setScanMeta] = useState<PostsResponse['scanMeta']>()
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
-  /** Offset da próxima página na ordenação do servidor (não usar `items.length` — a lista é reordenada no cliente). */
+  const [rateLimitError, setRateLimitError] = useState<{
+    message: string
+    retryAfterSeconds: number
+  } | null>(null)
+  /** Offset da próxima página na ordenação do servidor. */
   const [serverOffset, setServerOffset] = useState(0)
   const [loadMoreExhausted, setLoadMoreExhausted] = useState(false)
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const profileFiltersRef = useRef(profileFilters)
   profileFiltersRef.current = profileFilters
+  const onLoadedPostsForFacetsRef = useRef(onLoadedPostsForFacets)
+  onLoadedPostsForFacetsRef.current = onLoadedPostsForFacets
 
   const kindsKey = mediaKinds?.length ? [...mediaKinds].sort().join(',') : ''
   const hasSearchTerm = textQuery.trim().length > 0
-  const displayItems = useMemo(
-    () => sortPostsByCampaignFacetBoost(items, facetBoostQuery ?? {}),
-    [items, facetBoostQuery]
-  )
   const facetBoostForApi = useMemo(
     () =>
       hasCampaignFacetBoost(facetBoostQuery ?? {})
@@ -340,16 +376,11 @@ export default function CampaignOriginGallery({
         : undefined,
     [facetBoostQuery]
   )
-  const facetBoostSortKey = useMemo(
-    () => JSON.stringify(pickCampaignFacetBoostFromQuery(facetBoostQuery ?? {})),
-    [facetBoostQuery]
+  const facetBoostKey = useMemo(
+    () => JSON.stringify(facetBoostForApi ?? {}),
+    [facetBoostForApi]
   )
-
-  useEffect(() => {
-    if (!hasCampaignFacetBoost(facetBoostQuery ?? {})) return
-    setItems((prev) => sortPostsByCampaignFacetBoost(prev, facetBoostQuery ?? {}))
-  }, [facetBoostSortKey, facetBoostQuery])
-
+  const lastFacetBoostKeyForLoaderRef = useRef<string | undefined>(undefined)
   const runOpenInfluencerDetail = useCallback(
     (profileRef: string, snapshot?: InfluencerConnectSnapshot) => {
       const ref = (profileRef ?? '').trim()
@@ -370,6 +401,71 @@ export default function CampaignOriginGallery({
     setFailedPostImages((prev) => new Set(prev).add(post.key))
   }, [])
 
+  const mergeOpts = useMemo(
+    () => ({
+      facetBoostForApi,
+      facetBoostQuery,
+      hasSearchTerm,
+    }),
+    [facetBoostForApi, facetBoostQuery, hasSearchTerm]
+  )
+
+  const prefetchFacetGrowthPages = useCallback(
+    async (
+      signal: AbortSignal,
+      firstPageItems: PostItem[],
+      totalCount: number,
+      initialScanMeta: PostsResponse['scanMeta']
+    ) => {
+      let merged = firstPageItems
+      let offset = firstPageItems.length
+      let scanMeta = initialScanMeta
+      let total = totalCount
+
+      for (let n = 0; n < FACET_GROWTH_PREFETCH_PAGES; n++) {
+        if (signal.aborted) return
+        const partialMore =
+          scanMeta?.partial === true && scanMeta.handlesScanned < scanMeta.handlesTotal
+        if (offset >= total && !partialMore) break
+
+        try {
+          const res = await fetchCampaignPostMatches(
+            campaignId,
+            {
+              q: textQuery.trim() || undefined,
+              mediaKinds: mediaKinds?.length ? mediaKinds : undefined,
+              limit: PAGE,
+              offset,
+            },
+            { signal, profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
+          )
+          if (signal.aborted) return
+          if (res.items.length === 0) break
+
+          const prevLen = merged.length
+          merged = mergePostMatchPage(merged, res.items, mergeOpts)
+          offset += res.items.length
+          total = Math.max(total, res.total)
+          scanMeta = res.scanMeta
+
+          setItems(merged)
+          setServerOffset(offset)
+          setTotal(total)
+          setScanMeta(scanMeta)
+
+          if (merged.length <= prevLen) break
+          const partialAfter =
+            scanMeta?.partial === true && scanMeta.handlesScanned < scanMeta.handlesTotal
+          if (offset >= res.total && !partialAfter) break
+        } catch (e) {
+          if (signal.aborted || (e as { name?: string }).name === 'AbortError') return
+          break
+        }
+      }
+    },
+    [campaignId, textQuery, kindsKey, facetBoostForApi, mergeOpts]
+  )
+
   const reload = useCallback(
     async (signal?: AbortSignal) => {
       if (!hasSearchTerm) {
@@ -388,6 +484,8 @@ export default function CampaignOriginGallery({
       }
       setFailedPostImages(new Set())
       setLoadMoreExhausted(false)
+      setItems([])
+      setRateLimitError(null)
       setLoading(true)
       try {
         const res = await fetchCampaignPostMatches(
@@ -400,15 +498,29 @@ export default function CampaignOriginGallery({
           },
           { signal, profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
         )
-        const sorted = sortPostsByCampaignFacetBoost(res.items, facetBoostQuery ?? {})
         if (signal?.aborted) return
-        setItems(sorted)
+        const items =
+          facetBoostForApi && facetBoostQuery
+            ? sortPostsByCampaignFacetBoost(res.items, facetBoostQuery)
+            : hasSearchTerm
+              ? sortPostsByFacetDiversity(res.items)
+              : res.items
+        setItems(items)
         setTotal(res.total)
         setServerOffset(res.items.length)
         setScanMeta(res.scanMeta)
-        onLoadedPostsForFacetsRef.current?.(sorted)
+
+        if (signal && !signal.aborted && res.items.length > 0) {
+          void prefetchFacetGrowthPages(signal, items, res.total, res.scanMeta)
+        }
       } catch (e) {
         if (signal?.aborted || (e as { name?: string }).name === 'AbortError') return
+        if (isRateLimitError(e)) {
+          setRateLimitError({
+            message: e.message,
+            retryAfterSeconds: rateLimitRetryAfterSeconds(e),
+          })
+        }
         setItems([])
         setTotal(0)
         setServerOffset(0)
@@ -417,11 +529,18 @@ export default function CampaignOriginGallery({
         if (!signal?.aborted) setLoading(false)
       }
     },
-    [campaignId, textQuery, kindsKey, hasSearchTerm, captionFilterReady, facetBoostForApi, facetBoostQuery]
+    [
+      campaignId,
+      textQuery,
+      kindsKey,
+      hasSearchTerm,
+      captionFilterReady,
+      facetBoostForApi,
+      facetBoostQuery,
+      prefetchFacetGrowthPages,
+    ]
   )
 
-  const onLoadedPostsForFacetsRef = useRef(onLoadedPostsForFacets)
-  onLoadedPostsForFacetsRef.current = onLoadedPostsForFacets
   useEffect(() => {
     if (!hasSearchTerm) {
       onLoadedPostsForFacetsRef.current?.([])
@@ -431,11 +550,22 @@ export default function CampaignOriginGallery({
     onLoadedPostsForFacetsRef.current?.(items)
   }, [items, hasSearchTerm])
 
+  /** Loader no mesmo frame do clique no painel BI (antes do fetch no useEffect). */
+  useLayoutEffect(() => {
+    if (!hasSearchTerm || !captionFilterReady) return
+    const prev = lastFacetBoostKeyForLoaderRef.current
+    if (prev !== undefined && prev !== facetBoostKey) {
+      setLoading(true)
+      setItems([])
+    }
+    lastFacetBoostKeyForLoaderRef.current = facetBoostKey
+  }, [facetBoostKey, hasSearchTerm, captionFilterReady])
+
   useEffect(() => {
     const ac = new AbortController()
     void reload(ac.signal)
     return () => ac.abort()
-  }, [reload])
+  }, [campaignId, textQuery, kindsKey, hasSearchTerm, captionFilterReady, facetBoostKey, reload])
 
   const loadMore = useCallback(async () => {
     if (!hasSearchTerm || loadMoreExhausted) return
@@ -459,11 +589,9 @@ export default function CampaignOriginGallery({
       let mergedLen = 0
       setItems((prev) => {
         prevLen = prev.length
-        const byKey = new Map(prev.map((p) => [p.key, p]))
-        for (const p of res.items) byKey.set(p.key, p)
-        const next = sortPostsByCampaignFacetBoost([...byKey.values()], facetBoostQuery ?? {})
-        mergedLen = next.length
-        return next
+        const merged = mergePostMatchPage(prev, res.items, mergeOpts)
+        mergedLen = merged.length
+        return merged
       })
       const nextServerOffset = offset + res.items.length
       setServerOffset(nextServerOffset)
@@ -490,6 +618,7 @@ export default function CampaignOriginGallery({
     facetBoostForApi,
     facetBoostQuery,
     scanMeta,
+    mergeOpts,
   ])
 
   const partialScanMore =
@@ -501,19 +630,22 @@ export default function CampaignOriginGallery({
   const onLoadingChangeRef = useRef(onLoadingChange)
   onLoadingChangeRef.current = onLoadingChange
   useEffect(() => {
-    onLoadingChangeRef.current?.(loading && items.length === 0)
-  }, [loading, items.length])
+    onLoadingChangeRef.current?.(loading)
+  }, [loading])
 
   const onOriginSearchSettledRef = useRef(onOriginSearchSettled)
   onOriginSearchSettledRef.current = onOriginSearchSettled
   useEffect(() => {
     if (!hasSearchTerm) {
-      onOriginSearchSettledRef.current?.({ empty: false })
+      onOriginSearchSettledRef.current?.({ empty: false, rateLimited: false })
       return
     }
     if (loading) return
-    onOriginSearchSettledRef.current?.({ empty: items.length === 0 })
-  }, [loading, hasSearchTerm, items.length])
+    onOriginSearchSettledRef.current?.({
+      empty: items.length === 0 && !rateLimitError,
+      rateLimited: !!rateLimitError,
+    })
+  }, [loading, hasSearchTerm, items.length, rateLimitError])
 
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current
@@ -530,11 +662,21 @@ export default function CampaignOriginGallery({
 
   return (
     <div style={{ minWidth: 0 }}>
-      {loading && displayItems.length === 0 ? (
+      {loading ? (
         <OriginGalleryLoadingState />
       ) : !hasSearchTerm ? (
         <OriginSearchEmptyState variant="prompt" onSuggestionClick={onSearchSuggestion} />
-      ) : displayItems.length === 0 ? (
+      ) : rateLimitError ? (
+        <OriginSearchEmptyState
+          variant="rate-limit"
+          searchQuery={textQuery}
+          retryAfterSeconds={rateLimitError.retryAfterSeconds}
+          onRetry={() => {
+            const ac = new AbortController()
+            void reload(ac.signal)
+          }}
+        />
+      ) : items.length === 0 ? (
         <OriginSearchEmptyState
           variant="no-results"
           searchQuery={textQuery}
@@ -552,7 +694,7 @@ export default function CampaignOriginGallery({
                 minWidth: 0,
               }}
             >
-              {displayItems.map((post) => {
+              {items.map((post) => {
                 const stableBg = getPostStablePreviewUrl(post)
                 const displayUrl = getPostCoverDisplayUrl(post)
                 const failed = failedPostImages.has(post.key)
@@ -657,7 +799,7 @@ export default function CampaignOriginGallery({
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {displayItems.map((post) => {
+              {items.map((post) => {
                 const stableBg = getPostStablePreviewUrl(post)
                 const displayUrl = getPostCoverDisplayUrl(post)
                 const failed = failedPostImages.has(post.key)

@@ -19,6 +19,8 @@ import {
   payCampaignWithCredits,
   fetchMyPendingPayment,
   fetchCampaignPostSearchHandles,
+  isRateLimitError,
+  rateLimitRetryAfterSeconds,
   fetchFavorites,
   addFavorite,
   removeFavorite,
@@ -41,11 +43,13 @@ import {
   filterAndSortCampaignItems,
   computeFacetsFromItems,
   filterFacetsForDisplay,
-  pruneInvalidCampaignFacetBoost,
   profileListItemsFromOriginPosts,
   campaignContextFetchQueryKey,
   isCampaignFacetBoostOnlyPatch,
+  hasCampaignFacetBoost,
+  pickCampaignFacetBoostFromQuery,
   stripCampaignFacetBoostFromQuery,
+  buildSingleCampaignFacetBoostPatch,
 } from '../utils/campaignFilterClient'
 import { getLlmDescriptionLine } from '../utils/mapProfileListToPreviewItems'
 import { campaignLlmBadgeStyles, getLlmContentPillarLabels, getLlmGenderBadge, getLlmMainCategoryLabel, getLlmProfileTypeBadge } from '../utils/campaignLlmBadges'
@@ -119,7 +123,10 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
   return {
     q: params.get('q')?.trim() || undefined,
     sort: (params.get('sort') as ProfilesSort) || undefined,
-    sizeFilter: parseStrList(params.get('sizeFilter')),
+    sizeFilter: (() => {
+      const arr = parseStrList(params.get('sizeFilter'))
+      return arr?.length ? [arr[0]] : undefined
+    })(),
     accountTypeFilter: parseNumList(params.get('accountTypeFilter')),
     contentTypes: parseStrList(params.get('contentTypes')),
     originMediaKinds: parseOriginMediaKindsParam(params.get('originMediaKinds')),
@@ -537,7 +544,6 @@ export type CampaignViewMode = 'list' | 'grid'
 const defaultQuery: Partial<ProfilesSearchQuery> = {
   limit: PAGE_SIZE,
   offset: 0,
-  sort: 'engagement_desc',
 }
 
 const MOBILE_BREAKPOINT = 768
@@ -583,6 +589,23 @@ export default function CampaignInfluencers() {
     })
     return JSON.stringify(profileFiltersForCampaignPostApis(stripped))
   }, [urlParams.toString()])
+  const postMatchProfileFilters = useMemo(
+    () => JSON.parse(postMatchProfileFiltersKey) as Partial<ProfilesSearchQuery>,
+    [postMatchProfileFiltersKey]
+  )
+  const postMatchFacetBoostKey = useMemo(() => {
+    if (!hasCampaignFacetBoost(query)) return ''
+    return JSON.stringify(pickCampaignFacetBoostFromQuery(query))
+  }, [
+    query.sizeFilter,
+    query.llmMainCategory,
+    query.llmGender,
+    query.llmAudienceType,
+    query.llmProfileType,
+    query.engagementRateBuckets,
+    query.avgLikesBuckets,
+    query.postsCountBuckets,
+  ])
   const [facets, setFacets] = useState<ProfilesSearchFacets | null>(null)
   /** Facets só dos posts carregados na busca por legenda (aba Origem). */
   const [searchFacets, setSearchFacets] = useState<ProfilesSearchFacets | null>(null)
@@ -745,41 +768,41 @@ export default function CampaignInfluencers() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const applySearchFacets = useCallback(
-    (next: ProfilesSearchFacets | null) => {
-      setSearchFacets(next)
-      const pruned = next ? pruneInvalidCampaignFacetBoost(queryRef.current, next) : null
-      if (pruned) {
-        setQuery(pruned)
-        setSearchParams(
-          buildCampaignUrlParams(pruned, campaignMainTabRef.current),
-          { replace: true }
-        )
-      }
-    },
-    [setSearchParams, buildCampaignUrlParams]
-  )
+  const applySearchFacets = useCallback((next: ProfilesSearchFacets | null) => {
+    setSearchFacets(next)
+  }, [])
 
   const handleOriginPostsForFacets = useCallback(
     (posts: PostItem[]) => {
       if (!urlParams.get('q')?.trim()) return
+      if (posts.length === 0) return
       const items = profileListItemsFromOriginPosts(posts)
       applySearchFacets(filterFacetsForDisplay(computeFacetsFromItems(items)))
     },
     [applySearchFacets, urlParams]
   )
 
+  /** Aba Perfis + busca por legenda: facetas só dos perfis listados (não da campanha inteira). */
   useEffect(() => {
-    if (!hasActiveSearchQ || !searchFacets) return
-    const pruned = pruneInvalidCampaignFacetBoost(queryRef.current, searchFacets)
-    if (pruned) {
-      setQuery(pruned)
-      setSearchParams(buildCampaignUrlParams(pruned, campaignMainTabRef.current), { replace: true })
-    }
-  }, [searchFacets, hasActiveSearchQ, setSearchParams, buildCampaignUrlParams])
+    if (!hasActiveSearchQ || campaignMainTab !== 'influencers') return
+    if (postCaptionSearchLoading) return
+    const captionQ = captionSearchQ
+    if (!postCaptionSearch || postCaptionSearch.qKey !== captionQ) return
+    if (filteredList.length === 0) return
+    applySearchFacets(filterFacetsForDisplay(computeFacetsFromItems(filteredList)))
+  }, [
+    hasActiveSearchQ,
+    campaignMainTab,
+    filteredList,
+    postCaptionSearchLoading,
+    postCaptionSearch,
+    captionSearchQ,
+    applySearchFacets,
+  ])
 
   const applyContextFilters = useCallback((requestQuery: Partial<ProfilesSearchQuery>) => {
     if (contextItems == null) return
+    const sortQuery = stripCampaignFacetBoostFromQuery(requestQuery)
     const skipCampaignFacets =
       !!(requestQuery.q ?? '').trim() && campaignMainTabRef.current === 'origin'
     if (contextItems.length === 0) {
@@ -794,7 +817,7 @@ export default function CampaignInfluencers() {
       const captionAligned =
         postCaptionSearch != null && postCaptionSearch.qKey === qTrim && !postCaptionSearchLoading
       if (!captionAligned) {
-        const queryWithoutProfileQ = { ...requestQuery, q: undefined }
+        const queryWithoutProfileQ = { ...sortQuery, q: undefined }
         const sortedForFacets = filterAndSortCampaignItems(contextItems, queryWithoutProfileQ, { favoriteHandles })
         if (!skipCampaignFacets) setFacets(computeFacetsFromItems(sortedForFacets))
         setFilteredList([])
@@ -802,8 +825,8 @@ export default function CampaignInfluencers() {
         setDisplayedCount(DISPLAY_PAGE_SIZE)
         return
       }
-      const queryWithoutProfileQ = { ...requestQuery, q: undefined }
-      const sorted = filterAndSortCampaignItems(contextItems, queryWithoutProfileQ, {
+      const sortInput = { ...requestQuery, q: undefined }
+      const sorted = filterAndSortCampaignItems(contextItems, sortInput, {
         favoriteHandles,
         postCaptionMatchHandles: postCaptionSearch.handles,
       })
@@ -813,7 +836,7 @@ export default function CampaignInfluencers() {
       setDisplayedCount(DISPLAY_PAGE_SIZE)
       return
     }
-    const sorted = filterAndSortCampaignItems(contextItems, requestQuery, { favoriteHandles })
+    const sorted = filterAndSortCampaignItems(contextItems, sortQuery, { favoriteHandles })
     setFilteredList(sorted)
     setTotal(sorted.length)
     setFacets(computeFacetsFromItems(sorted))
@@ -924,8 +947,16 @@ export default function CampaignInfluencers() {
       /** `q` aqui é só busca em legendas/posts (post-matches + cliente); não enviar para /profiles — senão o backend filtra nome/bio e zera a lista (ex.: "marcado" só em posts marcados). */
       const { q: _wordSearchOmit, ...baseWithoutWordSearch } = baseQuery
       if (!pendingPayment && isAllCampaignsView && !hasWordSearch) {
-        const quickQuery = { ...defaultQuery, ...baseWithoutWordSearch, limit: 1, offset: 0 }
-        fetchCampaignProfiles(campaignId, quickQuery, { signal })
+        const quickQuery = stripCampaignFacetBoostFromQuery({
+          ...defaultQuery,
+          ...baseWithoutWordSearch,
+          limit: 1,
+          offset: 0,
+        })
+        const quickFacetBoost = hasCampaignFacetBoost(baseQuery)
+          ? pickCampaignFacetBoostFromQuery(baseQuery)
+          : undefined
+        fetchCampaignProfiles(campaignId, quickQuery, { signal, facetBoost: quickFacetBoost })
           .then((res) => {
             if (signal?.aborted) return
             setFacets(mapFacetsFromApi(res.facets ?? null))
@@ -933,10 +964,18 @@ export default function CampaignInfluencers() {
           })
           .catch(() => { })
       }
-      const q = pendingPayment
-        ? { ...baseWithoutWordSearch, limit: 10000 }
-        : { ...defaultQuery, ...baseWithoutWordSearch, limit: 10000 }
-      fetchCampaignProfiles(campaignId, q, { signal, includeFacets: pendingPayment ? true : false })
+      const filterQuery = stripCampaignFacetBoostFromQuery({
+        ...(pendingPayment ? baseWithoutWordSearch : { ...defaultQuery, ...baseWithoutWordSearch }),
+        limit: 10000,
+      })
+      const facetBoost = hasCampaignFacetBoost(baseQuery)
+        ? pickCampaignFacetBoostFromQuery(baseQuery)
+        : undefined
+      fetchCampaignProfiles(campaignId, filterQuery, {
+        signal,
+        includeFacets: pendingPayment ? true : false,
+        facetBoost,
+      })
         .then((res) => {
           if (signal?.aborted) return
           if (pendingPayment) {
@@ -966,9 +1005,19 @@ export default function CampaignInfluencers() {
   const updateFilter = useCallback(
     (overrides: Partial<ProfilesSearchQuery>) => {
       if (isCampaignFacetBoostOnlyPatch(overrides)) {
-        const newQuery = { ...query, ...overrides, offset: 0 }
+        if (campaignMainTabRef.current === 'origin' && (query.q ?? '').trim()) {
+          setOriginGallerySearchLoading(true)
+        }
+        const newQuery = { ...stripCampaignFacetBoostFromQuery(query), ...overrides, offset: 0 }
         setQuery(newQuery)
+        setDisplayedCount(DISPLAY_PAGE_SIZE)
         setSearchParams(buildCampaignUrlParams(newQuery, campaignMainTab), { replace: true })
+        if (pendingPayment) {
+          pendingLoadFromFilterRef.current = true
+          loadContext(undefined, newQuery)
+        } else if (contextItems != null) {
+          applyContextFilters(newQuery)
+        }
         return
       }
       const qFromOverride = overrides.q
@@ -1009,6 +1058,7 @@ export default function CampaignInfluencers() {
       buildCampaignUrlParams,
       campaignMainTab,
       isAllCampaignsView,
+      hasActiveSearchQ,
     ]
   )
 
@@ -1103,16 +1153,24 @@ export default function CampaignInfluencers() {
       setPostCaptionSearchLoading(false)
       return
     }
+    /** handlesOnly só na aba Perfis; na aba Posts a galeria usa post-matches e não deve ficar em loading. */
+    if (campaignMainTab !== 'influencers') {
+      setPostCaptionSearchLoading(false)
+      return
+    }
     const kinds = query.originMediaKinds
     const ac = new AbortController()
     setPostCaptionSearchLoading(true)
     setPostCaptionSearch(null)
+    const facetBoost = hasCampaignFacetBoost(query)
+      ? pickCampaignFacetBoostFromQuery(query)
+      : undefined
     const tid = window.setTimeout(() => {
       if (ac.signal.aborted) return
       void fetchCampaignPostSearchHandles(
         campaignId,
         { q, mediaKinds: kinds?.length ? kinds : undefined },
-        { signal: ac.signal }
+        { signal: ac.signal, facetBoost }
       )
         .then((res) => {
           if (ac.signal.aborted) return
@@ -1121,9 +1179,18 @@ export default function CampaignInfluencers() {
           )
           setPostCaptionSearch({ qKey: q, handles, totalPosts: res.totalPosts })
         })
-        .catch(() => {
+        .catch((e) => {
           if (ac.signal.aborted) return
-          setPostCaptionSearch({ qKey: q, handles: new Set(), totalPosts: 0 })
+          if (isRateLimitError(e)) {
+            message.warning(
+              e.message ||
+                `Muitas buscas em pouco tempo. Aguarde ${rateLimitRetryAfterSeconds(e)} segundos e tente de novo.`
+            )
+            return
+          }
+          setPostCaptionSearch((prev) =>
+            prev?.qKey === q ? prev : { qKey: q, handles: new Set(), totalPosts: 0 }
+          )
         })
         .finally(() => {
           if (!ac.signal.aborted) setPostCaptionSearchLoading(false)
@@ -1133,7 +1200,15 @@ export default function CampaignInfluencers() {
       ac.abort()
       window.clearTimeout(tid)
     }
-  }, [campaignId, query.q, originMediaKindsKey, postMatchProfileFiltersKey, searchRefreshToken])
+  }, [
+    campaignId,
+    campaignMainTab,
+    query.q,
+    originMediaKindsKey,
+    postMatchProfileFiltersKey,
+    postMatchFacetBoostKey,
+    searchRefreshToken,
+  ])
 
   useEffect(() => {
     if (campaignId == null) return
@@ -1357,12 +1432,8 @@ export default function CampaignInfluencers() {
   const selectedOriginMediaKinds = (query.originMediaKinds ?? []) as MediaKind[]
   const hasOriginSearchTerm = (query.q?.trim().length ?? 0) > 0
   const captionQNormalized = query.q?.trim() ?? ''
-  /** Evita post-matches em paralelo com handlesOnly: galeria só busca posts após handles alinhados ao `q` atual. */
-  const originCaptionPostMatchesReady =
-    !captionQNormalized ||
-    (!!postCaptionSearch &&
-      !postCaptionSearchLoading &&
-      postCaptionSearch.qKey === captionQNormalized)
+  /** Aba Posts: galeria chama post-matches direto; não espera handlesOnly (fila de refresh não trava a UI). */
+  const originCaptionPostMatchesReady = true
   const showOriginSearchOnly = campaignMainTab === 'origin' && !hasOriginSearchTerm
   /** Base completa: logo + busca fixos no topo ao rolar (aba com termo ou Perfis). */
   const showAllCampaignsFixedChrome = isAllCampaignsView && !pendingPayment && !showOriginSearchOnly
@@ -1381,6 +1452,9 @@ export default function CampaignInfluencers() {
         postCaptionSearch != null &&
         postCaptionSearch.qKey === captionQNormalized &&
         postCaptionSearch.handles.size === 0))
+  const influencersListRefetching =
+    campaignMainTab === 'influencers' &&
+    (loading || (!!query.q?.trim() && postCaptionSearchLoading))
   const campaignHidesBIPanel = originCaptionSearchHidesBIPanel || influencersCaptionSearchHidesBIPanel
   const showCampaignLeftColumn =
     !isMobile && !campaignHidesBIPanel && (isAllCampaignsView ? !pendingPayment : true)
@@ -1823,8 +1897,11 @@ export default function CampaignInfluencers() {
                       textQuery={query.q?.trim() || ''}
                       mediaKinds={selectedOriginMediaKinds.length ? selectedOriginMediaKinds : undefined}
                       onLoadingChange={setOriginGallerySearchLoading}
-                      onOriginSearchSettled={({ empty }) => setOriginSearchSettledEmpty(empty)}
+                      onOriginSearchSettled={({ empty, rateLimited }) =>
+                        setOriginSearchSettledEmpty(rateLimited ? false : empty)
+                      }
                       facetBoostQuery={query}
+                      profileFilters={postMatchProfileFilters}
                       onLoadedPostsForFacets={handleOriginPostsForFacets}
                       onOpenInfluencerDetail={openInfluencerFromCard}
                       captionFilterReady={originCaptionPostMatchesReady}
@@ -1852,47 +1929,46 @@ export default function CampaignInfluencers() {
                         <FilterOutlined style={{ fontSize: 12, color: 'var(--app-text-secondary)', marginRight: 2 }} />
                         {displayFacets?.size_buckets && displayFacets.size_buckets.length > 0 && (
                           <Select
-                            mode="multiple"
                             size="small"
                             placeholder="Tamanho"
                             allowClear
-                            value={selectedSizeFilter.length ? selectedSizeFilter : undefined}
+                            value={selectedSizeFilter[0]}
                             options={displayFacets.size_buckets.map(({ key, label, count }) => ({
                               value: key,
                               label: `${label} (${count})`,
                             }))}
-                            onChange={(vals) => updateFilter({ sizeFilter: vals?.length ? vals : undefined })}
+                            onChange={(val) =>
+                              updateFilter(buildSingleCampaignFacetBoostPatch('sizeFilter', val ? [val] : undefined))
+                            }
                             style={{ width: 120 }}
-                            maxTagCount={1}
                           />
                         )}
                         {displayFacets?.content_type && displayFacets.content_type.filter((x) => x.count > 0).length > 0 && (
                           <Select
-                            mode="multiple"
                             size="small"
                             placeholder="Conteúdo"
                             allowClear
                             showSearch
                             optionFilterProp="label"
-                            value={selectedContentTypes.length ? selectedContentTypes : undefined}
+                            value={selectedContentTypes[0]}
                             options={displayFacets.content_type
                               .filter((x) => x.count > 0)
                               .map(({ name, count }) => ({
                                 value: name,
                                 label: `${CONTENT_TYPE_LABELS[name] ?? name} (${count})`,
                               }))}
-                            onChange={(vals) => updateFilter({ contentTypes: vals?.length ? vals : undefined })}
+                            onChange={(val) =>
+                              updateFilter(buildSingleCampaignFacetBoostPatch('contentTypes', val ? [val] : undefined))
+                            }
                             style={{ width: 140 }}
-                            maxTagCount={1}
                           />
                         )}
                         {displayFacets?.social && (displayFacets.social.whatsapp > 0 || displayFacets.social.tiktok > 0 || displayFacets.social.facebook > 0 || displayFacets.social.linkedin > 0 || displayFacets.social.twitter > 0) && (
                           <Select
-                            mode="multiple"
                             size="small"
                             placeholder="Redes"
                             allowClear
-                            value={selectedSocial.length ? selectedSocial : undefined}
+                            value={selectedSocial[0]}
                             options={[
                               displayFacets.social.whatsapp > 0 && { value: 'whatsapp', label: `WA (${displayFacets.social.whatsapp})` },
                               displayFacets.social.tiktok > 0 && { value: 'tiktok', label: `TikTok (${displayFacets.social.tiktok})` },
@@ -1900,39 +1976,40 @@ export default function CampaignInfluencers() {
                               displayFacets.social.linkedin > 0 && { value: 'linkedin', label: `LI (${displayFacets.social.linkedin})` },
                               displayFacets.social.twitter > 0 && { value: 'twitter', label: `X (${displayFacets.social.twitter})` },
                             ].filter(Boolean) as { value: string; label: string }[]}
-                            onChange={(vals) => updateFilter({ socialNetworks: vals?.length ? vals : undefined })}
+                            onChange={(val) =>
+                              updateFilter(buildSingleCampaignFacetBoostPatch('socialNetworks', val ? [val] : undefined))
+                            }
                             style={{ width: 110 }}
-                            maxTagCount={1}
                           />
                         )}
                         {displayFacets?.cities && displayFacets.cities.length > 0 && (
                           <Select
-                            mode="multiple"
                             size="small"
                             placeholder="Cidades"
                             allowClear
                             showSearch={false}
                             optionFilterProp="label"
-                            value={selectedCities.length ? selectedCities : undefined}
+                            value={selectedCities[0]}
                             options={displayFacets.cities.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                            onChange={(vals) => updateFilter({ cities: vals?.length ? vals : undefined })}
+                            onChange={(val) =>
+                              updateFilter(buildSingleCampaignFacetBoostPatch('cities', val ? [val] : undefined))
+                            }
                             style={{ width: 120 }}
-                            maxTagCount={1}
                           />
                         )}
                         {displayFacets?.states && displayFacets.states.length > 0 && (
                           <Select
-                            mode="multiple"
                             size="small"
                             placeholder="Estados"
                             allowClear
                             showSearch={false}
                             optionFilterProp="label"
-                            value={selectedStates.length ? selectedStates : undefined}
+                            value={selectedStates[0]}
                             options={displayFacets.states.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))}
-                            onChange={(vals) => updateFilter({ states: vals?.length ? vals : undefined })}
+                            onChange={(val) =>
+                              updateFilter(buildSingleCampaignFacetBoostPatch('states', val ? [val] : undefined))
+                            }
                             style={{ width: 110 }}
-                            maxTagCount={1}
                           />
                         )}
                         {hasActiveFilters && (
@@ -1943,7 +2020,9 @@ export default function CampaignInfluencers() {
                       </div>
                     )}
                     <div style={{ minWidth: 0 }}>
-                      {data.length === 0 && query.q?.trim() && postCaptionSearchLoading ? (
+                      {influencersListRefetching ? (
+                        <OriginGalleryLoadingState />
+                      ) : data.length === 0 && query.q?.trim() && postCaptionSearchLoading ? (
                         <OriginGalleryLoadingState />
                       ) : data.length === 0 ? (
                         <div className="campaign-origin-search-loader">
@@ -1952,7 +2031,7 @@ export default function CampaignInfluencers() {
                           </div>
                         </div>
                       ) : null}
-                      {data.length > 0 && (effectiveViewMode === 'list' ? (
+                      {!influencersListRefetching && data.length > 0 && (effectiveViewMode === 'list' ? (
                         <div style={{ overflow: 'auto', border: '1px solid var(--app-border, #f0f0f0)', borderRadius: 8, minWidth: 0 }}>
                           <table className="campaign-list-table" style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--app-bg)' }}>
                             <thead>

@@ -598,7 +598,7 @@ const BENCHMARKS: { min: number; max: number; label: string; erMin: number; erMi
   { min: 100_000, max: 250_000, label: 'Mid', erMin: 1, erMid: 3, erMax: 5 },
   { min: 250_000, max: 500_000, label: 'Macro', erMin: 0.7, erMid: 2, erMax: 4 },
   { min: 500_000, max: 1_000_000, label: 'Elite', erMin: 0.5, erMid: 1.2, erMax: 3 },
-  { min: 1_000_000, max: Infinity, label: 'Celebridade', erMin: 0.2, erMid: 0.8, erMax: 2 },
+  { min: 1_000_000, max: Infinity, label: 'Celeb', erMin: 0.2, erMid: 0.8, erMax: 2 },
 ]
 
 /** Retorna info sobre próximo patamar e progresso no atual. */
@@ -624,8 +624,8 @@ export function getPatamarProximo(followersCount: number, er?: number): {
   let insightPatamar: string
   if (!proximoRow) {
     insightPatamar =
-      tierRow.label === 'Celebridade'
-        ? 'Você está no patamar Celebridade — foco em marca pessoal, mídia e parcerias premium.'
+      tierRow.label === 'Celeb'
+        ? 'Você está no patamar Celeb — foco em marca pessoal, mídia e parcerias premium.'
         : 'Você está no último patamar — foco em consolidação e monetização.'
   } else {
     const falta = faltaSeguidores.toLocaleString('pt-BR')

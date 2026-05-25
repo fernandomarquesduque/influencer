@@ -97,7 +97,7 @@ const STEPS = [
     title: 'Qual a categoria deseja buscar?',
     subtitle: `Selecione de 1 a ${LLM_MAIN_CATEGORY_MAX} itens para buscar o influencer ideal para sua campanha`,
   },
-  { key: 'porte', icon: TeamOutlined, title: 'Qual o tamanho do influencer?', subtitle: 'Escolha uma ou mais faixas de seguidores' },
+  { key: 'porte', icon: TeamOutlined, title: 'Qual o tamanho do influencer?', subtitle: 'Escolha uma faixa de seguidores' },
   { key: 'llmAudience', icon: TeamOutlined, title: 'Qual o público-alvo que você busca?', subtitle: 'Opcional' },
 ] as const
 
@@ -159,6 +159,9 @@ const LLM_ENUM_LABELS: Record<string, string> = {
   high: 'Alto',
   low: 'Baixo',
   medium: 'Médio',
+  positivo: 'Positivo',
+  negativo: 'Negativo',
+  misto: 'Misto',
 }
 
 function llmOptionLabel(raw: string): string {
@@ -347,6 +350,7 @@ export interface WizardState {
   llmAudienceType?: string[]
   llmToneOfVoice?: string[]
   llmRiskLevel?: string[]
+  llmPostSentiment?: string[]
   llmIsFamilySafe?: boolean
   llmIsAdultContent?: boolean
 }
@@ -378,6 +382,7 @@ function stateToQuery(state: WizardState): Partial<ProfilesSearchQuery> {
     llmAudienceType: state.llmAudienceType?.length ? state.llmAudienceType : undefined,
     llmToneOfVoice: state.llmToneOfVoice?.length ? state.llmToneOfVoice : undefined,
     llmRiskLevel: state.llmRiskLevel?.length ? state.llmRiskLevel : undefined,
+    llmPostSentiment: state.llmPostSentiment?.length ? state.llmPostSentiment : undefined,
     ...(state.llmIsFamilySafe === true || state.llmIsFamilySafe === false ? { llmIsFamilySafe: state.llmIsFamilySafe } : {}),
     ...(state.llmIsAdultContent === true || state.llmIsAdultContent === false ? { llmIsAdultContent: state.llmIsAdultContent } : {}),
   }
@@ -449,6 +454,7 @@ function maxLlmStepFromFilters(f: Partial<WizardState>): number {
   if ((f.llmAudienceType?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if ((f.llmToneOfVoice?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if ((f.llmRiskLevel?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
+  if ((f.llmPostSentiment?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
   if (f.llmIsFamilySafe === true || f.llmIsFamilySafe === false) max = Math.max(max, STEP_LLM_AUDIENCE)
   if (f.llmIsAdultContent === true || f.llmIsAdultContent === false) max = Math.max(max, STEP_LLM_AUDIENCE)
   return max
@@ -476,6 +482,7 @@ function filterPatchForWizardStep(stepIndex: number): Partial<WizardState> {
         llmAudienceType: undefined,
         llmRiskLevel: undefined,
         llmToneOfVoice: undefined,
+        llmPostSentiment: undefined,
         llmIsFamilySafe: undefined,
         llmIsAdultContent: undefined,
       }
@@ -543,6 +550,7 @@ function filtersToWizardState(
     llmAudienceType: copyStrArr(f.llmAudienceType?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmToneOfVoice: copyStrArr(f.llmToneOfVoice?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmRiskLevel: copyStrArr(f.llmRiskLevel?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    llmPostSentiment: copyStrArr(f.llmPostSentiment?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
     llmIsFamilySafe: f.llmIsFamilySafe,
     llmIsAdultContent: f.llmIsAdultContent,
   }
@@ -1064,8 +1072,8 @@ export default function SearchWizard({
                             size="large"
                             onClick={() => {
                               const cur = state.sizeFilter ?? []
-                              const next = cur.includes(p.key) ? cur.filter((k) => k !== p.key) : [...cur, p.key]
-                              update({ sizeFilter: next.length ? next : undefined, minFollowers: undefined, maxFollowers: undefined })
+                              const next = cur.includes(p.key) ? undefined : [p.key]
+                              update({ sizeFilter: next, minFollowers: undefined, maxFollowers: undefined })
                             }}
                             style={{ borderRadius: 14, fontSize: 15 }}
                           >
@@ -1115,13 +1123,26 @@ export default function SearchWizard({
                         )
                       }
                       case STEP_LLM_AUDIENCE:
-                        return chipOrHint(llm.audienceType ?? [], (
-                          <LlmChipSection
-                            items={llm.audienceType ?? []}
-                            selected={state.llmAudienceType}
-                            onToggle={(k) => toggleArray('llmAudienceType', k)}
-                          />
-                        ))
+                        return (
+                          <>
+                            {chipOrHint(llm.audienceType ?? [], (
+                              <LlmChipSection
+                                title="Público-alvo"
+                                items={llm.audienceType ?? []}
+                                selected={state.llmAudienceType}
+                                onToggle={(k) => toggleArray('llmAudienceType', k)}
+                              />
+                            ))}
+                            {chipOrHint(llm.postSentiment ?? [], (
+                              <LlmChipSection
+                                title="Sentimento nas legendas"
+                                items={llm.postSentiment ?? []}
+                                selected={state.llmPostSentiment}
+                                onToggle={(k) => toggleArray('llmPostSentiment', k)}
+                              />
+                            ))}
+                          </>
+                        )
                       default:
                         return null
                     }

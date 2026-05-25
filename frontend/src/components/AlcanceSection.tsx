@@ -152,11 +152,8 @@ export function AlcanceSection({
 
   const gridGap = Array.isArray(gutter) ? gutter[0] : gutter
   const gridStyle: React.CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
     columnGap: gridGap,
     rowGap: gridGap,
-    width: '100%',
   }
 
   return (

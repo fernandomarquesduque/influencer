@@ -5,14 +5,16 @@
             "type": "node",
             "request": "launch",
             "name": "Backend API (watch)",
-            "runtimeExecutable": "npm",
+            "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
             "runtimeArgs": [
-                "run",
-                "api:dev"
+                "--max-old-space-size=16384",
+                "${workspaceFolder}/backend/node_modules/tsx/dist/cli.mjs",
+                "watch",
+                "src/api/server.ts"
             ],
             "cwd": "${workspaceFolder}/backend",
             "console": "integratedTerminal",
-            "preLaunchTask": "kill-api-and-frontend",
+            "preLaunchTask": "prelaunch-backend",
             "presentation": {
                 "group": "dev",
                 "order": 1
@@ -22,14 +24,15 @@
             "type": "node",
             "request": "launch",
             "name": "Backend API (sem watch)",
-            "runtimeExecutable": "npm",
+            "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
             "runtimeArgs": [
-                "run",
-                "api"
+                "--max-old-space-size=16384",
+                "${workspaceFolder}/backend/node_modules/tsx/dist/cli.mjs",
+                "src/api/server.ts"
             ],
             "cwd": "${workspaceFolder}/backend",
             "console": "integratedTerminal",
-            "preLaunchTask": "kill-api-and-frontend",
+            "preLaunchTask": "prelaunch-backend",
             "presentation": {
                 "group": "dev",
                 "order": 2

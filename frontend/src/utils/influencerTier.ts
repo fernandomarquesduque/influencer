@@ -10,7 +10,7 @@ import {
   type FollowersSizeKey,
 } from '@repo/followersSizeBuckets'
 
-export type InfluencerTierLabel = 'Nano' | 'Micro' | 'Mid' | 'Macro' | 'Elite' | 'Celebridade' | '—'
+export type InfluencerTierLabel = 'Nano' | 'Micro' | 'Mid' | 'Macro' | 'Elite' | 'Celeb' | '—'
 
 /** Limiar de seguidores em forma curta (ex.: 10k, 200k, 1M) — chips do wizard e UI densa. */
 export function formatFollowersBoundCompact(n: number): string {
@@ -50,7 +50,7 @@ export function sizeKeyToShortTierLabel(key: FollowersSizeKey): InfluencerTierLa
   if (key === 'medio') return 'Mid'
   if (key === 'macro') return 'Macro'
   if (key === 'elite') return 'Elite'
-  return 'Celebridade'
+  return 'Celeb'
 }
 
 export function getInfluencerTierShort(followers: number | undefined | null): InfluencerTierLabel {
@@ -72,7 +72,7 @@ export function getInfluencerTierTooltip(followers: number | undefined | null): 
 export function getInfluencerTierLongLabel(followers: number | undefined | null): string {
   const short = getInfluencerTierShort(followers)
   if (short === '—') return '—'
-  if (short === 'Celebridade' || short === 'Elite') return short
+  if (short === 'Celeb' || short === 'Elite') return short
   return `${short} Influencer`
 }
 
@@ -95,7 +95,7 @@ export function getInfluencerTierTooltipFromLabel(tier: InfluencerTierLabel): st
     Mid: 'medio',
     Macro: 'macro',
     Elite: 'elite',
-    Celebridade: 'celebridade',
+    Celeb: 'celebridade',
   }
   const b = FOLLOWERS_SIZE_BUCKETS.find((x) => x.key === keyMap[tier])
   if (!b) return undefined
@@ -108,7 +108,7 @@ const TIER_SOLID_HEX: Record<Exclude<InfluencerTierLabel, '—'>, string> = {
   Mid: '#13c2c2',
   Macro: '#eb2f96',
   Elite: '#531dab',
-  Celebridade: '#d48806',
+  Celeb: '#d48806',
 }
 
 /** Cor sólida (tom base do gradiente do selo) para chaves de bucket da API. */
@@ -131,6 +131,6 @@ export function getInfluencerTierGradientCss(tier: InfluencerTierLabel): string 
   if (tier === 'Mid') return 'linear-gradient(90deg, #13c2c2, #36cfc9)'
   if (tier === 'Macro') return 'linear-gradient(90deg, #eb2f96, #f759ab)'
   if (tier === 'Elite') return 'linear-gradient(90deg, #391085, #b37feb)'
-  if (tier === 'Celebridade') return 'linear-gradient(90deg, #ad6800, #ffc53d)'
+  if (tier === 'Celeb') return 'linear-gradient(90deg, #ad6800, #ffc53d)'
   return 'rgba(0,0,0,0.25)'
 }

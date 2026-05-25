@@ -37,6 +37,7 @@ function ensurePruneInterval(): void {
  * @returns true se permitido; false se excedeu (deve retornar 429)
  */
 export function checkApiRateLimit(key: string, maxPerWindow: number): boolean {
+  if (maxPerWindow <= 0) return true;
   ensurePruneInterval();
   const now = Date.now();
   let state = store.get(key);

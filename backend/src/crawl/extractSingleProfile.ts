@@ -21,6 +21,28 @@ import { loadExistingProfileRecordForMerge, mergeProfilePreservingLlm } from '..
 import { resyncInfluencerS3AfterDbMediaReset } from '../storage/s3InfluencerImage.js';
 import { logMemorySnapshot } from '../utils/memoryDiag.js';
 import type { CrawlStorage } from './runCrawl.js';
+import type { CompositeStorage } from '../storage/compositeStorage.js';
+import { buildExpectedPostKeySet, pruneStalePostMediaAfterSave } from '../storage/postMediaKeys.js';
+
+const DEFER_SEARCH = { skipSearchInvalidation: true as const };
+/** Aguarda requisições post-matches em voo antes do sync FTS do handle. */
+const FINALIZE_SEARCH_INDEX_DELAY_MS = Math.max(
+  0,
+  Number(process.env.FINALIZE_SEARCH_INDEX_DELAY_MS) || 400
+);
+
+/** FTS do handle em background (não bloqueia fechar browser nem a API de busca). Rewarm quando a fila de refresh esvaziar. */
+function finalizePersistSearch(storage: CrawlStorage, handle: string): void {
+  const cs = storage as CompositeStorage;
+  if (typeof cs.finalizeSearchAfterHandlePersist !== 'function') return;
+  const h = handle.toLowerCase().replace(/^@/, '').trim();
+  if (!h) return;
+  setTimeout(() => {
+    void cs.finalizeSearchAfterHandlePersist(h).catch((e) =>
+      console.warn('[extract] finalize FTS:', h, e instanceof Error ? e.message : e)
+    );
+  }, FINALIZE_SEARCH_INDEX_DELAY_MS);
+}
 
 const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? (parseInt(process.env.MIN_FOLLOWERS, 10) || 0) : 0;
 const EXTRACT_TIMEOUT_MS = Number(process.env.PROFILE_PROCESS_TIMEOUT_MS) || 180_000;
@@ -137,12 +159,16 @@ export async function extractSingleProfileWithPage(
   const followsOfficialProfile =
     requiredProfile && requiredProfile.length > 0 ? isFollowingViewerFromEntity(raw) : undefined;
 
-  const saveAllMedia = async (collectedAt: string): Promise<number> => {
-    let total = await storage.savePosts(slim.handle, posts, collectedAt);
-    if (typeof storage.saveMedia === 'function') {
-      if (reels.length > 0) total += await storage.saveMedia(slim.handle, 'reel', reels, collectedAt);
-      if (tagged.length > 0) total += await storage.saveMedia(slim.handle, 'tagged', tagged, collectedAt);
-      if (highlights.length > 0) total += await storage.saveMedia(slim.handle, 'highlight', highlights, collectedAt);
+  const cs = storage as CompositeStorage;
+  const saveAllMedia = async (
+    collectedAt: string,
+    opts?: { skipSearchInvalidation?: boolean }
+  ): Promise<number> => {
+    let total = await cs.savePosts(slim.handle, posts, collectedAt, opts);
+    if (typeof cs.saveMedia === 'function') {
+      if (reels.length > 0) total += await cs.saveMedia(slim.handle, 'reel', reels, collectedAt, opts);
+      if (tagged.length > 0) total += await cs.saveMedia(slim.handle, 'tagged', tagged, collectedAt, opts);
+      if (highlights.length > 0) total += await cs.saveMedia(slim.handle, 'highlight', highlights, collectedAt, opts);
     }
     return total;
   };
@@ -160,10 +186,6 @@ export async function extractSingleProfileWithPage(
       return { success: true, saved: true, handle: cleanHandle, followers, postsSaved: 0, followsOfficialProfile };
     }
     const collectedAt = String(slim._collected_at ?? new Date().toISOString());
-    if (typeof storage.deletePostsByHandle === 'function') {
-      logStep('forRefresh: deletando mídia antiga (DB)...');
-      await storage.deletePostsByHandle(slim.handle);
-    }
     logStep('forRefresh: S3 wipe + avatar + capas...');
     logMemorySnapshot(`forRefresh @${cleanHandle}: antes de resync S3`, {
       posts: posts.length,
@@ -179,9 +201,13 @@ export async function extractSingleProfileWithPage(
       slim.handle
     );
     const mergedRefresh = mergeProfilePreservingLlm(existingRefresh, slim as Record<string, unknown>);
-    await storage.save(mergedRefresh as Entity & { handle: string });
+    await cs.save(mergedRefresh as Entity & { handle: string }, DEFER_SEARCH);
     logStep('salvando posts, reels e marcados...');
-    const postsSaved = await saveAllMedia(collectedAt);
+    const postsSaved = await saveAllMedia(collectedAt, DEFER_SEARCH);
+    const keepKeys = buildExpectedPostKeySet(slim.handle, posts, reels, tagged, highlights);
+    logStep('forRefresh: removendo mídia obsoleta no DB...');
+    await pruneStalePostMediaAfterSave(storage, slim.handle, keepKeys);
+    await finalizePersistSearch(storage, slim.handle);
     logStep(`pronto (${postsSaved} itens).`);
     return { success: true, saved: true, handle: cleanHandle, followers, postsSaved, followsOfficialProfile };
   }
@@ -276,10 +302,6 @@ export async function extractSingleProfileWithPage(
   }
 
   const collectedAt = String(slim._collected_at ?? new Date().toISOString());
-  if (typeof storage.deletePostsByHandle === 'function') {
-    logStep('deletando mídia antiga (DB)...');
-    await storage.deletePostsByHandle(slim.handle);
-  }
   logStep('S3: apaga prefixo influencer + avatar + capas...');
   await resyncInfluencerS3AfterDbMediaReset(slim, { posts, reels, tagged, highlights });
   logStep('salvando perfil...');
@@ -288,9 +310,13 @@ export async function extractSingleProfileWithPage(
     slim.handle
   );
   const mergedSave = mergeProfilePreservingLlm(existingSave, slim as Record<string, unknown>);
-  await storage.save(mergedSave as Entity & { handle: string });
+  await cs.save(mergedSave as Entity & { handle: string }, DEFER_SEARCH);
   logStep('salvando posts, reels e marcados...');
-  const postsSaved = await saveAllMedia(collectedAt);
+  const postsSaved = await saveAllMedia(collectedAt, DEFER_SEARCH);
+  const keepKeysSave = buildExpectedPostKeySet(slim.handle, posts, reels, tagged, highlights);
+  logStep('removendo mídia obsoleta no DB...');
+  await pruneStalePostMediaAfterSave(storage, slim.handle, keepKeysSave);
+  await finalizePersistSearch(storage, slim.handle);
   logStep(`pronto (${postsSaved} itens).`);
   return {
     success: true,

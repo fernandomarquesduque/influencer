@@ -39,11 +39,23 @@
 
 .report-hero-tier-under-avatar {
   align-items: center;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+}
+
+.report-hero-avatar-col.report-hero-tier-under-avatar,
+.report-hero--compact .report-hero-avatar-col:has(.report-hero-tier-badge) {
+  overflow: visible;
 }
 
 .report-hero-tier-badge.ant-tag,
 .report-hero--compact .report-hero-tier-under-avatar .ant-tag {
-  max-width: 100% !important;
+  max-width: none !important;
+  width: max-content;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
   background: var(--app-primary, #68278f) !important;
   color: var(--brand-white, #fff) !important;
   border: none !important;

@@ -21,7 +21,7 @@ export const FOLLOWERS_SIZE_BUCKETS: readonly FollowersSizeBucketDef[] = [
   { key: 'medio', label: 'Médio', min: 100_000, max: 250_000 },
   { key: 'macro', label: 'Macro', min: 250_000, max: 500_000 },
   { key: 'elite', label: 'Elite', min: 500_000, max: 1_000_000 },
-  { key: 'celebridade', label: 'Celebridade', min: 1_000_000, max: undefined },
+  { key: 'celebridade', label: 'Celeb', min: 1_000_000, max: undefined },
 ] as const;
 
 export function followersCountToSizeKey(followers: number): FollowersSizeKey {

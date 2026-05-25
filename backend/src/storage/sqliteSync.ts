@@ -61,6 +61,8 @@ export interface GlobalAuxSqlFilter {
   pricingDestaqueValues?: number[] | null;
   costTiers?: string[] | null;
   llm?: GlobalAuxSqlLlmFilter | null;
+  /** positivo | negativo | misto — coluna `llm_post_sentiment` (OR no multiselect). */
+  postSentiments?: string[] | null;
 }
 
 /** Agregados numéricos de facetas a partir de `profile_search_aux` (sem loop em cada item). */
@@ -301,6 +303,7 @@ export class SqliteSync {
     tryAdd('ALTER TABLE profile_search_aux ADD COLUMN cost_tier TEXT');
     tryAdd('ALTER TABLE profile_search_aux ADD COLUMN llm_qualification_json TEXT');
     tryAdd('ALTER TABLE profile_search_aux ADD COLUMN llm_brand_level TEXT');
+    tryAdd('ALTER TABLE profile_search_aux ADD COLUMN llm_post_sentiment TEXT');
     try {
       this.db.exec(`
         UPDATE profile_search_aux SET
@@ -351,6 +354,7 @@ export class SqliteSync {
       costTier?: string | null;
       llmQualificationJson?: string | null;
       llmBrandLevel?: string | null;
+      llmPostSentiment?: string | null;
     }
   ): void {
     const h = handle.toLowerCase().replace(/^@/, '');
@@ -372,15 +376,19 @@ export class SqliteSync {
       metrics?.llmBrandLevel != null && typeof metrics.llmBrandLevel === 'string' && metrics.llmBrandLevel.trim()
         ? metrics.llmBrandLevel.trim().toLowerCase()
         : null;
+    const llmPostSent =
+      metrics?.llmPostSentiment != null && typeof metrics.llmPostSentiment === 'string' && metrics.llmPostSentiment.trim()
+        ? metrics.llmPostSentiment.trim().toLowerCase()
+        : null;
     const delFts = this.db.prepare('DELETE FROM profile_search_fts WHERE handle = ?');
     const insFts = this.db.prepare('INSERT INTO profile_search_fts (handle, content) VALUES (?, ?)');
     const upsertAux = this.db.prepare(`
       INSERT INTO profile_search_aux (
         handle, engagement_json, hashtags_json, search_blob,
         followers_count, engagement_rate, avg_likes, posts_count, account_type,
-        is_private, categories_json, cost_tier, llm_qualification_json, llm_brand_level
+        is_private, categories_json, cost_tier, llm_qualification_json, llm_brand_level, llm_post_sentiment
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(handle) DO UPDATE SET
         engagement_json = excluded.engagement_json,
         hashtags_json = excluded.hashtags_json,
@@ -394,7 +402,8 @@ export class SqliteSync {
         categories_json = excluded.categories_json,
         cost_tier = excluded.cost_tier,
         llm_qualification_json = excluded.llm_qualification_json,
-        llm_brand_level = excluded.llm_brand_level
+        llm_brand_level = excluded.llm_brand_level,
+        llm_post_sentiment = excluded.llm_post_sentiment
     `);
     const trx = this.db.transaction(() => {
       delFts.run(h);
@@ -413,7 +422,8 @@ export class SqliteSync {
         categoriesJson,
         costTier,
         llmQ,
-        llmBrand
+        llmBrand,
+        llmPostSent
       );
     });
     trx();
@@ -458,11 +468,12 @@ export class SqliteSync {
     avg_likes: number;
     posts_count: number;
     account_type: number | null;
+    llm_post_sentiment: string | null;
   }[] {
     const rows = this.db
       .prepare(
         `SELECT handle, engagement_json, hashtags_json, search_blob,
-                followers_count, engagement_rate, avg_likes, posts_count, account_type
+                followers_count, engagement_rate, avg_likes, posts_count, account_type, llm_post_sentiment
          FROM profile_search_aux`
       )
       .all() as {
@@ -475,6 +486,7 @@ export class SqliteSync {
       avg_likes: number | null;
       posts_count: number | null;
       account_type: number | null;
+      llm_post_sentiment: string | null;
     }[];
     return rows.map((r) => ({
       handle: String(r.handle ?? '').toLowerCase().replace(/^@/, ''),
@@ -487,6 +499,10 @@ export class SqliteSync {
       posts_count: Math.max(0, Math.floor(Number(r.posts_count) || 0)),
       account_type:
         r.account_type != null && [1, 2, 3].includes(Number(r.account_type)) ? Number(r.account_type) : null,
+      llm_post_sentiment:
+        r.llm_post_sentiment != null && String(r.llm_post_sentiment).trim()
+          ? String(r.llm_post_sentiment).trim().toLowerCase()
+          : null,
     }));
   }
 
@@ -669,6 +685,12 @@ export class SqliteSync {
       else if (L.isAdultContent === false) whereParts.push(`(a.llm_brand_level IN ('familia', 'sensivel'))`);
     }
 
+    if (filter.postSentiments != null && filter.postSentiments.length > 0) {
+      const ph = filter.postSentiments.map(() => '?').join(', ');
+      whereParts.push(`a.llm_post_sentiment IN (${ph})`);
+      for (const p of filter.postSentiments) params.push(p);
+    }
+
     if (filter.minFollowers != null) {
       whereParts.push('a.followers_count >= ?');
       params.push(Math.floor(filter.minFollowers));
@@ -821,6 +843,7 @@ export class SqliteSync {
     avg_likes: number;
     posts_count: number;
     account_type: number | null;
+    llm_post_sentiment: string | null;
   }[] {
     if (handles.length === 0) return [];
     const out: {
@@ -833,10 +856,11 @@ export class SqliteSync {
       avg_likes: number;
       posts_count: number;
       account_type: number | null;
+      llm_post_sentiment: string | null;
     }[] = [];
     const chunk = 400;
     const selectSql = `SELECT handle, engagement_json, hashtags_json, search_blob,
-        followers_count, engagement_rate, avg_likes, posts_count, account_type
+        followers_count, engagement_rate, avg_likes, posts_count, account_type, llm_post_sentiment
       FROM profile_search_aux WHERE handle IN (`;
     for (let i = 0; i < handles.length; i += chunk) {
       const slice = handles.slice(i, i + chunk).map((h) => h.toLowerCase().replace(/^@/, ''));
@@ -852,6 +876,7 @@ export class SqliteSync {
         avg_likes: number | null;
         posts_count: number | null;
         account_type: number | null;
+        llm_post_sentiment: string | null;
       }[];
       for (const r of rows) {
         out.push({
@@ -865,6 +890,10 @@ export class SqliteSync {
           posts_count: Math.max(0, Math.floor(Number(r.posts_count) || 0)),
           account_type:
             r.account_type != null && [1, 2, 3].includes(Number(r.account_type)) ? Number(r.account_type) : null,
+          llm_post_sentiment:
+            r.llm_post_sentiment != null && String(r.llm_post_sentiment).trim()
+              ? String(r.llm_post_sentiment).trim().toLowerCase()
+              : null,
         });
       }
     }

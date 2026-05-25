@@ -17,6 +17,26 @@
             "problemMatcher": []
         },
         {
+            "label": "ensure-native-modules",
+            "type": "shell",
+            "command": "node",
+            "args": ["scripts/ensure-native-modules.mjs"],
+            "options": {
+                "cwd": "${workspaceFolder}/backend"
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "prelaunch-backend",
+            "dependsOn": ["kill-api-and-frontend", "ensure-native-modules"],
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        },
+        {
             "label": "kill-extract",
             "type": "shell",
             "command": "powershell",
@@ -103,7 +123,7 @@
         {
             "label": "Dev: API (watch) + Frontend",
             "dependsOn": [
-                "kill-api-and-frontend",
+                "prelaunch-backend",
                 "Backend: API (watch)",
                 "Frontend: dev"
             ],

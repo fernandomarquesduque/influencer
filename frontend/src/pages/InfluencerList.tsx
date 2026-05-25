@@ -82,6 +82,7 @@ function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
   if (query.llmAudienceType?.length) params.llmAudienceType = query.llmAudienceType.join(',')
   if (query.llmToneOfVoice?.length) params.llmToneOfVoice = query.llmToneOfVoice.join(',')
   if (query.llmRiskLevel?.length) params.llmRiskLevel = query.llmRiskLevel.join(',')
+  if (query.llmPostSentiment?.length) params.llmPostSentiment = query.llmPostSentiment.join(',')
   if (query.llmIsFamilySafe === true) params.llmFamilySafe = '1'
   if (query.llmIsFamilySafe === false) params.llmFamilySafe = '0'
   if (query.llmIsAdultContent === true) params.llmAdultContent = '1'
@@ -119,10 +120,14 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     hasMandatory,
     q: q || undefined,
     categories,
-    sizeFilter: params.get('sizeFilter')
-      ?.split(',')
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean),
+    sizeFilter: (() => {
+      const arr = params
+        .get('sizeFilter')
+        ?.split(',')
+        .map((x) => x.trim().toLowerCase())
+        .filter(Boolean)
+      return arr?.length ? [arr[0]] : undefined
+    })(),
     minFollowers: params.has('minFollowers') ? Number(params.get('minFollowers')) : undefined,
     maxFollowers: params.has('maxFollowers') ? Number(params.get('maxFollowers')) : undefined,
     excludePrivate: params.get('excludePrivate') === '1',
@@ -148,6 +153,7 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     llmAudienceType: parseStrList(params.get('llmAudienceType')),
     llmToneOfVoice: parseStrList(params.get('llmToneOfVoice')),
     llmRiskLevel: parseStrList(params.get('llmRiskLevel')),
+    llmPostSentiment: parseStrList(params.get('llmPostSentiment')),
     llmIsFamilySafe: parseBool01(params.get('llmFamilySafe')),
     llmIsAdultContent: parseBool01(params.get('llmAdultContent')),
   }
@@ -309,7 +315,7 @@ export default function InfluencerList() {
           ? parsedUrl.categories
           : [String(parsedUrl.categories)]
         : undefined,
-      sizeFilter: parsedUrl.sizeFilter?.length ? parsedUrl.sizeFilter : undefined,
+      sizeFilter: parsedUrl.sizeFilter?.length ? [parsedUrl.sizeFilter[0]] : undefined,
       minFollowers: parsedUrl.minFollowers,
       maxFollowers: parsedUrl.maxFollowers,
       excludePrivate: parsedUrl.excludePrivate,
@@ -327,6 +333,7 @@ export default function InfluencerList() {
       llmAudienceType: parsedUrl.llmAudienceType?.length ? parsedUrl.llmAudienceType : undefined,
       llmToneOfVoice: parsedUrl.llmToneOfVoice?.length ? parsedUrl.llmToneOfVoice : undefined,
       llmRiskLevel: parsedUrl.llmRiskLevel?.length ? parsedUrl.llmRiskLevel : undefined,
+      llmPostSentiment: parsedUrl.llmPostSentiment?.length ? parsedUrl.llmPostSentiment : undefined,
       llmIsFamilySafe: parsedUrl.llmIsFamilySafe,
       llmIsAdultContent: parsedUrl.llmIsAdultContent,
     }),
@@ -705,6 +712,7 @@ export default function InfluencerList() {
     (query.llmAudienceType?.length ?? 0) > 0 ||
     (query.llmToneOfVoice?.length ?? 0) > 0 ||
     (query.llmRiskLevel?.length ?? 0) > 0 ||
+    (query.llmPostSentiment?.length ?? 0) > 0 ||
     query.llmIsFamilySafe === true ||
     query.llmIsFamilySafe === false ||
     query.llmIsAdultContent === true ||
@@ -758,6 +766,7 @@ export default function InfluencerList() {
       llmAudienceType: undefined,
       llmToneOfVoice: undefined,
       llmRiskLevel: undefined,
+      llmPostSentiment: undefined,
       llmIsFamilySafe: undefined,
       llmIsAdultContent: undefined,
     })

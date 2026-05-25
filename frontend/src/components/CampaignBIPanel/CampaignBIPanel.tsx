@@ -2,11 +2,12 @@
  * Painel BI: compilado das informações do relatório de campanha.
  * Exibido na coluna esquerda da tela de influenciadores da campanha.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { FOLLOWERS_SIZE_BUCKETS } from '@repo/followersSizeBuckets'
 import { Card, Typography, Input } from 'antd'
 import { EnvironmentOutlined, FilterOutlined } from '@ant-design/icons'
 import type { ProfilesSearchFacets, ProfilesSearchQuery } from '../../api'
-import { facetBucketFilterMin } from '../../utils/campaignFilterClient'
+import { buildSingleCampaignFacetBoostPatch, facetBucketFilterMin } from '../../utils/campaignFilterClient'
 import { formatFacetLabel } from '../../utils/facetLabels'
 import { CONTENT_TYPE_LABELS } from '../../constants/contentTypes'
 import { getInfluencerTierSolidHexForBucketKey } from '../../utils/influencerTier'
@@ -22,11 +23,7 @@ function llmPillColor(seed: string): string {
   return `hsl(${hue}, 42%, 40%)`
 }
 
-type LlmArrayFilterKey =
-  | 'llmProfileType'
-  | 'llmMainCategory'
-  | 'llmGender'
-  | 'llmAudienceType'
+type LlmArrayFilterKey = 'llmMainCategory' | 'llmGender' | 'llmAudienceType'
 
 type LlmNameCountRow = { name: string; count: number }
 
@@ -45,16 +42,6 @@ export interface CampaignBIPanelProps {
   /** Descrição/anotações da campanha (salva no banco). */
   description?: string | null
   onDescriptionSave?: (value: string) => void
-}
-
-function toggleInArray(arr: string[] | undefined, value: string): string[] | undefined {
-  const list = arr ?? []
-  const idx = list.indexOf(value)
-  if (idx >= 0) {
-    const next = list.filter((_, i) => i !== idx)
-    return next.length ? next : undefined
-  }
-  return [...list, value]
 }
 
 export default function CampaignBIPanel({
@@ -79,7 +66,7 @@ export default function CampaignBIPanel({
   const selectedAvgLikes = (query?.avgLikesBuckets ?? []) as number[]
   const engagementBuckets = facets?.engagement_rate ?? []
   const avgLikesFacetBuckets = facets?.avg_likes ?? []
-  const sizeBuckets =
+  const sizeBucketsFromFacets =
     facets?.size_buckets ??
     facets?.followers_buckets?.map((b) => ({
       key: b.key === 'medio' ? 'mid' : b.key,
@@ -87,11 +74,41 @@ export default function CampaignBIPanel({
       count: b.count,
     })) ??
     []
+  const sizeBuckets = useMemo(() => {
+    const byKey = new Map(sizeBucketsFromFacets.map((b) => [b.key, b]))
+    const normSel = (s: string) => {
+      const x = s.toLowerCase().trim()
+      if (x === 'mid') return 'medio'
+      return x
+    }
+    for (const sel of selectedSize) {
+      const sk = normSel(sel)
+      const bucketKey = sk === 'medio' ? 'mid' : sk
+      if (!byKey.has(bucketKey)) {
+        const def = FOLLOWERS_SIZE_BUCKETS.find((b) => b.key === sk)
+        if (def) {
+          byKey.set(bucketKey, {
+            key: bucketKey,
+            label: def.key === 'medio' ? 'Mid' : def.label,
+            count: 0,
+          })
+        }
+      }
+    }
+    return [...byKey.values()]
+  }, [sizeBucketsFromFacets, selectedSize])
+
+  const applySingleBoost = (
+    key: Parameters<typeof buildSingleCampaignFacetBoostPatch>[0],
+    nextValue: string[] | number[] | undefined
+  ) => {
+    if (!onFilter) return
+    onFilter(buildSingleCampaignFacetBoostPatch(key, nextValue))
+  }
 
   const handleSize = (key: string) => {
-    if (!onFilter) return
-    const next = selectedSize.includes(key) ? selectedSize.filter((s) => s !== key) : [...selectedSize, key]
-    onFilter({ sizeFilter: next.length ? next : undefined })
+    const next = selectedSize.includes(key) ? undefined : [key]
+    applySingleBoost('sizeFilter', next)
   }
 
   const handleMetricBucket = (
@@ -99,30 +116,28 @@ export default function CampaignBIPanel({
     min: number,
     key: 'engagementRateBuckets' | 'avgLikesBuckets'
   ) => {
-    if (!onFilter) return
-    const next = selected.includes(min) ? selected.filter((x) => x !== min) : [...selected, min]
-    onFilter({ [key]: next.length ? next : undefined } as Partial<ProfilesSearchQuery>)
+    const next = selected.includes(min) ? undefined : [min]
+    applySingleBoost(key, next)
   }
 
   const handleContentType = (name: string) => {
-    if (!onFilter) return
-    onFilter({ contentTypes: toggleInArray(selectedContent, name) })
+    const next = selectedContent.includes(name) ? undefined : [name]
+    applySingleBoost('contentTypes', next)
   }
   const handleSocial = (net: string) => {
-    if (!onFilter) return
-    onFilter({ socialNetworks: toggleInArray(selectedSocial, net) })
+    const next = selectedSocial.includes(net) ? undefined : [net]
+    applySingleBoost('socialNetworks', next)
   }
   const handleCity = (name: string) => {
-    if (!onFilter) return
-    onFilter({ cities: toggleInArray(selectedCities, name) })
+    const next = selectedCities.includes(name) ? undefined : [name]
+    applySingleBoost('cities', next)
   }
   const handleState = (name: string) => {
-    if (!onFilter) return
-    onFilter({ states: toggleInArray(selectedStates, name) })
+    const next = selectedStates.includes(name) ? undefined : [name]
+    applySingleBoost('states', next)
   }
 
   const llm = facets?.llm
-  const selectedLlmProfileType = (query?.llmProfileType ?? []) as string[]
   const selectedLlmMainCategory = (query?.llmMainCategory ?? []) as string[]
   const selectedLlmGender = (query?.llmGender ?? []) as string[]
   const selectedLlmAudienceType = (query?.llmAudienceType ?? []) as string[]
@@ -137,12 +152,16 @@ export default function CampaignBIPanel({
   )
 
   const handleLlmArrayToggle = (key: LlmArrayFilterKey, facetName: string) => {
-    if (!onFilter) return
-    const cur = ((query?.[key] as string[] | undefined) ?? []) as string[]
-    const n = facetName.trim().toLowerCase()
-    const has = cur.some((x) => String(x).trim().toLowerCase() === n)
-    const next = has ? cur.filter((x) => String(x).trim().toLowerCase() !== n) : [...cur, facetName]
-    onFilter({ [key]: next.length ? next : undefined } as Partial<ProfilesSearchQuery>)
+    const has = llmArraySelected(
+      key === 'llmMainCategory'
+        ? selectedLlmMainCategory
+        : key === 'llmGender'
+          ? selectedLlmGender
+          : selectedLlmAudienceType,
+      facetName
+    )
+    const next = has ? undefined : [facetName]
+    applySingleBoost(key, next)
   }
 
   return (
@@ -215,11 +234,14 @@ export default function CampaignBIPanel({
             </div>
           )}
 
-        {onFilter && sizeBuckets.some((b) => (b.count ?? 0) > 0) && (
+        {onFilter &&
+          (sizeBuckets.some((b) => (b.count ?? 0) > 0) || selectedSize.length > 0) && (
           <div className="campaign-bi-section">
             <Text strong className="campaign-bi-section-title">Tamanho</Text>
             <div className="campaign-bi-price">
-              {sizeBuckets.filter((b) => (b.count ?? 0) > 0).map(({ key, label }) => {
+              {sizeBuckets
+                .filter((b) => (b.count ?? 0) > 0 || selectedSize.includes(b.key))
+                .map(({ key, label }) => {
                 const selected = selectedSize.includes(key)
                 return (
                   <span
@@ -346,26 +368,6 @@ export default function CampaignBIPanel({
 
         {onFilter && llm && (
           <>
-            {showNamedFacetList(llm.profileType) && (
-              <div className="campaign-bi-section">
-                <Text strong className="campaign-bi-section-title">Tipo de perfil</Text>
-                <div className="campaign-bi-content">
-                  {filterNamedFacetRows(llm.profileType).map(({ name }) => (
-                    <span
-                      key={name}
-                      className={`campaign-bi-clickable ${llmArraySelected(selectedLlmProfileType, name) ? 'campaign-bi-selected' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleLlmArrayToggle('llmProfileType', name)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmProfileType', name)}
-                      style={{ color: llmPillColor(name) }}
-                    >
-                      {formatFacetLabel(name)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
             {showLlmMainCategorySection && (
               <div className="campaign-bi-section">
                 <Text strong className="campaign-bi-section-title">Categoria principal</Text>

@@ -22,21 +22,45 @@ export class CompositeStorage {
     private readonly onProfileSearchIndexSync?: ProfileSearchIndexSyncFn
   ) { }
 
+  private applySearchSideEffects(handle: string, opts?: { skipSearchInvalidation?: boolean }): void {
+    if (opts?.skipSearchInvalidation) return;
+    const h = handle.toLowerCase().replace(/^@/, '').trim();
+    if (!h) return;
+    void Promise.resolve(this.onProfileSearchIndexSync?.(this, h)).catch((e) =>
+      console.warn('[profile-search-index] sync após save:', h, e instanceof Error ? e.message : e)
+    );
+    this.onInvalidateSearch?.(this);
+  }
+
+  /**
+   * Após extração/refresh completo: atualiza FTS do handle (uma vez).
+   * Rewarm do cache de perfis deve ser agendado em debounce pelo caller (`scheduleSearchCacheRewarmDebounced`).
+   */
+  async finalizeSearchAfterHandlePersist(handle: string): Promise<void> {
+    const h = handle.toLowerCase().replace(/^@/, '').trim();
+    if (!h) return;
+    if (this.onProfileSearchIndexSync) {
+      await Promise.resolve(this.onProfileSearchIndexSync(this, h)).catch((e) =>
+        console.warn('[profile-search-index] finalize sync:', h, e instanceof Error ? e.message : e)
+      );
+    }
+  }
+
   async save(
     entity: Entity & { handle: string },
     opts?: { skipSearchInvalidation?: boolean }
   ): Promise<{ path: string; bytes: number }> {
     const result = await this.rocks.save(entity);
-    if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
-    const h = (entity.handle || '').toLowerCase().replace(/^@/, '');
-    if (h) void Promise.resolve(this.onProfileSearchIndexSync?.(this, h)).catch((e) =>
-      console.warn('[profile-search-index] sync após save:', h, e instanceof Error ? e.message : e)
-    );
+    this.applySearchSideEffects(entity.handle || '', opts);
     return result;
   }
 
   async deletePostsByHandle(profileHandle: string): Promise<number> {
     return this.rocks.deletePostsByHandle(profileHandle);
+  }
+
+  async deletePostKeysExcept(profileHandle: string, keepLogicalKeys: ReadonlySet<string>): Promise<number> {
+    return this.rocks.deletePostKeysExcept(profileHandle, keepLogicalKeys);
   }
 
   /**
@@ -59,11 +83,7 @@ export class CompositeStorage {
     opts?: { skipSearchInvalidation?: boolean }
   ): Promise<number> {
     const n = await this.rocks.savePosts(profileHandle, posts, collectedAt);
-    if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
-    const h = profileHandle.toLowerCase().replace(/^@/, '');
-    if (h) void Promise.resolve(this.onProfileSearchIndexSync?.(this, h)).catch((e) =>
-      console.warn('[profile-search-index] sync após savePosts:', h, e instanceof Error ? e.message : e)
-    );
+    this.applySearchSideEffects(profileHandle, opts);
     return n;
   }
 
@@ -75,11 +95,7 @@ export class CompositeStorage {
     opts?: { skipSearchInvalidation?: boolean }
   ): Promise<number> {
     const n = await this.rocks.saveMedia(profileHandle, mediaKind, items, collectedAt);
-    if (!opts?.skipSearchInvalidation) this.onInvalidateSearch?.(this);
-    const h = profileHandle.toLowerCase().replace(/^@/, '');
-    if (h) void Promise.resolve(this.onProfileSearchIndexSync?.(this, h)).catch((e) =>
-      console.warn('[profile-search-index] sync após saveMedia:', h, e instanceof Error ? e.message : e)
-    );
+    this.applySearchSideEffects(profileHandle, opts);
     return n;
   }
 
@@ -105,6 +121,25 @@ export class CompositeStorage {
 
   async get<T = unknown>(bucket: string, key: string): Promise<T | null> {
     return this.rocks.get<T>(bucket, key);
+  }
+
+  async set(
+    bucket: string,
+    key: string,
+    value: unknown,
+    opts?: { skipSearchInvalidation?: boolean }
+  ): Promise<void> {
+    await this.rocks.set(bucket, key, value);
+    if (bucket === 'profile') {
+      const handle = String(key ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/^@/, '');
+      if (handle) this.applySearchSideEffects(handle, opts);
+    } else if (bucket === 'post' && !opts?.skipSearchInvalidation) {
+      const handle = String(key ?? '').split(':')[0]?.trim().toLowerCase().replace(/^@/, '');
+      if (handle) this.applySearchSideEffects(handle, opts);
+    }
   }
 
   async loadByHandle(handle: string): Promise<Entity | null> {
@@ -142,6 +177,7 @@ export class CompositeStorage {
         costTier: payload.costTier ?? null,
         llmQualificationJson: payload.llmQualificationJson,
         llmBrandLevel: payload.llmBrandLevel,
+        llmPostSentiment: payload.llmPostSentiment,
       }
     );
   }
@@ -160,6 +196,7 @@ export class CompositeStorage {
     avg_likes: number;
     posts_count: number;
     account_type: number | null;
+    llm_post_sentiment: string | null;
   }[] {
     return this.sqlite.getAllProfileSearchAuxRows();
   }
@@ -176,6 +213,7 @@ export class CompositeStorage {
     avg_likes: number;
     posts_count: number;
     account_type: number | null;
+    llm_post_sentiment: string | null;
   }[] {
     return this.sqlite.getProfileSearchAuxRowsForHandles(handles);
   }

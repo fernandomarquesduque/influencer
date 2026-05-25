@@ -8,7 +8,12 @@ import { logMemorySnapshot } from '../utils/memoryDiag.js';
 import type { ProfileActivationData, AuxNumericFacetAggregate, GlobalAuxSqlLlmFilter, GlobalAuxSqlFilter } from '../storage/sqliteSync.js';
 import { SqliteSync } from '../storage/sqliteSync.js';
 import { computeInstagramBi, type InstagramBi, type PostForBi } from '../utils/instagramBi.js';
-import { getCostTierFromPricing, getSuggestedPricingFromFollowers, type CostTier } from '../utils/suggestedPricing.js';
+import {
+  getCostTierFromPricing,
+  getSuggestedPricingFromFollowers,
+  getFollowersFromProfile,
+  type CostTier,
+} from '../utils/suggestedPricing.js';
 import {
   followersCountToSizeKey,
   createEmptyFollowersBucketsForFacets,
@@ -79,7 +84,6 @@ let searchCacheRewarmPending = false;
 function runSearchCacheRewarmPass(db: CompositeStorage): void {
   searchCacheRewarmInFlight = true;
   const gen = ++searchCacheGeneration;
-  searchDataCache = null;
   void loadSearchCacheData(db)
     .then((data) => applySearchCacheIfCurrent(gen, data))
     .catch((err) => console.warn('[search-cache] rewarm falhou:', err))
@@ -95,7 +99,7 @@ function runSearchCacheRewarmPass(db: CompositeStorage): void {
 /**
  * Agenda reaquecimento do cache em background.
  * Chamadas em rajada (ex.: refresh — 1× save + 1× savePosts + 3× saveMedia) viram no máximo 2 passadas sequenciais,
- * nunca várias Promise.all(profile+post) simultâneas. O snapshot antigo é descartado antes da nova leitura (menos pico de heap).
+ * nunca várias Promise.all(profile+post) simultâneas. Substitui o snapshot só quando a nova leitura termina.
  */
 export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
   if (searchCacheRewarmInFlight) {
@@ -103,6 +107,21 @@ export function scheduleSearchCacheRewarm(db: CompositeStorage): void {
     return;
   }
   runSearchCacheRewarmPass(db);
+}
+
+/** Evita N rewarms seguidos ao fim de cada extração na fila (só um após a rajada). */
+let searchCacheRewarmDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const SEARCH_CACHE_REWARM_DEBOUNCE_MS = Math.max(
+  5_000,
+  Number(process.env.SEARCH_CACHE_REWARM_DEBOUNCE_MS) || 25_000
+);
+
+export function scheduleSearchCacheRewarmDebounced(db: CompositeStorage): void {
+  if (searchCacheRewarmDebounceTimer) clearTimeout(searchCacheRewarmDebounceTimer);
+  searchCacheRewarmDebounceTimer = setTimeout(() => {
+    searchCacheRewarmDebounceTimer = null;
+    scheduleSearchCacheRewarm(db);
+  }, SEARCH_CACHE_REWARM_DEBOUNCE_MS);
 }
 
 /** Invalidação forte: esvazia o cache (próxima busca lê do RocksDB e repovoa). Uso pontual; reaquecimento após save usa scheduleSearchCacheRewarm. */
@@ -327,6 +346,29 @@ function bumpFacetStringArray(map: Map<string, number>, arr: unknown): void {
   }
 }
 
+export type ProfilePostSentimentSummary = 'positivo' | 'negativo' | 'misto';
+
+/** Agrega sentimento dos posts (`post.llm.sentiment`) em rótulo por perfil para facetas/filtro. */
+export function computeProfilePostSentimentFromPosts(
+  posts: Record<string, unknown>[]
+): ProfilePostSentimentSummary | null {
+  let pos = 0;
+  let neg = 0;
+  for (const p of posts) {
+    const llm = p.llm;
+    if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) continue;
+    const s = String((llm as Record<string, unknown>).sentiment ?? '')
+      .trim()
+      .toLowerCase();
+    if (s === 'positivo' || s === 'positive' || s === 'pos') pos++;
+    else if (s === 'negativo' || s === 'negative' || s === 'neg') neg++;
+  }
+  if (pos === 0 && neg === 0) return null;
+  if (pos > neg) return 'positivo';
+  if (neg > pos) return 'negativo';
+  return 'misto';
+}
+
 interface LlmFacetMaps {
   profileType: Map<string, number>;
   mainCategory: Map<string, number>;
@@ -335,6 +377,7 @@ interface LlmFacetMaps {
   audienceType: Map<string, number>;
   toneOfVoice: Map<string, number>;
   brandSafetyLevel: Map<string, number>;
+  postSentiment: Map<string, number>;
 }
 
 function createEmptyLlmFacetMaps(): LlmFacetMaps {
@@ -346,6 +389,7 @@ function createEmptyLlmFacetMaps(): LlmFacetMaps {
     audienceType: new Map(),
     toneOfVoice: new Map(),
     brandSafetyLevel: new Map(),
+    postSentiment: new Map(),
   };
 }
 
@@ -375,15 +419,20 @@ export function normalizeBrandSafetyLevel(brandSafety: unknown): 'adulto' | 'sen
 
 function accumulateLlmFacetsFromItem(item: ProfileListItem, maps: LlmFacetMaps): void {
   const q = getLlmQualification(item as unknown as Record<string, unknown>);
-  if (!q) return;
-  bumpFacetString(maps.profileType, String(q.profileType ?? ''));
-  bumpFacetMainCategory(maps.mainCategory, String(q.mainCategory ?? ''));
-  bumpFacetString(maps.gender, String(q.gender ?? ''));
-  bumpFacetString(maps.language, String(q.language ?? ''));
-  bumpFacetStringArray(maps.audienceType, q.audienceType);
-  bumpFacetStringArray(maps.toneOfVoice, q.toneOfVoice);
-  const brandSafetyLevel = normalizeBrandSafetyLevel(q.brandSafety);
-  if (brandSafetyLevel) bumpFacetString(maps.brandSafetyLevel, brandSafetyLevel);
+  if (q) {
+    bumpFacetString(maps.profileType, String(q.profileType ?? ''));
+    bumpFacetMainCategory(maps.mainCategory, String(q.mainCategory ?? ''));
+    bumpFacetString(maps.gender, String(q.gender ?? ''));
+    bumpFacetString(maps.language, String(q.language ?? ''));
+    bumpFacetStringArray(maps.audienceType, q.audienceType);
+    bumpFacetStringArray(maps.toneOfVoice, q.toneOfVoice);
+    const brandSafetyLevel = normalizeBrandSafetyLevel(q.brandSafety);
+    if (brandSafetyLevel) bumpFacetString(maps.brandSafetyLevel, brandSafetyLevel);
+  }
+  const ps = String((item as Record<string, unknown>).llm_post_sentiment ?? '').trim().toLowerCase();
+  if (ps === 'positivo' || ps === 'negativo' || ps === 'misto') {
+    bumpFacetString(maps.postSentiment, ps);
+  }
 }
 
 function mapsToLlmSearchFacets(maps: LlmFacetMaps): LlmSearchFacets {
@@ -397,6 +446,7 @@ function mapsToLlmSearchFacets(maps: LlmFacetMaps): LlmSearchFacets {
     brandSafety: {
       level: mapToNameCountDesc(maps.brandSafetyLevel),
     },
+    postSentiment: mapToNameCountDesc(maps.postSentiment),
   };
 }
 
@@ -698,6 +748,8 @@ export interface LlmSearchFacets {
   brandSafety: {
     level: { name: string; count: number }[];
   };
+  /** Sentimento predominante nas legendas analisadas (`post.llm.sentiment`). */
+  postSentiment: { name: string; count: number }[];
 }
 
 /** Sumarização dos resultados para filtros (hashtags/categorias, engajamento, ativação, tipo de conteúdo). */
@@ -812,6 +864,8 @@ export interface ProfilesSearchQuery {
   /** Quando definido, exige mesmo valor em `qualification.brandSafety`. */
   llmIsFamilySafe?: boolean;
   llmIsAdultContent?: boolean;
+  /** Sentimento predominante por perfil (positivo | negativo | misto), agregado dos posts. */
+  llmPostSentiment?: string | string[];
   /** Ordenação: relevance_desc | engagement_desc | engagement_asc | followers_desc | followers_asc | avg_likes_desc | avg_likes_asc | total_likes_desc | total_likes_asc */
   sort?: string;
   limit?: number;
@@ -883,45 +937,693 @@ function normalizeSizeBoostKey(s: string): string {
   return x;
 }
 
-/** Pontuação para ordenar resultados (facets do painel BI = prioridade, não filtro). */
+type CampaignFacetBoostDimension = (typeof CAMPAIGN_FACET_BOOST_QUERY_KEYS)[number];
+
+/** Dimensões ativas na ordem do painel (primeira = maior prioridade na ordenação). */
+export function activeCampaignFacetBoostDimensions(
+  query: ProfilesSearchQuery
+): CampaignFacetBoostDimension[] {
+  return CAMPAIGN_FACET_BOOST_QUERY_KEYS.filter((k) => {
+    const v = query[k];
+    return Array.isArray(v) && v.length > 0;
+  });
+}
+
+function getProfileActivationForBoost(
+  profile: Record<string, unknown> | null
+): ProfileActivationData | undefined {
+  const act = profile?.activation;
+  if (act != null && typeof act === 'object' && !Array.isArray(act)) {
+    return act as ProfileActivationData;
+  }
+  return undefined;
+}
+
+function getProfileEngagementForBoost(profile: Record<string, unknown> | null): EngagementStats {
+  const eng = profile?.engagement;
+  if (eng != null && typeof eng === 'object' && !Array.isArray(eng)) {
+    return eng as EngagementStats;
+  }
+  return {
+    posts_count: 0,
+    avg_likes: 0,
+    avg_comments: 0,
+    avg_views: 0,
+    total_likes: 0,
+    total_comments: 0,
+    total_views: 0,
+    engagement_rate: 0,
+  };
+}
+
+function profileHasSocialNetwork(act: ProfileActivationData, net: string): boolean {
+  const n = net.toLowerCase();
+  if (n === 'whatsapp') return !!(act.whatsapp?.trim());
+  if (n === 'tiktok') return !!(act.tiktok?.trim());
+  if (n === 'facebook') return !!(act.facebook?.trim());
+  if (n === 'linkedin') return !!(act.linkedin?.trim());
+  if (n === 'twitter') return !!(act.twitter?.trim());
+  return false;
+}
+
+/** Se o perfil casa com a dimensão selecionada no painel BI (prioridade de ordenação). */
+export function profileMatchesCampaignFacetBoostDimension(
+  profile: Record<string, unknown> | null,
+  query: ProfilesSearchQuery,
+  dimension: CampaignFacetBoostDimension,
+  followersCount?: number
+): boolean {
+  const record = profile ?? {};
+  const fc =
+    followersCount ??
+    (typeof record.followers_count === 'number' && Number.isFinite(record.followers_count)
+      ? record.followers_count
+      : getFollowers(record) ?? getFollowersFromProfile(record) ?? 0);
+  const act = getProfileActivationForBoost(profile);
+  const engagement = getProfileEngagementForBoost(profile);
+
+  switch (dimension) {
+    case 'sizeFilter': {
+      const sizeSel = parseStringArray(query.sizeFilter).map(normalizeSizeBoostKey);
+      if (sizeSel.length === 0 || !Number.isFinite(fc)) return false;
+      return sizeSel.includes(followersCountToSizeKey(fc));
+    }
+    case 'accountTypeFilter': {
+      const sel = (query.accountTypeFilter ?? []).filter((n) => [1, 2, 3].includes(n));
+      if (sel.length === 0) return false;
+      const at = getAccountType(record);
+      return at != null && sel.includes(at);
+    }
+    case 'contentTypes': {
+      const sel = parseStringArray(query.contentTypes).map((s) => s.toLowerCase());
+      if (sel.length === 0 || !act) return false;
+      const ct = act.content_type;
+      if (!ct || !Array.isArray(ct)) return false;
+      const ctLower = ct.map((c) => String(c).trim().toLowerCase()).filter(Boolean);
+      return sel.some((fc) => ctLower.includes(fc));
+    }
+    case 'cities': {
+      const sel = parseStringArray(query.cities).map((s) => s.toLowerCase());
+      if (sel.length === 0) return false;
+      const city = act?.city?.trim().toLowerCase();
+      return !!city && sel.includes(city);
+    }
+    case 'states': {
+      const sel = parseStringArray(query.states).map((s) => s.toLowerCase());
+      if (sel.length === 0) return false;
+      const state = act?.state?.trim().toLowerCase();
+      return !!state && sel.includes(state);
+    }
+    case 'neighborhoods': {
+      const sel = parseStringArray(query.neighborhoods).map((s) => s.toLowerCase());
+      if (sel.length === 0) return false;
+      const raw = act?.neighborhood?.trim();
+      if (!raw) return false;
+      const parts = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+      return parts.some((p) => sel.includes(p));
+    }
+    case 'socialNetworks': {
+      const sel = parseStringArray(query.socialNetworks).map((s) => s.toLowerCase());
+      if (sel.length === 0 || !act) return false;
+      return sel.some((net) => profileHasSocialNetwork(act, net));
+    }
+    case 'engagementRateBuckets':
+      return matchesEngagementRateBuckets(
+        engagement.engagement_rate ?? 0,
+        (query.engagementRateBuckets ?? []).filter(Number.isFinite)
+      );
+    case 'avgLikesBuckets':
+      return matchesAvgLikesBuckets(
+        engagement.avg_likes ?? 0,
+        (query.avgLikesBuckets ?? []).filter(Number.isFinite)
+      );
+    case 'postsCountBuckets':
+      return matchesPostsCountBuckets(
+        engagement.posts_count ?? 0,
+        (query.postsCountBuckets ?? []).filter(Number.isFinite)
+      );
+    case 'llmProfileType':
+    case 'llmMainCategory':
+    case 'llmGender':
+    case 'llmAudienceType': {
+      const qual = getLlmQualification(record);
+      if (!qual) return false;
+      if (dimension === 'llmProfileType') {
+        const sel = parseStringArray(query.llmProfileType);
+        if (sel.length === 0) return false;
+        const set = new Set(sel.map((s) => s.trim().toLowerCase()).filter(Boolean));
+        return set.has(String(qual.profileType ?? '').trim().toLowerCase());
+      }
+      if (dimension === 'llmGender') {
+        const sel = parseStringArray(query.llmGender);
+        if (sel.length === 0) return false;
+        const set = new Set(sel.map((s) => s.trim().toLowerCase()).filter(Boolean));
+        return set.has(String(qual.gender ?? '').trim().toLowerCase());
+      }
+      if (dimension === 'llmMainCategory') {
+        const sel = parseStringArray(query.llmMainCategory);
+        if (sel.length === 0) return false;
+        const set = new Set(
+          sel
+            .map((s) => snapMainCategoryToTaxonomy(s.trim())?.toLowerCase())
+            .filter((x): x is string => Boolean(x))
+        );
+        const stored = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim())?.toLowerCase();
+        return !!stored && set.has(stored);
+      }
+      return qualificationArrayMatchesOr(qual, 'audienceType', parseStringArray(query.llmAudienceType));
+    }
+    default:
+      return false;
+  }
+}
+
+/**
+ * Prioridade lexicográfica: primeira dimensão selecionada no painel vence;
+ * dentro de cada dimensão, quem casa com a seleção sobe antes dos demais.
+ */
+export function computeCampaignFacetBoostPriority(
+  profile: Record<string, unknown> | null,
+  query: ProfilesSearchQuery,
+  followersCount?: number
+): number {
+  const dims = activeCampaignFacetBoostDimensions(query);
+  let priority = 0;
+  for (const dim of dims) {
+    priority <<= 1;
+    if (profileMatchesCampaignFacetBoostDimension(profile, query, dim, followersCount)) {
+      priority |= 1;
+    }
+  }
+  return priority;
+}
+
+/** @deprecated Use `computeCampaignFacetBoostPriority` — mantido para compatibilidade interna. */
 export function computeCampaignFacetBoostScore(
   profile: Record<string, unknown> | null,
   query: ProfilesSearchQuery,
   followersCount?: number
 ): number {
-  let score = 0;
+  return computeCampaignFacetBoostPriority(profile, query, followersCount);
+}
+
+export function compareCampaignFacetBoostPriority(priorityA: number, priorityB: number): number {
+  if (priorityB !== priorityA) return priorityB - priorityA;
+  return 0;
+}
+
+/** Perfil mínimo a partir do item de post-matches já enriquecido (mesmos seguidores da UI). */
+export function profileRecordFromPostMatchItem(item: Record<string, unknown>): Record<string, unknown> {
+  const inf = item.influencer;
+  const record: Record<string, unknown> = {};
+  if (inf != null && typeof inf === 'object' && !Array.isArray(inf)) {
+    const io = inf as Record<string, unknown>;
+    if (typeof io.followers_count === 'number' && Number.isFinite(io.followers_count)) {
+      record.followers_count = io.followers_count;
+    }
+    if (io.llm != null) record.llm = io.llm;
+  }
+  return record;
+}
+
+/** Reordena itens da página após enriquecer `influencer` (porte/LLM alinhados ao card). */
+export function sortPostMatchItemsByCampaignFacetBoost(
+  items: Record<string, unknown>[],
+  query: ProfilesSearchQuery
+): Record<string, unknown>[] {
+  if (!hasCampaignFacetBoostInQuery(query) || items.length < 2) return items;
+  return [...items]
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const profA = profileRecordFromPostMatchItem(a.item);
+      const profB = profileRecordFromPostMatchItem(b.item);
+      const fcA =
+        typeof profA.followers_count === 'number' && Number.isFinite(profA.followers_count)
+          ? profA.followers_count
+          : 0;
+      const fcB =
+        typeof profB.followers_count === 'number' && Number.isFinite(profB.followers_count)
+          ? profB.followers_count
+          : 0;
+      const boostCmp = compareCampaignFacetBoostPriority(
+        computeCampaignFacetBoostPriority(profA, query, fcA),
+        computeCampaignFacetBoostPriority(profB, query, fcB)
+      );
+      if (boostCmp !== 0) return boostCmp;
+      return a.index - b.index;
+    })
+    .map(({ item }) => item);
+}
+
+function normalizeHandleForFacetBoost(h: string): string {
+  return String(h).toLowerCase().replace(/^@/, '').trim();
+}
+
+function handleFromPostBucketKey(key: string): string {
+  const idx = key.indexOf(':');
+  if (idx <= 0) return normalizeHandleForFacetBoost(key);
+  return normalizeHandleForFacetBoost(key.slice(0, idx));
+}
+
+function normalizeDiversityToken(raw: string): string {
+  const s = raw.trim().toLowerCase();
+  return s || '_';
+}
+
+function normalizeGenderForDiversity(raw: string): string {
+  const x = raw.trim().toLowerCase();
+  if (!x || x === '_' || x === 'unknown' || x === 'n/a') return '_';
+  if (x === 'm' || x === 'male' || x === 'masculino' || x === 'homem' || x === 'man') return 'masculino';
+  if (x === 'f' || x === 'female' || x === 'feminino' || x === 'mulher' || x === 'woman') return 'feminino';
+  return x;
+}
+
+/** Dimensões usadas para facetas do painel BI na busca por legenda. */
+export type HandleDiversityMeta = {
+  sizeKey: string;
+  gender: string;
+  mainCategory: string;
+  audience: string;
+  profileType: string;
+};
+
+export function buildHandleDiversityMetaFromProfile(
+  profile: Record<string, unknown> | null,
+  followersCount?: number
+): HandleDiversityMeta {
   const fc =
     followersCount ??
-    (profile != null && typeof profile.followers_count === 'number' ? profile.followers_count : undefined);
-  const sizeSel = parseStringArray(query.sizeFilter).map(normalizeSizeBoostKey);
-  if (sizeSel.length > 0 && fc != null && Number.isFinite(fc)) {
-    const size = followersCountToSizeKey(fc);
-    if (sizeSel.includes(size)) score++;
-  }
-  const record = profile ?? {};
-  const qual = getLlmQualification(record);
+    (profile != null && typeof profile.followers_count === 'number' && Number.isFinite(profile.followers_count)
+      ? profile.followers_count
+      : getFollowers(profile ?? {}) ?? getFollowersFromProfile(profile) ?? 0);
+  const sizeKey =
+    Number.isFinite(fc) && fc >= 0 ? followersCountToSizeKey(fc) : 'unknown';
+  const qual = getLlmQualification(profile ?? {});
+  let gender = '_';
+  let mainCategory = '_';
+  let audience = '_';
+  let profileType = '_';
   if (qual) {
-    const orScalar = (field: string, selected: string[]): boolean => {
-      if (selected.length === 0) return false;
-      const set = new Set(selected.map((s) => s.trim().toLowerCase()).filter(Boolean));
-      const v = String(qual[field] ?? '').trim().toLowerCase();
-      return set.has(v);
-    };
-    if (orScalar('profileType', parseStringArray(query.llmProfileType))) score++;
-    const mainCatSel = parseStringArray(query.llmMainCategory);
-    if (mainCatSel.length > 0) {
-      const set = new Set(
-        mainCatSel
-          .map((s) => snapMainCategoryToTaxonomy(s.trim())?.toLowerCase())
-          .filter((x): x is string => Boolean(x))
-      );
-      const stored = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim())?.toLowerCase();
-      if (stored && set.has(stored)) score++;
+    gender = normalizeGenderForDiversity(String(qual.gender ?? ''));
+    const mc = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim());
+    mainCategory = mc ? normalizeDiversityToken(mc) : '_';
+    profileType = normalizeDiversityToken(String(qual.profileType ?? ''));
+    const aud = qual.audienceType;
+    if (Array.isArray(aud) && aud.length > 0) {
+      audience = normalizeDiversityToken(String(aud[0] ?? ''));
     }
-    if (orScalar('gender', parseStringArray(query.llmGender))) score++;
-    if (qualificationArrayMatchesOr(qual, 'audienceType', parseStringArray(query.llmAudienceType))) score++;
+  }
+  return { sizeKey, gender, mainCategory, audience, profileType };
+}
+
+function diversityDimensionKeys(m: HandleDiversityMeta): string[] {
+  return [
+    `gender:${m.gender}`,
+    `size:${m.sizeKey}`,
+    `main:${m.mainCategory}`,
+    `aud:${m.audience}`,
+    `ptype:${m.profileType}`,
+  ];
+}
+
+/** Ordem fixa nano → celebridade para intercalar todos os portes na varredura. */
+const DIVERSITY_SIZE_TIER_ORDER: readonly string[] = [
+  'nano',
+  'micro',
+  'medio',
+  'macro',
+  'elite',
+  'celebridade',
+  'unknown',
+];
+
+/** Bônus ao primeiro perfil de cada porte/gênero ainda não representado na lista. */
+const DIVERSITY_NEW_BUCKET_BONUS = 110;
+
+function diversityPenaltyForKey(dimKey: string): number {
+  if (dimKey.startsWith('gender:')) return 85;
+  if (dimKey.startsWith('size:')) return 72;
+  return 12;
+}
+
+function diversityScoreForPick(
+  baseScore: number,
+  m: HandleDiversityMeta,
+  dimCounts: Map<string, number>
+): number {
+  let score = baseScore;
+  for (const dk of diversityDimensionKeys(m)) {
+    const seen = dimCounts.get(dk) ?? 0;
+    score -= seen * diversityPenaltyForKey(dk);
+    if (seen === 0 && !dk.endsWith(':_') && !dk.endsWith(':unknown')) {
+      score += DIVERSITY_NEW_BUCKET_BONUS;
+    }
   }
   return score;
+}
+
+/** Carrega metadados de diversidade (porte + LLM) por handle. */
+export async function loadHandleDiversityMeta(
+  db: CompositeStorage,
+  handles: string[]
+): Promise<Map<string, HandleDiversityMeta>> {
+  const out = new Map<string, HandleDiversityMeta>();
+  if (handles.length === 0) return out;
+  const BATCH = 64;
+  for (let i = 0; i < handles.length; i += BATCH) {
+    const chunk = handles.slice(i, i + BATCH);
+    const auxRows = db.getProfileSearchAuxRowsForHandles(chunk);
+    const fcBy = new Map<string, number>();
+    for (const r of auxRows) {
+      const k = normalizeHandleForFacetBoost(String(r.handle ?? ''));
+      if (!k) continue;
+      const fc =
+        typeof r.followers_count === 'number' && Number.isFinite(r.followers_count) ? r.followers_count : 0;
+      fcBy.set(k, fc);
+    }
+    await Promise.all(
+      chunk.map(async (rawH) => {
+        const hk = normalizeHandleForFacetBoost(rawH);
+        if (!hk) return;
+        const profile = (await db.loadByHandle(rawH)) as Record<string, unknown> | null;
+        const fc = fcBy.get(hk) ?? getFollowersFromProfile(profile);
+        out.set(hk, buildHandleDiversityMetaFromProfile(profile, fc));
+      })
+    );
+  }
+  return out;
+}
+
+function roundRobinInterleaveHandles(
+  handles: string[],
+  bucketForHandle: (h: string) => string,
+  bucketKeyOrder?: readonly string[]
+): string[] {
+  if (handles.length < 2) return handles;
+  const buckets = new Map<string, { h: string; idx: number }[]>();
+  handles.forEach((h, idx) => {
+    const bk = bucketForHandle(h);
+    if (!buckets.has(bk)) buckets.set(bk, []);
+    buckets.get(bk)!.push({ h, idx });
+  });
+  const orderIndex = (k: string): number => {
+    if (!bucketKeyOrder?.length) return 0;
+    const i = bucketKeyOrder.indexOf(k);
+    return i >= 0 ? i : bucketKeyOrder.length;
+  };
+  const keys = [...buckets.keys()].sort((a, b) => {
+    const oa = orderIndex(a);
+    const ob = orderIndex(b);
+    if (oa !== ob) return oa - ob;
+    return a.localeCompare(b);
+  });
+  const out: string[] = [];
+  let round = 0;
+  for (;;) {
+    let added = false;
+    for (const k of keys) {
+      const list = buckets.get(k)!;
+      if (round < list.length) {
+        out.push(list[round]!.h);
+        added = true;
+      }
+    }
+    if (!added) break;
+    round++;
+  }
+  return out.length > 0 ? out : handles;
+}
+
+/**
+ * Varredura: intercala todos os portes (nano…celebridade), depois gênero — facetas de tamanho mais ricas.
+ */
+export async function orderHandlesForFacetDiversity(
+  db: CompositeStorage,
+  handles: string[]
+): Promise<string[]> {
+  if (handles.length < 2) return handles;
+  const meta = await loadHandleDiversityMeta(db, handles);
+  const bySize = roundRobinInterleaveHandles(
+    handles,
+    (h) => {
+      const hk = normalizeHandleForFacetBoost(h);
+      const sk = meta.get(hk)?.sizeKey ?? 'unknown';
+      return sk === 'unknown' ? 'unknown' : sk;
+    },
+    DIVERSITY_SIZE_TIER_ORDER
+  );
+  return roundRobinInterleaveHandles(bySize, (h) => {
+    const hk = normalizeHandleForFacetBoost(h);
+    const g = meta.get(hk)?.gender ?? '_';
+    return g === '_' ? 'unknown' : g;
+  });
+}
+
+/** Reordena handles já priorizados (ex.: porte Mid) intercalando gênero na varredura. */
+export function interleaveHandlesByDiversityGender(
+  handles: string[],
+  meta: Map<string, HandleDiversityMeta>
+): string[] {
+  return roundRobinInterleaveHandles(handles, (h) => {
+    const hk = normalizeHandleForFacetBoost(h);
+    const g = meta.get(hk)?.gender ?? '_';
+    return g === '_' ? 'unknown' : g;
+  });
+}
+
+/**
+ * Ordenação gananciosa: relevância alta, penalizando repetir a mesma faceta (porte, gênero, categoria…).
+ */
+export function sortScratchRowsByFacetDiversity<T extends { key: string; relevance: number }>(
+  rows: T[],
+  handleMeta: Map<string, HandleDiversityMeta>,
+  qRaw: string
+): T[] {
+  if (rows.length < 2) return rows;
+  const remaining = [...rows];
+  const result: T[] = [];
+  const dimCounts = new Map<string, number>();
+  while (remaining.length > 0) {
+    let bestI = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const row = remaining[i]!;
+      const ha = handleFromPostBucketKey(row.key);
+      const m = handleMeta.get(ha) ?? {
+        sizeKey: 'unknown',
+        gender: '_',
+        mainCategory: '_',
+        audience: '_',
+        profileType: '_',
+      };
+      const baseScore = qRaw.trim() ? row.relevance : 0;
+      const score = diversityScoreForPick(baseScore, m, dimCounts);
+      if (score > bestScore) {
+        bestScore = score;
+        bestI = i;
+      }
+    }
+    const picked = remaining.splice(bestI, 1)[0]!;
+    const ha = handleFromPostBucketKey(picked.key);
+    const pm = handleMeta.get(ha) ?? {
+      sizeKey: 'unknown',
+      gender: '_',
+      mainCategory: '_',
+      audience: '_',
+      profileType: '_',
+    };
+    for (const dk of diversityDimensionKeys(pm)) {
+      dimCounts.set(dk, (dimCounts.get(dk) ?? 0) + 1);
+    }
+    result.push(picked);
+  }
+  return result;
+}
+
+function scratchRowEngagementScore(value: unknown): number {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return 0;
+  const item = value as Record<string, unknown>;
+  const metrics = item.metrics as Record<string, unknown> | undefined;
+  const likes = typeof metrics?.likes === 'number' && Number.isFinite(metrics.likes) ? metrics.likes : 0;
+  const comments =
+    typeof metrics?.comments === 'number' && Number.isFinite(metrics.comments) ? metrics.comments : 0;
+  return likes + comments * 2;
+}
+
+/** Dentro do mesmo nível de boost: relevância, engajamento do post, data (sem intercalar porte). */
+function sortScratchRowsWithinBoostPriority<T extends { key: string; relevance: number; ts?: number; value?: unknown }>(
+  rows: T[],
+  qRaw: string
+): T[] {
+  if (rows.length < 2) return rows;
+  const hasQ = qRaw.trim().length > 0;
+  return [...rows].sort((a, b) => {
+    if (hasQ && b.relevance !== a.relevance) return b.relevance - a.relevance;
+    const engDiff = scratchRowEngagementScore(b.value) - scratchRowEngagementScore(a.value);
+    if (engDiff !== 0) return engDiff;
+    const tsA = typeof a.ts === 'number' && Number.isFinite(a.ts) ? a.ts : 0;
+    const tsB = typeof b.ts === 'number' && Number.isFinite(b.ts) ? b.ts : 0;
+    if (tsB !== tsA) return tsB - tsA;
+    return a.key.localeCompare(b.key);
+  });
+}
+
+/** Com filtro BI ativo: prioridade do boost; dentro do mesmo nível, relevância/engajamento (não diversidade por porte). */
+export function sortScratchRowsByBoostThenDiversity<T extends { key: string; relevance: number; ts?: number; value?: unknown }>(
+  rows: T[],
+  query: ProfilesSearchQuery,
+  boostMeta: Map<string, HandleFacetBoostMeta>,
+  _diversityMeta: Map<string, HandleDiversityMeta>,
+  qRaw: string
+): T[] {
+  if (rows.length < 2) return rows;
+  if (!hasCampaignFacetBoostInQuery(query)) {
+    return sortScratchRowsByFacetDiversity(rows as T[], _diversityMeta, qRaw);
+  }
+  const byPriority = new Map<number, T[]>();
+  for (const row of rows) {
+    const ha = handleFromPostBucketKey(row.key);
+    const p = boostMeta.get(ha)?.priority ?? 0;
+    if (!byPriority.has(p)) byPriority.set(p, []);
+    byPriority.get(p)!.push(row);
+  }
+  const priorities = [...byPriority.keys()].sort((a, b) => b - a);
+  const out: T[] = [];
+  for (const p of priorities) {
+    const group = byPriority.get(p)!;
+    out.push(...sortScratchRowsWithinBoostPriority(group, qRaw));
+  }
+  return out;
+}
+
+function campaignFacetBoostNeedsProfileLoad(query: ProfilesSearchQuery): boolean {
+  return (
+    parseStringArray(query.sizeFilter).length > 0 ||
+    parseStringArray(query.llmProfileType).length > 0 ||
+    parseStringArray(query.llmMainCategory).length > 0 ||
+    parseStringArray(query.llmGender).length > 0 ||
+    parseStringArray(query.llmAudienceType).length > 0 ||
+    (query.engagementRateBuckets?.length ?? 0) > 0 ||
+    (query.avgLikesBuckets?.length ?? 0) > 0 ||
+    (query.postsCountBuckets?.length ?? 0) > 0 ||
+    (query.accountTypeFilter?.length ?? 0) > 0 ||
+    (query.contentTypes?.length ?? 0) > 0 ||
+    (query.cities?.length ?? 0) > 0 ||
+    (query.states?.length ?? 0) > 0
+  );
+}
+
+export type HandleFacetBoostMeta = { priority: number; fc: number };
+
+/** Pontuação de boost por handle (índice normalizado, sem @). */
+export async function loadHandleFacetBoostMeta(
+  db: CompositeStorage,
+  handles: string[],
+  query: ProfilesSearchQuery
+): Promise<Map<string, HandleFacetBoostMeta>> {
+  const out = new Map<string, HandleFacetBoostMeta>();
+  if (handles.length === 0) return out;
+  const needsProfile = campaignFacetBoostNeedsProfileLoad(query);
+  const BATCH = 64;
+  for (let i = 0; i < handles.length; i += BATCH) {
+    const chunk = handles.slice(i, i + BATCH);
+    const auxRows = db.getProfileSearchAuxRowsForHandles(chunk);
+    const fcBy = new Map<string, number>();
+    for (const r of auxRows) {
+      const k = normalizeHandleForFacetBoost(String(r.handle ?? ''));
+      if (!k) continue;
+      const fc =
+        typeof r.followers_count === 'number' && Number.isFinite(r.followers_count) ? r.followers_count : 0;
+      fcBy.set(k, fc);
+    }
+    if (needsProfile) {
+      await Promise.all(
+        chunk.map(async (rawH) => {
+          const hk = normalizeHandleForFacetBoost(rawH);
+          if (!hk) return;
+          const profile = (await db.loadByHandle(rawH)) as Record<string, unknown> | null;
+          const fc = fcBy.get(hk) ?? getFollowersFromProfile(profile);
+          out.set(hk, {
+            priority: computeCampaignFacetBoostPriority(profile, query, fc),
+            fc: typeof fc === 'number' && Number.isFinite(fc) ? fc : 0,
+          });
+        })
+      );
+    } else {
+      const engBy = new Map<string, EngagementStats>();
+      for (const r of auxRows) {
+        const k = normalizeHandleForFacetBoost(String(r.handle ?? ''));
+        if (!k || !r.engagement_json) continue;
+        try {
+          engBy.set(k, JSON.parse(r.engagement_json) as EngagementStats);
+        } catch {
+          /* ignore */
+        }
+      }
+      for (const rawH of chunk) {
+        const hk = normalizeHandleForFacetBoost(rawH);
+        if (!hk) continue;
+        const fc = fcBy.get(hk) ?? 0;
+        const stub: Record<string, unknown> = { followers_count: fc };
+        const eng = engBy.get(hk);
+        if (eng) stub.engagement = eng;
+        out.set(hk, {
+          priority: computeCampaignFacetBoostPriority(stub, query, fc),
+          fc,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Ordena handles antes do scan de posts: perfis que casam com o boost (ex.: celebridade) entram no lote cedo.
+ */
+export async function orderHandlesForCampaignFacetBoost(
+  db: CompositeStorage,
+  handles: string[],
+  query: ProfilesSearchQuery
+): Promise<string[]> {
+  if (!hasCampaignFacetBoostInQuery(query) || handles.length < 2) return handles;
+  const meta = await loadHandleFacetBoostMeta(db, handles, query);
+  return [...handles]
+    .map((h, idx) => {
+      const hk = normalizeHandleForFacetBoost(h);
+      const m = meta.get(hk) ?? { priority: 0, fc: 0 };
+      return { h, priority: m.priority, idx };
+    })
+    .sort((a, b) => {
+      if (b.priority !== a.priority) return b.priority - a.priority;
+      return a.idx - b.idx;
+    })
+    .map((x) => x.h);
+}
+
+/** Ordena perfis da campanha: quem casa com os facets do painel BI sobe (sem remover itens). */
+export function sortProfileListItemsByCampaignFacetBoost(
+  items: ProfileListItem[],
+  query: ProfilesSearchQuery
+): ProfileListItem[] {
+  if (!hasCampaignFacetBoostInQuery(query) || items.length < 2) return items;
+  return [...items]
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const pa = computeCampaignFacetBoostPriority(
+        a.item as unknown as Record<string, unknown>,
+        query,
+        a.item.followers_count
+      );
+      const pb = computeCampaignFacetBoostPriority(
+        b.item as unknown as Record<string, unknown>,
+        query,
+        b.item.followers_count
+      );
+      const boostCmp = compareCampaignFacetBoostPriority(pa, pb);
+      if (boostCmp !== 0) return boostCmp;
+      return a.index - b.index;
+    })
+    .map(({ item }) => item);
 }
 
 /** Filtro por campos de `llm.qualification` (multiselect = OR dentro do mesmo campo). */
@@ -976,6 +1678,17 @@ export function matchesLlmQualificationFilters(record: Record<string, unknown>, 
   }
 
   return true;
+}
+
+/** Filtro por sentimento agregado dos posts (independente de qualification LLM). */
+export function matchesPostSentimentFilter(record: Record<string, unknown>, query: ProfilesSearchQuery): boolean {
+  const selected = parseStringArray(query.llmPostSentiment)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (selected.length === 0) return true;
+  const raw = String(record.llm_post_sentiment ?? '').trim().toLowerCase();
+  if (!raw) return false;
+  return selected.includes(raw);
 }
 
 /** Verifica se rate cai em algum bucket selecionado. Buckets: 0=<1%, 1=1-5%, 5=5%+. */
@@ -1104,6 +1817,7 @@ export interface ProfileSearchIndexPayload {
   categoriesJson: string;
   llmQualificationJson: string | null;
   llmBrandLevel: string | null;
+  llmPostSentiment: ProfilePostSentimentSummary | null;
 }
 
 export function buildProfileSearchIndexPayload(
@@ -1136,6 +1850,7 @@ export function buildProfileSearchIndexPayload(
     });
     llmBrandLevel = normalizeBrandSafetyLevel(qual.brandSafety);
   }
+  const llmPostSentiment = computeProfilePostSentimentFromPosts(posts);
   return {
     ftsText,
     engagementJson: JSON.stringify(engagement),
@@ -1150,6 +1865,7 @@ export function buildProfileSearchIndexPayload(
     categoriesJson,
     llmQualificationJson,
     llmBrandLevel,
+    llmPostSentiment,
   };
 }
 
@@ -1210,6 +1926,13 @@ function buildGlobalAuxLlmSqlFromQuery(query: ProfilesSearchQuery): GlobalAuxSql
     isFamilySafe,
     isAdultContent,
   };
+}
+
+function buildGlobalAuxPostSentimentsFromQuery(query: ProfilesSearchQuery): string[] | null {
+  const sentiments = parseStringArray(query.llmPostSentiment)
+    .map((s) => s.trim().toLowerCase())
+    .filter((s): s is ProfilePostSentimentSummary => s === 'positivo' || s === 'negativo' || s === 'misto');
+  return sentiments.length > 0 ? sentiments : null;
 }
 
 /** Filtro rápido de handles (SQLite `globalAuxSearchHandles`) — post-matches / campanha; evita `searchProfiles` no RocksDB. */
@@ -1311,6 +2034,7 @@ export function narrowHandlesByProfilesQuery(
     pricingDestaqueValues: pricingFilters.destaque?.length ? pricingFilters.destaque : null,
     costTiers: costTierFilter.length > 0 ? costTierFilter.map((s) => String(s).toLowerCase()) : null,
     llm: buildGlobalAuxLlmSqlFromQuery(query),
+    postSentiments: buildGlobalAuxPostSentimentsFromQuery(query),
   };
 
   const CHUNK = 400;
@@ -1502,6 +2226,8 @@ export async function searchProfiles(
     query.llmIsAdultContent === true ||
     query.llmIsAdultContent === false;
 
+  const hasPostSentimentFilterInQuery = parseStringArray(query.llmPostSentiment).length > 0;
+
   const pricingFiltersActive = pricingActivationKeys.some((k) => (pricingFilters[k]?.length ?? 0) > 0);
 
   let followerRanges: { min: number; maxExclusive: number | null }[] | undefined;
@@ -1539,6 +2265,7 @@ export async function searchProfiles(
   }
 
   const globalAuxLlm = buildGlobalAuxLlmSqlFromQuery(query);
+  const globalAuxPostSentiments = buildGlobalAuxPostSentimentsFromQuery(query);
 
   let useGlobalSqlPath = false;
   let globalSqlHandles: string[] = [];
@@ -1575,6 +2302,7 @@ export async function searchProfiles(
       pricingDestaqueValues: pricingFilters.destaque?.length ? pricingFilters.destaque : null,
       costTiers: costTierFilter.length > 0 ? costTierFilter.map((s) => String(s).toLowerCase()) : null,
       llm: globalAuxLlm,
+      postSentiments: globalAuxPostSentiments,
     });
     globalSqlHandles = r.handles;
     useGlobalSqlPath = true;
@@ -1611,6 +2339,7 @@ export async function searchProfiles(
     costTierFilter.length === 0 &&
     sizeFilterSet == null &&
     !hasAnyLlmFilterInQuery &&
+    !hasPostSentimentFilterInQuery &&
     categoriesFilter.length === 0;
 
   let profilesRaw: { key: string; value: Record<string, unknown> }[];
@@ -1647,6 +2376,7 @@ export async function searchProfiles(
       avg_likes: number;
       posts_count: number;
       account_type: number | null;
+      llm_post_sentiment: string | null;
     }
   >();
   for (const r of auxRows) {
@@ -1659,6 +2389,7 @@ export async function searchProfiles(
       avg_likes: r.avg_likes,
       posts_count: r.posts_count,
       account_type: r.account_type,
+      llm_post_sentiment: r.llm_post_sentiment ?? null,
     });
   }
 
@@ -1694,6 +2425,7 @@ export async function searchProfiles(
             avg_likes: payload.avgLikes,
             posts_count: payload.postsCount,
             account_type: payload.accountType,
+            llm_post_sentiment: payload.llmPostSentiment ?? null,
           });
         })
       );
@@ -1740,6 +2472,7 @@ export async function searchProfiles(
             avg_likes: payload.avgLikes,
             posts_count: payload.postsCount,
             account_type: payload.accountType,
+            llm_post_sentiment: payload.llmPostSentiment ?? null,
           });
         })
       );
@@ -1865,6 +2598,7 @@ export async function searchProfiles(
             avg_likes: payload.avgLikes,
             posts_count: payload.postsCount,
             account_type: payload.accountType,
+            llm_post_sentiment: payload.llmPostSentiment ?? null,
           };
           auxByHandle.set(handle, aux);
         } else if (options?.skipAuxBackfill) {
@@ -1878,6 +2612,7 @@ export async function searchProfiles(
             avg_likes: 0,
             posts_count: 0,
             account_type: null,
+            llm_post_sentiment: null,
           };
           auxByHandle.set(handle, aux);
         } else {
@@ -1963,6 +2698,9 @@ export async function searchProfiles(
       };
       Object.assign(item, profile);
       item.categories = categories;
+      if (aux.llm_post_sentiment) {
+        (item as Record<string, unknown>).llm_post_sentiment = aux.llm_post_sentiment;
+      }
       if (q) {
         (item as Record<string, unknown>)._searchable_text = aux.search_blob;
       }
@@ -2133,6 +2871,12 @@ export async function searchProfiles(
     if (hasAnyLlmFilterInQuery) {
       filteredItems = filteredItems.filter((i) =>
         matchesLlmQualificationFilters(i as unknown as Record<string, unknown>, query)
+      );
+    }
+
+    if (hasPostSentimentFilterInQuery) {
+      filteredItems = filteredItems.filter((i) =>
+        matchesPostSentimentFilter(i as unknown as Record<string, unknown>, query)
       );
     }
 

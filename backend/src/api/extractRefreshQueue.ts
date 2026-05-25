@@ -35,6 +35,11 @@ export function setExtractRefreshProcessingHandle(handle: string | null): void {
     : null;
 }
 
+/** Playwright/S3/DB pesados em andamento — busca por legenda deve aliviar carga no RocksDB. */
+export function isExtractRefreshProcessing(): boolean {
+  return refreshProfileProcessingHandle != null;
+}
+
 export function isHandleInExtractRefreshQueue(handle: string): boolean {
   const h = handle.toLowerCase().replace(/^@/, '');
   if (refreshProfileProcessingHandle === h) return true;

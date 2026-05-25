@@ -791,6 +791,15 @@ body {
 }
 
 /* ER Gauge Chart: em mobile quebra para linhas (gauge em cima, textos abaixo) */
+@media (max-width: 767.98px) {
+  .er-gauge-chart__title {
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.35;
+    max-width: 100%;
+  }
+}
+
 @media (max-width: 576px) {
   .er-gauge-chart__row {
     flex-direction: column !important;
@@ -808,6 +817,7 @@ body {
   .er-gauge-chart__row>div:last-child>div {
     text-align: center !important;
     align-items: center !important;
+    min-width: 0;
   }
 }
 

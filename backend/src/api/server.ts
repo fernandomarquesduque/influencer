@@ -39,6 +39,7 @@ import {
   getProfileEngagementByType,
   isSearchCacheWarmBlockedError,
   scheduleSearchCacheRewarm,
+  scheduleSearchCacheRewarmDebounced,
   scheduleSearchCacheWarmRetries,
   warmSearchCache,
   getLlmQualification,
@@ -55,6 +56,16 @@ import {
   collectMentionHandlesFromPostItem,
   computeCampaignFacetBoostScore,
   hasCampaignFacetBoostInQuery,
+  sortProfileListItemsByCampaignFacetBoost,
+  sortPostMatchItemsByCampaignFacetBoost,
+  orderHandlesForCampaignFacetBoost,
+  loadHandleFacetBoostMeta,
+  loadHandleDiversityMeta,
+  orderHandlesForFacetDiversity,
+  sortScratchRowsByFacetDiversity,
+  sortScratchRowsByBoostThenDiversity,
+  type HandleFacetBoostMeta,
+  type HandleDiversityMeta,
   stripCampaignFacetBoostFromProfilesQuery,
   type ProfilesSearchQuery,
   type ProfileListItem,
@@ -76,6 +87,7 @@ import {
   getFollowersFromProfile,
   isPricingEmpty,
 } from '../utils/suggestedPricing.js';
+import { checkApiRateLimit, getRetryAfterSeconds } from '../utils/apiRateLimit.js';
 import { get429BackoffMs, record429 } from '../utils/rateLimit429.js';
 import { sendVerificationCode, sendDirectMessage } from '../instagramClient/sendDirectMessage.js';
 import { followUser, followUserFromCurrentPage } from '../instagramClient/followUser.js';
@@ -85,7 +97,6 @@ import { extractProfile, extractReelsAndTaggedFromCurrentPage } from '../profile
 import { isFollowingViewerFromEntity } from '../utils/entityAccess.js';
 import { AuthDb } from '../auth/authDb.js';
 import { authOptional, requireScopes, requireScopesOrPublic, canEditProfile, type RequestWithAuth } from '../auth/middleware.js';
-import { checkApiRateLimit, getRetryAfterSeconds } from '../utils/apiRateLimit.js';
 import {
   redactContactInfoInActivation,
   redactContactInfoInPostItems,
@@ -127,6 +138,7 @@ import {
   dequeueExtractRefreshHandle,
   enqueueExtractRefresh,
   getExtractRefreshQueueSnapshot,
+  isExtractRefreshProcessing,
   isExtractRefreshPriority,
   isHandleInExtractRefreshQueue,
   setExtractRefreshProcessingHandle,
@@ -201,17 +213,32 @@ process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) =>
 
 const rocks = new RocksDBStorage({ dbPath: rocksPath });
 const sqlite = new SqliteSync(sqlitePath);
+/** Fila serial de sync FTS — evita SQLITE_BUSY zerando MATCH durante refresh em rajada. */
+let profileSearchIndexSyncChain: Promise<void> = Promise.resolve();
+
+function queueProfileSearchIndexSync(storage: CompositeStorage, handle: string): void {
+  profileSearchIndexSyncChain = profileSearchIndexSyncChain
+    .then(() => syncProfileSearchIndexForHandle(storage, handle))
+    .catch((e) =>
+      console.warn(
+        '[profile-search-index] sync enfileirado:',
+        handle,
+        e instanceof Error ? e.message : e
+      )
+    );
+}
+
 const db = new CompositeStorage(
   rocks,
   sqlite,
-  (storage) => scheduleSearchCacheRewarm(storage),
+  (storage) => scheduleSearchCacheRewarmDebounced(storage),
   (storage, handle) => {
     try {
       profileRefDb.getOrCreateRef(handle);
     } catch (_) {
       /* handle inválido */
     }
-    void syncProfileSearchIndexForHandle(storage, handle);
+    queueProfileSearchIndexSync(storage, handle);
   }
 );
 const collectorController = createCollectorController(db);
@@ -574,6 +601,10 @@ function processNextRefresh(): void {
     .finally(() => {
       setExtractRefreshProcessingHandle(null);
       dequeueExtractRefreshHandle(handle);
+      const snap = getExtractRefreshQueueSnapshot();
+      if (snap.length === 0 && snap.processing_handle == null) {
+        scheduleSearchCacheRewarmDebounced(db);
+      }
       processNextRefresh();
     });
 }
@@ -2324,12 +2355,12 @@ function parseCostTierFilter(v: unknown): string[] | undefined {
   return filtered.length > 0 ? filtered : undefined;
 }
 
-/** Requisições por minuto por IP (anônimo). Configurável por API_RATE_LIMIT_PER_MIN_IP. */
-const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 120;
+/** Requisições por minuto por IP (anônimo). Configurável por API_RATE_LIMIT_PER_MIN_IP (padrão 600). */
+const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 600;
 /** Requisições por minuto por usuário (public/influencer). Configurável por API_RATE_LIMIT_PER_MIN_USER. */
-const RATE_LIMIT_PER_MIN_USER = Number(process.env.API_RATE_LIMIT_PER_MIN_USER) || 120;
+const RATE_LIMIT_PER_MIN_USER = Number(process.env.API_RATE_LIMIT_PER_MIN_USER) || 600;
 /** Requisições por minuto para adm/assinante. Configurável por API_RATE_LIMIT_PER_MIN_SUBSCRIBER. */
-const RATE_LIMIT_PER_MIN_SUBSCRIBER = Number(process.env.API_RATE_LIMIT_PER_MIN_SUBSCRIBER) || 300;
+const RATE_LIMIT_PER_MIN_SUBSCRIBER = Number(process.env.API_RATE_LIMIT_PER_MIN_SUBSCRIBER) || 1200;
 
 function getClientKeyForRateLimit(req: RequestWithAuth): string {
   if (req.user) return `u:${req.user.sub}`;
@@ -2780,6 +2811,7 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
       llmAudienceType: optStrList(req.query.llmAudienceType),
       llmToneOfVoice: optStrList(req.query.llmToneOfVoice),
       llmRiskLevel: optStrList(req.query.llmRiskLevel),
+      llmPostSentiment: optStrList(req.query.llmPostSentiment),
       ...(llmIsFamilySafe !== undefined ? { llmIsFamilySafe } : {}),
       ...(llmIsAdultContent !== undefined ? { llmIsAdultContent } : {}),
       sort,
@@ -5759,12 +5791,36 @@ function buildCampaignProfilesQuery(
     llmAudienceType: optStrList(req.query.llmAudienceType),
     llmToneOfVoice: optStrList(req.query.llmToneOfVoice),
     llmRiskLevel: optStrList(req.query.llmRiskLevel),
+    llmPostSentiment: optStrList(req.query.llmPostSentiment),
     ...(llmIsFamilySafe !== undefined ? { llmIsFamilySafe } : {}),
     ...(llmIsAdultContent !== undefined ? { llmIsAdultContent } : {}),
     sort,
     limit,
     offset,
   };
+}
+
+async function searchCampaignProfilesFromRequest(
+  req: { query: Record<string, unknown> },
+  contextItems: ProfileListItem[],
+  campaignBaseFacets: ProfilesSearchFacets | undefined,
+  extra?: { skipInstagramBi?: boolean }
+) {
+  const rawQuery = buildCampaignProfilesQuery(req, { maxLimit: 10000 });
+  const facetBoostSort =
+    req.query.facetBoostSort === '1' && hasCampaignFacetBoostInQuery(rawQuery);
+  const filterQuery = facetBoostSort
+    ? stripCampaignFacetBoostFromProfilesQuery(rawQuery)
+    : rawQuery;
+  const result = await searchProfiles(db, filterQuery, {
+    initialItems: contextItems,
+    ...(campaignBaseFacets != null ? { campaignBaseFacets } : {}),
+    ...(extra?.skipInstagramBi ? { skipInstagramBi: true } : {}),
+  });
+  if (facetBoostSort) {
+    result.items = sortProfileListItemsByCampaignFacetBoost(result.items, rawQuery);
+  }
+  return result;
 }
 
 /** Admin: lista todos os perfis (índice) com filtros iguais à busca de campanha + facetas LLM; até 500 por página. */
@@ -6004,7 +6060,6 @@ function requireCampaignIdHeader(req: RequestWithAuth, res: Response, next: () =
 app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
   try {
     const cacheKey = 'all-base:public-v2';
-    const query = buildCampaignProfilesQuery(req, { maxLimit: 10000 });
     const ctxAll = getCachedCampaignContext(cacheKey);
     let contextItems: ProfileListItem[];
     let campaignBaseFacets: ProfilesSearchFacets | undefined;
@@ -6021,10 +6076,7 @@ app.get('/api/campaigns/all/profiles', rateLimitDataApi, async (req: RequestWith
       contextItems = ctxAll.items;
       campaignBaseFacets = ctxAll.baseFacets;
     }
-    const result = await searchProfiles(db, query, {
-      initialItems: contextItems,
-      ...(campaignBaseFacets != null ? { campaignBaseFacets } : {}),
-    });
+    const result = await searchCampaignProfilesFromRequest(req, contextItems, campaignBaseFacets);
     res.json({ total: result.total, items: prepareProfileListItemsForApiResponse(result.items, req), facets: result.facets });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -6057,7 +6109,6 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
     const payment = paymentsDb.getByCampaignId(campaignId, userId);
     const pendingPayment = campaign.payment_status === 'pending';
 
-    const query = buildCampaignProfilesQuery(req, { maxLimit: 10000 });
     const ctxCamp = getCachedCampaignContext(campaignId);
     let contextItems: ProfileListItem[];
     let campaignBaseFacets: ProfilesSearchFacets | undefined;
@@ -6074,12 +6125,21 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
       contextItems = ctxCamp.items;
       campaignBaseFacets = ctxCamp.baseFacets;
     }
-    const queryForResult = pendingPayment ? { ...query, limit: 10000, offset: 0 } : query;
-    const result = await searchProfiles(db, queryForResult, {
-      initialItems: contextItems,
-      ...(campaignBaseFacets != null ? { campaignBaseFacets } : {}),
-      ...(pendingPayment ? { skipInstagramBi: true } : {}),
-    });
+    const reqForSearch = pendingPayment
+      ? {
+          query: {
+            ...req.query,
+            limit: '10000',
+            offset: '0',
+          },
+        }
+      : req;
+    const result = await searchCampaignProfilesFromRequest(
+      reqForSearch,
+      contextItems,
+      campaignBaseFacets,
+      pendingPayment ? { skipInstagramBi: true } : undefined
+    );
 
     if (pendingPayment) {
       let activatedCount = 0;
@@ -6736,6 +6796,11 @@ const POST_MATCHES_MAX_SCAN_HANDLES = Math.max(
   40,
   Number(process.env.POST_MATCHES_MAX_SCAN_HANDLES) || 180
 );
+/** Quando o FTS não responde (ex.: SQLite ocupado no fim da extração), scan amplo no RocksDB. */
+const POST_MATCHES_FTS_MISS_MAX_SCAN = Math.max(
+  500,
+  Number(process.env.POST_MATCHES_FTS_MISS_MAX_SCAN) || 3500
+);
 /** Posts além de offset+limit antes de parar o scan (1 post/perfil → poucos perfis bastam). */
 const POST_MATCHES_EARLY_STOP_BUFFER = 4;
 
@@ -6835,45 +6900,63 @@ function postMatchesFacetBoostFingerprint(req: RequestWithAuth): string {
   return crypto.createHash('sha256').update(JSON.stringify(base)).digest('hex').slice(0, 12);
 }
 
+function comparePostRowsByFacetBoostThenDefault(
+  a: PostMatchRowScratch,
+  b: PostMatchRowScratch,
+  qRaw: string,
+  handleMeta: Map<string, HandleFacetBoostMeta>
+): number {
+  const ha = postBucketKeyToHandle(a.key);
+  const hb = postBucketKeyToHandle(b.key);
+  const ma = handleMeta.get(ha) ?? { priority: 0, fc: 0 };
+  const mb = handleMeta.get(hb) ?? { priority: 0, fc: 0 };
+  if (mb.priority !== ma.priority) return mb.priority - ma.priority;
+  if (qRaw) {
+    if (b.relevance !== a.relevance) return b.relevance - a.relevance;
+    const engDiff = postMatchEngagementScore(b.value) - postMatchEngagementScore(a.value);
+    if (engDiff !== 0) return engDiff;
+  }
+  const rankA = postMatchTaggedRank(a.ct);
+  const rankB = postMatchTaggedRank(b.ct);
+  if (rankA !== rankB) return rankA - rankB;
+  return b.ts - a.ts || a.key.localeCompare(b.key);
+}
+
 async function sortPostMatchRowsByCampaignFacetBoost(
   rows: PostMatchesCachedRow[],
-  query: ProfilesSearchQuery
+  query: ProfilesSearchQuery,
+  preloadedMeta?: Map<string, HandleFacetBoostMeta>
 ): Promise<PostMatchesCachedRow[]> {
   if (!hasCampaignFacetBoostInQuery(query) || rows.length < 2) return rows;
-  const handleScores = new Map<string, number>();
   const handles = [...new Set(rows.map((r) => postBucketKeyToHandle(r.key)).filter(Boolean))];
-  await Promise.all(
-    handles.map(async (h) => {
-      const profile = (await db.loadByHandle(h)) as Record<string, unknown> | null;
-      const auxRows = db.getProfileSearchAuxRowsForHandles([h]);
-      const fc = auxRows[0]?.followers_count;
-      handleScores.set(h, computeCampaignFacetBoostScore(profile, query, fc));
-    })
-  );
+  const handleMeta =
+    preloadedMeta ?? (await loadHandleFacetBoostMeta(db, handles, query));
   return [...rows]
     .map((row, index) => ({ row, index }))
     .sort((a, b) => {
       const ha = postBucketKeyToHandle(a.row.key);
       const hb = postBucketKeyToHandle(b.row.key);
-      const sa = handleScores.get(ha) ?? 0;
-      const sb = handleScores.get(hb) ?? 0;
-      if (sb !== sa) return sb - sa;
+      const ma = handleMeta.get(ha) ?? { priority: 0, fc: 0 };
+      const mb = handleMeta.get(hb) ?? { priority: 0, fc: 0 };
+      if (mb.priority !== ma.priority) return mb.priority - ma.priority;
       return a.index - b.index;
     })
     .map(({ row }) => row);
 }
 
-function postMatchesCacheGet(key: string): PostMatchesCachePayload | null {
+function postMatchesCacheGet(key: string, staleGraceMs = 0): PostMatchesCachePayload | null {
   const e = postMatchesResultCache.get(key);
   const now = Date.now();
-  if (!e || e.expires <= now) {
-    if (e) postMatchesResultCache.delete(key);
-    return null;
-  }
-  return e.payload;
+  if (!e) return null;
+  if (e.expires > now) return e.payload;
+  if (staleGraceMs > 0 && e.expires + staleGraceMs > now) return e.payload;
+  postMatchesResultCache.delete(key);
+  return null;
 }
 
-function postMatchesCacheSet(key: string, payload: PostMatchesCachePayload): void {
+function postMatchesCacheSet(key: string, payload: PostMatchesCachePayload, qRaw = ''): void {
+  /** Não congelar “0 posts” por 90s após extração/FTS em rajada — usuário vê vazio até o TTL expirar. */
+  if (qRaw.trim() && payload.total === 0) return;
   const now = Date.now();
   for (const [k, v] of postMatchesResultCache) {
     if (v.expires <= now) postMatchesResultCache.delete(k);
@@ -6916,20 +6999,24 @@ function postMatchNarrowCacheSet(key: string, handles: string[]): void {
 /**
  * Pré-filtra handles pelo índice FTS (legendas/posts agregados no SQLite).
  * FTS com OR entre tokens (qualquer palavra); BM25 ordena quem bate mais termos.
- * Se zero linhas no índice, retorna [] (nenhum token relacionado no corpus).
+ * Se o FTS não retornar hits, mantém o universo de handles — o scan no RocksDB ainda casa legenda (`matchesQuery`).
  */
-function scopeHandlesForPostCaptionSearch(
-  handlesUniverse: string[],
-  qRaw: string
-): { handles: string[]; ftsRankByHandle: Map<string, number> } {
+type PostCaptionSearchScope = {
+  handles: string[];
+  ftsRankByHandle: Map<string, number>;
+  /** FTS sem hits (SQLite ocupado ou índice atrasado) — scan amplo no RocksDB. */
+  ftsPrefilterMiss: boolean;
+};
+
+function scopeHandlesForPostCaptionSearch(handlesUniverse: string[], qRaw: string): PostCaptionSearchScope {
   const trimmed = qRaw.trim();
   if (!trimmed) {
-    return { handles: handlesUniverse, ftsRankByHandle: new Map() };
+    return { handles: handlesUniverse, ftsRankByHandle: new Map(), ftsPrefilterMiss: false };
   }
   const limit = postMatchesFtsHandleLimitForQuery(trimmed);
   const exprs = userQueryToFtsMatchExpressions(trimmed);
   if (exprs.length === 0) {
-    return { handles: handlesUniverse, ftsRankByHandle: new Map() };
+    return { handles: handlesUniverse, ftsRankByHandle: new Map(), ftsPrefilterMiss: true };
   }
   const rankMaps: Map<string, number>[] = [];
   for (const expr of exprs) {
@@ -6938,7 +7025,7 @@ function scopeHandlesForPostCaptionSearch(
     rankMaps.push(ftsRowsToRankMap(rows));
   }
   if (rankMaps.length === 0) {
-    return { handles: [], ftsRankByHandle: new Map() };
+    return { handles: handlesUniverse, ftsRankByHandle: new Map(), ftsPrefilterMiss: true };
   }
   const ftsRankByHandle = mergeFtsRankMaps(rankMaps);
   const universe = new Set(handlesUniverse.map((h) => normalizeHandle(h)).filter(Boolean));
@@ -6950,7 +7037,10 @@ function scopeHandlesForPostCaptionSearch(
     seen.add(h);
     out.push(h);
   }
-  return { handles: out, ftsRankByHandle };
+  if (out.length === 0) {
+    return { handles: handlesUniverse, ftsRankByHandle: new Map(), ftsPrefilterMiss: true };
+  }
+  return { handles: out, ftsRankByHandle, ftsPrefilterMiss: false };
 }
 
 /** Filtros de perfil na query string (LLM, porte, geo, etc.) — `q` aqui é só legenda dos posts (tratado à parte). */
@@ -6985,6 +7075,7 @@ function postMatchesHasProfileSideFilters(pq: ProfilesSearchQuery): boolean {
     pq.llmAudienceType,
     pq.llmToneOfVoice,
     pq.llmRiskLevel,
+    pq.llmPostSentiment,
   ];
   if (llmArr.some((a) => (a?.length ?? 0) > 0)) return true;
   if (pq.llmIsFamilySafe === true || pq.llmIsFamilySafe === false) return true;
@@ -7000,6 +7091,7 @@ function narrowPostMatchHandlesByProfileFilters(
   if (scopedHandles.length === 0) return scopedHandles;
   const base = buildCampaignProfilesQuery(req, { maxLimit: 1 });
   const pq: ProfilesSearchQuery = { ...base, q: undefined };
+  /** Porte/LLM do painel BI só ordenam (`facetBoostSort`); não restringem handles na legenda. */
   if (!postMatchesHasProfileSideFilters(stripCampaignFacetBoostFromProfilesQuery(pq))) return scopedHandles;
   const norm = scopedHandles.map((h) => normalizeHandle(h)).filter(Boolean);
   const nKey = postMatchNarrowCacheKey(norm, pq);
@@ -7017,7 +7109,8 @@ async function runPostMatchesForHandles(
   req: RequestWithAuth,
   res: Response,
   normHandles: string[],
-  ftsRankByHandle: Map<string, number> = new Map()
+  ftsRankByHandle: Map<string, number> = new Map(),
+  opts?: { ftsPrefilterMiss?: boolean }
 ): Promise<void> {
   try {
     const handleSet = new Set(normHandles.map((h) => normalizeHandle(h)));
@@ -7036,14 +7129,23 @@ async function runPostMatchesForHandles(
       normHandles.length > 0
         ? postMatchesCacheKey(cacheOwner, normHandles, qRaw, typeFilters, boostFp)
         : '';
-    const cached = cacheKey ? postMatchesCacheGet(cacheKey) : null;
-
+    const cachedFresh = cacheKey ? postMatchesCacheGet(cacheKey) : null;
+    const cached =
+      cachedFresh ??
+      (cacheKey && isExtractRefreshProcessing()
+        ? postMatchesCacheGet(cacheKey, POST_MATCHES_CACHE_TTL_MS)
+        : null);
+    const sortQuery = buildCampaignProfilesQuery(req, { maxLimit: 1 });
+    const facetBoostSortActive =
+      req.query.facetBoostSort === '1' && hasCampaignFacetBoostInQuery(sortQuery);
     let orderedRows: PostMatchesCachedRow[];
     let total: number;
     let mediaKindCounts: Record<string, number>;
     let scanPartial = false;
     let handlesScanned = 0;
     const handlesTotal = normHandles.length;
+    let handleBoostMeta = new Map<string, HandleFacetBoostMeta>();
+    let handleDiversityMeta = new Map<string, HandleDiversityMeta>();
 
     if (cached) {
       orderedRows = cached.rows;
@@ -7054,19 +7156,42 @@ async function runPostMatchesForHandles(
     } else {
       const bestPerHandle = new Map<string, PostMatchRowScratch>();
 
+      let scanHandles = normHandles;
+      if (qRaw) {
+        scanHandles = facetBoostSortActive
+          ? await orderHandlesForCampaignFacetBoost(db, normHandles, sortQuery)
+          : await orderHandlesForFacetDiversity(db, normHandles);
+      }
+      if (facetBoostSortActive) {
+        handleBoostMeta = await loadHandleFacetBoostMeta(db, scanHandles, sortQuery);
+      }
+
       const buildFilteredSorted = (): PostMatchesCachedRow[] => {
-        const sorted = [...bestPerHandle.values()].sort((a, b) => {
-          if (qRaw) {
-            if (b.relevance !== a.relevance) return b.relevance - a.relevance;
-            const engDiff =
-              postMatchEngagementScore(b.value) - postMatchEngagementScore(a.value);
-            if (engDiff !== 0) return engDiff;
-          }
-          const rankA = postMatchTaggedRank(a.ct);
-          const rankB = postMatchTaggedRank(b.ct);
-          if (rankA !== rankB) return rankA - rankB;
-          return b.ts - a.ts || a.key.localeCompare(b.key);
-        });
+        let sorted = [...bestPerHandle.values()];
+        if (facetBoostSortActive && sorted.length > 1 && handleBoostMeta.size > 0) {
+          sorted = sortScratchRowsByBoostThenDiversity(
+            sorted,
+            sortQuery,
+            handleBoostMeta,
+            handleDiversityMeta,
+            qRaw
+          );
+        } else if (qRaw && sorted.length > 1 && handleDiversityMeta.size > 0) {
+          sorted = sortScratchRowsByFacetDiversity(sorted, handleDiversityMeta, qRaw);
+        } else {
+          sorted.sort((a, b) => {
+            if (qRaw) {
+              if (b.relevance !== a.relevance) return b.relevance - a.relevance;
+              const engDiff =
+                postMatchEngagementScore(b.value) - postMatchEngagementScore(a.value);
+              if (engDiff !== 0) return engDiff;
+            }
+            const rankA = postMatchTaggedRank(a.ct);
+            const rankB = postMatchTaggedRank(b.ct);
+            if (rankA !== rankB) return rankA - rankB;
+            return b.ts - a.ts || a.key.localeCompare(b.key);
+          });
+        }
         const filtered =
           typeFilters.length > 0 ? sorted.filter((x) => typeFilters.includes(x.ct)) : sorted;
         return filtered.map(({ key, value, ct }) => ({ key, value, ct }));
@@ -7095,11 +7220,17 @@ async function runPostMatchesForHandles(
         }
       };
 
-      const maxScan = Math.min(normHandles.length, POST_MATCHES_MAX_SCAN_HANDLES);
+      const richFacetScan = Boolean(qRaw);
+      const ftsPrefilterMiss = opts?.ftsPrefilterMiss === true;
+      const maxScan = qRaw
+        ? ftsPrefilterMiss
+          ? Math.min(scanHandles.length, POST_MATCHES_FTS_MISS_MAX_SCAN)
+          : Math.min(scanHandles.length, Math.max(POST_MATCHES_MAX_SCAN_HANDLES, 500))
+        : Math.min(scanHandles.length, POST_MATCHES_MAX_SCAN_HANDLES);
       const needCount = limit > 0 ? offset + limit : 0;
 
       for (let i = 0; i < maxScan; i += POST_MATCHES_HANDLE_BATCH) {
-        const batch = normHandles.slice(i, i + POST_MATCHES_HANDLE_BATCH);
+        const batch = scanHandles.slice(i, i + POST_MATCHES_HANDLE_BATCH);
         const parts = await Promise.all(
           batch.map((h) =>
             db.getByBucket<Record<string, unknown>>('post', `${h}:`, { sort: false })
@@ -7108,24 +7239,33 @@ async function runPostMatchesForHandles(
         for (const items of parts) ingestPosts(items);
         handlesScanned = Math.min(i + batch.length, maxScan);
 
-        if (needCount > 0) {
+        if (needCount > 0 && qRaw) {
           const rowsSoFar = buildFilteredSorted();
           if (rowsSoFar.length >= needCount + POST_MATCHES_EARLY_STOP_BUFFER) {
-            if (handlesScanned < normHandles.length) scanPartial = true;
+            if (handlesScanned < scanHandles.length) scanPartial = true;
+            break;
+          }
+        } else if (needCount > 0 && !richFacetScan) {
+          const rowsSoFar = buildFilteredSorted();
+          if (rowsSoFar.length >= needCount + POST_MATCHES_EARLY_STOP_BUFFER) {
+            if (handlesScanned < scanHandles.length) scanPartial = true;
             break;
           }
         }
       }
 
-      if (handlesScanned < normHandles.length && handlesScanned >= maxScan) {
+      if (handlesScanned < scanHandles.length && handlesScanned >= maxScan) {
         scanPartial = true;
       }
 
-      orderedRows = buildFilteredSorted();
-      const sortQuery = buildCampaignProfilesQuery(req, { maxLimit: 1 });
-      if (req.query.facetBoostSort === '1' && hasCampaignFacetBoostInQuery(sortQuery)) {
-        orderedRows = await sortPostMatchRowsByCampaignFacetBoost(orderedRows, sortQuery);
+      if (qRaw && bestPerHandle.size > 0 && handleDiversityMeta.size === 0) {
+        const rowHandles = [...bestPerHandle.values()]
+          .map((r) => postBucketKeyToHandle(r.key))
+          .filter(Boolean);
+        handleDiversityMeta = await loadHandleDiversityMeta(db, rowHandles);
       }
+
+      orderedRows = buildFilteredSorted();
 
       mediaKindCounts = {};
       for (const row of bestPerHandle.values()) {
@@ -7135,15 +7275,59 @@ async function runPostMatchesForHandles(
 
       total = orderedRows.length;
       if (!scanPartial && cacheKey) {
-        postMatchesCacheSet(cacheKey, {
-          total,
-          mediaKindCounts,
-          rows: orderedRows,
-          scanPartial: false,
-          handlesScanned: handlesTotal,
-          handlesTotal,
-        });
+        postMatchesCacheSet(
+          cacheKey,
+          {
+            total,
+            mediaKindCounts,
+            rows: orderedRows,
+            scanPartial: false,
+            handlesScanned: handlesTotal,
+            handlesTotal,
+          },
+          qRaw
+        );
       }
+    }
+
+    if (qRaw && orderedRows.length > 1) {
+      const scratchRows = orderedRows.map((row) => {
+        const item = row.value;
+        let relevance = 0;
+        const h = postBucketKeyToHandle(row.key);
+        const searchable = getPostSearchableNormalized(item);
+        const mq = matchesQuery(searchable, qRaw);
+        if (mq.match) {
+          relevance = combineSearchRelevance(mq.relevance, ftsRankByHandle.get(h));
+        }
+        return {
+          key: row.key,
+          relevance,
+          value: item,
+          ts: getPostTimestamp(item) ?? 0,
+          ct: row.ct,
+        };
+      });
+      const rowHandles = [...new Set(scratchRows.map((r) => postBucketKeyToHandle(r.key)).filter(Boolean))];
+      if (handleDiversityMeta.size === 0) {
+        handleDiversityMeta = await loadHandleDiversityMeta(db, rowHandles);
+      }
+      let sortedScratch = scratchRows;
+      if (facetBoostSortActive) {
+        if (handleBoostMeta.size === 0) {
+          handleBoostMeta = await loadHandleFacetBoostMeta(db, rowHandles, sortQuery);
+        }
+        sortedScratch = sortScratchRowsByBoostThenDiversity(
+          scratchRows,
+          sortQuery,
+          handleBoostMeta,
+          handleDiversityMeta,
+          qRaw
+        );
+      } else {
+        sortedScratch = sortScratchRowsByFacetDiversity(scratchRows, handleDiversityMeta, qRaw);
+      }
+      orderedRows = sortedScratch.map(({ key, value, ct }) => ({ key, value, ct }));
     }
 
     const scanMeta =
@@ -7157,18 +7341,20 @@ async function runPostMatchesForHandles(
       handlesOnlyRaw === 'true' ||
       String(handlesOnlyRaw ?? '').toLowerCase() === 'yes';
     if (handlesOnly && qRaw) {
-      const profileHandlesSet = new Set<string>();
+      const profileHandlesOrdered: string[] = [];
+      const profileHandlesSeen = new Set<string>();
       for (const row of orderedRows) {
         const h = postBucketKeyToHandle(row.key);
-        if (h) profileHandlesSet.add(h);
+        if (!h || profileHandlesSeen.has(h)) continue;
+        profileHandlesSeen.add(h);
+        profileHandlesOrdered.push(h);
       }
-      const profileHandles = [...profileHandlesSet].sort((a, b) => a.localeCompare(b));
-      const profileRefs = profileHandles.map((h) => profileRefDb.getOrCreateRef(h));
+      const profileRefs = profileHandlesOrdered.map((h) => profileRefDb.getOrCreateRef(h));
       const payload = {
         total,
         items: [] as unknown[],
         profileRefs,
-        ...(shouldIncludeHandleInApi(req) ? { profileHandles } : {}),
+        ...(shouldIncludeHandleInApi(req) ? { profileHandles: profileHandlesOrdered } : {}),
         mediaKindCounts,
         q: qRaw || undefined,
         ...(scanMeta ? { scanMeta } : {}),
@@ -7237,9 +7423,14 @@ async function runPostMatchesForHandles(
       };
     }
 
+    const itemsForResponse: typeof slice =
+      facetBoostSortActive && slice.length > 1
+        ? (sortPostMatchItemsByCampaignFacetBoost(slice, sortQuery) as typeof slice)
+        : slice;
+
     res.json({
       total,
-      items: preparePostItemsForApiResponse(slice, req),
+      items: preparePostItemsForApiResponse(itemsForResponse, req),
       q: qRaw || undefined,
       mediaKindCounts,
       ...(scanMeta ? { scanMeta } : {}),
@@ -7270,7 +7461,9 @@ app.get('/api/campaigns/all/post-matches', rateLimitDataApi, async (req: Request
       return;
     }
     const narrowedAll = narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
-    await runPostMatchesForHandles(req, res, narrowedAll, scoped.ftsRankByHandle);
+    await runPostMatchesForHandles(req, res, narrowedAll, scoped.ftsRankByHandle, {
+      ftsPrefilterMiss: scoped.ftsPrefilterMiss,
+    });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -7305,7 +7498,9 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
       return;
     }
     const narrowed = narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
-    await runPostMatchesForHandles(req, res, narrowed, scoped.ftsRankByHandle);
+    await runPostMatchesForHandles(req, res, narrowed, scoped.ftsRankByHandle, {
+      ftsPrefilterMiss: scoped.ftsPrefilterMiss,
+    });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }

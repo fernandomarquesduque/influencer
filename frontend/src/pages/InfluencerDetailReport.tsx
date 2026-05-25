@@ -223,9 +223,7 @@ export function ReportHero({
         fontSize: isMobile ? 10 : 11,
         fontWeight: 700,
         lineHeight: 1.35,
-        maxWidth: '100%',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
         boxShadow: 'none',
       }}
     >
@@ -1099,11 +1097,8 @@ export function EngajamentoPorTipoSection({ engagementByType, rowGutter = [s.lg,
     cursor: 'help' as const,
   })
   const gridStyle: React.CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     columnGap: gridGap,
     rowGap: gridGap,
-    width: '100%',
   }
 
   return (
