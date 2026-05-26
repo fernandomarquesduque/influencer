@@ -4,10 +4,13 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
 import { Typography, Tooltip } from 'antd'
 import OriginSearchEmptyState from './OriginSearchEmptyState'
+import { openBuscaInfluencerPlansModal } from '../utils/openPlansModal'
 import './CampaignOriginGallery.css'
 import {
   fetchCampaignPostMatches,
+  isPublicSearchLimitError,
   isRateLimitError,
+  publicSearchLimitRetryAfterSeconds,
   rateLimitRetryAfterSeconds,
   getPostCoverDisplayUrl,
   getPostStablePreviewUrl,
@@ -16,6 +19,7 @@ import {
   type MediaKind,
   type ProfilesSearchQuery,
   type ProfileListItem,
+  type OriginPostSort,
 } from '../api'
 import { resolveMediaUrl } from '../constants/profilePaths'
 import { PostPreviewMedia } from './PostPreviewCard'
@@ -23,21 +27,19 @@ import ProfileAvatar from './ProfileAvatar'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { getInfluencerTierShort } from '../utils/influencerTier'
 import InfluencerTierPill from './InfluencerTierPill'
-import {
-  getLlmTripleBadgesFromLlmRoot,
-} from '../utils/campaignLlmBadges'
 import HighlightedSearchText from './HighlightedSearchText'
 import { getCaptionSnippetForSearch } from '../utils/queryRelevance'
 import { queueMediaRefreshFromPost } from '../utils/queueMediaRefreshForProfile'
 import type { InfluencerConnectSnapshot } from './InfluencerConnectModal/InfluencerConnectModal'
 import { getLlmDescriptionLine, getProfilePersonaSummary } from '../utils/mapProfileListToPreviewItems'
-import { formatFacetLabel } from '../utils/facetLabels'
 import {
   pickCampaignFacetBoostFromQuery,
   hasCampaignFacetBoost,
   sortPostsByCampaignFacetBoost,
   sortPostsByBoostThenSearchRelevance,
   sortPostsBySearchRelevance,
+  sortPostsByOriginDisplay,
+  filterPostsBySearchWhere,
 } from '../utils/campaignFilterClient'
 
 const { Text } = Typography
@@ -55,19 +57,24 @@ function orderPostMatchItems(
     facetBoostQuery: Partial<ProfilesSearchQuery> | undefined
     hasSearchTerm: boolean
     searchQuery: string
+    originPostSort?: OriginPostSort
   }
 ): PostItem[] {
   const qTrim = opts.searchQuery.trim()
-  if (qTrim && opts.facetBoostForApi && opts.facetBoostQuery) {
-    return sortPostsByBoostThenSearchRelevance(posts, opts.facetBoostQuery, qTrim)
+  const filtered = qTrim ? filterPostsBySearchWhere(posts, qTrim) : posts
+  if (opts.originPostSort) {
+    return sortPostsByOriginDisplay(filtered, opts.originPostSort)
+  }
+  if (qTrim && opts.facetBoostQuery && hasCampaignFacetBoost(opts.facetBoostQuery)) {
+    return sortPostsByBoostThenSearchRelevance(filtered, opts.facetBoostQuery, qTrim)
   }
   if (qTrim) {
-    return sortPostsBySearchRelevance(posts, qTrim)
+    return sortPostsBySearchRelevance(filtered, qTrim)
   }
   if (opts.facetBoostForApi && opts.facetBoostQuery) {
-    return sortPostsByCampaignFacetBoost(posts, opts.facetBoostQuery)
+    return sortPostsByCampaignFacetBoost(filtered, opts.facetBoostQuery)
   }
-  return posts
+  return filtered
 }
 
 function mergePostMatchPage(
@@ -133,64 +140,6 @@ export function OriginGalleryLoadingState() {
 }
 
 /** Modo lista: largura da coluna só de mídia (legenda e perfil ficam à direita). */
-
-const MEDIA_KIND_SHORT: Record<MediaKind, string> = {
-  post: 'Feed',
-  reel: 'Reels',
-  tagged: 'Marcados',
-  highlight: 'Destaques',
-}
-
-/** Base do pill de tipo de mídia (topo esquerdo). */
-const originMediaOverlayBase: CSSProperties = {
-  position: 'absolute',
-  top: 8,
-  left: 8,
-  zIndex: 2,
-  fontSize: 10,
-  fontWeight: 700,
-  lineHeight: 1.25,
-  padding: '5px 9px',
-  borderRadius: 999,
-  maxWidth: 'calc(100% - 16px)',
-  boxShadow: '0 1px 6px rgba(0,0,0,0.35)',
-  letterSpacing: '0.02em',
-  pointerEvents: 'auto',
-}
-
-/** Base do pill de categoria no rodapé da mídia. */
-const originMediaCategoryFooterBase: CSSProperties = {
-  position: 'absolute',
-  bottom: 0,
-  left: 0,
-  right: 0,
-  zIndex: 2,
-  fontSize: 10,
-  fontWeight: 700,
-  lineHeight: 1.3,
-  padding: '6px 10px',
-  borderRadius: 0,
-  maxWidth: '100%',
-  boxShadow: '0 -1px 8px rgba(0,0,0,0.28)',
-  letterSpacing: '0.02em',
-  pointerEvents: 'auto',
-  textAlign: 'left',
-}
-
-/** Pill sobre a mídia (topo esquerdo), leitura em foto clara/escura. */
-function originMediaKindOverlayStyle(ct: MediaKind): CSSProperties {
-  const base = originMediaOverlayBase
-  switch (ct) {
-    case 'reel':
-      return { ...base, color: '#fff', background: 'linear-gradient(135deg, #c084fc 0%, #7c3aed 100%)' }
-    case 'tagged':
-      return { ...base, color: '#fff', background: 'linear-gradient(135deg, #fb7185 0%, #db2777 100%)' }
-    case 'highlight':
-      return { ...base, color: '#fff', background: 'linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)' }
-    default:
-      return { ...base, color: '#fff', background: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)' }
-  }
-}
 
 function formatFollowersShort(n: number | undefined | null): string | null {
   if (n == null || !Number.isFinite(n) || n <= 0) return null
@@ -276,50 +225,6 @@ function getCaptionDisplayText(post: PostItem, searchQuery: string, hasSearch: b
   return `${t.slice(0, 140)}…`
 }
 
-/** Categoria principal — lê `qualification` mesmo sem `status: done` (como o resumo LLM). */
-function getOriginInfluencerMainCategory(inf: PostItem['influencer']): string | null {
-  const rec =
-    inf != null && typeof inf === 'object' ? (inf as unknown as Record<string, unknown>) : undefined
-  const strict = getLlmTripleBadgesFromLlmRoot(rec).categoria?.text
-  if (strict) return strict
-  const llm = rec?.llm
-  if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) return null
-  const q = (llm as Record<string, unknown>).qualification
-  if (q == null || typeof q !== 'object' || Array.isArray(q)) return null
-  const mainCategory = String((q as Record<string, unknown>).mainCategory ?? '').trim()
-  if (!mainCategory || mainCategory === '-') return null
-  return mainCategory
-}
-
-function originCategoryMediaPillStyle(label: string): CSSProperties {
-  let h = 0
-  const key = label.trim().toLowerCase()
-  for (let i = 0; i < key.length; i++) h = (Math.imul(31, h) + key.charCodeAt(i)) | 0
-  const hue = Math.abs(h) % 360
-  return {
-    ...originMediaCategoryFooterBase,
-    color: '#fff',
-    border: 'none',
-    background: `linear-gradient(135deg, hsl(${hue}, 52%, 46%) 0%, hsl(${hue}, 52%, 36%) 100%)`,
-  }
-}
-
-/** Categoria LLM no rodapé da mídia (substitui Reels/Feed no topo quando houver categoria). */
-function OriginMediaCategoryPill({ inf, contentType }: { inf: PostItem['influencer']; contentType: MediaKind }) {
-  const raw = getOriginInfluencerMainCategory(inf)
-  if (raw) {
-    const label = formatFacetLabel(raw)
-    return (
-      <Tooltip title="Categoria principal">
-        <span className="campaign-origin-media-pill" style={originCategoryMediaPillStyle(label)}>
-          {label}
-        </span>
-      </Tooltip>
-    )
-  }
-  return <span style={originMediaKindOverlayStyle(contentType)}>{MEDIA_KIND_SHORT[contentType] ?? contentType}</span>
-}
-
 export type OriginGalleryViewMode = 'list' | 'grid'
 
 export default function CampaignOriginGallery({
@@ -336,6 +241,8 @@ export default function CampaignOriginGallery({
   profileFilters,
   /** Prioridade dos facets do painel BI (porte, LLM, etc.) — só reordena posts no cliente. */
   facetBoostQuery,
+  /** Ordenação explícita (engajamento, data, seguidores); omitir = relevância da busca + facets. */
+  originPostSort,
   /** Se definido, substitui o `window.open` ao abrir o perfil a partir do card (ex.: convidado sem login). */
   onOpenInfluencerDetail,
   captionFilterReady = true,
@@ -350,11 +257,12 @@ export default function CampaignOriginGallery({
   mediaKinds?: MediaKind[]
   /** Primeira página da busca: `true` enquanto carrega, `false` ao terminar (erro ou sucesso). */
   onLoadingChange?: (loading: boolean) => void
-  /** Após a primeira página com termo: `empty` se não houver posts; `rateLimited` se 429 (não é “sem resultado”). */
+  /** Após a primeira página com termo: `empty` se não houver posts; `rateLimited` se cota/limite de busca. */
   onOriginSearchSettled?: (payload: { empty: boolean; rateLimited?: boolean }) => void
   onLoadedPostsForFacets?: (posts: PostItem[]) => void
   profileFilters?: Partial<ProfilesSearchQuery>
   facetBoostQuery?: Partial<ProfilesSearchQuery>
+  originPostSort?: OriginPostSort
   onOpenInfluencerDetail?: (profileRef: string, snapshot?: InfluencerConnectSnapshot) => void
   /**
    * Com termo de busca: só dispara post-matches quando true (ex.: após handlesOnly no pai),
@@ -369,10 +277,7 @@ export default function CampaignOriginGallery({
   const [scanMeta, setScanMeta] = useState<PostsResponse['scanMeta']>()
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [rateLimitError, setRateLimitError] = useState<{
-    message: string
-    retryAfterSeconds: number
-  } | null>(null)
+  const [searchQuotaError, setSearchQuotaError] = useState<{ retryAfterSeconds: number } | null>(null)
   /** Offset da próxima página na ordenação do servidor. */
   const [serverOffset, setServerOffset] = useState(0)
   const [loadMoreExhausted, setLoadMoreExhausted] = useState(false)
@@ -423,9 +328,15 @@ export default function CampaignOriginGallery({
       facetBoostQuery,
       hasSearchTerm,
       searchQuery: textQuery,
+      originPostSort,
     }),
-    [facetBoostForApi, facetBoostQuery, hasSearchTerm, textQuery]
+    [facetBoostForApi, facetBoostQuery, hasSearchTerm, textQuery, originPostSort]
   )
+
+  useEffect(() => {
+    if (!hasSearchTerm) return
+    setItems((prev) => (prev.length ? orderPostMatchItems(prev, mergeOpts) : prev))
+  }, [originPostSort, mergeOpts, hasSearchTerm])
 
   const prefetchFacetGrowthPages = useCallback(
     async (
@@ -502,7 +413,7 @@ export default function CampaignOriginGallery({
       setFailedPostImages(new Set())
       setLoadMoreExhausted(false)
       setItems([])
-      setRateLimitError(null)
+      setSearchQuotaError(null)
       setLoading(true)
       try {
         const res = await fetchCampaignPostMatches(
@@ -532,9 +443,12 @@ export default function CampaignOriginGallery({
         }
       } catch (e) {
         if (signal?.aborted || (e as { name?: string }).name === 'AbortError') return
-        if (isRateLimitError(e)) {
-          setRateLimitError({
-            message: e.message,
+        if (isPublicSearchLimitError(e)) {
+          setSearchQuotaError({
+            retryAfterSeconds: publicSearchLimitRetryAfterSeconds(e),
+          })
+        } else if (isRateLimitError(e)) {
+          setSearchQuotaError({
             retryAfterSeconds: rateLimitRetryAfterSeconds(e),
           })
         }
@@ -659,10 +573,10 @@ export default function CampaignOriginGallery({
     }
     if (loading) return
     onOriginSearchSettledRef.current?.({
-      empty: items.length === 0 && !rateLimitError,
-      rateLimited: !!rateLimitError,
+      empty: items.length === 0 && !searchQuotaError,
+      rateLimited: !!searchQuotaError,
     })
-  }, [loading, hasSearchTerm, items.length, rateLimitError])
+  }, [loading, hasSearchTerm, items.length, searchQuotaError])
 
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current
@@ -677,21 +591,27 @@ export default function CampaignOriginGallery({
     return () => observer.disconnect()
   }, [serverOffset, total, hasMoreItems, loadMore, loading, loadingMore])
 
+  const searchLimitView = !loading && hasSearchTerm && !!searchQuotaError
+
   return (
-    <div style={{ minWidth: 0 }}>
+    <div
+      className={searchLimitView ? 'campaign-origin-limit-view' : undefined}
+      style={{ minWidth: 0 }}
+    >
       {loading ? (
         <OriginGalleryLoadingState />
       ) : !hasSearchTerm ? (
         <OriginSearchEmptyState variant="prompt" onSuggestionClick={onSearchSuggestion} />
-      ) : rateLimitError ? (
+      ) : searchQuotaError ? (
         <OriginSearchEmptyState
-          variant="rate-limit"
+          variant="search-quota"
           searchQuery={textQuery}
-          retryAfterSeconds={rateLimitError.retryAfterSeconds}
-          onRetry={() => {
+          retryAfterSeconds={searchQuotaError.retryAfterSeconds}
+          onQuotaExpired={() => {
             const ac = new AbortController()
             void reload(ac.signal)
           }}
+          onOpenPlans={openBuscaInfluencerPlansModal}
         />
       ) : items.length === 0 ? (
         <OriginSearchEmptyState
@@ -718,7 +638,6 @@ export default function CampaignOriginGallery({
                 const bar = influencerBarData(post)
                 const handle = bar.handleKey
                 const headline = influencerCardHeadline(post, bar)
-                const ct = (post.content_type || 'post') as MediaKind
                 const openInfluencerDetail = () => runOpenInfluencerDetail(bar.profileRef, postToConnectSnapshot(post))
                 const followersCount = post.influencer?.followers_count
                 const mediaShellStyle: CSSProperties = {
@@ -760,7 +679,6 @@ export default function CampaignOriginGallery({
                         imageUnavailable={failed || !displayUrl}
                         onImageError={() => handlePostImageError(post)}
                       />
-                      <OriginMediaCategoryPill inf={post.influencer} contentType={ct} />
                     </div>
                     <div
                       style={{
@@ -859,7 +777,6 @@ export default function CampaignOriginGallery({
                             imageUnavailable={failed || !displayUrl}
                             onImageError={() => handlePostImageError(post)}
                           />
-                          <OriginMediaCategoryPill inf={post.influencer} contentType={ct} />
                         </div>
                         <div
                           style={{

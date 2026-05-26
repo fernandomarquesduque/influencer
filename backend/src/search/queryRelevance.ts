@@ -50,6 +50,67 @@ export function tokenizeQueryWords(q: string): string[] {
   return t.split(' ').filter((w) => w.length >= MIN_TOKEN_LEN && !STOPWORDS.has(w));
 }
 
+/** Tokens da frase entre aspas (mantém stopwords; sem fuzzy). */
+function tokenizeExactPhraseWords(q: string): string[] {
+  const t = foldSearchText(q.trim());
+  if (!t) return [];
+  return t.split(' ').filter((w) => w.length >= MIN_TOKEN_LEN);
+}
+
+/** Trechos entre aspas (obrigatórios, frase exata) + texto livre restante. */
+export type ParsedSearchQuery = { exactPhrases: string[]; remainder: string };
+
+const QUOTED_SEGMENT_RE = /"([^"]*)"|'([^']*)'|\u201c([^\u201d]*)\u201d/g;
+
+/**
+ * Extrai cada `"frase"` / `'frase'` da query.
+ * Ex.: `"silvio santos" saia rodada` → exactPhrases: ['silvio santos'], remainder: 'saia rodada'
+ */
+export function parseSearchQuery(q: string): ParsedSearchQuery {
+  const trimmed = q.trim();
+  const exactPhrases: string[] = [];
+  const re = new RegExp(QUOTED_SEGMENT_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(trimmed)) !== null) {
+    const inner = (m[1] ?? m[2] ?? m[3] ?? '').trim();
+    if (inner.length > 0) exactPhrases.push(inner);
+  }
+  const remainder = trimmed.replace(re, ' ').replace(/\s+/g, ' ').trim();
+  return { exactPhrases, remainder };
+}
+
+export function isExactPhraseSearchQuery(q: string): boolean {
+  return parseSearchQuery(q).exactPhrases.length > 0;
+}
+
+function ftsExprForExactPhrase(phrase: string): string | null {
+  const words = tokenizeExactPhraseWords(phrase);
+  if (words.length >= 2) {
+    const p = words.join(' ').replace(/"/g, '""');
+    return `content:"${p}"`;
+  }
+  if (words.length === 1) return escapeFtsToken(words[0]!);
+  const t = foldSearchText(phrase.trim());
+  if (t.length >= MIN_TOKEN_LEN) return escapeFtsToken(t);
+  return null;
+}
+
+function scoreExactPhraseQuery(qTrim: string, search: string): { match: boolean; relevance: number } {
+  const words = tokenizeExactPhraseWords(qTrim);
+  if (words.length >= 2) {
+    if (textContainsAdjacentPhrase(words, search)) return { match: true, relevance: 1000 };
+    return { match: false, relevance: 0 };
+  }
+  if (words.length === 1) {
+    if (isWholeTokenMatch(words[0]!, search)) return { match: true, relevance: 1000 };
+    return { match: false, relevance: 0 };
+  }
+  if (qTrim.length >= MIN_TOKEN_LEN && isWholeTokenMatch(qTrim, search)) {
+    return { match: true, relevance: 1000 };
+  }
+  return { match: false, relevance: 0 };
+}
+
 function escapeFtsToken(w: string): string {
   const esc = w.replace(/"/g, '""');
   if (/^[a-z0-9_]+$/i.test(w)) {
@@ -63,48 +124,63 @@ function escapeFtsToken(w: string): string {
 /**
  * FTS5: frase exata + AND de tokens (restrito) + OR por token (amplo).
  */
-export function userQueryToFtsMatchExpression(q: string): string | null {
+function userQueryToFtsMatchExpressionFree(q: string): string | null {
   const words = tokenizeQueryWords(q);
   if (words.length === 0) {
     const t = foldSearchText(q.trim());
     if (t.length >= MIN_TOKEN_LEN) return escapeFtsToken(t);
     return null;
   }
-  const parts: string[] = [];
   if (words.length >= 2) {
-    const phrase = words.join(' ').replace(/"/g, '""');
-    parts.push(`content:"${phrase}"`);
-    parts.push(`(${words.map(escapeFtsToken).join(' AND ')})`);
+    return `(${words.map(escapeFtsToken).join(' AND ')})`;
   }
-  for (const w of words) parts.push(escapeFtsToken(w));
-  return parts.join(' OR ');
+  return escapeFtsToken(words[0]!);
+}
+
+export function userQueryToFtsMatchExpression(q: string): string | null {
+  const parsed = parseSearchQuery(q);
+  if (parsed.exactPhrases.length > 0) {
+    const andParts: string[] = [];
+    for (const phrase of parsed.exactPhrases) {
+      const e = ftsExprForExactPhrase(phrase);
+      if (e) andParts.push(e);
+    }
+    const rem = parsed.remainder.trim();
+    if (rem) {
+      const words = tokenizeQueryWords(rem);
+      if (words.length >= 2) andParts.push(`(${words.map(escapeFtsToken).join(' AND ')})`);
+      else if (words.length === 1) andParts.push(escapeFtsToken(words[0]!));
+      else {
+        const t = foldSearchText(rem);
+        if (t.length >= MIN_TOKEN_LEN) andParts.push(escapeFtsToken(t));
+      }
+    }
+    return andParts.length > 0 ? andParts.join(' AND ') : null;
+  }
+  return userQueryToFtsMatchExpressionFree(q);
 }
 
 /**
  * Variantes FTS em ordem do mais ao menos restrito (frase → AND → OR amplo).
  */
 export function userQueryToFtsMatchExpressions(q: string): string[] {
-  const words = tokenizeQueryWords(q);
-  const out: string[] = [];
+  const parsed = parseSearchQuery(q);
+  if (parsed.exactPhrases.length > 0) {
+    const expr = userQueryToFtsMatchExpression(q);
+    return expr ? [expr] : [];
+  }
+  const words = tokenizeQueryWords(parsed.remainder || q);
   if (words.length >= 2) {
+    // Pré-filtra com mais amplitude no FTS para não perder handles caso o índice esteja incompleto.
+    // O WHERE final (`matchesQuery`) continua exigindo todas as palavras.
     const phrase = words.join(' ').replace(/"/g, '""');
-    out.push(`content:"${phrase}"`);
-    out.push(`(${words.map(escapeFtsToken).join(' AND ')})`);
+    const phraseExpr = `content:"${phrase}"`;
+    const andExpr = `(${words.map(escapeFtsToken).join(' AND ')})`;
+    const orExpr = `(${words.map(escapeFtsToken).join(' OR ')})`;
+    return Array.from(new Set([phraseExpr, andExpr, orExpr]));
   }
   const primary = userQueryToFtsMatchExpression(q);
-  if (primary && !out.includes(primary)) out.push(primary);
-  if (words.length >= 2) {
-    const tokensOnly = words.map(escapeFtsToken).join(' OR ');
-    if (!out.includes(tokensOnly)) out.push(tokensOnly);
-  }
-  if (words.length === 0) {
-    const t = foldSearchText(q.trim());
-    if (t.length >= MIN_TOKEN_LEN) {
-      const one = escapeFtsToken(t);
-      if (!out.includes(one)) out.push(one);
-    }
-  }
-  return out;
+  return primary ? [primary] : [];
 }
 
 function wordMatchWeight(word: string): number {
@@ -284,6 +360,8 @@ function scoreMultiWordQuery(words: string[], search: string): { match: boolean;
   }
   const total = words.length;
   if (hitSum <= 0) return { match: false, relevance: 0 };
+  /** WHERE: sem aspas, todas as palavras precisam casar (AND). */
+  if (exact + fuzzy < total) return { match: false, relevance: 0 };
 
   const coverage = totalWeight > 0 ? hitSum / totalWeight : 0;
   const exactRatio = exact / total;
@@ -306,15 +384,10 @@ function scoreMultiWordQuery(words: string[], search: string): { match: boolean;
   return { match: true, relevance: Math.min(relevance, 990) };
 }
 
-/**
- * Score de relevância (maior = melhor). `match` se score > 0 (ao menos um token útil bate).
- */
-export function scoreQueryMatch(searchableText: string, q: string): { match: boolean; relevance: number } {
+/** Busca livre (sem trechos entre aspas). */
+function scoreFreeTextQuery(search: string, q: string): { match: boolean; relevance: number } {
   const qTrim = foldSearchText(q.trim());
   if (!qTrim) return { match: true, relevance: 0 };
-
-  const search = foldSearchText(searchableText.trim());
-  if (!search) return { match: false, relevance: 0 };
 
   const words = tokenizeQueryWords(qTrim);
   if (words.length >= 2 && textContainsAdjacentPhrase(words, search)) {
@@ -345,6 +418,40 @@ export function scoreQueryMatch(searchableText: string, q: string): { match: boo
   }
 
   return scoreMultiWordQuery(words, search);
+}
+
+/**
+ * WHERE + score: trechos `"..."` são obrigatórios (frase exata adjacente); o restante também deve casar (busca livre).
+ * `match === false` exclui o item — aspas não são critério de ordenação.
+ */
+export function scoreQueryMatch(searchableText: string, q: string): { match: boolean; relevance: number } {
+  const parsed = parseSearchQuery(q);
+  const search = foldSearchText(searchableText.trim());
+  if (!search && (parsed.exactPhrases.length > 0 || parsed.remainder.trim())) {
+    return { match: false, relevance: 0 };
+  }
+  if (!parsed.exactPhrases.length && !parsed.remainder.trim()) return { match: true, relevance: 0 };
+
+  let relevance = 0;
+  for (const phrase of parsed.exactPhrases) {
+    const r = scoreExactPhraseQuery(foldSearchText(phrase.trim()), search);
+    if (!r.match) return { match: false, relevance: 0 };
+    relevance += r.relevance;
+  }
+
+  const rem = parsed.remainder.trim();
+  if (!rem) {
+    if (parsed.exactPhrases.length === 0) return { match: true, relevance: 0 };
+    return { match: true, relevance: Math.round(relevance / parsed.exactPhrases.length) };
+  }
+
+  const free = scoreFreeTextQuery(search, rem);
+  if (!free.match) return { match: false, relevance: 0 };
+  return { match: true, relevance: relevance + free.relevance };
+}
+
+export function passesSearchWhere(searchableText: string, q: string): boolean {
+  return scoreQueryMatch(searchableText, q).match;
 }
 
 /** Alias legado. */

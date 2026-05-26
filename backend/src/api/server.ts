@@ -90,7 +90,12 @@ import {
   getFollowersFromProfile,
   isPricingEmpty,
 } from '../utils/suggestedPricing.js';
-import { checkApiRateLimit, getRetryAfterSeconds } from '../utils/apiRateLimit.js';
+import {
+  checkApiRateLimit,
+  getRetryAfterSeconds,
+  PUBLIC_SEARCH_RATE_MAX,
+  PUBLIC_SEARCH_RATE_WINDOW_MS,
+} from '../utils/apiRateLimit.js';
 import { get429BackoffMs, record429 } from '../utils/rateLimit429.js';
 import { sendVerificationCode, sendDirectMessage } from '../instagramClient/sendDirectMessage.js';
 import { followUser, followUserFromCurrentPage } from '../instagramClient/followUser.js';
@@ -973,9 +978,9 @@ async function performRequestCodeFlow(
       const sendOpts =
         skipFollowerListCheck || fast
           ? {
-              ...(skipFollowerListCheck ? { skipFollowerListCheck: true as const } : {}),
-              ...(fast ? { fast: true as const } : {}),
-            }
+            ...(skipFollowerListCheck ? { skipFollowerListCheck: true as const } : {}),
+            ...(fast ? { fast: true as const } : {}),
+          }
           : undefined;
       let result = await sendVerificationCode(client, nickname, code, sendOpts);
       for (let attempt = 1; !result.ok && attempt < maxAttempts; attempt++) {
@@ -2359,11 +2364,11 @@ function parseCostTierFilter(v: unknown): string[] | undefined {
 }
 
 /** Requisições por minuto por IP (anônimo). Configurável por API_RATE_LIMIT_PER_MIN_IP (padrão 600). */
-const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 600;
+const RATE_LIMIT_PER_MIN_IP = Number(process.env.API_RATE_LIMIT_PER_MIN_IP) || 200;
 /** Requisições por minuto por usuário (public/influencer). Configurável por API_RATE_LIMIT_PER_MIN_USER. */
-const RATE_LIMIT_PER_MIN_USER = Number(process.env.API_RATE_LIMIT_PER_MIN_USER) || 600;
+const RATE_LIMIT_PER_MIN_USER = Number(process.env.API_RATE_LIMIT_PER_MIN_USER) || 500;
 /** Requisições por minuto para adm/assinante. Configurável por API_RATE_LIMIT_PER_MIN_SUBSCRIBER. */
-const RATE_LIMIT_PER_MIN_SUBSCRIBER = Number(process.env.API_RATE_LIMIT_PER_MIN_SUBSCRIBER) || 1200;
+const RATE_LIMIT_PER_MIN_SUBSCRIBER = Number(process.env.API_RATE_LIMIT_PER_MIN_SUBSCRIBER) || 1000;
 
 function getClientKeyForRateLimit(req: RequestWithAuth): string {
   if (req.user) return `u:${req.user.sub}`;
@@ -2391,6 +2396,71 @@ function rateLimitDataApi(req: RequestWithAuth, res: Response, next: () => void)
     return;
   }
   next();
+}
+
+/**
+ * Busca textual (visitante / scope public): rate limit horário próprio; sem 429 por minuto nestas rotas.
+ */
+function rateLimitDataApiUnlessPublicSearch(req: RequestWithAuth, res: Response, next: () => void): void {
+  if (isPublicSearchSubject(req)) {
+    next();
+    return;
+  }
+  rateLimitDataApi(req, res, next);
+}
+
+function isPublicSearchSubject(req: RequestWithAuth): boolean {
+  if (!req.user) return true;
+  return req.user.scope === 'public';
+}
+
+function publicSearchLimitKey(req: RequestWithAuth): string {
+  if (req.user) return `search:u:${req.user.sub}`;
+  const ip = (req.ip || (req as unknown as { socket?: { remoteAddress?: string } }).socket?.remoteAddress || 'unknown').toString();
+  const ipHash = crypto.createHash('sha256').update(ip + (process.env.ANON_SEARCH_SALT || '')).digest('hex');
+  return `search:ip:${ipHash}`;
+}
+
+/** Primeira página de post-matches com termo consome cota; paginação e handlesOnly não. */
+function postMatchSearchConsumesPublicQuota(req: Request): boolean {
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  if (offset > 0) return false;
+  const handlesOnlyRaw = req.query.handlesOnly ?? req.query.handles_only;
+  const handlesOnly =
+    handlesOnlyRaw === '1' ||
+    handlesOnlyRaw === 'true' ||
+    String(handlesOnlyRaw ?? '').toLowerCase() === 'yes';
+  return !handlesOnly;
+}
+
+/** Rate limit horário de busca (visitante / scope public). Retorna false se já enviou 403. */
+function enforcePublicSearchHourlyLimit(
+  req: RequestWithAuth,
+  res: Response,
+  q: string,
+  opts?: { increment?: boolean }
+): boolean {
+  if (!isPublicSearchSubject(req)) return true;
+  const term = q.trim();
+  if (!term) return true;
+  const increment = opts?.increment !== false;
+  const limitKey = publicSearchLimitKey(req);
+  if (
+    checkApiRateLimit(limitKey, PUBLIC_SEARCH_RATE_MAX, {
+      windowMs: PUBLIC_SEARCH_RATE_WINDOW_MS,
+      increment,
+    })
+  ) {
+    return true;
+  }
+  const retryAfterSeconds = getRetryAfterSeconds(limitKey, PUBLIC_SEARCH_RATE_WINDOW_MS);
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+  res.status(403).json({
+    error: 'Você atingiu o limite de buscas gratuitas. Aguarde alguns minutos ou assine um plano para continuar.',
+    code: 'PUBLIC_SEARCH_LIMIT',
+    retryAfterSeconds,
+  });
+  return false;
 }
 
 /** Foto e bio para prévia pública (bio com @/telefone redigidos). */
@@ -2496,7 +2566,7 @@ function redactPostsItems(items: Array<{ key: string;[k: string]: unknown }>): A
 
 /** Posts para resposta da API: oculta @ e inclui `profile_ref` opaco por item. */
 function preparePostItemsForApiResponse(
-  items: Array<{ key: string; [k: string]: unknown }>,
+  items: Array<{ key: string;[k: string]: unknown }>,
   req?: RequestWithAuth
 ): Array<Record<string, unknown>> {
   return enrichPostItemsWithRefs(items, profileRefDb, req);
@@ -2708,9 +2778,10 @@ function pickMixedRecentPreviewItems(sortedByRecent: ProfileListItem[], limit: n
 
 /** Listagem de perfis com filtros avançados e engajamento. Público (anônimo ou scope public): 1ª página.
  * Com limit=0 retorna só quantitativos (total + facets), sem autenticação nem X-Campaign-Id. */
-app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+app.get('/api/profiles/search', rateLimitDataApiUnlessPublicSearch, async (req: RequestWithAuth, res: Response) => {
   try {
     const q = (req.query.q as string)?.trim();
+    if (q && !enforcePublicSearchHourlyLimit(req, res, q)) return;
     const parseNumList = (v: unknown): number[] | undefined => {
       if (v == null) return undefined;
       if (Array.isArray(v)) return v.map((x) => Number(x)).filter(Number.isFinite);
@@ -2866,13 +2937,14 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
 });
 
 /** Preview de perfis para dashboard: 10 mais atuais com metadados LLM resumidos. */
-app.post('/api/profiles/preview', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+app.post('/api/profiles/preview', rateLimitDataApiUnlessPublicSearch, async (req: RequestWithAuth, res: Response) => {
   try {
     const body = (req.body ?? {}) as { query?: ProfilesSearchQuery; limit?: number };
     const query = (body.query ?? {}) as ProfilesSearchQuery;
     const limitRaw = Number(body.limit);
     const limit = Number.isFinite(limitRaw) ? Math.min(50, Math.max(1, Math.floor(limitRaw))) : 10;
     const previewQ = (query.q ?? '').trim();
+    if (previewQ && !enforcePublicSearchHourlyLimit(req, res, previewQ)) return;
     const searchQuery: ProfilesSearchQuery = {
       ...query,
       sort: 'relevance_desc',
@@ -4124,7 +4196,7 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
         subject: 'Bem-vindo! Confirme seu e-mail',
         verifyUrl,
         bodyText: 'Obrigado por se cadastrar. Sua conta foi criada com sucesso. Confirme seu e-mail para começar a usar a plataforma.',
-      }).catch(() => {});
+      }).catch(() => { });
       try {
         authDb.setBillingCpfCnpj(userId, cpfDigits);
       } catch (saveDocErr) {
@@ -4164,14 +4236,14 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
     const tokenGuest =
       !req.user && authRowFinal
         ? signJwt(
-            {
-              sub: String(userId),
-              username: authRowFinal.username,
-              scope: 'assinante' as AuthScope,
-              profile_handle: authRowFinal.profile_handle ?? undefined,
-            },
-            getJwtSecret()
-          )
+          {
+            sub: String(userId),
+            username: authRowFinal.username,
+            scope: 'assinante' as AuthScope,
+            profile_handle: authRowFinal.profile_handle ?? undefined,
+          },
+          getJwtSecret()
+        )
         : undefined;
 
     res.status(201).json({
@@ -4190,15 +4262,15 @@ app.post('/api/checkout/plan-subscribe', async (req: RequestWithAuth, res: Respo
       planFirstInvoiceDue: nextDueStr,
       ...(tokenGuest && authRowFinal
         ? {
-            token: tokenGuest,
-            user: {
-              id: authRowFinal.id,
-              username: authRowFinal.username,
-              scope: authRowFinal.scope,
-              profile_handle: authRowFinal.profile_handle,
-              email_verified: authRowFinal.email_verified === 1 ? true : false,
-            },
-          }
+          token: tokenGuest,
+          user: {
+            id: authRowFinal.id,
+            username: authRowFinal.username,
+            scope: authRowFinal.scope,
+            profile_handle: authRowFinal.profile_handle,
+            email_verified: authRowFinal.email_verified === 1 ? true : false,
+          },
+        }
         : {}),
     });
   } catch (e) {
@@ -6131,12 +6203,12 @@ app.get('/api/campaigns/:id/profiles', rateLimitDataApi, async (req: RequestWith
     }
     const reqForSearch = pendingPayment
       ? {
-          query: {
-            ...req.query,
-            limit: '10000',
-            offset: '0',
-          },
-        }
+        query: {
+          ...req.query,
+          limit: '10000',
+          offset: '0',
+        },
+      }
       : req;
     const result = await searchCampaignProfilesFromRequest(
       reqForSearch,
@@ -6914,11 +6986,13 @@ function comparePostRowsByFacetBoostThenDefault(
   const hb = postBucketKeyToHandle(b.key);
   const ma = handleMeta.get(ha) ?? { priority: 0, fc: 0 };
   const mb = handleMeta.get(hb) ?? { priority: 0, fc: 0 };
-  if (mb.priority !== ma.priority) return mb.priority - ma.priority;
   if (qRaw) {
+    if (mb.priority !== ma.priority) return mb.priority - ma.priority;
     if (b.relevance !== a.relevance) return b.relevance - a.relevance;
     const engDiff = postMatchEngagementScore(b.value) - postMatchEngagementScore(a.value);
     if (engDiff !== 0) return engDiff;
+  } else if (mb.priority !== ma.priority) {
+    return mb.priority - ma.priority;
   }
   const rankA = postMatchTaggedRank(a.ct);
   const rankB = postMatchTaggedRank(b.ct);
@@ -7002,7 +7076,7 @@ function postMatchNarrowCacheSet(key: string, handles: string[]): void {
 
 /**
  * Pré-filtra handles pelo índice FTS (legendas/posts agregados no SQLite).
- * FTS com OR entre tokens (qualquer palavra); BM25 ordena quem bate mais termos.
+ * FTS com AND entre tokens (todas as palavras); BM25 ordena entre os que passam.
  * Se o FTS não retornar hits, mantém o universo de handles — o scan no RocksDB ainda casa legenda (`matchesQuery`).
  */
 type PostCaptionSearchScope = {
@@ -7451,7 +7525,7 @@ async function runPostMatchesForHandles(
   }
 }
 
-app.get('/api/campaigns/all/post-matches', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+app.get('/api/campaigns/all/post-matches', rateLimitDataApiUnlessPublicSearch, async (req: RequestWithAuth, res: Response) => {
   try {
     const now = Date.now();
     let handles = allPostMatchesHandlesCache.handles;
@@ -7466,6 +7540,14 @@ app.get('/api/campaigns/all/post-matches', rateLimitDataApi, async (req: Request
       return;
     }
     const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
+    if (
+      qRaw &&
+      !enforcePublicSearchHourlyLimit(req, res, qRaw, {
+        increment: postMatchSearchConsumesPublicQuota(req),
+      })
+    ) {
+      return;
+    }
     const scoped = scopeHandlesForPostCaptionSearch(handles, qRaw);
     if (scoped.handles.length === 0) {
       res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
@@ -7484,7 +7566,7 @@ app.get('/api/campaigns/all/post-matches', rateLimitDataApi, async (req: Request
  * Posts/reels/etc. dos perfis da campanha onde `q` aparece na legenda/hashtags (dados atuais do storage).
  * Sem `q`, retorna todos os itens da campanha (filtráveis por `type`).
  */
-app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: RequestWithAuth, res: Response) => {
+app.get('/api/campaigns/:id/post-matches', rateLimitDataApiUnlessPublicSearch, async (req: RequestWithAuth, res: Response) => {
   try {
     if (!req.user) {
       res.status(401).json({ error: 'Login necessário' });
@@ -7503,6 +7585,14 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApi, async (req: Request
     }
     const normalizedHandles = Array.from(new Set(handles.map((h) => normalizeHandle(h))));
     const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
+    if (
+      qRaw &&
+      !enforcePublicSearchHourlyLimit(req, res, qRaw, {
+        increment: postMatchSearchConsumesPublicQuota(req),
+      })
+    ) {
+      return;
+    }
     const scoped = scopeHandlesForPostCaptionSearch(normalizedHandles, qRaw);
     if (scoped.handles.length === 0) {
       res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });

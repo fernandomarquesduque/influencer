@@ -76,13 +76,6 @@
   max-width: 100%;
 }
 
-.campaign-origin-media-pill {
-  display: inline-block;
-  white-space: normal;
-  word-break: break-word;
-  text-align: left;
-}
-
 .campaign-origin-llm-badge {
   display: inline-block;
   max-width: 100%;

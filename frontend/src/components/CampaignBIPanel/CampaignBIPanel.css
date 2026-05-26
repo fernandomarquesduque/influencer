@@ -140,6 +140,25 @@
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
+.campaign-bi-section--origin-sort {
+  padding-top: 2px;
+}
+
+.campaign-bi-origin-sort-select {
+  display: block;
+  width: 100%;
+}
+
+.campaign-bi-origin-sort-select.ant-select {
+  font-size: 11px;
+}
+
+.campaign-bi-origin-sort-select .ant-select-selector {
+  border-radius: 8px !important;
+  font-size: 11px !important;
+  min-height: 28px !important;
+}
+
 .campaign-bi-category-sub-pair-grid {
   display: flex;
   flex-direction: column;

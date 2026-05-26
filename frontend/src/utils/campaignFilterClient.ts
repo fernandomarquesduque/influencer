@@ -2,14 +2,21 @@
  * Filtro, ordenação e facets no cliente para a listagem de campanha.
  * Usado quando temos o contexto completo em cache para evitar chamadas à API a cada mudança de filtro.
  */
-import type { ProfileListItem, ProfilesSearchQuery, ProfilesSearchFacets, LlmSearchFacets, PostItem } from '../api'
+import type {
+  ProfileListItem,
+  ProfilesSearchQuery,
+  ProfilesSearchFacets,
+  LlmSearchFacets,
+  PostItem,
+  OriginPostSort,
+} from '../api'
 import type { ProfilesSort } from '../api'
 import { FOLLOWERS_SIZE_BUCKETS, followersCountToSizeKey } from '@repo/followersSizeBuckets'
 import { getCostTier } from './pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
 import { snapMainCategoryToTaxonomy } from '@repo/llmMainCategoryTaxonomy'
-import { foldSearchText, matchesQuery } from './queryRelevance'
+import { foldSearchText, matchesQuery, passesSearchWhere } from './queryRelevance'
 
 type CostTier = 'low' | 'medium' | 'high' | 'very_high'
 
@@ -139,12 +146,66 @@ export function stripCampaignFacetBoostFromQuery(
   return out
 }
 
+function toSingleStringFacetValue(arr: string[] | undefined): string[] | undefined {
+  if (!arr?.length) return undefined
+  const first = arr.map((x) => String(x).trim()).find(Boolean)
+  return first ? [first] : undefined
+}
+
+function toSingleNumberFacetValue(arr: number[] | undefined): number[] | undefined {
+  if (!arr?.length) return undefined
+  const first = arr.find((x) => Number.isFinite(x))
+  return first != null ? [first] : undefined
+}
+
+/** Painel BI: no máximo um valor por dimensão (público, gênero, porte, categoria, etc.). */
+export function normalizeSingleSelectFacetBoost(
+  query: Partial<ProfilesSearchQuery>
+): Partial<ProfilesSearchQuery> {
+  const next: Partial<ProfilesSearchQuery> = { ...query }
+  let changed = false
+  const stringKeys = [
+    'sizeFilter',
+    'contentTypes',
+    'cities',
+    'states',
+    'neighborhoods',
+    'socialNetworks',
+    'llmProfileType',
+    'llmMainCategory',
+    'llmGender',
+    'llmAudienceType',
+  ] as const
+  for (const k of stringKeys) {
+    const raw = next[k] as string[] | undefined
+    const single = toSingleStringFacetValue(raw)
+    if (
+      (raw?.length ?? 0) !== (single?.length ?? 0) ||
+      (raw?.[0] !== undefined && single?.[0] !== undefined && raw[0] !== single[0])
+    ) {
+      ;(next as Record<string, unknown>)[k] = single
+      changed = true
+    }
+  }
+  const numKeys = ['engagementRateBuckets', 'avgLikesBuckets', 'postsCountBuckets', 'accountTypeFilter'] as const
+  for (const k of numKeys) {
+    const raw = next[k] as number[] | undefined
+    const single = toSingleNumberFacetValue(raw)
+    if ((raw?.length ?? 0) !== (single?.length ?? 0)) {
+      ;(next as Record<string, unknown>)[k] = single
+      changed = true
+    }
+  }
+  return changed ? next : query
+}
+
 export function pickCampaignFacetBoostFromQuery(
   query: Partial<ProfilesSearchQuery>
 ): Partial<ProfilesSearchQuery> {
+  const normalized = normalizeSingleSelectFacetBoost(query)
   const out: Partial<ProfilesSearchQuery> = {}
   for (const k of CAMPAIGN_FACET_BOOST_KEYS) {
-    const v = query[k]
+    const v = normalized[k]
     if (Array.isArray(v) && v.length > 0) {
       ; (out as Record<string, unknown>)[k] = [...v]
     }
@@ -159,7 +220,19 @@ export function buildSingleCampaignFacetBoostPatch(
 ): Partial<ProfilesSearchQuery> {
   const patch: Partial<ProfilesSearchQuery> = {}
   if (Array.isArray(nextValue) && nextValue.length > 0) {
-    ; (patch as Record<string, unknown>)[activeKey] = [...nextValue]
+    const isNumKey =
+      activeKey === 'engagementRateBuckets' ||
+      activeKey === 'avgLikesBuckets' ||
+      activeKey === 'postsCountBuckets' ||
+      activeKey === 'accountTypeFilter'
+    const single = isNumKey
+      ? toSingleNumberFacetValue(nextValue as number[])
+      : toSingleStringFacetValue(nextValue as string[])
+    if (single?.length) {
+      ; (patch as Record<string, unknown>)[activeKey] = single
+    } else {
+      ; (patch as Record<string, unknown>)[activeKey] = undefined
+    }
   } else {
     ; (patch as Record<string, unknown>)[activeKey] = undefined
   }
@@ -177,12 +250,64 @@ export function isCampaignFacetBoostOnlyPatch(patch: Partial<ProfilesSearchQuery
   return keys.every((k) => (CAMPAIGN_FACET_BOOST_KEYS as readonly string[]).includes(k))
 }
 
+const CAMPAIGN_GALLERY_UI_KEYS = ['originPostSort'] as const
+
+/** Mudança só de ordenação da galeria Origem — não refaz fetch de contexto/campanha. */
+export function isCampaignGalleryUiOnlyPatch(patch: Partial<ProfilesSearchQuery>): boolean {
+  const keys = Object.keys(patch).filter((k) => k !== 'offset')
+  if (keys.length === 0) return false
+  return keys.every((k) => (CAMPAIGN_GALLERY_UI_KEYS as readonly string[]).includes(k))
+}
+
 export function hasCampaignFacetBoost(query: Partial<ProfilesSearchQuery>): boolean {
   return CAMPAIGN_FACET_BOOST_KEYS.some((k) => {
     const v = query[k]
     if (Array.isArray(v)) return v.length > 0
     return false
   })
+}
+
+export type SizeBucketFacetRow = { key: string; label: string; count: number }
+
+/** Chave de porte na UI (`mid` no lugar de `medio`). */
+export function normalizeSizeBucketKey(raw: string): string {
+  const x = raw.toLowerCase().trim()
+  if (x === 'medio' || x === 'mid') return 'mid'
+  return x
+}
+
+const SIZE_BUCKET_UI_ORDER = FOLLOWERS_SIZE_BUCKETS.map((b) => (b.key === 'medio' ? 'mid' : b.key))
+
+/**
+ * Chips de porte para o painel BI: só faixas com count > 0 nos facets atuais,
+ * mais a seleção ativa (count 0) para permitir desmarcar.
+ */
+export function buildSizeBucketsForPanel(
+  fromFacets: SizeBucketFacetRow[],
+  selectedSizeFilter?: string
+): SizeBucketFacetRow[] {
+  const positive = fromFacets.filter((b) => (b.count ?? 0) > 0)
+  const byKey = new Map(positive.map((b) => [normalizeSizeBucketKey(b.key), b]))
+
+  const sel = selectedSizeFilter?.trim()
+  if (sel) {
+    const bucketKey = normalizeSizeBucketKey(sel)
+    if (!byKey.has(bucketKey)) {
+      const def = FOLLOWERS_SIZE_BUCKETS.find((b) => {
+        const uiKey = b.key === 'medio' ? 'mid' : b.key
+        return uiKey === bucketKey || b.key === sel.toLowerCase()
+      })
+      if (def) {
+        byKey.set(bucketKey, {
+          key: bucketKey,
+          label: def.key === 'medio' ? 'Mid' : def.label,
+          count: 0,
+        })
+      }
+    }
+  }
+
+  return SIZE_BUCKET_UI_ORDER.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!)
 }
 
 /** Só opções com contagem > 0 (facets estritamente dos resultados atuais). */
@@ -277,8 +402,9 @@ export function pruneInvalidCampaignFacetBoost(
     const arr = next[key] as string[] | undefined
     if (!arr?.length) return
     const valid = arr.filter((v) => facetAllowsLlmName(facets, facetKey, v))
-    if (valid.length !== arr.length) {
-      ; (next as Record<string, unknown>)[key] = valid.length ? valid : undefined
+    const single = valid.length ? [valid[0]!] : undefined
+    if (valid.length !== arr.length || arr.length > 1 || (single && single[0] !== arr[0])) {
+      ; (next as Record<string, unknown>)[key] = single
       changed = true
     }
   }
@@ -529,6 +655,13 @@ function postDiversityScoreForPick(
   return score
 }
 
+/** WHERE da busca em legendas (aspas = frase exata obrigatória). */
+export function filterPostsBySearchWhere(posts: PostItem[], q: string): PostItem[] {
+  const qTrim = q.trim()
+  if (!qTrim) return posts
+  return posts.filter((p) => passesSearchWhere(getPostCaptionSearchText(p), qTrim))
+}
+
 function getPostCaptionSearchText(post: PostItem): string {
   const parts: string[] = []
   const cap = post.content?.caption_text
@@ -542,10 +675,75 @@ function getPostCaptionSearchText(post: PostItem): string {
   return foldSearchText(parts.join(' '))
 }
 
-/** Ordena posts da galeria Origem por relevância textual (frase exata primeiro). */
-export function sortPostsBySearchRelevance(posts: PostItem[], q: string): PostItem[] {
+const ORIGIN_POST_SORT_SET = new Set<string>(['engagement_desc', 'recent_desc', 'oldest_asc', 'followers_desc'])
+
+export function isOriginPostSort(value: string | null | undefined): value is OriginPostSort {
+  return typeof value === 'string' && ORIGIN_POST_SORT_SET.has(value)
+}
+
+/** Ordenação explícita escolhida no painel (engajamento, data, seguidores). */
+export function sortPostsByOriginDisplay(posts: PostItem[], sort: OriginPostSort): PostItem[] {
+  if (posts.length < 2) return posts
+  const indexed = posts.map((post, idx) => ({ post, idx }))
+  indexed.sort((a, b) => {
+    let diff = 0
+    switch (sort) {
+      case 'engagement_desc':
+        diff = postEngagementScore(b.post) - postEngagementScore(a.post)
+        break
+      case 'recent_desc':
+        diff = postTimestamp(b.post) - postTimestamp(a.post)
+        break
+      case 'oldest_asc':
+        diff = postTimestamp(a.post) - postTimestamp(b.post)
+        break
+      case 'followers_desc':
+        diff = postFollowersCount(b.post) - postFollowersCount(a.post)
+        break
+      default:
+        break
+    }
+    if (diff !== 0) return diff
+    return a.idx - b.idx
+  })
+  return indexed.map((x) => x.post)
+}
+
+/** Com filtro do painel: boost primeiro; dentro do grupo, relevância da legenda. */
+function sortPostsByBoostThenRelevance(
+  posts: PostItem[],
+  qTrim: string,
+  facetBoostQuery: Partial<ProfilesSearchQuery>
+): PostItem[] {
+  const scored = posts.map((post, idx) => ({
+    post,
+    relevance: matchesQuery(getPostCaptionSearchText(post), qTrim).relevance,
+    boost: computeFacetBoostPriority(postToProfileListItemForBoost(post), facetBoostQuery),
+    idx,
+  }))
+  scored.sort((a, b) => {
+    if (b.boost !== a.boost) return b.boost - a.boost
+    if (b.relevance !== a.relevance) return b.relevance - a.relevance
+    const engDiff = postEngagementScore(b.post) - postEngagementScore(a.post)
+    if (engDiff !== 0) return engDiff
+    const tsDiff = postTimestamp(b.post) - postTimestamp(a.post)
+    if (tsDiff !== 0) return tsDiff
+    return a.idx - b.idx
+  })
+  return scored.map((s) => s.post)
+}
+
+/** Sem filtro BI: relevância da legenda; com filtro BI delega para boost → relevância. */
+export function sortPostsBySearchRelevance(
+  posts: PostItem[],
+  q: string,
+  facetBoostQuery?: Partial<ProfilesSearchQuery>
+): PostItem[] {
   const qTrim = q.trim()
   if (!qTrim || posts.length < 2) return posts
+  if (facetBoostQuery != null && hasCampaignFacetBoost(facetBoostQuery)) {
+    return sortPostsByBoostThenRelevance(posts, qTrim, facetBoostQuery)
+  }
   const scored = posts.map((post, idx) => ({
     post,
     relevance: matchesQuery(getPostCaptionSearchText(post), qTrim).relevance,
@@ -595,7 +793,7 @@ export function sortPostsByFacetDiversity(posts: PostItem[]): PostItem[] {
   return result
 }
 
-function postEngagementScore(post: PostItem): number {
+export function postEngagementScore(post: PostItem): number {
   const likes = typeof post.metrics?.likes === 'number' && Number.isFinite(post.metrics.likes) ? post.metrics.likes : 0
   const comments =
     typeof post.metrics?.comments === 'number' && Number.isFinite(post.metrics.comments)
@@ -604,7 +802,12 @@ function postEngagementScore(post: PostItem): number {
   return likes + comments * 2
 }
 
-function postTimestamp(post: PostItem): number {
+export function postFollowersCount(post: PostItem): number {
+  const n = post.influencer?.followers_count
+  return typeof n === 'number' && Number.isFinite(n) ? n : 0
+}
+
+export function postTimestamp(post: PostItem): number {
   const taken = post.post?.taken_at
   if (typeof taken === 'number' && Number.isFinite(taken)) return taken
   const created = (post.content as { caption_created_at?: number } | undefined)?.caption_created_at
@@ -646,15 +849,17 @@ export function sortPostsByBoostThenDiversity(
   return out
 }
 
-/** Busca textual + painel BI: porte/facet que casa primeiro; dentro do grupo, relevância da legenda. */
+/** Busca + painel BI: filtro selecionado prevalece; frase exata da busca em segundo. */
 export function sortPostsByBoostThenSearchRelevance(
   posts: PostItem[],
   query: Partial<ProfilesSearchQuery>,
   searchQ: string
 ): PostItem[] {
   const qTrim = searchQ.trim()
-  if (!qTrim) return sortPostsByCampaignFacetBoost(posts, query)
-  if (!hasCampaignFacetBoost(query) || posts.length < 2) return sortPostsBySearchRelevance(posts, searchQ)
+  if (!qTrim) return sortPostsByCampaignFacetBoost(posts, query, searchQ)
+  if (!hasCampaignFacetBoost(query) || posts.length < 2) {
+    return sortPostsBySearchRelevance(posts, searchQ)
+  }
   return sortPostsByBoostThenDiversity(posts, query, searchQ)
 }
 
@@ -799,16 +1004,17 @@ export function filterAndSortCampaignItems(
   }
   const order = (query.sort ?? (q ? 'relevance_desc' : 'relevance_desc')) as ProfilesSort
   const sortFn = (a: ProfileListItem, b: ProfileListItem): number => {
+    const boostCmp = compareFacetBoostPriority(
+      computeFacetBoostPriority(a, query),
+      computeFacetBoostPriority(b, query)
+    )
+    if (hasCampaignFacetBoost(query) && boostCmp !== 0) return boostCmp
     if (q) {
       const relA = (a as ProfileListItem & { search_relevance?: number }).search_relevance ?? 0
       const relB = (b as ProfileListItem & { search_relevance?: number }).search_relevance ?? 0
       if (relB !== relA) return relB - relA
     }
-    const boostCmp = compareFacetBoostPriority(
-      computeFacetBoostPriority(a, query),
-      computeFacetBoostPriority(b, query)
-    )
-    if (boostCmp !== 0) return boostCmp
+    if (!hasCampaignFacetBoost(query) && boostCmp !== 0) return boostCmp
     if (order === 'favorite_desc') {
       const favA = isFavorite(a) ? 1 : 0
       const favB = isFavorite(b) ? 1 : 0

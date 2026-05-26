@@ -86,11 +86,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
   flex-shrink: 0;
+  width: 40px;
   height: 40px;
-  min-width: 52px;
-  padding: 0 14px;
+  padding: 0;
   border: 1px solid #dbdbdb;
   border-radius: 999px;
   background: #fff;
@@ -112,22 +111,6 @@
 
 .app-top-bar-account-btn__user {
   font-size: 17px;
-  flex-shrink: 0;
-}
-
-.app-top-bar-account-btn__label {
-  max-width: min(28vw, 140px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.app-top-bar-account-btn__chevron {
-  font-size: 10px;
-  opacity: 0.75;
   flex-shrink: 0;
 }
 
@@ -225,9 +208,8 @@
   }
 
   .app-top-bar-account-btn {
+    width: 36px;
     height: 36px;
-    min-width: 44px;
-    padding: 0 10px;
   }
 
   .app-top-bar-account-btn__user {

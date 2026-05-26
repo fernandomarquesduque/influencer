@@ -45,6 +45,50 @@ export function tokenizeQueryWords(q: string): string[] {
   return t.split(' ').filter((w) => w.length >= MIN_TOKEN_LEN && !STOPWORDS.has(w))
 }
 
+function tokenizeExactPhraseWords(q: string): string[] {
+  const t = foldSearchText(q.trim())
+  if (!t) return []
+  return t.split(' ').filter((w) => w.length >= MIN_TOKEN_LEN)
+}
+
+export type ParsedSearchQuery = { exactPhrases: string[]; remainder: string }
+
+const QUOTED_SEGMENT_RE = /"([^"]*)"|'([^']*)'|\u201c([^\u201d]*)\u201d/g
+
+/** Extrai cada `"frase"` da query; o restante é busca livre. */
+export function parseSearchQuery(q: string): ParsedSearchQuery {
+  const trimmed = q.trim()
+  const exactPhrases: string[] = []
+  const re = new RegExp(QUOTED_SEGMENT_RE.source, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(trimmed)) !== null) {
+    const inner = (m[1] ?? m[2] ?? m[3] ?? '').trim()
+    if (inner.length > 0) exactPhrases.push(inner)
+  }
+  const remainder = trimmed.replace(re, ' ').replace(/\s+/g, ' ').trim()
+  return { exactPhrases, remainder }
+}
+
+export function isExactPhraseSearchQuery(q: string): boolean {
+  return parseSearchQuery(q).exactPhrases.length > 0
+}
+
+function scoreExactPhraseQuery(qTrim: string, search: string): { match: boolean; relevance: number } {
+  const words = tokenizeExactPhraseWords(qTrim)
+  if (words.length >= 2) {
+    if (textContainsAdjacentPhrase(words, search)) return { match: true, relevance: 1000 }
+    return { match: false, relevance: 0 }
+  }
+  if (words.length === 1) {
+    if (isWholeTokenMatch(words[0]!, search)) return { match: true, relevance: 1000 }
+    return { match: false, relevance: 0 }
+  }
+  if (qTrim.length >= MIN_TOKEN_LEN && isWholeTokenMatch(qTrim, search)) {
+    return { match: true, relevance: 1000 }
+  }
+  return { match: false, relevance: 0 }
+}
+
 function maxEditDistanceForWord(word: string): number {
   if (word.length >= 8) return 2
   if (word.length >= 5) return 1
@@ -216,6 +260,7 @@ function scoreMultiWordQuery(words: string[], search: string): { match: boolean;
   }
   const total = words.length
   if (hitSum <= 0) return { match: false, relevance: 0 }
+  if (exact + fuzzy < total) return { match: false, relevance: 0 }
 
   const coverage = totalWeight > 0 ? hitSum / totalWeight : 0
   const exactRatio = exact / total
@@ -238,12 +283,9 @@ function scoreMultiWordQuery(words: string[], search: string): { match: boolean;
   return { match: true, relevance: Math.min(relevance, 990) }
 }
 
-export function scoreQueryMatch(searchableText: string, q: string): { match: boolean; relevance: number } {
+function scoreFreeTextQuery(search: string, q: string): { match: boolean; relevance: number } {
   const qTrim = foldSearchText(q.trim())
   if (!qTrim) return { match: true, relevance: 0 }
-
-  const search = foldSearchText(searchableText.trim())
-  if (!search) return { match: false, relevance: 0 }
 
   const words = tokenizeQueryWords(qTrim)
   if (words.length >= 2 && textContainsAdjacentPhrase(words, search)) {
@@ -274,6 +316,40 @@ export function scoreQueryMatch(searchableText: string, q: string): { match: boo
   }
 
   return scoreMultiWordQuery(words, search)
+}
+
+/**
+ * WHERE da busca: trechos `"..."` obrigam frase exata no texto; o restante é busca livre (também obrigatório).
+ * `match === false` → resultado excluído (não é critério de ordenação).
+ */
+export function scoreQueryMatch(searchableText: string, q: string): { match: boolean; relevance: number } {
+  const parsed = parseSearchQuery(q)
+  const search = foldSearchText(searchableText.trim())
+  if (!search && (parsed.exactPhrases.length > 0 || parsed.remainder.trim())) {
+    return { match: false, relevance: 0 }
+  }
+  if (!parsed.exactPhrases.length && !parsed.remainder.trim()) return { match: true, relevance: 0 }
+
+  let relevance = 0
+  for (const phrase of parsed.exactPhrases) {
+    const r = scoreExactPhraseQuery(foldSearchText(phrase.trim()), search)
+    if (!r.match) return { match: false, relevance: 0 }
+    relevance += r.relevance
+  }
+
+  const rem = parsed.remainder.trim()
+  if (!rem) {
+    if (parsed.exactPhrases.length === 0) return { match: true, relevance: 0 }
+    return { match: true, relevance: Math.round(relevance / parsed.exactPhrases.length) }
+  }
+
+  const free = scoreFreeTextQuery(search, rem)
+  if (!free.match) return { match: false, relevance: 0 }
+  return { match: true, relevance: relevance + free.relevance }
+}
+
+export function passesSearchWhere(searchableText: string, q: string): boolean {
+  return scoreQueryMatch(searchableText, q).match
 }
 
 export function matchesQuery(searchableText: string, q: string): { match: boolean; relevance: number } {
@@ -366,9 +442,24 @@ export function findHighlightRangesInText(text: string, query: string): TextHigh
   const raw = text ?? ''
   if (!raw.trim() || !query.trim()) return []
 
+  const parsed = parseSearchQuery(query)
   const ranges: TextHighlightRange[] = []
-  const qTrim = query.trim()
-  const words = tokenizeQueryWords(qTrim)
+
+  for (const phrase of parsed.exactPhrases) {
+    const words = tokenizeExactPhraseWords(phrase)
+    if (words.length >= 2) {
+      const phrasePat = words.map((w) => tokenToAccentInsensitivePattern(w)).join('\\s+')
+      addRangesFromPattern(ranges, raw, `(${phrasePat})`)
+    } else if (words.length === 1) {
+      const inner = tokenToAccentInsensitivePattern(words[0]!)
+      addRangesFromPattern(ranges, raw, `(?:^|[^\\p{L}\\p{N}_])(${inner})(?=[^\\p{L}\\p{N}_]|$)`)
+    }
+  }
+
+  const rem = parsed.remainder.trim()
+  if (!rem) return mergeHighlightRanges(ranges)
+
+  const words = tokenizeQueryWords(rem)
 
   if (words.length >= 2) {
     const phrasePat = words.map((w) => tokenToAccentInsensitivePattern(w)).join('\\s+')
@@ -384,8 +475,8 @@ export function findHighlightRangesInText(text: string, query: string): TextHigh
     }
   }
 
-  if (words.length === 0 && qTrim.length >= MIN_TOKEN_LEN) {
-    const inner = tokenToAccentInsensitivePattern(foldSearchText(qTrim))
+  if (words.length === 0 && rem.length >= MIN_TOKEN_LEN) {
+    const inner = tokenToAccentInsensitivePattern(foldSearchText(rem))
     addRangesFromPattern(ranges, raw, `(?:^|[^\\p{L}\\p{N}_])(${inner})(?=[^\\p{L}\\p{N}_]|$)`)
   }
 

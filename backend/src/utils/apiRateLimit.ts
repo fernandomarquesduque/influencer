@@ -1,9 +1,24 @@
 /**
- * Rate limit em memória para a API (proteção contra crawlers e extração em massa).
- * Janela fixa de 1 minuto: máximo de N requisições por (IP ou usuário) por minuto.
+ * Rate limit em memória (proteção contra abuso e freemium na busca pública).
+ * Janela configurável por chamada (1 min para API geral, 10 min para busca public/anônimo).
  */
 
-const WINDOW_MS = 60 * 1000; // 1 minuto
+export const API_RATE_WINDOW_MS = 60 * 1000;
+
+const PUBLIC_SEARCH_WINDOW_MINUTES_RAW = Number(process.env.API_RATE_LIMIT_PUBLIC_SEARCH_WINDOW_MINUTES);
+/** Janela do rate limit de busca textual (visitante / scope public). Padrão 10 minutos. */
+export const PUBLIC_SEARCH_RATE_WINDOW_MS =
+  Number.isFinite(PUBLIC_SEARCH_WINDOW_MINUTES_RAW) && PUBLIC_SEARCH_WINDOW_MINUTES_RAW > 0
+    ? PUBLIC_SEARCH_WINDOW_MINUTES_RAW * 60 * 1000
+    : 10 * 60 * 1000;
+
+/** Máximo de buscas (requests que consomem cota) por janela. */
+export const PUBLIC_SEARCH_RATE_MAX = Math.max(
+  0,
+  Number(process.env.API_RATE_LIMIT_PUBLIC_SEARCH_PER_HOUR) ||
+  Number(process.env.PUBLIC_SEARCH_LIMIT_PER_HOUR) ||
+  20
+);
 
 interface WindowState {
   count: number;
@@ -12,7 +27,6 @@ interface WindowState {
 
 const store = new Map<string, WindowState>();
 
-/** Limpa entradas expiradas (evitar crescimento infinito do Map). */
 function prune(): void {
   const now = Date.now();
   for (const [key, state] of store.entries()) {
@@ -20,42 +34,54 @@ function prune(): void {
   }
 }
 
-/** Chama prune a cada 5 minutos. */
 let pruneInterval: ReturnType<typeof setInterval> | null = null;
 function ensurePruneInterval(): void {
   if (pruneInterval) return;
-  pruneInterval = setInterval(() => {
-    prune();
-  }, 5 * 60 * 1000);
+  pruneInterval = setInterval(prune, 10 * 60 * 1000);
   if (pruneInterval.unref) pruneInterval.unref();
 }
 
-/**
- * Verifica se o cliente (key) pode fazer mais uma requisição.
- * @param key Identificador único (ex: "ip:abc123" ou "user:42")
- * @param maxPerWindow Máximo de requisições na janela (1 min)
- * @returns true se permitido; false se excedeu (deve retornar 429)
- */
-export function checkApiRateLimit(key: string, maxPerWindow: number): boolean {
-  if (maxPerWindow <= 0) return true;
-  ensurePruneInterval();
-  const now = Date.now();
+function getOrCreateState(key: string, now: number, windowMs: number): WindowState {
   let state = store.get(key);
   if (!state || state.resetAt <= now) {
-    state = { count: 0, resetAt: now + WINDOW_MS };
+    state = { count: 0, resetAt: now + windowMs };
     store.set(key, state);
   }
+  return state;
+}
+
+export type ApiRateLimitOptions = {
+  /** Duração da janela (default 1 min). */
+  windowMs?: number;
+  /** false = só valida, não incrementa (ex.: paginação com cota já esgotada). */
+  increment?: boolean;
+};
+
+/**
+ * Verifica se o cliente (key) pode fazer mais uma requisição na janela.
+ * @returns true se permitido; false se excedeu
+ */
+export function checkApiRateLimit(
+  key: string,
+  maxPerWindow: number,
+  options?: ApiRateLimitOptions
+): boolean {
+  if (maxPerWindow <= 0) return true;
+  const windowMs = options?.windowMs ?? API_RATE_WINDOW_MS;
+  const increment = options?.increment !== false;
+  ensurePruneInterval();
+  const now = Date.now();
+  const state = getOrCreateState(key, now, windowMs);
   if (state.count >= maxPerWindow) return false;
-  state.count++;
+  if (increment) state.count++;
   return true;
 }
 
-/**
- * Retorna quantos segundos o cliente deve esperar antes de tentar de novo (para header Retry-After).
- */
-export function getRetryAfterSeconds(key: string): number {
+/** Segundos até o fim da janela (header Retry-After / contador na UI). */
+export function getRetryAfterSeconds(key: string, windowMs: number = API_RATE_WINDOW_MS): number {
   const state = store.get(key);
-  if (!state) return 60;
+  const maxSec = Math.ceil(windowMs / 1000);
+  if (!state) return maxSec;
   const remaining = Math.ceil((state.resetAt - Date.now()) / 1000);
-  return Math.max(1, Math.min(60, remaining));
+  return Math.max(1, Math.min(maxSec, remaining));
 }

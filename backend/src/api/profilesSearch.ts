@@ -1165,7 +1165,7 @@ export function sortPostMatchItemsBySearchRelevance(
   return scored.map((s) => s.item);
 }
 
-/** Busca + painel BI: perfis que casam com o facet sobem; dentro do grupo, relevância da legenda. */
+/** Busca + painel BI: filtro do painel primeiro; relevância da legenda em segundo. */
 export function sortPostMatchItemsByBoostThenSearchRelevance(
   items: Record<string, unknown>[],
   query: ProfilesSearchQuery,
@@ -1524,7 +1524,7 @@ export function sortScratchRowsWithinBoostPriority<T extends { key: string; rele
   });
 }
 
-/** Com filtro BI ativo: prioridade do boost; dentro do mesmo nível, relevância/engajamento (não diversidade por porte). */
+/** Com termo + filtro BI: boost primeiro, relevância em segundo. Sem termo: boost por grupo. */
 export function sortScratchRowsByBoostThenDiversity<T extends { key: string; relevance: number; ts?: number; value?: unknown }>(
   rows: T[],
   query: ProfilesSearchQuery,
@@ -1533,6 +1533,26 @@ export function sortScratchRowsByBoostThenDiversity<T extends { key: string; rel
   qRaw: string
 ): T[] {
   if (rows.length < 2) return rows;
+  const q = qRaw.trim();
+  if (q) {
+    const hasBoost = hasCampaignFacetBoostInQuery(query);
+    return [...rows].sort((a, b) => {
+      if (hasBoost) {
+        const ha = handleFromPostBucketKey(a.key);
+        const hb = handleFromPostBucketKey(b.key);
+        const pa = boostMeta.get(ha)?.priority ?? 0;
+        const pb = boostMeta.get(hb)?.priority ?? 0;
+        if (pb !== pa) return pb - pa;
+      }
+      if (b.relevance !== a.relevance) return b.relevance - a.relevance;
+      const engDiff = scratchRowEngagementScore(b.value) - scratchRowEngagementScore(a.value);
+      if (engDiff !== 0) return engDiff;
+      const tsA = typeof a.ts === 'number' && Number.isFinite(a.ts) ? a.ts : 0;
+      const tsB = typeof b.ts === 'number' && Number.isFinite(b.ts) ? b.ts : 0;
+      if (tsB !== tsA) return tsB - tsA;
+      return a.key.localeCompare(b.key);
+    });
+  }
   if (!hasCampaignFacetBoostInQuery(query)) {
     return sortScratchRowsWithinBoostPriority(rows, qRaw);
   }

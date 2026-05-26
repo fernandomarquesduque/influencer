@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button, Dropdown, Input, Space } from 'antd'
-import { DownOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
+import { SearchOutlined, UserOutlined } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppAccountMenuItems } from '../../hooks/useAppAccountMenuItems'
 import BuscaInfluencerPlansModal from '../BuscaInfluencerPlansModal/BuscaInfluencerPlansModal'
@@ -10,6 +10,7 @@ import {
   SEARCH_ROUTE_PATH,
   getMergedUrlSearchParams,
 } from '../../constants/searchRoute'
+import { OPEN_PLANS_MODAL_EVENT } from '../../utils/openPlansModal'
 import './AppTopBar.css'
 
 function readSearchTermFromLocation(location: { pathname: string; search: string; hash: string }): string {
@@ -21,7 +22,7 @@ export default function AppTopBar() {
   const navigate = useNavigate()
   const isSearchRoute = checkIsSearchRoute(location.pathname)
   const [searchInput, setSearchInput] = useState(() => readSearchTermFromLocation(location))
-  const { items: userMenuItems, plansModalOpen, setPlansModalOpen, accountLabel } = useAppAccountMenuItems()
+  const { items: userMenuItems, plansModalOpen, setPlansModalOpen } = useAppAccountMenuItems()
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
   )
@@ -37,6 +38,12 @@ export default function AppTopBar() {
     mq.addEventListener('change', onChange)
     return () => mq.removeEventListener('change', onChange)
   }, [])
+
+  useEffect(() => {
+    const onOpenPlans = () => setPlansModalOpen(true)
+    window.addEventListener(OPEN_PLANS_MODAL_EVENT, onOpenPlans)
+    return () => window.removeEventListener(OPEN_PLANS_MODAL_EVENT, onOpenPlans)
+  }, [setPlansModalOpen])
 
   const submitSearch = () => {
     const term = searchInput.trim()
@@ -98,10 +105,6 @@ export default function AppTopBar() {
           >
             <button type="button" className="app-top-bar-account-btn" aria-label="Abrir menu da conta">
               <UserOutlined className="app-top-bar-account-btn__user" aria-hidden />
-              {accountLabel ? (
-                <span className="app-top-bar-account-btn__label">{accountLabel}</span>
-              ) : null}
-              <DownOutlined className="app-top-bar-account-btn__chevron" aria-hidden />
             </button>
           </Dropdown>
         </div>

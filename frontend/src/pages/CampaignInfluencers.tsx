@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Listagem de influenciadores de uma campanha.
  * Rota: /app/campaigns/:campaignId — filtros baseados nos facets (retorno da API), igual InfluencerList.
  */
@@ -19,8 +19,7 @@ import {
   payCampaignWithCredits,
   fetchMyPendingPayment,
   fetchCampaignPostSearchHandles,
-  isRateLimitError,
-  rateLimitRetryAfterSeconds,
+  isPublicSearchLimitError,
   fetchFavorites,
   addFavorite,
   removeFavorite,
@@ -46,8 +45,11 @@ import {
   profileListItemsFromOriginPosts,
   campaignContextFetchQueryKey,
   isCampaignFacetBoostOnlyPatch,
+  isCampaignGalleryUiOnlyPatch,
   hasCampaignFacetBoost,
   pickCampaignFacetBoostFromQuery,
+  normalizeSingleSelectFacetBoost,
+  isOriginPostSort,
   stripCampaignFacetBoostFromQuery,
   buildSingleCampaignFacetBoostPatch,
 } from '../utils/campaignFilterClient'
@@ -96,6 +98,7 @@ function campaignQueryToUrlParams(query: Partial<ProfilesSearchQuery>): Record<s
   if (query.accountTypeFilter?.length) params.accountTypeFilter = query.accountTypeFilter.map(String).join(',')
   if (query.contentTypes?.length) params.contentTypes = query.contentTypes.join(',')
   if (query.originMediaKinds?.length) params.originMediaKinds = query.originMediaKinds.join(',')
+  if (query.originPostSort) params.originPostSort = query.originPostSort
   if (query.cities?.length) params.cities = query.cities.join(',')
   if (query.states?.length) params.states = query.states.join(',')
   if (query.socialNetworks?.length) params.socialNetworks = query.socialNetworks.join(',')
@@ -120,27 +123,36 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
     const arr = s.split(',').map((x) => x.trim()).filter(Boolean)
     return arr.length ? arr : undefined
   }
+  const parseSingleStr = (s: string | null): string[] | undefined => {
+    const arr = parseStrList(s)
+    return arr?.length ? [arr[0]!] : undefined
+  }
+  const parseSingleNum = (s: string | null): number[] | undefined => {
+    const arr = parseNumList(s)
+    return arr?.length ? [arr[0]!] : undefined
+  }
   return {
     q: params.get('q')?.trim() || undefined,
     sort:
       (params.get('sort') as ProfilesSort) ||
       (params.get('q')?.trim() ? ('relevance_desc' as ProfilesSort) : undefined),
-    sizeFilter: (() => {
-      const arr = parseStrList(params.get('sizeFilter'))
-      return arr?.length ? [arr[0]] : undefined
-    })(),
-    accountTypeFilter: parseNumList(params.get('accountTypeFilter')),
-    contentTypes: parseStrList(params.get('contentTypes')),
+    sizeFilter: parseSingleStr(params.get('sizeFilter')),
+    accountTypeFilter: parseSingleNum(params.get('accountTypeFilter')),
+    contentTypes: parseSingleStr(params.get('contentTypes')),
     originMediaKinds: parseOriginMediaKindsParam(params.get('originMediaKinds')),
-    cities: parseStrList(params.get('cities')),
-    states: parseStrList(params.get('states')),
-    socialNetworks: parseStrList(params.get('socialNetworks')),
-    llmProfileType: parseStrList(params.get('llmProfileType')),
-    llmMainCategory: parseStrList(params.get('llmMainCategory')),
-    llmGender: parseStrList(params.get('llmGender')),
+    originPostSort: (() => {
+      const raw = params.get('originPostSort')
+      return isOriginPostSort(raw) ? raw : undefined
+    })(),
+    cities: parseSingleStr(params.get('cities')),
+    states: parseSingleStr(params.get('states')),
+    socialNetworks: parseSingleStr(params.get('socialNetworks')),
+    llmProfileType: parseSingleStr(params.get('llmProfileType')),
+    llmMainCategory: parseSingleStr(params.get('llmMainCategory')),
+    llmGender: parseSingleStr(params.get('llmGender')),
     llmSubCategories: parseStrList(params.get('llmSubCategories')),
     llmContentPillars: parseStrList(params.get('llmContentPillars')),
-    llmAudienceType: parseStrList(params.get('llmAudienceType')),
+    llmAudienceType: parseSingleStr(params.get('llmAudienceType')),
     offset: params.has('offset') ? Number(params.get('offset')) : undefined,
   }
 }
@@ -664,6 +676,8 @@ export default function CampaignInfluencers() {
   const [originGallerySearchLoading, setOriginGallerySearchLoading] = useState(false)
   /** Aba Posts com termo: após carregar, sem posts — esconder painel BI à esquerda. */
   const [originSearchSettledEmpty, setOriginSearchSettledEmpty] = useState(false)
+  /** Aba Posts: cota horária ou 429 — esconder lateral e centralizar empty state. */
+  const [originSearchLimited, setOriginSearchLimited] = useState(false)
   const [searchInput, setSearchInput] = useState(() => urlParams.get('q') ?? '')
   /** Incrementado quando a top bar reenvia a mesma busca (URL igual). */
   const [searchRefreshToken, setSearchRefreshToken] = useState(0)
@@ -694,7 +708,10 @@ export default function CampaignInfluencers() {
   const captionSearchQ = urlParams.get('q')?.trim() ?? ''
   const hasActiveSearchQ = captionSearchQ.length > 0
   /** Na busca por legenda: só facets dos posts carregados — nunca os da campanha inteira. */
-  const displayFacets = hasActiveSearchQ ? searchFacets : facets
+  const displayFacets = useMemo(() => {
+    if (hasActiveSearchQ) return searchFacets
+    return facets
+  }, [hasActiveSearchQ, searchFacets, facets])
   const buildCampaignUrlParams = useCallback(
     (nextQuery: Partial<ProfilesSearchQuery>, tab: 'influencers' | 'origin' = campaignMainTab) => {
       const params = campaignQueryToUrlParams(nextQuery)
@@ -1016,11 +1033,15 @@ export default function CampaignInfluencers() {
 
   const updateFilter = useCallback(
     (overrides: Partial<ProfilesSearchQuery>) => {
-      if (isCampaignFacetBoostOnlyPatch(overrides)) {
-        if (campaignMainTabRef.current === 'origin' && (query.q ?? '').trim()) {
+      if (isCampaignFacetBoostOnlyPatch(overrides) || isCampaignGalleryUiOnlyPatch(overrides)) {
+        if (
+          isCampaignFacetBoostOnlyPatch(overrides) &&
+          campaignMainTabRef.current === 'origin' &&
+          (query.q ?? '').trim()
+        ) {
           setOriginGallerySearchLoading(true)
         }
-        const newQuery = { ...query, ...overrides, offset: 0 }
+        const newQuery = normalizeSingleSelectFacetBoost({ ...query, ...overrides, offset: 0 })
         setQuery(newQuery)
         setDisplayedCount(DISPLAY_PAGE_SIZE)
         setSearchParams(buildCampaignUrlParams(newQuery, campaignMainTab), { replace: true })
@@ -1042,7 +1063,7 @@ export default function CampaignInfluencers() {
         : { ...query, ...overrides, offset: 0 }
       /** Nova busca ou reenvio do mesmo termo: volta à ordenação padrão (relevância). */
       if (explicitQ) {
-        newQuery = { ...newQuery, sort: undefined }
+        newQuery = { ...newQuery, sort: undefined, originPostSort: undefined }
       }
       if (wordSearchApplied) {
         setSearchFacets(null)
@@ -1163,11 +1184,13 @@ export default function CampaignInfluencers() {
   useEffect(() => {
     if (campaignMainTab !== 'origin' || !query.q?.trim()) {
       setOriginSearchSettledEmpty(false)
+      setOriginSearchLimited(false)
     }
   }, [campaignMainTab, query.q, originMediaKindsKey])
 
   useEffect(() => {
     setOriginSearchSettledEmpty(false)
+    setOriginSearchLimited(false)
   }, [campaignId])
 
   useEffect(() => {
@@ -1210,11 +1233,7 @@ export default function CampaignInfluencers() {
         })
         .catch((e) => {
           if (ac.signal.aborted) return
-          if (isRateLimitError(e)) {
-            message.warning(
-              e.message ||
-                `Muitas buscas em pouco tempo. Aguarde ${rateLimitRetryAfterSeconds(e)} segundos e tente de novo.`
-            )
+          if (isPublicSearchLimitError(e)) {
             return
           }
           setPostCaptionSearch((prev) =>
@@ -1472,7 +1491,7 @@ export default function CampaignInfluencers() {
   const originCaptionSearchHidesBIPanel =
     campaignMainTab === 'origin' &&
     !!query.q?.trim() &&
-    (originGallerySearchLoading || originSearchSettledEmpty)
+    (originGallerySearchLoading || originSearchSettledEmpty || originSearchLimited)
   const influencersCaptionSearchHidesBIPanel =
     campaignMainTab === 'influencers' &&
     !!query.q?.trim() &&
@@ -1535,28 +1554,28 @@ export default function CampaignInfluencers() {
   const renderCampaignSearchToolbar = (options?: { withViewToggle?: boolean }) => {
     const withViewToggle = options?.withViewToggle ?? !showAllCampaignsFixedChrome
     return (
-    <>
-      <Space.Compact style={{ flex: 1, minWidth: 0 }}>
-        <Input
-          placeholder="Digite uma palavra"
-          prefix={<SearchOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 16 }} />}
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          allowClear
-          size="large"
-          style={{ flex: 1 }}
-        />
-        <Button
-          type="primary"
-          size="large"
-          icon={<SearchOutlined />}
-          onClick={() => updateFilter({ q: searchInput.trim() || undefined })}
-        >
-          Buscar
-        </Button>
-      </Space.Compact>
-      {withViewToggle ? renderCampaignViewToggle() : null}
-    </>
+      <>
+        <Space.Compact style={{ flex: 1, minWidth: 0 }}>
+          <Input
+            placeholder="Digite uma palavra"
+            prefix={<SearchOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 16 }} />}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            allowClear
+            size="large"
+            style={{ flex: 1 }}
+          />
+          <Button
+            type="primary"
+            size="large"
+            icon={<SearchOutlined />}
+            onClick={() => updateFilter({ q: searchInput.trim() || undefined })}
+          >
+            Buscar
+          </Button>
+        </Space.Compact>
+        {withViewToggle ? renderCampaignViewToggle() : null}
+      </>
     )
   }
 
@@ -1744,65 +1763,65 @@ export default function CampaignInfluencers() {
             flexWrap: isMobile ? 'nowrap' : 'wrap',
           }}
         >
-        <div
-          style={{
-            ...(isMobile
-              ? { width: '100%', minWidth: 0 }
-              : { width: CAMPAIGN_BI_PANEL_WIDTH_PX, flexShrink: 0 }),
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: isMobile ? 'stretch' : 'flex-start',
-            gap: 0,
-            minWidth: 0,
-          }}
-        >
-          {renderCampaignPageBranding()}
-        </div>
-        {!isAllCampaignsView && !pendingPayment ? (
           <div
             style={{
               ...(isMobile
-                ? {
-                  width: '100%',
-                  minWidth: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'stretch',
-                  gap: 10,
-                }
-                : {
-                  flex: 1,
-                  minWidth: 0,
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  justifyContent: 'flex-end',
-                  gap: 8,
-                  flexWrap: 'wrap',
-                }),
+                ? { width: '100%', minWidth: 0 }
+                : { width: CAMPAIGN_BI_PANEL_WIDTH_PX, flexShrink: 0 }),
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: isMobile ? 'stretch' : 'flex-start',
+              gap: 0,
+              minWidth: 0,
             }}
           >
+            {renderCampaignPageBranding()}
+          </div>
+          {!isAllCampaignsView && !pendingPayment ? (
             <div
               style={{
-                display: 'flex',
-                flexDirection: isMobile ? 'column' : 'row',
-                alignItems: isMobile ? 'stretch' : 'center',
-                gap: 8,
-                flexWrap: isMobile ? 'nowrap' : 'wrap',
-                width: isMobile ? '100%' : undefined,
-                minWidth: 0,
+                ...(isMobile
+                  ? {
+                    width: '100%',
+                    minWidth: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'stretch',
+                    gap: 10,
+                  }
+                  : {
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'flex-end',
+                    gap: 8,
+                    flexWrap: 'wrap',
+                  }),
               }}
             >
-              <Button
-                type="default"
-                className="campaign-toolbar-quiet-btn"
-                onClick={() => navigate('/app/campaigns')}
-                style={isMobile ? { width: '100%' } : undefined}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: isMobile ? 'column' : 'row',
+                  alignItems: isMobile ? 'stretch' : 'center',
+                  gap: 8,
+                  flexWrap: isMobile ? 'nowrap' : 'wrap',
+                  width: isMobile ? '100%' : undefined,
+                  minWidth: 0,
+                }}
               >
-                <ArrowLeftOutlined /> Voltar
-              </Button>
+                <Button
+                  type="default"
+                  className="campaign-toolbar-quiet-btn"
+                  onClick={() => navigate('/app/campaigns')}
+                  style={isMobile ? { width: '100%' } : undefined}
+                >
+                  <ArrowLeftOutlined /> Voltar
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
         </div>
       )}
 
@@ -1869,6 +1888,7 @@ export default function CampaignInfluencers() {
                   onFilter={updateFilter}
                   description={campaignInfo?.description ?? null}
                   onDescriptionSave={pendingPayment || isAllCampaignsView ? undefined : handleDescriptionSave}
+                  showOriginPostSort={campaignMainTab === 'origin' && hasOriginSearchTerm}
                 />
               ) : null}
             </div>
@@ -1926,10 +1946,12 @@ export default function CampaignInfluencers() {
                       textQuery={query.q?.trim() || ''}
                       mediaKinds={selectedOriginMediaKinds.length ? selectedOriginMediaKinds : undefined}
                       onLoadingChange={setOriginGallerySearchLoading}
-                      onOriginSearchSettled={({ empty, rateLimited }) =>
+                      onOriginSearchSettled={({ empty, rateLimited }) => {
+                        setOriginSearchLimited(!!rateLimited)
                         setOriginSearchSettledEmpty(rateLimited ? false : empty)
-                      }
+                      }}
                       facetBoostQuery={query}
+                      originPostSort={query.originPostSort}
                       profileFilters={postMatchProfileFilters}
                       onLoadedPostsForFacets={handleOriginPostsForFacets}
                       onOpenInfluencerDetail={openInfluencerFromCard}

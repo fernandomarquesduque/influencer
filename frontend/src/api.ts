@@ -16,10 +16,47 @@ export function authHeaders(): Record<string, string> {
 }
 
 /** Erro 429 da API (`code: RATE_LIMIT`) — distinto de busca sem resultados. */
-export type ApiClientErrorCode = 'RATE_LIMIT'
+export type ApiClientErrorCode = 'RATE_LIMIT' | 'PUBLIC_SEARCH_LIMIT'
 
 export function isRateLimitError(e: unknown): e is Error & { code: 'RATE_LIMIT'; retryAfterSeconds?: number } {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'RATE_LIMIT'
+}
+
+/** Cota horária de buscas (visitante / scope public) — exige assinatura. */
+export function isPublicSearchLimitError(
+  e: unknown
+): e is Error & { code: 'PUBLIC_SEARCH_LIMIT'; retryAfterSeconds?: number } {
+  return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'PUBLIC_SEARCH_LIMIT'
+}
+
+async function throwForForbiddenSearchLimit(res: Response): Promise<never> {
+  const err = await res.json().catch(() => ({}))
+  const code = (err as { code?: string }).code
+  const msg =
+    (err as { error?: string }).error ||
+    'Você atingiu o limite de buscas gratuitas. Aguarde alguns minutos ou assine um plano para continuar.'
+  if (code === 'PUBLIC_SEARCH_LIMIT') {
+    const retryHeader = res.headers.get('Retry-After')
+    const fromHeader = retryHeader ? parseInt(retryHeader, 10) : NaN
+    const fromBody = (err as { retryAfterSeconds?: number }).retryAfterSeconds
+    const retryAfterSeconds =
+      typeof fromBody === 'number' && Number.isFinite(fromBody) && fromBody > 0
+        ? fromBody
+        : Number.isFinite(fromHeader) && fromHeader > 0
+          ? fromHeader
+          : 600
+    throw Object.assign(new Error(msg), {
+      code: 'PUBLIC_SEARCH_LIMIT' as ApiClientErrorCode,
+      retryAfterSeconds,
+    })
+  }
+  throw new Error(msg)
+}
+
+export function publicSearchLimitRetryAfterSeconds(e: unknown): number {
+  if (!isPublicSearchLimitError(e)) return 600
+  const n = e.retryAfterSeconds
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.min(600, Math.round(n)) : 600
 }
 
 export function rateLimitRetryAfterSeconds(e: unknown): number {
@@ -287,6 +324,9 @@ export type ProfilesSort =
 /** Tipo de mídia no índice (feed, reels, marcados, destaques). */
 export type MediaKind = 'post' | 'reel' | 'tagged' | 'highlight'
 
+/** Ordenação da galeria de posts (aba Origem / busca por legenda). */
+export type OriginPostSort = 'engagement_desc' | 'recent_desc' | 'oldest_asc' | 'followers_desc'
+
 export interface ProfilesSearchQuery {
   q?: string
   minFollowers?: number
@@ -315,6 +355,8 @@ export interface ProfilesSearchQuery {
   contentTypes?: string[]
   /** Galeria Origem (posts): filtrar por tipo de mídia no índice (feed, reels, marcados, destaques). */
   originMediaKinds?: MediaKind[]
+  /** Galeria Origem: ordenação explícita dos posts no cliente (omitir = relevância + facets). */
+  originPostSort?: OriginPostSort
   /** Faixas de preço por formato (valores em reais: 0, 50, 100, 250, 500, 1000, 2500, 5000, 15000). */
   pricingFeed?: number[]
   pricingReels?: number[]
@@ -513,7 +555,7 @@ export function profilesSearchQueryToParams(query: Partial<ProfilesSearchQuery>)
 
 /** Remove busca por palavra na legenda (`q`) e campos só de UI/paginação de perfis ao reutilizar filtros em `post-matches`. */
 export function profileFiltersForCampaignPostApis(query: Partial<ProfilesSearchQuery>): Partial<ProfilesSearchQuery> {
-  const { q: _q, originMediaKinds: _om, limit: _l, offset: _o, sort: _s, ...rest } = query
+  const { q: _q, originMediaKinds: _om, originPostSort: _ops, limit: _l, offset: _o, sort: _s, ...rest } = query
   return stripCampaignFacetBoostFromQuery(rest)
 }
 
@@ -1527,6 +1569,7 @@ export async function fetchCampaignPostMatches(
     signal: options?.signal,
   })
   if (res.status === 429) await throwForRateLimitedResponse(res)
+  if (res.status === 403) await throwForForbiddenSearchLimit(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error((err as { error?: string }).error || 'Falha ao carregar posts da campanha')
