@@ -117,6 +117,12 @@ function textContainsPhraseAsTokens(qTrim: string, search: string): boolean {
   return matchPositionsInOrder(words, search).length === words.length
 }
 
+function textContainsAdjacentPhrase(words: string[], search: string): boolean {
+  if (words.length < 2) return false
+  const phrasePat = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
+  return new RegExp(`(?:^|[^a-z0-9_])${phrasePat}(?=[^a-z0-9_]|$)`).test(search)
+}
+
 function findWordTokenPosition(word: string, search: string, from: number): number {
   const re = /[a-z0-9_]+/g
   re.lastIndex = from
@@ -239,9 +245,17 @@ export function scoreQueryMatch(searchableText: string, q: string): { match: boo
   const search = foldSearchText(searchableText.trim())
   if (!search) return { match: false, relevance: 0 }
 
-  if (textContainsPhraseAsTokens(qTrim, search)) return { match: true, relevance: 1000 }
-
   const words = tokenizeQueryWords(qTrim)
+  if (words.length >= 2 && textContainsAdjacentPhrase(words, search)) {
+    return { match: true, relevance: 1000 }
+  }
+  if (words.length >= 2 && textContainsPhraseAsTokens(qTrim, search)) {
+    return scoreMultiWordQuery(words, search)
+  }
+  if (words.length === 1 && textContainsPhraseAsTokens(qTrim, search)) {
+    return { match: true, relevance: 1000 }
+  }
+
   if (words.length === 0) {
     if (qTrim.length >= MIN_TOKEN_LEN && isWholeTokenMatch(qTrim, search)) return { match: true, relevance: 500 }
     return { match: false, relevance: 0 }

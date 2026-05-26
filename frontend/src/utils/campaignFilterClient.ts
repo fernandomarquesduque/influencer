@@ -9,7 +9,7 @@ import { getCostTier } from './pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
 import { snapMainCategoryToTaxonomy } from '@repo/llmMainCategoryTaxonomy'
-import { matchesQuery } from './queryRelevance'
+import { foldSearchText, matchesQuery } from './queryRelevance'
 
 type CostTier = 'low' | 'medium' | 'high' | 'very_high'
 
@@ -146,23 +146,22 @@ export function pickCampaignFacetBoostFromQuery(
   for (const k of CAMPAIGN_FACET_BOOST_KEYS) {
     const v = query[k]
     if (Array.isArray(v) && v.length > 0) {
-      ;(out as Record<string, unknown>)[k] = [...v]
+      ; (out as Record<string, unknown>)[k] = [...v]
     }
   }
   return out
 }
 
-/** Uma única ordenação ativa no painel BI; clicar de novo no mesmo item limpa tudo. */
+/** Atualiza uma dimensão do painel BI; outras dimensões (tipos diferentes) permanecem ativas. */
 export function buildSingleCampaignFacetBoostPatch(
   activeKey: (typeof CAMPAIGN_FACET_BOOST_KEYS)[number],
   nextValue: string[] | number[] | undefined
 ): Partial<ProfilesSearchQuery> {
   const patch: Partial<ProfilesSearchQuery> = {}
-  for (const k of CAMPAIGN_FACET_BOOST_KEYS) {
-    ;(patch as Record<string, unknown>)[k] = undefined
-  }
   if (Array.isArray(nextValue) && nextValue.length > 0) {
-    ;(patch as Record<string, unknown>)[activeKey] = [...nextValue]
+    ; (patch as Record<string, unknown>)[activeKey] = [...nextValue]
+  } else {
+    ; (patch as Record<string, unknown>)[activeKey] = undefined
   }
   return patch
 }
@@ -205,15 +204,15 @@ export function filterFacetsForDisplay(facets: ProfilesSearchFacets): ProfilesSe
     account_type: (facets.account_type ?? []).filter((b) => (b.count ?? 0) > 0),
     llm: llm
       ? {
-          profileType: nameCountPositive(llm.profileType ?? []),
-          mainCategory: nameCountPositive(llm.mainCategory ?? []),
-          gender: nameCountPositive(llm.gender ?? []),
-          language: nameCountPositive(llm.language ?? []),
-          audienceType: nameCountPositive(llm.audienceType ?? []),
-          toneOfVoice: nameCountPositive(llm.toneOfVoice ?? []),
-          brandSafety: { level: nameCountPositive(llm.brandSafety?.level ?? []) },
-          postSentiment: nameCountPositive(llm.postSentiment ?? []),
-        }
+        profileType: nameCountPositive(llm.profileType ?? []),
+        mainCategory: nameCountPositive(llm.mainCategory ?? []),
+        gender: nameCountPositive(llm.gender ?? []),
+        language: nameCountPositive(llm.language ?? []),
+        audienceType: nameCountPositive(llm.audienceType ?? []),
+        toneOfVoice: nameCountPositive(llm.toneOfVoice ?? []),
+        brandSafety: { level: nameCountPositive(llm.brandSafety?.level ?? []) },
+        postSentiment: nameCountPositive(llm.postSentiment ?? []),
+      }
       : facets.llm,
   }
 }
@@ -279,7 +278,7 @@ export function pruneInvalidCampaignFacetBoost(
     if (!arr?.length) return
     const valid = arr.filter((v) => facetAllowsLlmName(facets, facetKey, v))
     if (valid.length !== arr.length) {
-      ;(next as Record<string, unknown>)[key] = valid.length ? valid : undefined
+      ; (next as Record<string, unknown>)[key] = valid.length ? valid : undefined
       changed = true
     }
   }
@@ -296,7 +295,7 @@ export function pruneInvalidCampaignFacetBoost(
     )
     const valid = arr.filter((n) => allowed.has(n))
     if (valid.length !== arr.length) {
-      ;(next as Record<string, unknown>)[key] = valid.length ? valid : undefined
+      ; (next as Record<string, unknown>)[key] = valid.length ? valid : undefined
       changed = true
     }
   }
@@ -530,6 +529,39 @@ function postDiversityScoreForPick(
   return score
 }
 
+function getPostCaptionSearchText(post: PostItem): string {
+  const parts: string[] = []
+  const cap = post.content?.caption_text
+  if (typeof cap === 'string' && cap.trim()) parts.push(cap.trim())
+  const hashtags = post.content?.hashtags
+  if (Array.isArray(hashtags)) {
+    for (const h of hashtags) {
+      if (typeof h === 'string' && h.trim()) parts.push(h.trim().replace(/^#/, ''))
+    }
+  }
+  return foldSearchText(parts.join(' '))
+}
+
+/** Ordena posts da galeria Origem por relevância textual (frase exata primeiro). */
+export function sortPostsBySearchRelevance(posts: PostItem[], q: string): PostItem[] {
+  const qTrim = q.trim()
+  if (!qTrim || posts.length < 2) return posts
+  const scored = posts.map((post, idx) => ({
+    post,
+    relevance: matchesQuery(getPostCaptionSearchText(post), qTrim).relevance,
+    idx,
+  }))
+  scored.sort((a, b) => {
+    if (b.relevance !== a.relevance) return b.relevance - a.relevance
+    const engDiff = postEngagementScore(b.post) - postEngagementScore(a.post)
+    if (engDiff !== 0) return engDiff
+    const tsDiff = postTimestamp(b.post) - postTimestamp(a.post)
+    if (tsDiff !== 0) return tsDiff
+    return a.idx - b.idx
+  })
+  return scored.map((s) => s.post)
+}
+
 /**
  * Sem filtro do painel BI: intercala porte, gênero, categoria etc. para facetas mais ricas.
  */
@@ -579,8 +611,10 @@ function postTimestamp(post: PostItem): number {
   return typeof created === 'number' && Number.isFinite(created) ? created : 0
 }
 
-/** Dentro do mesmo nível de boost: engajamento e data (sem intercalar porte por diversidade). */
-function sortPostsWithinBoostPriority(posts: PostItem[]): PostItem[] {
+/** Dentro do mesmo nível de boost: relevância da busca ou engajamento/data. */
+function sortPostsWithinBoostPriority(posts: PostItem[], searchQ?: string): PostItem[] {
+  const qTrim = searchQ?.trim() ?? ''
+  if (qTrim) return sortPostsBySearchRelevance(posts, qTrim)
   if (posts.length < 2) return posts
   return [...posts].sort((a, b) => {
     const engDiff = postEngagementScore(b) - postEngagementScore(a)
@@ -594,7 +628,8 @@ function sortPostsWithinBoostPriority(posts: PostItem[]): PostItem[] {
 /** Com filtro BI: prioridade do boost; dentro do mesmo nível, engajamento/data (não diversidade por porte). */
 export function sortPostsByBoostThenDiversity(
   posts: PostItem[],
-  query: Partial<ProfilesSearchQuery>
+  query: Partial<ProfilesSearchQuery>,
+  searchQ?: string
 ): PostItem[] {
   if (!hasCampaignFacetBoost(query) || posts.length < 2) return posts
   const byPriority = new Map<number, PostItem[]>()
@@ -606,18 +641,31 @@ export function sortPostsByBoostThenDiversity(
   const priorities = [...byPriority.keys()].sort((a, b) => b - a)
   const out: PostItem[] = []
   for (const pr of priorities) {
-    out.push(...sortPostsWithinBoostPriority(byPriority.get(pr)!))
+    out.push(...sortPostsWithinBoostPriority(byPriority.get(pr)!, searchQ))
   }
   return out
+}
+
+/** Busca textual + painel BI: porte/facet que casa primeiro; dentro do grupo, relevância da legenda. */
+export function sortPostsByBoostThenSearchRelevance(
+  posts: PostItem[],
+  query: Partial<ProfilesSearchQuery>,
+  searchQ: string
+): PostItem[] {
+  const qTrim = searchQ.trim()
+  if (!qTrim) return sortPostsByCampaignFacetBoost(posts, query)
+  if (!hasCampaignFacetBoost(query) || posts.length < 2) return sortPostsBySearchRelevance(posts, searchQ)
+  return sortPostsByBoostThenDiversity(posts, query, searchQ)
 }
 
 /** Ordena posts da galeria Origem: quem casa com os facets selecionados sobe (sem remover itens). */
 export function sortPostsByCampaignFacetBoost(
   posts: PostItem[],
-  query: Partial<ProfilesSearchQuery>
+  query: Partial<ProfilesSearchQuery>,
+  searchQ?: string
 ): PostItem[] {
   if (!hasCampaignFacetBoost(query)) return posts
-  return sortPostsByBoostThenDiversity(posts, query)
+  return sortPostsByBoostThenDiversity(posts, query, searchQ)
 }
 
 function getSearchableTextFromItem(item: ProfileListItem): string {
@@ -728,7 +776,7 @@ export function filterAndSortCampaignItems(
       const text = getSearchableTextFromItem(i)
       const { match, relevance } = matchesQuery(text, q)
       if (match) {
-        ;(i as ProfileListItem & { search_relevance?: number }).search_relevance = relevance
+        ; (i as ProfileListItem & { search_relevance?: number }).search_relevance = relevance
         return true
       }
       return false
@@ -749,18 +797,18 @@ export function filterAndSortCampaignItems(
     const h = (item.handle ?? item.key ?? '').toString().toLowerCase().replace(/^@/, '').trim()
     return h ? favoriteHandles.has(h) : false
   }
-  const order = (query.sort ?? 'engagement_desc') as ProfilesSort
+  const order = (query.sort ?? (q ? 'relevance_desc' : 'relevance_desc')) as ProfilesSort
   const sortFn = (a: ProfileListItem, b: ProfileListItem): number => {
+    if (q) {
+      const relA = (a as ProfileListItem & { search_relevance?: number }).search_relevance ?? 0
+      const relB = (b as ProfileListItem & { search_relevance?: number }).search_relevance ?? 0
+      if (relB !== relA) return relB - relA
+    }
     const boostCmp = compareFacetBoostPriority(
       computeFacetBoostPriority(a, query),
       computeFacetBoostPriority(b, query)
     )
     if (boostCmp !== 0) return boostCmp
-    if (order === 'relevance_desc' && q) {
-      const relA = (a as ProfileListItem & { search_relevance?: number }).search_relevance ?? 0
-      const relB = (b as ProfileListItem & { search_relevance?: number }).search_relevance ?? 0
-      if (relB !== relA) return relB - relA
-    }
     if (order === 'favorite_desc') {
       const favA = isFavorite(a) ? 1 : 0
       const favB = isFavorite(b) ? 1 : 0

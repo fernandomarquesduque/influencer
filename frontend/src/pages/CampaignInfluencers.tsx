@@ -122,7 +122,9 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
   }
   return {
     q: params.get('q')?.trim() || undefined,
-    sort: (params.get('sort') as ProfilesSort) || undefined,
+    sort:
+      (params.get('sort') as ProfilesSort) ||
+      (params.get('q')?.trim() ? ('relevance_desc' as ProfilesSort) : undefined),
     sizeFilter: (() => {
       const arr = parseStrList(params.get('sizeFilter'))
       return arr?.length ? [arr[0]] : undefined
@@ -141,6 +143,16 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
     llmAudienceType: parseStrList(params.get('llmAudienceType')),
     offset: params.has('offset') ? Number(params.get('offset')) : undefined,
   }
+}
+
+/** Busca por legenda: só `q` na URL (sem filtros/ordenação legados no hash). */
+function wordSearchUrlLocation(q: string, options?: { tab?: string }): { search: string; hash: string } {
+  const params = new URLSearchParams()
+  const trimmed = q.trim()
+  if (trimmed) params.set('q', trimmed)
+  if (options?.tab) params.set('tab', options.tab)
+  const qs = params.toString()
+  return { search: qs ? `?${qs}` : '', hash: '' }
 }
 
 /** Query + hash (#q=...) — hash sobrescreve query na mesma chave. */
@@ -1008,7 +1020,7 @@ export default function CampaignInfluencers() {
         if (campaignMainTabRef.current === 'origin' && (query.q ?? '').trim()) {
           setOriginGallerySearchLoading(true)
         }
-        const newQuery = { ...stripCampaignFacetBoostFromQuery(query), ...overrides, offset: 0 }
+        const newQuery = { ...query, ...overrides, offset: 0 }
         setQuery(newQuery)
         setDisplayedCount(DISPLAY_PAGE_SIZE)
         setSearchParams(buildCampaignUrlParams(newQuery, campaignMainTab), { replace: true })
@@ -1025,19 +1037,33 @@ export default function CampaignInfluencers() {
       const qTrim = typeof qFromOverride === 'string' ? qFromOverride.trim() : ''
       const wordSearchApplied = explicitQ && qTrim.length > 0
       /** Buscar por legenda: URL só com `q` (remove LLM, geo, tipo de mídia na origem, etc.). */
-      const newQuery = wordSearchApplied
+      let newQuery: Partial<ProfilesSearchQuery> = wordSearchApplied
         ? { ...defaultQuery, q: qTrim, offset: 0 }
         : { ...query, ...overrides, offset: 0 }
+      /** Nova busca ou reenvio do mesmo termo: volta à ordenação padrão (relevância). */
+      if (explicitQ) {
+        newQuery = { ...newQuery, sort: undefined }
+      }
       if (wordSearchApplied) {
         setSearchFacets(null)
         setCampaignMainTab('origin')
       }
       const tab: 'influencers' | 'origin' = wordSearchApplied ? 'origin' : campaignMainTab
       setQuery(newQuery)
+      if (explicitQ) {
+        setSearchRefreshToken((t) => t + 1)
+      }
       if (wordSearchApplied) {
-        const params: Record<string, string> = { q: qTrim }
-        if (!isAllCampaignsView) params.tab = 'origin'
-        setSearchParams(params, { replace: true })
+        const { search, hash } = wordSearchUrlLocation(
+          qTrim,
+          !isAllCampaignsView ? { tab: 'origin' } : undefined
+        )
+        navigate(
+          { pathname: location.pathname, search, hash },
+          { replace: true, state: { searchSubmitAt: Date.now() } }
+        )
+      } else if (explicitQ && !qTrim) {
+        navigate({ pathname: location.pathname, search: '', hash: '' }, { replace: true })
       } else {
         setSearchParams(buildCampaignUrlParams(newQuery, tab), { replace: true })
       }
@@ -1053,6 +1079,8 @@ export default function CampaignInfluencers() {
       contextItems,
       applyContextFilters,
       setSearchParams,
+      navigate,
+      location.pathname,
       pendingPayment,
       loadContext,
       buildCampaignUrlParams,
@@ -1066,9 +1094,9 @@ export default function CampaignInfluencers() {
     const newQuery = { ...defaultQuery, offset: 0 }
     setQuery(newQuery)
     setSearchFacets(null)
-    setSearchParams(buildCampaignUrlParams(newQuery), { replace: true })
+    navigate({ pathname: location.pathname, search: '', hash: '' }, { replace: true })
     if (!pendingPayment && contextItems != null) applyContextFilters(newQuery)
-  }, [contextItems, applyContextFilters, setSearchParams, pendingPayment, buildCampaignUrlParams])
+  }, [contextItems, applyContextFilters, navigate, location.pathname, pendingPayment])
 
   const loadMore = useCallback(() => {
     if (loadingMore) return
@@ -1109,7 +1137,8 @@ export default function CampaignInfluencers() {
 
     const q = urlParams.get('q')?.trim()
     if (q) setCampaignMainTab('origin')
-    setQuery({ ...defaultQuery, ...urlParamsToCampaignQuery(urlParams), offset: 0 })
+    const { sort: _dropSort, ...parsedWithoutSort } = urlParamsToCampaignQuery(urlParams)
+    setQuery({ ...defaultQuery, ...parsedWithoutSort, offset: 0 })
     setSearchFacets(null)
     setSearchRefreshToken((t) => t + 1)
   }, [isAllCampaignsView, location.state, urlParams])
@@ -1404,7 +1433,7 @@ export default function CampaignInfluencers() {
     [isAllCampaignsView, openInfluencerProfileDetail, openInfluencerConnect]
   )
 
-  const currentSort = query.sort ?? 'engagement_desc'
+  const currentSort = query.sort ?? (query.q?.trim() ? 'relevance_desc' : 'engagement_desc')
   type SortColumn = 'name' | 'favorite'
   const handleSortColumn = useCallback(
     (column: SortColumn) => {

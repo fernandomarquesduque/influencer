@@ -5,16 +5,15 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppAccountMenuItems } from '../../hooks/useAppAccountMenuItems'
 import BuscaInfluencerPlansModal from '../BuscaInfluencerPlansModal/BuscaInfluencerPlansModal'
 import { trackAppUiClick } from '../../utils/metaPixel'
-import { isSearchRoute as checkIsSearchRoute, SEARCH_ROUTE_PATH } from '../../constants/searchRoute'
+import {
+  isSearchRoute as checkIsSearchRoute,
+  SEARCH_ROUTE_PATH,
+  getMergedUrlSearchParams,
+} from '../../constants/searchRoute'
 import './AppTopBar.css'
 
 function readSearchTermFromLocation(location: { pathname: string; search: string; hash: string }): string {
-  const merged = new URLSearchParams()
-  const qs = location.search?.replace(/^\?/, '').trim()
-  if (qs) new URLSearchParams(qs).forEach((v, k) => merged.set(k, v))
-  const hash = location.hash?.replace(/^#/, '').trim()
-  if (hash) new URLSearchParams(hash).forEach((v, k) => merged.set(k, v))
-  return merged.get('q')?.trim() ?? ''
+  return getMergedUrlSearchParams(location.search, location.hash).get('q')?.trim() ?? ''
 }
 
 export default function AppTopBar() {
@@ -42,16 +41,18 @@ export default function AppTopBar() {
   const submitSearch = () => {
     const term = searchInput.trim()
     trackAppUiClick('topbar_search', { has_term: term.length > 0, on_search_route: isSearchRoute })
+    const searchSubmitAt = Date.now()
     if (isSearchRoute) {
-      const params = new URLSearchParams(location.search)
-      if (term) params.set('q', term)
-      else params.delete('q')
-      const next = params.toString()
-      const path = next ? `${SEARCH_ROUTE_PATH}?${next}` : SEARCH_ROUTE_PATH
-      navigate(path, { replace: false, state: { searchSubmitAt: Date.now() } })
+      const search = term ? `?q=${encodeURIComponent(term)}` : ''
+      navigate(
+        { pathname: SEARCH_ROUTE_PATH, search, hash: '' },
+        { replace: false, state: { searchSubmitAt } }
+      )
       return
     }
-    navigate(term ? `${SEARCH_ROUTE_PATH}?q=${encodeURIComponent(term)}` : SEARCH_ROUTE_PATH)
+    navigate(term ? `${SEARCH_ROUTE_PATH}?q=${encodeURIComponent(term)}` : SEARCH_ROUTE_PATH, {
+      state: term ? { searchSubmitAt } : undefined,
+    })
   }
 
   return (

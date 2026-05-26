@@ -36,7 +36,8 @@ import {
   pickCampaignFacetBoostFromQuery,
   hasCampaignFacetBoost,
   sortPostsByCampaignFacetBoost,
-  sortPostsByFacetDiversity,
+  sortPostsByBoostThenSearchRelevance,
+  sortPostsBySearchRelevance,
 } from '../utils/campaignFilterClient'
 
 const { Text } = Typography
@@ -47,6 +48,28 @@ const PAGE = 36
 /** Após a 1ª página, busca mais N páginas em background para enriquecer facets do painel BI. */
 const FACET_GROWTH_PREFETCH_PAGES = 2
 
+function orderPostMatchItems(
+  posts: PostItem[],
+  opts: {
+    facetBoostForApi: Partial<ProfilesSearchQuery> | undefined
+    facetBoostQuery: Partial<ProfilesSearchQuery> | undefined
+    hasSearchTerm: boolean
+    searchQuery: string
+  }
+): PostItem[] {
+  const qTrim = opts.searchQuery.trim()
+  if (qTrim && opts.facetBoostForApi && opts.facetBoostQuery) {
+    return sortPostsByBoostThenSearchRelevance(posts, opts.facetBoostQuery, qTrim)
+  }
+  if (qTrim) {
+    return sortPostsBySearchRelevance(posts, qTrim)
+  }
+  if (opts.facetBoostForApi && opts.facetBoostQuery) {
+    return sortPostsByCampaignFacetBoost(posts, opts.facetBoostQuery)
+  }
+  return posts
+}
+
 function mergePostMatchPage(
   prev: PostItem[],
   pageItems: PostItem[],
@@ -54,20 +77,13 @@ function mergePostMatchPage(
     facetBoostForApi: Partial<ProfilesSearchQuery> | undefined
     facetBoostQuery: Partial<ProfilesSearchQuery> | undefined
     hasSearchTerm: boolean
+    searchQuery: string
   }
 ): PostItem[] {
   const seen = new Set(prev.map((p) => p.key))
   const rawAppended = pageItems.filter((p) => !seen.has(p.key))
-  const appended =
-    opts.facetBoostForApi && opts.facetBoostQuery
-      ? sortPostsByCampaignFacetBoost(rawAppended, opts.facetBoostQuery)
-      : rawAppended
-  const mergedRaw = [...prev, ...appended]
-  if (opts.facetBoostForApi && opts.facetBoostQuery) {
-    return sortPostsByCampaignFacetBoost(mergedRaw, opts.facetBoostQuery)
-  }
-  if (opts.hasSearchTerm) return sortPostsByFacetDiversity(mergedRaw)
-  return mergedRaw
+  const mergedRaw = [...prev, ...rawAppended]
+  return orderPostMatchItems(mergedRaw, opts)
 }
 
 const ORIGIN_LOADER_SLIDES = [
@@ -406,8 +422,9 @@ export default function CampaignOriginGallery({
       facetBoostForApi,
       facetBoostQuery,
       hasSearchTerm,
+      searchQuery: textQuery,
     }),
-    [facetBoostForApi, facetBoostQuery, hasSearchTerm]
+    [facetBoostForApi, facetBoostQuery, hasSearchTerm, textQuery]
   )
 
   const prefetchFacetGrowthPages = useCallback(
@@ -499,12 +516,12 @@ export default function CampaignOriginGallery({
           { signal, profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
         )
         if (signal?.aborted) return
-        const items =
-          facetBoostForApi && facetBoostQuery
-            ? sortPostsByCampaignFacetBoost(res.items, facetBoostQuery)
-            : hasSearchTerm
-              ? sortPostsByFacetDiversity(res.items)
-              : res.items
+        const items = orderPostMatchItems(res.items, {
+          facetBoostForApi,
+          facetBoostQuery,
+          hasSearchTerm,
+          searchQuery: textQuery,
+        })
         setItems(items)
         setTotal(res.total)
         setServerOffset(res.items.length)

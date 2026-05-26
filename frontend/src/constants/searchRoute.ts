@@ -30,7 +30,7 @@ export function isStandaloneNavRoute(pathname: string): boolean {
   )
 }
 
-function getMergedSearchParams(search: string, hash: string): URLSearchParams {
+export function getMergedUrlSearchParams(search: string, hash: string): URLSearchParams {
   const merged = new URLSearchParams()
   const qs = search?.replace(/^\?/, '').trim()
   if (qs) new URLSearchParams(qs).forEach((v, k) => merged.set(k, v))
@@ -42,7 +42,7 @@ function getMergedSearchParams(search: string, hash: string): URLSearchParams {
 /** Hero inicial em `/` — sem termo de busca e aba Posts (padrão). */
 export function isSearchLandingHome(pathname: string, search = '', hash = ''): boolean {
   if (!isSearchRoute(pathname)) return false
-  const params = getMergedSearchParams(search, hash)
+  const params = getMergedUrlSearchParams(search, hash)
   if (params.get('q')?.trim()) return false
   return params.get('tab') !== 'influencers'
 }

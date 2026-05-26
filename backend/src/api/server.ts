@@ -58,12 +58,15 @@ import {
   hasCampaignFacetBoostInQuery,
   sortProfileListItemsByCampaignFacetBoost,
   sortPostMatchItemsByCampaignFacetBoost,
+  sortPostMatchItemsBySearchRelevance,
+  sortPostMatchItemsByBoostThenSearchRelevance,
   orderHandlesForCampaignFacetBoost,
   loadHandleFacetBoostMeta,
   loadHandleDiversityMeta,
   orderHandlesForFacetDiversity,
   sortScratchRowsByFacetDiversity,
   sortScratchRowsByBoostThenDiversity,
+  sortScratchRowsWithinBoostPriority,
   type HandleFacetBoostMeta,
   type HandleDiversityMeta,
   stripCampaignFacetBoostFromProfilesQuery,
@@ -2773,7 +2776,7 @@ app.get('/api/profiles/search', rateLimitDataApi, async (req: RequestWithAuth, r
         : typeof sizeFilterRaw === 'string'
           ? sizeFilterRaw.split(',').map((x) => x.trim()).filter(Boolean)
           : undefined;
-    const sort = (req.query.sort as string) || 'engagement_desc';
+    const sort = (req.query.sort as string) || (q ? 'relevance_desc' : 'engagement_desc');
     const limitRaw = quantitativosOnly ? 0 : (isPublicOrAnonymous ? PUBLIC_PAGE_SIZE : Math.min(Math.max(0, Number(req.query.limit) || 50), 200));
     const offsetRaw = quantitativosOnly ? 0 : (isPublicOrAnonymous ? 0 : Math.max(0, Number(req.query.offset) || 0));
     const limit = quantitativosOnly ? 0 : (isPublicOrAnonymous ? PUBLIC_PAGE_SIZE : limitRaw);
@@ -2869,6 +2872,7 @@ app.post('/api/profiles/preview', rateLimitDataApi, async (req: RequestWithAuth,
     const query = (body.query ?? {}) as ProfilesSearchQuery;
     const limitRaw = Number(body.limit);
     const limit = Number.isFinite(limitRaw) ? Math.min(50, Math.max(1, Math.floor(limitRaw))) : 10;
+    const previewQ = (query.q ?? '').trim();
     const searchQuery: ProfilesSearchQuery = {
       ...query,
       sort: 'relevance_desc',
@@ -2877,7 +2881,7 @@ app.post('/api/profiles/preview', rateLimitDataApi, async (req: RequestWithAuth,
       includeFacets: false,
     };
     const result = await searchProfiles(db, searchQuery);
-    const recent = [...result.items].sort(collectedAtDesc);
+    const recent = previewQ ? result.items : [...result.items].sort(collectedAtDesc);
     const mixed = pickMixedRecentPreviewItems(recent, limit);
     const items = mixed.map((it, index) => buildProfilePreviewItem(it, index));
     res.json({ total: result.total, items });
@@ -5754,11 +5758,11 @@ function buildCampaignProfilesQuery(
   const excludePrivate = req.query.excludePrivate === 'true';
   const accountTypeFilter = req.query.accountTypeFilter;
   const sizeFilter = req.query.sizeFilter;
-  const sort = (req.query.sort as string) || 'engagement_desc';
+  const q = (req.query.q as string)?.trim() || undefined;
+  const sort = (req.query.sort as string) || (q ? 'relevance_desc' : 'engagement_desc');
   const maxLimit = opts?.maxLimit ?? 200;
   const limit = Math.min(Math.max(0, Number(req.query.limit) || 50), maxLimit);
   const offset = Math.max(0, Number(req.query.offset) || 0);
-  const q = (req.query.q as string)?.trim() || undefined;
   const sizeFilterArr = Array.isArray(sizeFilter) ? sizeFilter.map(String).filter(Boolean) : typeof sizeFilter === 'string' ? sizeFilter.split(',').map((x) => x.trim()).filter(Boolean) : undefined;
   return {
     q,
@@ -7158,9 +7162,17 @@ async function runPostMatchesForHandles(
 
       let scanHandles = normHandles;
       if (qRaw) {
-        scanHandles = facetBoostSortActive
-          ? await orderHandlesForCampaignFacetBoost(db, normHandles, sortQuery)
-          : await orderHandlesForFacetDiversity(db, normHandles);
+        if (ftsRankByHandle.size > 0) {
+          scanHandles = [...normHandles].sort((a, b) => {
+            const ha = normalizeHandle(a);
+            const hb = normalizeHandle(b);
+            return (ftsRankByHandle.get(hb) ?? 0) - (ftsRankByHandle.get(ha) ?? 0);
+          });
+        } else if (facetBoostSortActive) {
+          scanHandles = await orderHandlesForCampaignFacetBoost(db, normHandles, sortQuery);
+        } else {
+          scanHandles = await orderHandlesForFacetDiversity(db, normHandles);
+        }
       }
       if (facetBoostSortActive) {
         handleBoostMeta = await loadHandleFacetBoostMeta(db, scanHandles, sortQuery);
@@ -7176,16 +7188,10 @@ async function runPostMatchesForHandles(
             handleDiversityMeta,
             qRaw
           );
-        } else if (qRaw && sorted.length > 1 && handleDiversityMeta.size > 0) {
-          sorted = sortScratchRowsByFacetDiversity(sorted, handleDiversityMeta, qRaw);
+        } else if (qRaw && sorted.length > 1) {
+          sorted = sortScratchRowsWithinBoostPriority(sorted, qRaw);
         } else {
           sorted.sort((a, b) => {
-            if (qRaw) {
-              if (b.relevance !== a.relevance) return b.relevance - a.relevance;
-              const engDiff =
-                postMatchEngagementScore(b.value) - postMatchEngagementScore(a.value);
-              if (engDiff !== 0) return engDiff;
-            }
             const rankA = postMatchTaggedRank(a.ct);
             const rankB = postMatchTaggedRank(b.ct);
             if (rankA !== rankB) return rankA - rankB;
@@ -7239,7 +7245,8 @@ async function runPostMatchesForHandles(
         for (const items of parts) ingestPosts(items);
         handlesScanned = Math.min(i + batch.length, maxScan);
 
-        if (needCount > 0 && qRaw) {
+        const ftsOrderedScan = qRaw && ftsRankByHandle.size > 0 && !ftsPrefilterMiss;
+        if (needCount > 0 && qRaw && !ftsOrderedScan) {
           const rowsSoFar = buildFilteredSorted();
           if (rowsSoFar.length >= needCount + POST_MATCHES_EARLY_STOP_BUFFER) {
             if (handlesScanned < scanHandles.length) scanPartial = true;
@@ -7325,7 +7332,7 @@ async function runPostMatchesForHandles(
           qRaw
         );
       } else {
-        sortedScratch = sortScratchRowsByFacetDiversity(scratchRows, handleDiversityMeta, qRaw);
+        sortedScratch = sortScratchRowsWithinBoostPriority(scratchRows, qRaw);
       }
       orderedRows = sortedScratch.map(({ key, value, ct }) => ({ key, value, ct }));
     }
@@ -7423,10 +7430,14 @@ async function runPostMatchesForHandles(
       };
     }
 
-    const itemsForResponse: typeof slice =
-      facetBoostSortActive && slice.length > 1
-        ? (sortPostMatchItemsByCampaignFacetBoost(slice, sortQuery) as typeof slice)
-        : slice;
+    let itemsForResponse: typeof slice = slice;
+    if (qRaw.trim() && facetBoostSortActive && slice.length > 1) {
+      itemsForResponse = sortPostMatchItemsByBoostThenSearchRelevance(slice, sortQuery, qRaw) as typeof slice;
+    } else if (qRaw.trim() && slice.length > 1) {
+      itemsForResponse = sortPostMatchItemsBySearchRelevance(slice, qRaw) as typeof slice;
+    } else if (facetBoostSortActive && slice.length > 1) {
+      itemsForResponse = sortPostMatchItemsByCampaignFacetBoost(slice, sortQuery) as typeof slice;
+    }
 
     res.json({
       total,

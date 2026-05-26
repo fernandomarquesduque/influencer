@@ -184,6 +184,10 @@ const PAGE_SIZE = 12
 
 const PUBLIC_LIMIT_CODES = ['PUBLIC_PAGE_LIMIT', 'PUBLIC_FILTERS_NOT_ALLOWED', 'PUBLIC_SEARCH_LIMIT']
 
+function defaultProfilesSort(q?: string, sort?: ProfilesSort): ProfilesSort {
+  return sort ?? ((q ?? '').trim() ? 'relevance_desc' : 'engagement_desc')
+}
+
 /**
  * Parâmetros da listagem: o app grava em hash (#...); URLs com query (?...) também são aceitas.
  * Hash sobrescreve chaves repetidas (navegação in-app).
@@ -291,7 +295,7 @@ export default function InfluencerList() {
       ...rest,
       limit: PAGE_SIZE,
       offset: rest.offset ?? 0,
-      sort: (rest.sort as ProfilesSort) ?? 'relevance_desc',
+      sort: defaultProfilesSort(rest.q, rest.sort as ProfilesSort),
     })
   }, [hasMandatoryFilters, parsedUrl, location.pathname])
 
@@ -303,7 +307,7 @@ export default function InfluencerList() {
       ...rest,
       limit: PAGE_SIZE,
       offset: rest.offset ?? 0,
-      sort: (rest.sort as ProfilesSort) ?? 'relevance_desc',
+      sort: defaultProfilesSort(rest.q, rest.sort as ProfilesSort),
     })
   }, [parsedUrl, location.pathname])
 
@@ -1055,7 +1059,7 @@ export default function InfluencerList() {
               </Text>
               <Select
                 size="small"
-                value={query.sort ?? 'engagement_desc'}
+                value={defaultProfilesSort(query.q, query.sort)}
                 options={SORT_OPTIONS}
                 style={{ width: '100%' }}
                 onChange={(value) => updateFilter({ sort: value as ProfilesSort })}
@@ -1327,7 +1331,7 @@ export default function InfluencerList() {
                 <Text strong type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>Ordenar por</Text>
                 <Select
                   size="small"
-                  value={query.sort ?? 'engagement_desc'}
+                  value={defaultProfilesSort(query.q, query.sort)}
                   options={SORT_OPTIONS}
                   style={{ width: '100%' }}
                   onChange={(value) => updateFilter({ sort: value as ProfilesSort })}

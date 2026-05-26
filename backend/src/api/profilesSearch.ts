@@ -1146,6 +1146,62 @@ export function profileRecordFromPostMatchItem(item: Record<string, unknown>): R
   return record;
 }
 
+/** Reordena posts da resposta por relevância da legenda (`q`). */
+export function sortPostMatchItemsBySearchRelevance(
+  items: Record<string, unknown>[],
+  qRaw: string
+): Record<string, unknown>[] {
+  const q = qRaw.trim();
+  if (!q || items.length < 2) return items;
+  const scored = items.map((item, index) => ({
+    item,
+    index,
+    relevance: matchesQuery(getPostSearchableNormalized(item), q).relevance,
+  }));
+  scored.sort((a, b) => {
+    if (b.relevance !== a.relevance) return b.relevance - a.relevance;
+    return a.index - b.index;
+  });
+  return scored.map((s) => s.item);
+}
+
+/** Busca + painel BI: perfis que casam com o facet sobem; dentro do grupo, relevância da legenda. */
+export function sortPostMatchItemsByBoostThenSearchRelevance(
+  items: Record<string, unknown>[],
+  query: ProfilesSearchQuery,
+  qRaw: string
+): Record<string, unknown>[] {
+  const q = qRaw.trim();
+  if (!q) {
+    if (hasCampaignFacetBoostInQuery(query) && items.length > 1) {
+      return sortPostMatchItemsByCampaignFacetBoost(items, query);
+    }
+    return items;
+  }
+  if (!hasCampaignFacetBoostInQuery(query) || items.length < 2) {
+    return sortPostMatchItemsBySearchRelevance(items, q);
+  }
+  const scored = items.map((item, index) => {
+    const prof = profileRecordFromPostMatchItem(item);
+    const fc =
+      typeof prof.followers_count === 'number' && Number.isFinite(prof.followers_count)
+        ? prof.followers_count
+        : 0;
+    return {
+      item,
+      index,
+      boost: computeCampaignFacetBoostPriority(prof, query, fc),
+      relevance: matchesQuery(getPostSearchableNormalized(item), q).relevance,
+    };
+  });
+  scored.sort((a, b) => {
+    if (b.boost !== a.boost) return b.boost - a.boost;
+    if (b.relevance !== a.relevance) return b.relevance - a.relevance;
+    return a.index - b.index;
+  });
+  return scored.map((s) => s.item);
+}
+
 /** Reordena itens da página após enriquecer `influencer` (porte/LLM alinhados ao card). */
 export function sortPostMatchItemsByCampaignFacetBoost(
   items: Record<string, unknown>[],
@@ -1451,7 +1507,7 @@ function scratchRowEngagementScore(value: unknown): number {
 }
 
 /** Dentro do mesmo nível de boost: relevância, engajamento do post, data (sem intercalar porte). */
-function sortScratchRowsWithinBoostPriority<T extends { key: string; relevance: number; ts?: number; value?: unknown }>(
+export function sortScratchRowsWithinBoostPriority<T extends { key: string; relevance: number; ts?: number; value?: unknown }>(
   rows: T[],
   qRaw: string
 ): T[] {
@@ -1478,7 +1534,7 @@ export function sortScratchRowsByBoostThenDiversity<T extends { key: string; rel
 ): T[] {
   if (rows.length < 2) return rows;
   if (!hasCampaignFacetBoostInQuery(query)) {
-    return sortScratchRowsByFacetDiversity(rows as T[], _diversityMeta, qRaw);
+    return sortScratchRowsWithinBoostPriority(rows, qRaw);
   }
   const byPriority = new Map<number, T[]>();
   for (const row of rows) {
@@ -2136,7 +2192,8 @@ export async function searchProfiles(
   const limitCap = options?.allowLargeLimit ? 10000 : isCampaignScope ? 10000 : 200;
   const limit = Math.min(Math.max(0, Number(query.limit) || 50), limitCap);
   const offset = Math.max(0, Number(query.offset) || 0);
-  const sort = (query.sort || 'engagement_desc').toLowerCase();
+  const q = (query.q || '').trim().toLowerCase();
+  const sort = (query.sort || (q ? 'relevance_desc' : 'engagement_desc')).toLowerCase();
   const minFollowers = query.minFollowers != null ? Number(query.minFollowers) : undefined;
   const maxFollowers = query.maxFollowers != null ? Number(query.maxFollowers) : undefined;
   const minEngagementRate = query.minEngagementRate != null ? Number(query.minEngagementRate) : undefined;
@@ -2150,7 +2207,6 @@ export async function searchProfiles(
   const statesFilter = parseStringArray(query.states).map((s) => s.toLowerCase());
   const neighborhoodsFilter = parseStringArray(query.neighborhoods).map((s) => s.toLowerCase());
   const socialNetworksFilter = parseStringArray(query.socialNetworks).map((s) => s.toLowerCase());
-  const q = (query.q || '').trim().toLowerCase();
   /** Expressão FTS5 para o atalho SQL global com texto (`q`); null se `q` vazio ou só tokens curtos demais. */
   const ftsExprForGlobalSql = q ? userQueryToFtsMatchExpression(q) : null;
   const excludePrivate = query.excludePrivate === true;
@@ -2899,14 +2955,13 @@ export async function searchProfiles(
     useInitialItems && campaignNoFilters && order === 'engagement_desc';
 
   if (!options?.skipSort) {
-    if (order === 'relevance_desc') {
-      items.sort(sortByOrder);
-    } else if (q && ftsNarrowSet != null) {
-      /** Caminho legado com `ftsNarrowSet` (Meili ou FTS isolado): relevância textual primeiro. Com atalho SQL+FTS, `ftsNarrowSet` fica null e preserva a ordem SQL + `sortByOrder`. */
+    if (order === 'relevance_desc' || q) {
       items.sort((a, b) => {
-        const relA = a.search_relevance ?? 0;
-        const relB = b.search_relevance ?? 0;
-        if (relB !== relA) return relB - relA;
+        if (q) {
+          const relA = a.search_relevance ?? 0;
+          const relB = b.search_relevance ?? 0;
+          if (relB !== relA) return relB - relA;
+        }
         return sortByOrder(a, b);
       });
     } else if (!skipResortEngagement) {
