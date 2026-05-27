@@ -25,6 +25,7 @@ import {
   RobotOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
+import { trackPlansIntent } from '../utils/metaPixelFunnel'
 import { fetchProfile, fetchCampaignProfile, fetchProfileSummary, fetchPosts, fetchProfileActivation, fetchCampaignProfileActivation, getProfileRef, getProfilePicUrl, getStableProfilePicUrl, getPostCoverDisplayUrl, proxyImageUrl, queueRefreshProfile, adminPurgeInfluencer, fetchMySubscription, type ProfileItem, type PostItem, type ProfileActivation, type EngagementStats } from '../api'
 import { isProfileRef } from '../constants/profilePaths'
 import { queueMediaRefreshForProfile } from '../utils/queueMediaRefreshForProfile'
@@ -800,7 +801,16 @@ export default function InfluencerDetail({
         {isRedacted && user && (
           <div style={{ width: '100%', padding: s.lg, paddingLeft: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg, paddingRight: isMobile ? lay.contentPaddingMobile ?? s.md : s.lg }}>
             <div style={{ marginBottom: s.lg, padding: s.sm, background: 'var(--app-warning-bg)', border: '1px solid var(--app-warning-border)', borderRadius: r }}>
-              <Text>Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou <Link to="/premium">assine o plano premium</Link> para ver tudo.</Text>
+              <Text>
+                Você atingiu o limite diário de buscas. Os dados sensíveis deste perfil estão ocultos. Volte amanhã ou{' '}
+                <Link
+                  to="/premium"
+                  onClick={() => trackPlansIntent('premium_page', { source: 'influencer_detail_limit' })}
+                >
+                  assine o plano premium
+                </Link>{' '}
+                para ver tudo.
+              </Text>
             </div>
           </div>
         )}

@@ -16,6 +16,7 @@ import AccountMenuProfilePreview from '../components/AppAccountMenu/AccountMenuP
 import { buildAdminRouteMenuSection } from '../constants/adminRouteMenu'
 import { SEARCH_ROUTE_PATH } from '../constants/searchRoute'
 import { trackAppUiClick } from '../utils/metaPixel'
+import { trackPlansIntent } from '../utils/metaPixelFunnel'
 
 function resolveMyProfileRef(user: AuthUser): string | null {
   const ref = user.profile_ref?.trim()
@@ -103,7 +104,10 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
           key: 'invoice',
           icon: <CreditCardOutlined aria-hidden />,
           label: 'Assinatura',
-          onClick: () => setPlansModalOpen(true),
+          onClick: () => {
+            trackPlansIntent('modal_open', { source: 'account_menu_guest' })
+            setPlansModalOpen(true)
+          },
         },
         { type: 'divider' },
         influencerLandingItem,

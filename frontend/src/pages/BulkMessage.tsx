@@ -23,6 +23,7 @@ import {
   type DirectQueueItem,
 } from '../api'
 import { reportTokens as t } from './reportTokens'
+import { trackInfluencerSearch } from '../utils/metaPixelFunnel'
 
 const { TextArea } = Input
 const { Text } = Typography
@@ -77,6 +78,7 @@ export default function BulkMessage() {
   const [savingEditQueue, setSavingEditQueue] = useState(false)
   const mainSearchAbortRef = useRef<AbortController | null>(null)
   const followersSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastFollowersSearchTrackedRef = useRef('')
   const mainSearchValueRef = useRef('')
   const filterExcludeSetRef = useRef<Set<string>>(new Set())
   const [modalTemplate, setModalTemplate] = useState(false)
@@ -201,6 +203,10 @@ export default function BulkMessage() {
       fetchFollowersSearch(searchTerm, { signal: mainSearchAbortRef.current.signal })
         .then((res) => {
           if (mainSearchValueRef.current.trim() !== searchTerm) return
+          if (lastFollowersSearchTrackedRef.current !== searchTerm) {
+            lastFollowersSearchTrackedRef.current = searchTerm
+            trackInfluencerSearch(searchTerm, 'bulk_message')
+          }
           const exclude = filterExcludeSetRef.current
           const allUsernames = (res.usernames || []).map((u) => u.trim().toLowerCase()).filter(Boolean)
           const rejected = exclude.size > 0 ? allUsernames.filter((h) => exclude.has(h)) : []

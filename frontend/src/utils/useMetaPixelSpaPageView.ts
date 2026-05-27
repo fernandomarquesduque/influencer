@@ -4,7 +4,7 @@ import { trackMetaPixel } from './metaPixel'
 
 /**
  * Dispara PageView com `page_path` nas trocas de rota (SPA). A primeira carga já
- * envia PageView via `/blog/meta-pixel.js` no index.html — evita duplicata.
+ * envia PageView via `/meta-pixel-init.js` no index.html — evita duplicata.
  */
 export function useMetaPixelSpaPageView(): void {
   const { pathname } = useLocation()

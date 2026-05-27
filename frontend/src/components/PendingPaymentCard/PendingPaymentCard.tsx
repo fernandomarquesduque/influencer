@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { Card, Button, Typography, Popconfirm, message } from 'antd'
 import {
@@ -21,6 +21,7 @@ import {
 } from '../../api'
 import { getBuscaPlanById } from '../../constants/buscaPlans'
 import { useRegisterPendingPaymentWatch } from '../../contexts/PendingPaymentCelebrationContext'
+import { trackPurchaseComplete, trackSubscribePaymentConfirmed } from '../../utils/metaPixelFunnel'
 import './PendingPaymentCard.css'
 
 const { Text, Title } = Typography
@@ -76,6 +77,7 @@ export default function PendingPaymentCard({ payment, onRemoved, onResolved }: P
   const registerPendingPaymentWatch = useRegisterPendingPaymentWatch()
   const [pixQrDataUrl, setPixQrDataUrl] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const resolvedTrackedRef = useRef(false)
 
   const billingType = payment.billingType === 'BOLETO' ? 'BOLETO' : payment.billingType === 'CREDIT_CARD' ? 'CREDIT_CARD' : 'PIX'
   const hasPixPayload = Boolean(payment.pixCopyPaste)
@@ -137,6 +139,10 @@ export default function PendingPaymentCard({ payment, onRemoved, onResolved }: P
   }, [payment.pixCopyPaste])
 
   useEffect(() => {
+    resolvedTrackedRef.current = false
+  }, [payment.paymentId])
+
+  useEffect(() => {
     const id = payment.paymentId
     if (!id) return
     let alive = true
@@ -145,6 +151,20 @@ export default function PendingPaymentCard({ payment, onRemoved, onResolved }: P
         const row = await fetchPaymentIfExists(id)
         if (!alive) return
         if (!row || (row.status !== 'PENDING' && row.status !== 'OVERDUE')) {
+          if (!resolvedTrackedRef.current) {
+            resolvedTrackedRef.current = true
+            const valueBrl = paymentBrlAmount(payment)
+            if (payment.planId) {
+              trackSubscribePaymentConfirmed(payment.planId, valueBrl, {
+                billing_type: billingType,
+              })
+            } else {
+              trackPurchaseComplete('credits', valueBrl, {
+                billing_type: billingType,
+                credits: payment.credits ?? undefined,
+              })
+            }
+          }
           await Promise.resolve(onResolved?.())
         }
       } catch {

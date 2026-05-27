@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons'
 import { useAuth } from '../../contexts/AuthContext'
 import { registerAssinanteApi, type AuthScope } from '../../api'
+import { trackAgencyLogin, trackAgencyRegistration } from '../../utils/metaPixelFunnel'
 import './AgencyLoginPanel.css'
 
 type PanelMode = 'login' | 'signup'
@@ -37,6 +38,7 @@ export default function AgencyLoginPanel({ onSuccess }: AgencyLoginPanelProps) {
     try {
       const email = values.email.trim().toLowerCase()
       await login(email, values.password)
+      trackAgencyLogin()
       message.success('Login realizado')
       onSuccess()
     } catch (e) {
@@ -66,6 +68,7 @@ export default function AgencyLoginPanel({ onSuccess }: AgencyLoginPanelProps) {
         displayName: res.user.display_name ?? null,
         emailVerified: res.user.email_verified,
       })
+      trackAgencyRegistration()
       message.success('Conta criada')
       onSuccess()
     } catch (e) {

@@ -21,6 +21,7 @@ import {
 } from '../../api'
 import { expiresAtIsoFromDurationDays, FALLBACK_CAMPAIGN_ACCESS_DAYS } from '../../utils/campaignExpires'
 import BuyCreditsModal from '../BuyCreditsModal/BuyCreditsModal'
+import { trackPurchaseComplete } from '../../utils/metaPixelFunnel'
 
 const { Text, Title } = Typography
 
@@ -193,6 +194,10 @@ export default function CheckoutContent({
     try {
       const res = await createCampaign(query, { maxHandles: desiredCount, expiresAt, name: query.q?.trim() || undefined })
       if (res.campaignId && onSuccess) {
+        trackPurchaseComplete('campaign_unlock', desiredCount, {
+          campaign_id: res.campaignId,
+          credits_spent: desiredCount,
+        })
         void refreshCredits()
         onSuccess(res.campaignId)
       }

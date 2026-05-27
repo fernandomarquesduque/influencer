@@ -3,6 +3,7 @@ import { App, Modal, Form, Input, Button, Typography, Space, Spin } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { useAuth } from '../../contexts/AuthContext'
+import { trackAgencyLogin, trackSignupIntent } from '../../utils/metaPixelFunnel'
 
 const { Paragraph, Text } = Typography
 
@@ -41,6 +42,7 @@ export default function ReportAuthModal({ open, onCancel, onAuthenticated, exter
     setSubmitting(true)
     try {
       await login(u, values.password)
+      trackAgencyLogin({ source: 'report_auth_modal' })
       message.success('Login realizado')
       await Promise.resolve(onAuthenticated())
     } catch {
@@ -101,6 +103,7 @@ export default function ReportAuthModal({ open, onCancel, onAuthenticated, exter
               size="large"
               disabled={busy}
               onClick={() => {
+                trackSignupIntent('report_auth_modal_signup')
                 onCancel()
                 navigate('/app/create')
               }}

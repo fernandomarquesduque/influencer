@@ -41,6 +41,7 @@ import ReportDashboard from '../components/ReportDashboard/ReportDashboard'
 import InfluencerPreviewTable from '../components/InfluencerPreviewTable/InfluencerPreviewTable'
 import ReportAuthModal from '../components/ReportAuthModal/ReportAuthModal'
 import InfluencerDetailModal from '../components/InfluencerDetailModal/InfluencerDetailModal'
+import { trackInfluencerSearch, trackInfluencerSearchFromUrlOnce, trackPlansIntent } from '../utils/metaPixelFunnel'
 
 const { Text } = Typography
 
@@ -271,6 +272,8 @@ export default function InfluencerList() {
 
   const handleWizardComplete = useCallback(
     (payload: Partial<ProfilesSearchQuery>) => {
+      const q = payload.q?.trim()
+      if (q) trackInfluencerSearch(q, 'search_wizard')
       const categories = payload.categories?.length ? payload.categories : undefined
       const fullPayload = withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
         ...payload,
@@ -370,6 +373,11 @@ export default function InfluencerList() {
       .catch(() => { })
     return () => c.abort()
   }, [])
+
+  useEffect(() => {
+    const q = parsedUrl.q?.trim()
+    if (q) trackInfluencerSearchFromUrlOnce(q, 'url_landing')
+  }, [parsedUrl.q])
   const filterDrawerRef = useRef<HTMLDivElement>(null)
   const scrollToRestoreRef = useRef<number | null>(null)
   const refetchedForZeroRef = useRef(false)
@@ -833,7 +841,14 @@ export default function InfluencerList() {
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
               <span>
-                Você chegou no limite de buscas de hoje. Volta amanhã ou <Link to="/premium">assina o Premium</Link>.
+                Você chegou no limite de buscas de hoje. Volta amanhã ou{' '}
+                <Link
+                  to="/premium"
+                  onClick={() => trackPlansIntent('premium_page', { source: 'influencer_list_inline' })}
+                >
+                  assina o Premium
+                </Link>
+                .
               </span>
             }
           />
@@ -843,7 +858,13 @@ export default function InfluencerList() {
             description={
               <span>
                 {limitReachedCode === 'PUBLIC_PAGE_LIMIT' ? 'Ver mais páginas é só pra assinante.' : 'Filtros avançados são só pra assinante.'}{' '}
-                <Link to="/premium">Assina o Premium</Link> pra acessar.
+                <Link
+                  to="/premium"
+                  onClick={() => trackPlansIntent('premium_page', { source: 'influencer_list_inline' })}
+                >
+                  Assina o Premium
+                </Link>{' '}
+                pra acessar.
               </span>
             }
           />
@@ -894,7 +915,14 @@ export default function InfluencerList() {
             )}
             {data.length < total && isLimitedView && (
               <div style={{ textAlign: 'center', marginTop: 24 }}>
-                <Button type="primary" onClick={() => navigate('/premium')} size="large">
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    trackPlansIntent('premium_page', { source: 'influencer_list_limit' })
+                    navigate('/premium')
+                  }}
+                  size="large"
+                >
                   Assine pra ver mais resultados
                 </Button>
               </div>
@@ -1397,7 +1425,14 @@ export default function InfluencerList() {
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
               <span>
-                Você chegou no limite de buscas de hoje. Volta amanhã ou <Link to="/premium">assina o Premium</Link>.
+                Você chegou no limite de buscas de hoje. Volta amanhã ou{' '}
+                <Link
+                  to="/premium"
+                  onClick={() => trackPlansIntent('premium_page', { source: 'influencer_list_inline' })}
+                >
+                  assina o Premium
+                </Link>
+                .
               </span>
             }
           />
@@ -1407,7 +1442,13 @@ export default function InfluencerList() {
             description={
               <span>
                 {limitReachedCode === 'PUBLIC_PAGE_LIMIT' ? 'Ver mais páginas é só pra assinante.' : 'Filtros avançados são só pra assinante.'}{' '}
-                <Link to="/premium">Assina o Premium</Link> pra acessar.
+                <Link
+                  to="/premium"
+                  onClick={() => trackPlansIntent('premium_page', { source: 'influencer_list_inline' })}
+                >
+                  Assina o Premium
+                </Link>{' '}
+                pra acessar.
               </span>
             }
           />
@@ -1450,7 +1491,14 @@ export default function InfluencerList() {
             )}
             {data.length < total && isLimitedView && (
               <div style={{ textAlign: 'center', marginTop: 24 }}>
-                <Button type="primary" onClick={() => navigate('/premium')} size="large">
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    trackPlansIntent('premium_page', { source: 'influencer_list_limit' })
+                    navigate('/premium')
+                  }}
+                  size="large"
+                >
                   Assine pra ver mais resultados
                 </Button>
               </div>

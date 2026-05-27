@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Spin, Alert, Button } from 'antd'
 import { verifyEmailByToken } from '../api'
+import { trackEmailVerified } from '../utils/metaPixelFunnel'
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams()
@@ -19,6 +20,7 @@ export default function VerifyEmail() {
     verifyEmailByToken(token)
       .then(() => {
         if (cancelled) return
+        trackEmailVerified()
         setStatus('success')
         navigate('/missions/reward?type=email', { replace: true })
       })

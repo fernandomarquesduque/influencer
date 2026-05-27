@@ -3,6 +3,7 @@ import { Button } from 'antd'
 import { LockOutlined } from '@ant-design/icons'
 import type { ProfileItem } from '../../api'
 import BuscaInfluencerPlansModal from '../BuscaInfluencerPlansModal/BuscaInfluencerPlansModal'
+import { trackPlansIntent } from '../../utils/metaPixelFunnel'
 import './ProfileLimitedPreviewLock.css'
 
 export type PreviewEngagementByType = {
@@ -225,7 +226,10 @@ export default function ProfileLimitedPreviewLock({
               size="small"
               className="profile-limited-preview__cta"
               icon={<LockOutlined />}
-              onClick={() => setPlansModalOpen(true)}
+              onClick={() => {
+                trackPlansIntent('profile_lock', { source: 'profile_preview' })
+                setPlansModalOpen(true)
+              }}
             >
               Ver análises completas
             </Button>

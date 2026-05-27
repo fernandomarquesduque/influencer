@@ -492,3 +492,68 @@
   background: var(--app-card-bg-soft, rgba(255, 255, 255, 0.04));
   border-color: var(--app-border-light);
 }
+
+/* Mobile: FAB fixo no canto inferior direito para abrir filtros/ordenação */
+.campaign-page--mobile-fab {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+}
+
+.campaign-mobile-filters-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    var(--app-primary, #722ed1) 0%,
+    var(--app-primary-dark, #5b21b6) 100%
+  );
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow:
+    0 4px 14px rgba(114, 46, 209, 0.35),
+    0 2px 6px rgba(15, 23, 42, 0.12);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.campaign-mobile-filters-fab:hover {
+  transform: scale(1.04);
+  box-shadow:
+    0 6px 18px rgba(114, 46, 209, 0.42),
+    0 3px 8px rgba(15, 23, 42, 0.14);
+}
+
+.campaign-mobile-filters-fab:focus-visible {
+  outline: 2px solid var(--app-primary, #722ed1);
+  outline-offset: 3px;
+}
+
+.campaign-mobile-filters-fab__badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--app-primary, #722ed1);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--app-primary, #722ed1);
+  pointer-events: none;
+}

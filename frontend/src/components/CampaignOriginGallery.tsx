@@ -611,7 +611,7 @@ export default function CampaignOriginGallery({
             const ac = new AbortController()
             void reload(ac.signal)
           }}
-          onOpenPlans={openBuscaInfluencerPlansModal}
+          onOpenPlans={() => openBuscaInfluencerPlansModal('search_quota')}
         />
       ) : items.length === 0 ? (
         <OriginSearchEmptyState

@@ -3,6 +3,8 @@ export type MetaPixelTrackParams = Record<string, string | number | boolean>
 declare global {
   interface Window {
     fbq?: (...args: unknown[]) => void
+    /** Definido por /meta-pixel-init.js na carga inicial. */
+    __buscaMetaPixelInited?: string
   }
 }
 

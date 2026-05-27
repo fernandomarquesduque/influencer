@@ -7,6 +7,7 @@ import { WhatsAppOutlined, UserOutlined } from '@ant-design/icons'
 import ProfileAvatar from '../ProfileAvatar'
 import InfluencerDetailModal from '../InfluencerDetailModal/InfluencerDetailModal'
 import BuscaInfluencerPlansModal from '../BuscaInfluencerPlansModal/BuscaInfluencerPlansModal'
+import { trackPlansIntent } from '../../utils/metaPixelFunnel'
 import { fetchMySubscription, proxyImageUrl } from '../../api'
 import { useAuth } from '../../contexts/AuthContext'
 import { AGENCY_WHATSAPP_DIGITS } from '../../constants/agencyContact'
@@ -148,6 +149,7 @@ export default function InfluencerConnectModal({
       return
     }
     if (!user) {
+      trackPlansIntent('modal_open', { source: 'connect_modal_guest' })
       setPlansModalOpen(true)
       return
     }
@@ -155,9 +157,15 @@ export default function InfluencerConnectModal({
     void fetchMySubscription()
       .then((sub) => {
         if (sub.active) openFullProfile()
-        else setPlansModalOpen(true)
+        else {
+          trackPlansIntent('modal_open', { source: 'connect_modal_no_subscription' })
+          setPlansModalOpen(true)
+        }
       })
-      .catch(() => setPlansModalOpen(true))
+      .catch(() => {
+        trackPlansIntent('modal_open', { source: 'connect_modal_error' })
+        setPlansModalOpen(true)
+      })
       .finally(() => setFullProfileLoading(false))
   }
 

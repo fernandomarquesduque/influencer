@@ -5,6 +5,7 @@ import { ArrowLeftOutlined } from '@ant-design/icons'
 import Logo from '../components/Logo'
 import PlanCheckoutForm from '../components/PlanCheckoutForm/PlanCheckoutForm'
 import { getBuscaPlanById } from '../constants/buscaPlans'
+import { trackCheckoutPlanView } from '../utils/metaPixelFunnel'
 import { useAuth } from '../contexts/AuthContext'
 import './CheckoutPlan.css'
 
@@ -27,6 +28,10 @@ export default function CheckoutPlan() {
       navigate('/', { replace: true })
     }
   }, [plan, navigate])
+
+  useEffect(() => {
+    if (plan) trackCheckoutPlanView(plan.id, plan.priceBrl)
+  }, [plan])
 
   if (!plan) return null
 

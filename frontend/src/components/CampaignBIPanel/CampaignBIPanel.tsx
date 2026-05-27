@@ -15,6 +15,7 @@ import {
 import { formatFacetLabel } from '../../utils/facetLabels'
 import { CONTENT_TYPE_LABELS } from '../../constants/contentTypes'
 import { getInfluencerTierSolidHexForBucketKey } from '../../utils/influencerTier'
+import { trackAppFilter } from '../../utils/metaPixelFunnel'
 import './CampaignBIPanel.css'
 
 const { Text } = Typography
@@ -98,9 +99,11 @@ export default function CampaignBIPanel({
 
   const applySingleBoost = (
     key: Parameters<typeof buildSingleCampaignFacetBoostPatch>[0],
-    nextValue: string[] | number[] | undefined
+    nextValue: string[] | number[] | undefined,
+    valueLabel: string
   ) => {
     if (!onFilter) return
+    trackAppFilter(key, valueLabel, nextValue != null && nextValue.length > 0)
     onFilter(buildSingleCampaignFacetBoostPatch(key, nextValue))
   }
 
@@ -124,35 +127,36 @@ export default function CampaignBIPanel({
   const metricBucketSelected = (selected: number[], min: number): boolean =>
     selected.length > 0 && selected[0] === min
 
-  const handleSize = (key: string) => {
+  const handleSize = (key: string, label: string) => {
     const next = sizeChipSelected(key) ? undefined : [key]
-    applySingleBoost('sizeFilter', next)
+    applySingleBoost('sizeFilter', next, label)
   }
 
   const handleMetricBucket = (
     selected: number[],
     min: number,
-    key: 'engagementRateBuckets' | 'avgLikesBuckets'
+    key: 'engagementRateBuckets' | 'avgLikesBuckets',
+    label: string
   ) => {
     const next = metricBucketSelected(selected, min) ? undefined : [min]
-    applySingleBoost(key, next)
+    applySingleBoost(key, next, label)
   }
 
   const handleContentType = (name: string) => {
     const next = facetChipSelected(selectedContent, name) ? undefined : [name]
-    applySingleBoost('contentTypes', next)
+    applySingleBoost('contentTypes', next, name)
   }
   const handleSocial = (net: string) => {
     const next = facetChipSelected(selectedSocial, net) ? undefined : [net]
-    applySingleBoost('socialNetworks', next)
+    applySingleBoost('socialNetworks', next, net)
   }
   const handleCity = (name: string) => {
     const next = facetChipSelected(selectedCities, name) ? undefined : [name]
-    applySingleBoost('cities', next)
+    applySingleBoost('cities', next, name)
   }
   const handleState = (name: string) => {
     const next = facetChipSelected(selectedStates, name) ? undefined : [name]
-    applySingleBoost('states', next)
+    applySingleBoost('states', next, name)
   }
 
   const showLlmMainCategorySection = !!(
@@ -168,7 +172,7 @@ export default function CampaignBIPanel({
           : selectedLlmAudienceType
     const has = facetChipSelected(selected, facetName)
     const next = has ? undefined : [facetName]
-    applySingleBoost(key, next)
+    applySingleBoost(key, next, facetName)
   }
 
   return (
@@ -204,11 +208,14 @@ export default function CampaignBIPanel({
               value={query?.originPostSort ?? ORIGIN_POST_SORT_RELEVANCE}
               options={[...ORIGIN_POST_SORT_SELECT_OPTIONS]}
               popupMatchSelectWidth
-              onChange={(value) =>
+              onChange={(value) => {
+                const label =
+                  ORIGIN_POST_SORT_SELECT_OPTIONS.find((o) => o.value === value)?.label ?? String(value)
+                trackAppFilter('originPostSort', label, value !== ORIGIN_POST_SORT_RELEVANCE)
                 onFilter({
                   originPostSort: value === ORIGIN_POST_SORT_RELEVANCE ? undefined : (value as OriginPostSort),
                 })
-              }
+              }}
             />
           </div>
         ) : null}
@@ -271,8 +278,8 @@ export default function CampaignBIPanel({
                         className={`campaign-bi-clickable ${selected ? 'campaign-bi-selected' : ''}`}
                         role="button"
                         tabIndex={0}
-                        onClick={() => handleSize(key)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSize(key)}
+                        onClick={() => handleSize(key, label)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSize(key, label)}
                         style={{ color: getInfluencerTierSolidHexForBucketKey(key) }}
                       >
                         {label}
@@ -298,8 +305,11 @@ export default function CampaignBIPanel({
                       className={`campaign-bi-clickable ${selected ? 'campaign-bi-selected' : ''}`}
                       role="button"
                       tabIndex={0}
-                      onClick={() => handleMetricBucket(selectedEngagement, min, 'engagementRateBuckets')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleMetricBucket(selectedEngagement, min, 'engagementRateBuckets')}
+                      onClick={() => handleMetricBucket(selectedEngagement, min, 'engagementRateBuckets', bucket.label)}
+                      onKeyDown={(e) =>
+                        e.key === 'Enter' &&
+                        handleMetricBucket(selectedEngagement, min, 'engagementRateBuckets', bucket.label)
+                      }
                     >
                       {bucket.label}
                     </span>
@@ -324,8 +334,11 @@ export default function CampaignBIPanel({
                       className={`campaign-bi-clickable ${selected ? 'campaign-bi-selected' : ''}`}
                       role="button"
                       tabIndex={0}
-                      onClick={() => handleMetricBucket(selectedAvgLikes, min, 'avgLikesBuckets')}
-                      onKeyDown={(e) => e.key === 'Enter' && handleMetricBucket(selectedAvgLikes, min, 'avgLikesBuckets')}
+                      onClick={() => handleMetricBucket(selectedAvgLikes, min, 'avgLikesBuckets', bucket.label)}
+                      onKeyDown={(e) =>
+                        e.key === 'Enter' &&
+                        handleMetricBucket(selectedAvgLikes, min, 'avgLikesBuckets', bucket.label)
+                      }
                     >
                       {bucket.label}
                     </span>

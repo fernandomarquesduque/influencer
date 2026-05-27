@@ -18,6 +18,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { useCredits } from '../../contexts/CreditsContext'
 import { useRegisterPendingPaymentWatch } from '../../contexts/PendingPaymentCelebrationContext'
+import { trackCreditsCheckoutInitiated } from '../../utils/metaPixelFunnel'
 import {
   createPaymentForCredits,
   adminAddCredits,
@@ -259,6 +260,7 @@ export default function BuyCreditsModal({
         if (await deliverPaymentToParent(res)) return
         createdPaymentRef.current = res
         setCreatedPayment(res)
+        trackCreditsCheckoutInitiated(buyCredits, buyCredits, { billing_type: buyBillingType })
         setCpfModalOpen(false)
         buyCreditsDbg('payment created, showing result modal (independent of parent open)', {
           hasPix: Boolean(res.pixCopyPaste),
@@ -276,6 +278,11 @@ export default function BuyCreditsModal({
           if (await deliverPaymentToParent(p)) return
           createdPaymentRef.current = p
           setCreatedPayment(p)
+          const resumeCredits = p.credits ?? buyCredits
+          trackCreditsCheckoutInitiated(resumeCredits, resumeCredits, {
+            billing_type: p.billingType === 'BOLETO' ? 'BOLETO' : 'PIX',
+            resumed: true,
+          })
           setBuyBillingType(p.billingType === 'BOLETO' ? 'BOLETO' : 'PIX')
           setCpfModalOpen(false)
           setError(null)

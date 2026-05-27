@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppAccountMenuItems } from '../../hooks/useAppAccountMenuItems'
 import BuscaInfluencerPlansModal from '../BuscaInfluencerPlansModal/BuscaInfluencerPlansModal'
 import { trackAppUiClick } from '../../utils/metaPixel'
+import { trackInfluencerSearch } from '../../utils/metaPixelFunnel'
 import {
   isSearchRoute as checkIsSearchRoute,
   SEARCH_ROUTE_PATH,
@@ -48,6 +49,7 @@ export default function AppTopBar() {
   const submitSearch = () => {
     const term = searchInput.trim()
     trackAppUiClick('topbar_search', { has_term: term.length > 0, on_search_route: isSearchRoute })
+    if (term) trackInfluencerSearch(term, 'topbar', { on_search_route: isSearchRoute })
     const searchSubmitAt = Date.now()
     if (isSearchRoute) {
       const search = term ? `?q=${encodeURIComponent(term)}` : ''

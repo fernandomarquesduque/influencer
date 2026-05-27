@@ -3,12 +3,18 @@
  * - data-fbq-custom="NomeEvento" → fbq('trackCustom', NomeEvento, params)
  * - data-fbq-event="Lead" → fbq('track', 'Lead', params)
  * Outros data-fbq-* viram chaves do objeto params (ex.: data-fbq-source="hero").
+ *
+ * Na SPA React, eventos de funil também saem via `src/utils/metaPixelFunnel.ts`:
+ * - AppSearch (termos), AppFilter (filtros BI), PlansIntent (intenção de plano),
+ *   AppSubscribe / AppSubscribePaid (assinatura), AppPurchase / Purchase (créditos),
+ *   EmailVerified, Search / Subscribe / InitiateCheckout (padrão Meta).
  */
 ;(function () {
   var PIXEL_ID = '236287274596638'
 
-  function loadMetaPixel() {
-    if (window.fbq) return
+  /** Páginas estáticas (blog) sem /meta-pixel-init.js no head. */
+  function ensurePixelInitialized() {
+    if (window.__buscaMetaPixelInited === PIXEL_ID) return
     !(function (f, b, e, v, n, t, s) {
       if (f.fbq) return
       n = f.fbq = function () {
@@ -16,15 +22,20 @@
       }
       if (!f._fbq) f._fbq = n
       n.push = n
-      n.loaded = true
+      n.loaded = !0
       n.version = '2.0'
       n.queue = []
       t = b.createElement(e)
-      t.async = true
+      t.async = !0
       t.src = v
       s = b.getElementsByTagName(e)[0]
       s.parentNode.insertBefore(t, s)
     })(window, document, 'script', 'https://connect.facebook.net/en_US/fbevents.js')
+    if (typeof window.fbq === 'function') {
+      window.fbq('init', PIXEL_ID)
+      window.fbq('track', 'PageView')
+      window.__buscaMetaPixelInited = PIXEL_ID
+    }
   }
 
   function track(eventName, params) {
@@ -60,11 +71,7 @@
     return params
   }
 
-  loadMetaPixel()
-  if (typeof window.fbq === 'function') {
-    window.fbq('init', PIXEL_ID)
-    track('PageView')
-  }
+  ensurePixelInitialized()
 
   document.addEventListener('click', function (event) {
     var tagged =

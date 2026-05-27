@@ -260,11 +260,15 @@ export function isCampaignGalleryUiOnlyPatch(patch: Partial<ProfilesSearchQuery>
 }
 
 export function hasCampaignFacetBoost(query: Partial<ProfilesSearchQuery>): boolean {
-  return CAMPAIGN_FACET_BOOST_KEYS.some((k) => {
+  return countCampaignFacetBoostSelections(query) > 0
+}
+
+/** Quantidade de dimensões do painel BI com filtro ativo (máx. 1 valor por dimensão). */
+export function countCampaignFacetBoostSelections(query: Partial<ProfilesSearchQuery>): number {
+  return CAMPAIGN_FACET_BOOST_KEYS.filter((k) => {
     const v = query[k]
-    if (Array.isArray(v)) return v.length > 0
-    return false
-  })
+    return Array.isArray(v) && v.length > 0
+  }).length
 }
 
 export type SizeBucketFacetRow = { key: string; label: string; count: number }

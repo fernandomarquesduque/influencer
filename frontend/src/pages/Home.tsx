@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons'
 import Logo from '../components/Logo'
 import { DiscoveryHomeHero } from '../components/DiscoveryHomeHero'
+import { trackInfluencerSearch } from '../utils/metaPixelFunnel'
 
 const sectionMaxWidth = 1000
 
@@ -155,6 +156,7 @@ export default function Home() {
           onSearchValueChange={setSearchInput}
           onSearch={(term) => {
             const q = (term ?? searchInput).trim()
+            if (q) trackInfluencerSearch(q, 'home_hero')
             navigate(q ? `/?q=${encodeURIComponent(q)}` : '/')
           }}
           style={{ position: 'relative', zIndex: 1, minHeight: 'auto', paddingBottom: '2rem' }}

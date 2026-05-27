@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom'
 import { Card, Button, Typography } from 'antd'
 import { CrownOutlined, ArrowLeftOutlined, DollarOutlined } from '@ant-design/icons'
 import AppPageBackdrop from '../components/AppPageBackdrop'
+import { openBuscaInfluencerPlansModal } from '../utils/openPlansModal'
+import { trackCreditsCheckoutInitiated, trackPlansIntent } from '../utils/metaPixelFunnel'
 
 const { Title, Paragraph } = Typography
 
@@ -24,8 +26,23 @@ export default function Premium() {
             Compre créditos com PIX ou Boleto e use nos relatórios de influenciadores.
           </Paragraph>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <Link to="/checkout">
-              <Button type="primary" icon={<DollarOutlined />}>Comprar créditos</Button>
+            <Button
+              type="primary"
+              icon={<CrownOutlined />}
+              onClick={() => {
+                trackPlansIntent('premium_page', { source: 'premium_cta_plans' })
+                openBuscaInfluencerPlansModal('premium_page')
+              }}
+            >
+              Ver planos de assinatura
+            </Button>
+            <Link
+              to="/checkout"
+              onClick={() => trackCreditsCheckoutInitiated(50, 50, { source: 'premium_page' })}
+            >
+              <Button type="default" icon={<DollarOutlined />}>
+                Comprar créditos
+              </Button>
             </Link>
             <Link to="/app">
               <Button icon={<ArrowLeftOutlined />}>Voltar à busca</Button>

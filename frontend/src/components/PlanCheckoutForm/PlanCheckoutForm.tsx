@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { useCredits } from '../../contexts/CreditsContext'
 import { subscribeToPlan, checkEmailRegistered, PendingPaymentExistsError } from '../../api'
+import { trackAgencyRegistration, trackSubscribeComplete } from '../../utils/metaPixelFunnel'
 import '../BuyCreditsModal/BuyCreditsModal.css'
 
 const { Text } = Typography
@@ -262,6 +263,7 @@ export default function PlanCheckoutForm({ plan, onSuccess, onCancel }: PlanChec
           : {}),
       })
       if (!user && subscribeRes.token && subscribeRes.user) {
+        trackAgencyRegistration({ source: 'checkout_plan_guest' })
         loginWithToken(subscribeRes.token, {
           id: subscribeRes.user.id,
           username: subscribeRes.user.username,
@@ -279,6 +281,10 @@ export default function PlanCheckoutForm({ plan, onSuccess, onCancel }: PlanChec
       } else {
         message.success('Assinatura criada com sucesso.')
       }
+      trackSubscribeComplete(plan.id, plan.priceBrl, {
+        had_trial: trialDays > 0,
+        registered_during_checkout: !user,
+      })
       await Promise.resolve(onSuccess())
     } catch (e) {
       if (e instanceof PendingPaymentExistsError) {

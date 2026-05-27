@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useCredits } from '../contexts/CreditsContext'
 import { useRegisterPendingPaymentWatch } from '../contexts/PendingPaymentCelebrationContext'
 import { registerAndCreatePayment, type RegisterAndCreatePaymentResponse } from '../api'
+import { trackAgencyRegistration, trackCreditsCheckoutInitiated } from '../utils/metaPixelFunnel'
 
 const { Title, Text } = Typography
 
@@ -88,6 +89,8 @@ export default function CheckoutCredits() {
         profile_handle: res.user.profile_handle,
       })
       await refreshCredits()
+      trackAgencyRegistration({ source: 'checkout_credits' })
+      trackCreditsCheckoutInitiated(credits, credits, { billing_type: billingType })
       setCreated(res)
     } catch (e) {
       setError((e as Error).message)

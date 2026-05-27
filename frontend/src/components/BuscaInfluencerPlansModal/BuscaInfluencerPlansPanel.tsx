@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { CheckOutlined, CrownOutlined, WhatsAppOutlined, CreditCardOutlined } from '@ant-design/icons'
 import { AGENCY_WHATSAPP_DIGITS } from '../../constants/agencyContact'
 import { BUSCA_PLANS } from '../../constants/buscaPlans'
+import { trackPlansIntent } from '../../utils/metaPixelFunnel'
 import { fetchMyPendingPayment, fetchMySubscription } from '../../api'
 import { useAuth } from '../../contexts/AuthContext'
 import './BuscaInfluencerPlansModal.css'
@@ -88,11 +89,13 @@ export default function BuscaInfluencerPlansPanel({
 
   const onWhatsApp = () => {
     if (!AGENCY_WHATSAPP_DIGITS) return
+    trackPlansIntent('whatsapp', { source: 'plans_panel' })
     window.open(buildPlansWhatsAppUrl(), '_blank', 'noopener,noreferrer')
     onAfterAction?.()
   }
 
   const openPlanCheckout = (planId: string) => {
+    trackPlansIntent('plan_select', { plan_id: planId, source: 'plans_panel' })
     onAfterAction?.()
     navigate(`/checkout/plan/${planId}`)
   }
