@@ -116,7 +116,7 @@ export default function DiscoveryHomeHero({
   const isCompact = variant === 'compact'
   const placeholder =
     searchPlaceholder ??
-    (isCompact ? 'Digite uma palavra para buscar' : 'Digite uma palavra-chave, nicho ou nome')
+    (isCompact ? 'Digite uma palavra para buscar' : 'Digite uma palavra, cidade ou marca')
 
   const handleTagClick = (tag: string) => {
     onSearchValueChange(tag)

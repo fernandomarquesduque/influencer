@@ -20,7 +20,7 @@ export default function BuscaSearchBar({
   value,
   onChange,
   onSearch,
-  placeholder = 'Digite uma palavra-chave, nicho ou nome',
+  placeholder = 'Digite uma palavra, cidade ou marca',
   size = 'lg',
   className,
   style,

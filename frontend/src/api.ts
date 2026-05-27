@@ -355,7 +355,7 @@ export interface ProfilesSearchQuery {
   contentTypes?: string[]
   /** Galeria Origem (posts): filtrar por tipo de mídia no índice (feed, reels, marcados, destaques). */
   originMediaKinds?: MediaKind[]
-  /** Galeria Origem: ordenação explícita dos posts no cliente (omitir = relevância + facets). */
+  /** Galeria Origem: ordenação global dos posts no backend antes da paginação. */
   originPostSort?: OriginPostSort
   /** Faixas de preço por formato (valores em reais: 0, 50, 100, 250, 500, 1000, 2500, 5000, 15000). */
   pricingFeed?: number[]
@@ -366,20 +366,20 @@ export interface ProfilesSearchQuery {
   costTierFilter?: string[]
   /** Tamanho: nano, micro, medio (ou mid), macro, elite, celebridade. */
   sizeFilter?: string[]
-  /** Filtros sobre classificação LLM (`llm.qualification`); multiselect = OR no mesmo campo. */
-  llmProfileType?: string[]
-  llmMainCategory?: string[]
-  llmSubCategories?: string[]
-  llmContentPillars?: string[]
-  llmGender?: string[]
-  llmLanguage?: string[]
-  llmAudienceType?: string[]
-  llmToneOfVoice?: string[]
-  llmRiskLevel?: string[]
+  /** Filtros de qualificação do perfil (classificador); multiselect = OR no mesmo campo. */
+  profileType?: string[]
+  mainCategory?: string[]
+  subCategories?: string[]
+  contentPillars?: string[]
+  gender?: string[]
+  language?: string[]
+  audienceType?: string[]
+  toneOfVoice?: string[]
+  riskLevel?: string[]
   /** Sentimento predominante nas legendas analisadas: positivo | negativo | misto. */
-  llmPostSentiment?: string[]
-  llmIsFamilySafe?: boolean
-  llmIsAdultContent?: boolean
+  postSentiment?: string[]
+  isFamilySafe?: boolean
+  isAdultContent?: boolean
   sort?: ProfilesSort
   limit?: number
   offset?: number
@@ -533,29 +533,30 @@ export function profilesSearchQueryToParams(query: Partial<ProfilesSearchQuery>)
   if (query.pricingStory?.length) params.set('pricingStory', query.pricingStory.join(','))
   if (query.pricingDestaque?.length) params.set('pricingDestaque', query.pricingDestaque.join(','))
   if (query.sort) params.set('sort', query.sort)
+  if (query.originPostSort) params.set('originPostSort', query.originPostSort)
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.offset != null) params.set('offset', String(query.offset))
-  const llmJoin = (key: string, arr?: string[]) => {
+  const joinFilter = (key: string, arr?: string[]) => {
     if (arr?.length) params.set(key, arr.join(','))
   }
-  llmJoin('llmProfileType', query.llmProfileType)
-  llmJoin('llmMainCategory', query.llmMainCategory)
-  llmJoin('llmGender', query.llmGender)
-  llmJoin('llmLanguage', query.llmLanguage)
-  llmJoin('llmAudienceType', query.llmAudienceType)
-  llmJoin('llmToneOfVoice', query.llmToneOfVoice)
-  llmJoin('llmRiskLevel', query.llmRiskLevel)
-  llmJoin('llmPostSentiment', query.llmPostSentiment)
-  if (query.llmIsFamilySafe === true) params.set('llmFamilySafe', '1')
-  if (query.llmIsFamilySafe === false) params.set('llmFamilySafe', '0')
-  if (query.llmIsAdultContent === true) params.set('llmAdultContent', '1')
-  if (query.llmIsAdultContent === false) params.set('llmAdultContent', '0')
+  joinFilter('profileType', query.profileType)
+  joinFilter('mainCategory', query.mainCategory)
+  joinFilter('gender', query.gender)
+  joinFilter('language', query.language)
+  joinFilter('audienceType', query.audienceType)
+  joinFilter('toneOfVoice', query.toneOfVoice)
+  joinFilter('riskLevel', query.riskLevel)
+  joinFilter('postSentiment', query.postSentiment)
+  if (query.isFamilySafe === true) params.set('familySafe', '1')
+  if (query.isFamilySafe === false) params.set('familySafe', '0')
+  if (query.isAdultContent === true) params.set('adultContent', '1')
+  if (query.isAdultContent === false) params.set('adultContent', '0')
   return params
 }
 
 /** Remove busca por palavra na legenda (`q`) e campos só de UI/paginação de perfis ao reutilizar filtros em `post-matches`. */
 export function profileFiltersForCampaignPostApis(query: Partial<ProfilesSearchQuery>): Partial<ProfilesSearchQuery> {
-  const { q: _q, originMediaKinds: _om, originPostSort: _ops, limit: _l, offset: _o, sort: _s, ...rest } = query
+  const { q: _q, originMediaKinds: _om, limit: _l, offset: _o, sort: _s, ...rest } = query
   return stripCampaignFacetBoostFromQuery(rest)
 }
 
@@ -1410,10 +1411,10 @@ export async function fetchCampaignProfiles(
   const llmJoinCamp = (key: string, arr?: string[]) => {
     if (arr?.length) params.set(key, arr.join(','))
   }
-  llmJoinCamp('llmProfileType', query.llmProfileType)
-  llmJoinCamp('llmMainCategory', query.llmMainCategory)
-  llmJoinCamp('llmGender', query.llmGender)
-  llmJoinCamp('llmAudienceType', query.llmAudienceType)
+  llmJoinCamp('profileType', query.profileType)
+  llmJoinCamp('mainCategory', query.mainCategory)
+  llmJoinCamp('gender', query.gender)
+  llmJoinCamp('audienceType', query.audienceType)
   const qs = params.toString()
   const res = await fetch(`${API_BASE}/campaigns/${campaignId}/profiles${qs ? `?${qs}` : ''}`, {
     headers: { ...authHeaders() },
@@ -1526,8 +1527,10 @@ export async function fetchCampaignPostMatches(
   options?: {
     signal?: AbortSignal
     profileFilters?: Partial<ProfilesSearchQuery>
-    /** Prioridade de facets (só ordenação no back; não estreita handles). */
+    /** Prioridade de facets (restrição + ordenação no back). */
     facetBoost?: Partial<ProfilesSearchQuery>
+    /** Ordenação global da galeria Origem (backend ordena antes do slice). */
+    originPostSort?: OriginPostSort
   }
 ): Promise<PostsResponse & { q?: string; mediaKindCounts?: Partial<Record<MediaKind, number>> }> {
   const p = new URLSearchParams()
@@ -1544,6 +1547,7 @@ export async function fetchCampaignPostMatches(
     'handlesOnly',
     'handles_only',
     'facetBoostSort',
+    'originPostSort',
   ])
   if (options?.profileFilters) {
     const pf = profilesSearchQueryToParams(
@@ -1553,6 +1557,12 @@ export async function fetchCampaignPostMatches(
       if (reservedPostKeys.has(key)) return
       p.set(key, value)
     })
+    if (options.profileFilters.originPostSort) {
+      p.set('originPostSort', options.profileFilters.originPostSort)
+    }
+  }
+  if (options?.originPostSort) {
+    p.set('originPostSort', options.originPostSort)
   }
   if (options?.facetBoost) {
     const boostParams = profilesSearchQueryToParams(options.facetBoost)
@@ -2371,18 +2381,54 @@ export async function fetchAdminDashboardStats(opts?: { fresh?: boolean }): Prom
 
 /** Resposta de GET /api/admin/reports/unregistered-mentions */
 export interface AdminUnregisteredMentionsReport {
+  strategy?: 'profiles' | 'posts'
+  /** Total de posts na base (antes da amostra). */
+  postsInDb?: number
+  /** Posts efetivamente analisados nesta execução (amostra aleatória). */
   postsScanned: number
+  postSampleSize?: number
+  profileSampleSize?: number
+  maxPostsPerProfile?: number
+  /** Limite de @ retornados nesta execução. */
+  maxReturn?: number
   profilesInDb: number
   uniqueMentions: number
+  /** @ sem cadastro encontrados na amostra (pode ser > lista retornada). */
   notRegisteredCount: number
-  /** Handles com @ que não existem no bucket `profile` do RocksDB */
+  notRegisteredReturned?: number
+  notRegisteredTruncated?: boolean
+  /** Handles com @ que não existem no bucket `profile` (ordem aleatória). */
   notRegistered: string[]
 }
 
-export async function fetchAdminUnregisteredMentionsReport(): Promise<AdminUnregisteredMentionsReport> {
-  const res = await fetch(`${API_BASE}/admin/reports/unregistered-mentions`, {
+export type AdminUnregisteredMentionsReportOptions = {
+  /** Perfis na amostra (`profiles`, padrão 800) ou posts (`posts`, padrão 2k). */
+  sample?: number
+  /** Máximo de @ na resposta (padrão 500). */
+  limit?: number
+  /** `profiles` (rápido, padrão) ou `posts` (varre amostra global de posts). */
+  strategy?: 'profiles' | 'posts'
+  /** Máx. posts por perfil quando `strategy=profiles` (padrão 15). */
+  maxPostsPerProfile?: number
+}
+
+export async function fetchAdminUnregisteredMentionsReport(
+  options?: AdminUnregisteredMentionsReportOptions
+): Promise<AdminUnregisteredMentionsReport> {
+  const params = new URLSearchParams()
+  if (options?.strategy) params.set('strategy', options.strategy)
+  if (options?.sample != null) params.set('sample', String(options.sample))
+  if (options?.limit != null) params.set('limit', String(options.limit))
+  if (options?.maxPostsPerProfile != null) {
+    params.set('maxPostsPerProfile', String(options.maxPostsPerProfile))
+  }
+  const qs = params.toString()
+  const res = await fetch(
+    `${API_BASE}/admin/reports/unregistered-mentions${qs ? `?${qs}` : ''}`,
+    {
     headers: { ...authHeaders() },
-  })
+    }
+  )
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(err?.error || 'Falha ao gerar relatório de menções')
@@ -2462,6 +2508,29 @@ export async function fetchAdminExtractQueue(): Promise<AdminExtractQueueStatus>
   return (await res.json()) as AdminExtractQueueStatus
 }
 
+export async function adminClearExtractQueue(): Promise<{
+  cleared_pending: number
+  processing_handle: string | null
+  queue_length: number
+}> {
+  const res = await fetch(`${API_BASE}/admin/extract-queue`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  const data = (await res.json().catch(() => ({}))) as {
+    cleared_pending?: number
+    processing_handle?: string | null
+    queue_length?: number
+    error?: string
+  }
+  if (!res.ok) throw new Error(data.error || 'Falha ao limpar fila')
+  return {
+    cleared_pending: data.cleared_pending ?? 0,
+    processing_handle: data.processing_handle ?? null,
+    queue_length: data.queue_length ?? 0,
+  }
+}
+
 export async function adminEnqueueExtractQueue(handles: string[]): Promise<{
   added: number
   skipped: number
@@ -2486,37 +2555,38 @@ export async function adminEnqueueExtractQueue(handles: string[]): Promise<{
   }
 }
 
-/** Enfileira todos os perfis pendentes que batem com filtro/busca da auditoria (não só a página atual). */
-export async function adminEnqueueAllFilteredExtractQueue(opts?: {
-  filter?: AdminMediaS3Filter
-  q?: string
-  refresh?: boolean
-}): Promise<{ added: number; skipped: number; total: number; message?: string }> {
-  const res = await fetch(`${API_BASE}/admin/extract-queue`, {
+export type AdminBulkEnqueueMode = 'missing_s3' | 'all_llm'
+
+export type AdminBulkEnqueueBatchResponse = {
+  mode: AdminBulkEnqueueMode
+  added: number
+  skipped: number
+  scanned: number
+  next_offset: number
+  total_handles: number
+  done: boolean
+  queue_length: number
+}
+
+/** Um lote da varredura da base → fila (sem carregar auditoria completa). */
+export async function adminBulkEnqueueExtractQueueBatch(opts: {
+  mode: AdminBulkEnqueueMode
+  offset: number
+  batch_size?: number
+}): Promise<AdminBulkEnqueueBatchResponse> {
+  const res = await fetch(`${API_BASE}/admin/extract-queue/bulk-scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
-      enqueue_all_filtered: true,
-      filter: opts?.filter ?? 'any',
-      q: opts?.q ?? '',
-      refresh: opts?.refresh === true,
+      mode: opts.mode,
+      offset: opts.offset,
+      batch_size: opts.batch_size,
       priority: true,
     }),
   })
-  const data = (await res.json().catch(() => ({}))) as {
-    added?: number
-    skipped?: number
-    total?: number
-    message?: string
-    error?: string
-  }
-  if (!res.ok) throw new Error(data.error || 'Falha ao enfileirar todos')
-  return {
-    added: data.added ?? 0,
-    skipped: data.skipped ?? 0,
-    total: data.total ?? 0,
-    message: data.message,
-  }
+  const data = (await res.json().catch(() => ({}))) as AdminBulkEnqueueBatchResponse & { error?: string }
+  if (!res.ok) throw new Error(data.error || 'Falha ao enfileirar em lote')
+  return data
 }
 
 export interface AdminUser {

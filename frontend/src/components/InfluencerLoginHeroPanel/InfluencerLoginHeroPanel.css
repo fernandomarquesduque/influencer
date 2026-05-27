@@ -162,39 +162,6 @@
   font-size: 12px;
 }
 
-.influencer-login-hero-panel__cta.ant-btn-primary,
-.influencer-login-hero-panel__cta.login-btn-primary {
-  height: 52px !important;
-  border-radius: 14px !important;
-  font-weight: 700 !important;
-  font-size: 15px !important;
-  border: none !important;
-  background: linear-gradient(135deg, #ff0080 0%, #e11d74 55%, #f97316 100%) !important;
-  box-shadow: 0 12px 32px rgba(255, 0, 128, 0.28) !important;
-}
-
-.influencer-login-hero-panel__cta.ant-btn-primary:hover,
-.influencer-login-hero-panel__cta.ant-btn-primary:focus,
-.influencer-login-hero-panel__cta.login-btn-primary:hover,
-.influencer-login-hero-panel__cta.login-btn-primary:focus {
-  background: linear-gradient(135deg, #ff1a8c 0%, #ec4899 55%, #fb923c 100%) !important;
-  filter: none !important;
-  box-shadow: 0 14px 36px rgba(255, 0, 128, 0.34) !important;
-}
-
-.influencer-login-hero-panel__cta-inner {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: 100%;
-}
-
-.influencer-login-hero-panel__cta-inner > span:nth-child(2) {
-  flex: 1;
-  text-align: center;
-}
-
 @media (max-width: 900px) {
   .influencer-login-page .login-left-panel .influencer-login-hero-panel {
     display: none;

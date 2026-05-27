@@ -15,7 +15,7 @@ export default defineConfig({
     alias: {
       /** Patamares nano→celebridade: mesma fonte que o backend (`followersSizeBuckets.ts`). */
       '@repo/followersSizeBuckets': path.resolve(__dirname, '../backend/src/api/followersSizeBuckets.ts'),
-      '@repo/llmMainCategoryTaxonomy': path.resolve(__dirname, '../backend/src/lib/mainCategoryTaxonomy.ts'),
+      '@repo/mainCategoryTaxonomy': path.resolve(__dirname, '../backend/src/lib/mainCategoryTaxonomy.ts'),
     },
   },
   server: {

@@ -1,14 +1,14 @@
 import type { ProfilesSearchQuery } from '../api'
 
 /**
- * Rotas que usam o wizard de busca e compartilham o mesmo default de `llmProfileType`
+ * Rotas que usam o wizard de busca e compartilham o mesmo default de `profileType`
  * (valores do qualify: criador + pessoal quando a URL não especifica).
  */
 export const DISCOVERY_LLM_PROFILE_TYPE_PATHS = ['/app/campaigns/create', '/'] as const
 
 const DISCOVERY_PATH_SET = new Set<string>(DISCOVERY_LLM_PROFILE_TYPE_PATHS)
 
-/** Default quando `llmProfileType` não vem na URL (nem alias reconhecido). */
+/** Default quando `profileType` não vem na URL (nem alias reconhecido). */
 export const DISCOVERY_DEFAULT_LLM_PROFILE_TYPES = ['criador', 'pessoal'] as const
 
 type DiscoveryCanonicalLlmProfileType = (typeof DISCOVERY_DEFAULT_LLM_PROFILE_TYPES)[number]
@@ -31,11 +31,11 @@ export function withDiscoveryDefaultLlmProfileTypeQuery(
 ): ProfilesSearchQuery {
   if (!usesDiscoveryDefaultLlmProfileType(pathname)) return q
   const picked = new Set<DiscoveryCanonicalLlmProfileType>()
-  for (const raw of q.llmProfileType ?? []) {
+  for (const raw of q.profileType ?? []) {
     const c = LLM_PROFILE_TYPE_TO_CANONICAL[raw.trim().toLowerCase()]
     if (c) picked.add(c)
   }
-  const llmProfileType =
+  const profileType =
     picked.size > 0 ? [...picked] : [...DISCOVERY_DEFAULT_LLM_PROFILE_TYPES]
-  return { ...q, llmProfileType }
+  return { ...q, profileType }
 }

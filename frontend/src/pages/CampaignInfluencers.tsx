@@ -4,13 +4,12 @@
  */
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Select, Input, Space, Modal, message, Segmented, Dropdown, Drawer } from 'antd'
+import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Input, Space, Modal, message, Segmented, Dropdown, Drawer } from 'antd'
 import type { MenuProps } from 'antd'
-import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, ClearOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import { isSearchRoute as checkIsSearchRoute, isSearchLandingHome } from '../constants/searchRoute'
 import {
-  trackAppFilter,
   trackInfluencerSearch,
   trackInfluencerSearchFromUrlOnce,
   trackPurchaseComplete,
@@ -59,12 +58,12 @@ import {
   normalizeSingleSelectFacetBoost,
   isOriginPostSort,
   stripCampaignFacetBoostFromQuery,
-  buildSingleCampaignFacetBoostPatch,
 } from '../utils/campaignFilterClient'
+import { firstUrlParam } from '../utils/qualificationFilterUrl'
+import { followersSizeKeyToUiKey } from '@repo/followersSizeBuckets'
 import { getLlmDescriptionLine } from '../utils/mapProfileListToPreviewItems'
 import { campaignLlmBadgeStyles, getLlmContentPillarLabels, getLlmGenderBadge, getLlmMainCategoryLabel, getLlmProfileTypeBadge } from '../utils/campaignLlmBadges'
 import InfluencerTierPill from '../components/InfluencerTierPill'
-import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import ProfileAvatar from '../components/ProfileAvatar'
 import CampaignBIPanel from '../components/CampaignBIPanel/CampaignBIPanel'
@@ -116,12 +115,12 @@ function campaignQueryToUrlParams(query: Partial<ProfilesSearchQuery>): Record<s
   if (query.cities?.length) params.cities = query.cities.join(',')
   if (query.states?.length) params.states = query.states.join(',')
   if (query.socialNetworks?.length) params.socialNetworks = query.socialNetworks.join(',')
-  if (query.llmProfileType?.length) params.llmProfileType = query.llmProfileType.join(',')
-  if (query.llmMainCategory?.length) params.llmMainCategory = query.llmMainCategory.join(',')
-  if (query.llmGender?.length) params.llmGender = query.llmGender.join(',')
-  if (query.llmSubCategories?.length) params.llmSubCategories = query.llmSubCategories.join(',')
-  if (query.llmContentPillars?.length) params.llmContentPillars = query.llmContentPillars.join(',')
-  if (query.llmAudienceType?.length) params.llmAudienceType = query.llmAudienceType.join(',')
+  if (query.profileType?.length) params.profileType = query.profileType.join(',')
+  if (query.mainCategory?.length) params.mainCategory = query.mainCategory.join(',')
+  if (query.gender?.length) params.gender = query.gender.join(',')
+  if (query.subCategories?.length) params.subCategories = query.subCategories.join(',')
+  if (query.contentPillars?.length) params.contentPillars = query.contentPillars.join(',')
+  if (query.audienceType?.length) params.audienceType = query.audienceType.join(',')
   if (query.offset != null && query.offset > 0) params.offset = String(query.offset)
   return params
 }
@@ -161,12 +160,12 @@ function urlParamsToCampaignQuery(params: URLSearchParams): Partial<ProfilesSear
     cities: parseSingleStr(params.get('cities')),
     states: parseSingleStr(params.get('states')),
     socialNetworks: parseSingleStr(params.get('socialNetworks')),
-    llmProfileType: parseSingleStr(params.get('llmProfileType')),
-    llmMainCategory: parseSingleStr(params.get('llmMainCategory')),
-    llmGender: parseSingleStr(params.get('llmGender')),
-    llmSubCategories: parseStrList(params.get('llmSubCategories')),
-    llmContentPillars: parseStrList(params.get('llmContentPillars')),
-    llmAudienceType: parseSingleStr(params.get('llmAudienceType')),
+    profileType: parseSingleStr(firstUrlParam(params, 'profileType', 'llmProfileType')),
+    mainCategory: parseSingleStr(firstUrlParam(params, 'mainCategory', 'llmMainCategory')),
+    gender: parseSingleStr(firstUrlParam(params, 'gender', 'llmGender')),
+    subCategories: parseStrList(firstUrlParam(params, 'subCategories', 'llmSubCategories')),
+    contentPillars: parseStrList(firstUrlParam(params, 'contentPillars', 'llmContentPillars')),
+    audienceType: parseSingleStr(firstUrlParam(params, 'audienceType', 'llmAudienceType')),
     offset: params.has('offset') ? Number(params.get('offset')) : undefined,
   }
 }
@@ -635,10 +634,10 @@ export default function CampaignInfluencers() {
     return JSON.stringify(pickCampaignFacetBoostFromQuery(query))
   }, [
     query.sizeFilter,
-    query.llmMainCategory,
-    query.llmGender,
-    query.llmAudienceType,
-    query.llmProfileType,
+    query.mainCategory,
+    query.gender,
+    query.audienceType,
+    query.profileType,
     query.engagementRateBuckets,
     query.avgLikesBuckets,
     query.postsCountBuckets,
@@ -882,7 +881,8 @@ export default function CampaignInfluencers() {
       setDisplayedCount(DISPLAY_PAGE_SIZE)
       return
     }
-    const sorted = filterAndSortCampaignItems(contextItems, sortQuery, { favoriteHandles })
+    const filterQuery = normalizeSingleSelectFacetBoost(requestQuery)
+    const sorted = filterAndSortCampaignItems(contextItems, filterQuery, { favoriteHandles })
     setFilteredList(sorted)
     setTotal(sorted.length)
     setFacets(computeFacetsFromItems(sorted))
@@ -976,7 +976,7 @@ export default function CampaignInfluencers() {
       return {
         ...facetsFromApi,
         size_buckets: facetsFromApi.followers_buckets.map((b: { key: string; label: string; count: number }) => ({
-          key: b.key === 'medio' ? 'mid' : b.key,
+          key: followersSizeKeyToUiKey(b.key),
           label: b.label,
           count: b.count,
         })),
@@ -1068,9 +1068,7 @@ export default function CampaignInfluencers() {
         } else if (contextItems != null) {
           applyContextFilters(newQuery)
         }
-        if (isCampaignGalleryUiOnlyPatch(overrides)) {
-          scrollCampaignPageToTop()
-        }
+        scrollCampaignPageToTop()
         return
       }
       const qFromOverride = overrides.q
@@ -1133,14 +1131,6 @@ export default function CampaignInfluencers() {
       hasActiveSearchQ,
     ]
   )
-
-  const clearFilters = useCallback(() => {
-    const newQuery = { ...defaultQuery, offset: 0 }
-    setQuery(newQuery)
-    setSearchFacets(null)
-    navigate({ pathname: location.pathname, search: '', hash: '' }, { replace: true })
-    if (!pendingPayment && contextItems != null) applyContextFilters(newQuery)
-  }, [contextItems, applyContextFilters, navigate, location.pathname, pendingPayment])
 
   const updateFilterFromMobileDrawer = useCallback(
     (overrides: Partial<ProfilesSearchQuery>) => {
@@ -1515,10 +1505,6 @@ export default function CampaignInfluencers() {
     [updateFilter]
   )
 
-  const selectedCities = (query.cities ?? []) as string[]
-  const selectedStates = (query.states ?? []) as string[]
-  const selectedSocial = (query.socialNetworks ?? []) as string[]
-  const selectedContentTypes = (query.contentTypes ?? []) as string[]
   const selectedOriginMediaKinds = (query.originMediaKinds ?? []) as MediaKind[]
   const hasOriginSearchTerm = (query.q?.trim().length ?? 0) > 0
   const captionQNormalized = query.q?.trim() ?? ''
@@ -1595,7 +1581,7 @@ export default function CampaignInfluencers() {
       <>
         <Space.Compact style={{ flex: 1, minWidth: 0 }}>
           <Input
-            placeholder="Digite uma palavra"
+            placeholder="Digite uma palavra, cidade ou marca"
             prefix={<SearchOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: 16 }} />}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
@@ -2128,7 +2114,7 @@ export default function CampaignInfluencers() {
                             <Col
                               key={item.key}
                               xs={24}
-                              sm={12}
+                              sm={24}
                               md={8}
                               lg={8}
                               style={{ minWidth: 0 }}
@@ -2185,7 +2171,7 @@ export default function CampaignInfluencers() {
             title={
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 <FilterOutlined aria-hidden />
-                Ordenr relatório
+                Filtrar e ordenar
               </span>
             }
             placement="right"
@@ -2205,20 +2191,6 @@ export default function CampaignInfluencers() {
                 onDescriptionSave={pendingPayment || isAllCampaignsView ? undefined : handleDescriptionSave}
                 showOriginPostSort={campaignMainTab === 'origin' && hasOriginSearchTerm}
               />
-              {mobileFiltersCount > 0 ? (
-                <Button
-                  type="default"
-                  size="small"
-                  icon={<ClearOutlined />}
-                  onClick={() => {
-                    clearFilters()
-                    setMobileBiDrawerOpen(false)
-                  }}
-                  block
-                >
-                  Limpar filtros
-                </Button>
-              ) : null}
             </div>
           </Drawer>
           <button

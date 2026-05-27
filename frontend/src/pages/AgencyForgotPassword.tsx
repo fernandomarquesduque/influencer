@@ -3,6 +3,7 @@ import { App, Form, Input, Button, Typography, Space, Divider, Alert, ConfigProv
 import { useNavigate } from 'react-router-dom'
 import { MailOutlined, LockOutlined, ArrowLeftOutlined, SafetyOutlined } from '@ant-design/icons'
 import Logo from '../components/Logo'
+import LoginCtaButton from '../components/LoginCtaButton/LoginCtaButton'
 import {
   requestAgencyPasswordReset,
   verifyAgencyPasswordResetCode,
@@ -94,18 +95,18 @@ export default function AgencyForgotPassword() {
   const leftCopy =
     step === 'email'
       ? {
-          title: 'Recuperar acesso',
-          lead: 'Informe o e-mail da sua conta. Enviaremos um código para você confirmar a identidade antes de criar uma nova senha.',
-        }
+        title: 'Recuperar acesso',
+        lead: 'Informe o e-mail da sua conta. Enviaremos um código para você confirmar a identidade antes de criar uma nova senha.',
+      }
       : step === 'code'
         ? {
-            title: 'Verificação',
-            lead: `Enviamos um código de 6 dígitos para ${email}. Ele expira em poucos minutos.`,
-          }
+          title: 'Verificação',
+          lead: `Enviamos um código de 6 dígitos para ${email}. Ele expira em poucos minutos.`,
+        }
         : {
-            title: 'Nova senha',
-            lead: 'Escolha uma senha forte e que você não use em outros sites.',
-          }
+          title: 'Nova senha',
+          lead: 'Escolha uma senha forte e que você não use em outros sites.',
+        }
 
   return (
     <div className="login-page agency-login-page">
@@ -242,17 +243,14 @@ export default function AgencyForgotPassword() {
                       style={{ borderRadius: 8 }}
                     />
                   </Form.Item>
-                  <Button
-                    type="primary"
+                  <LoginCtaButton
+                    ctaColor="agency"
                     htmlType="submit"
                     loading={loading}
-                    block
-                    icon={<MailOutlined />}
-                    className="login-btn-primary"
-                    style={{ height: 40, fontWeight: 600, borderRadius: 8 }}
+                    leadingIcon={<MailOutlined aria-hidden />}
                   >
                     Enviar código
-                  </Button>
+                  </LoginCtaButton>
                 </Form>
               )}
 
@@ -267,17 +265,14 @@ export default function AgencyForgotPassword() {
                       formatter={(str) => str.replace(/\D/g, '')}
                     />
                   </div>
-                  <Button
-                    type="primary"
+                  <LoginCtaButton
+                    ctaColor="agency"
                     onClick={() => void onVerifyCode()}
                     loading={loading}
-                    block
-                    icon={<SafetyOutlined />}
-                    className="login-btn-primary"
-                    style={{ height: 40, fontWeight: 600, borderRadius: 8 }}
+                    leadingIcon={<SafetyOutlined aria-hidden />}
                   >
                     Confirmar código
-                  </Button>
+                  </LoginCtaButton>
                   <Button type="link" block onClick={() => setStep('email')} style={{ fontSize: 12 }}>
                     Usar outro e-mail
                   </Button>
@@ -326,17 +321,14 @@ export default function AgencyForgotPassword() {
                       style={{ borderRadius: 8 }}
                     />
                   </Form.Item>
-                  <Button
-                    type="primary"
+                  <LoginCtaButton
+                    ctaColor="agency"
                     htmlType="submit"
                     loading={loading}
-                    block
-                    icon={<LockOutlined />}
-                    className="login-btn-primary"
-                    style={{ height: 40, fontWeight: 600, borderRadius: 8 }}
+                    leadingIcon={<LockOutlined aria-hidden />}
                   >
                     Salvar nova senha
-                  </Button>
+                  </LoginCtaButton>
                 </Form>
               )}
 
@@ -345,7 +337,7 @@ export default function AgencyForgotPassword() {
                   <span
                     style={{ cursor: 'pointer' }}
                     onClick={() => {
-                      window.location.href = '/landing/search/'
+                      window.location.href = '/'
                     }}
                   >
                     Voltar ao site

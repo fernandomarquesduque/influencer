@@ -131,6 +131,28 @@ export class RocksDBStorage {
   }
 
   /**
+   * Itera chaves do bucket sem ordenar nem carregar valores (memória extra O(1)).
+   * Retorna o total de chaves visitadas.
+   */
+  async iterateKeysInBucket(bucket: string, onKey: (key: string) => void): Promise<number> {
+    const db = await this.getDb();
+    const prefix = `${bucket}:`;
+    let n = 0;
+    const stream = db.iterator({ gte: prefix, lt: prefix + '\xff' });
+    try {
+      for await (const [fullKey] of stream) {
+        const k = parseKey(fullKey, bucket);
+        if (k == null) continue;
+        n++;
+        onKey(k);
+      }
+    } finally {
+      await stream.close();
+    }
+    return n;
+  }
+
+  /**
    * Lista todas as chaves de um bucket.
    */
   async listKeys(bucket: string): Promise<string[]> {
@@ -147,6 +169,39 @@ export class RocksDBStorage {
       await stream.close();
     }
     return keys.sort();
+  }
+
+  /**
+   * Amostra uniforme aleatória de até `sampleSize` chaves do bucket (uma passada no iterator, sem valores).
+   * Útil para relatórios admin em bases grandes.
+   */
+  async reservoirSampleKeysInBucket(
+    bucket: string,
+    sampleSize: number
+  ): Promise<{ sample: string[]; totalKeys: number }> {
+    const k = Math.max(0, Math.floor(sampleSize));
+    if (k === 0) return { sample: [], totalKeys: 0 };
+    const db = await this.getDb();
+    const prefix = `${bucket}:`;
+    const reservoir: string[] = [];
+    let totalKeys = 0;
+    const stream = db.iterator({ gte: prefix, lt: prefix + '\xff' });
+    try {
+      for await (const [fullKey] of stream) {
+        const parsed = parseKey(fullKey, bucket);
+        if (parsed == null) continue;
+        totalKeys++;
+        if (reservoir.length < k) {
+          reservoir.push(parsed);
+        } else {
+          const j = Math.floor(Math.random() * totalKeys);
+          if (j < k) reservoir[j] = parsed;
+        }
+      }
+    } finally {
+      await stream.close();
+    }
+    return { sample: reservoir, totalKeys };
   }
 
   /** Conta chaves no bucket sem carregar valores (uso em painel admin / métricas). */
@@ -216,8 +271,12 @@ export class RocksDBStorage {
    * Lista handles já armazenados (chaves do bucket "profile").
    */
   async listHandles(): Promise<Set<string>> {
-    const keys = await this.listKeys('profile');
-    return new Set(keys.map((k) => k.toLowerCase()));
+    const handles = new Set<string>();
+    await this.iterateKeysInBucket('profile', (k) => {
+      const h = k.toLowerCase().replace(/^@+/, '').trim();
+      if (h.length > 0) handles.add(h);
+    });
+    return handles;
   }
 
   /**

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Button } from 'antd'
-import { TeamOutlined, HeartOutlined, UserOutlined, ArrowLeftOutlined, SendOutlined } from '@ant-design/icons'
+import { HeartOutlined, UserOutlined, ArrowLeftOutlined, SendOutlined } from '@ant-design/icons'
 import './AuthCreateLayout.css'
 
 function Sparkle({ className }: { className?: string }) {
@@ -51,10 +51,7 @@ export default function AuthCreateLayout({
 
       <div className="auth-create__inner">
         <header className="auth-create__hero">
-          <div className="auth-create__badge">
-            <TeamOutlined aria-hidden />
-            <span>Mais de 2.000 criadores ativos</span>
-          </div>
+
           <div className="auth-create__title-wrap">
             <div className="auth-create__title-stars" aria-hidden>
               <Sparkle />

@@ -71,13 +71,13 @@ export default function AdminBulkPurgeInfluencers() {
   const { message, modal } = App.useApp()
   const [qText, setQText] = useState('')
   const [sort, setSort] = useState<ProfilesSort>('followers_desc')
-  const [llmProfileType, setLlmProfileType] = useState<string[]>([])
-  const [llmMainCategory, setLlmMainCategory] = useState<string[]>([])
-  const [llmGender, setLlmGender] = useState<string[]>([])
-  const [llmLanguage, setLlmLanguage] = useState<string[]>([])
-  const [llmAudienceType, setLlmAudienceType] = useState<string[]>([])
-  const [llmToneOfVoice, setLlmToneOfVoice] = useState<string[]>([])
-  const [llmRiskLevelRaw, setLlmRiskLevelRaw] = useState('')
+  const [profileType, setLlmProfileType] = useState<string[]>([])
+  const [mainCategory, setLlmMainCategory] = useState<string[]>([])
+  const [gender, setLlmGender] = useState<string[]>([])
+  const [language, setLlmLanguage] = useState<string[]>([])
+  const [audienceType, setLlmAudienceType] = useState<string[]>([])
+  const [toneOfVoice, setLlmToneOfVoice] = useState<string[]>([])
+  const [riskLevelRaw, setLlmRiskLevelRaw] = useState('')
   const [brandSafetyFilter, setBrandSafetyFilter] = useState<'' | 'familia' | 'adulto'>('')
   const [sizeFilter, setSizeFilter] = useState<string[]>([])
 
@@ -92,7 +92,7 @@ export default function AdminBulkPurgeInfluencers() {
   const llmFacets = facets?.llm
 
   const searchQuery = useCallback((): ProfilesSearchQuery => {
-    const riskParts = llmRiskLevelRaw
+    const riskParts = riskLevelRaw
       .split(/[,;]+/)
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean)
@@ -103,28 +103,28 @@ export default function AdminBulkPurgeInfluencers() {
     }
     const t = qText.trim()
     if (t) q.q = t
-    if (llmProfileType.length) q.llmProfileType = llmProfileType
-    if (llmMainCategory.length) q.llmMainCategory = llmMainCategory
-    if (llmGender.length) q.llmGender = llmGender
-    if (llmLanguage.length) q.llmLanguage = llmLanguage
-    if (llmAudienceType.length) q.llmAudienceType = llmAudienceType
-    if (llmToneOfVoice.length) q.llmToneOfVoice = llmToneOfVoice
-    if (riskParts.length) q.llmRiskLevel = riskParts
-    if (brandSafetyFilter === 'familia') q.llmIsFamilySafe = true
-    if (brandSafetyFilter === 'adulto') q.llmIsAdultContent = true
+    if (profileType.length) q.profileType = profileType
+    if (mainCategory.length) q.mainCategory = mainCategory
+    if (gender.length) q.gender = gender
+    if (language.length) q.language = language
+    if (audienceType.length) q.audienceType = audienceType
+    if (toneOfVoice.length) q.toneOfVoice = toneOfVoice
+    if (riskParts.length) q.riskLevel = riskParts
+    if (brandSafetyFilter === 'familia') q.isFamilySafe = true
+    if (brandSafetyFilter === 'adulto') q.isAdultContent = true
     if (sizeFilter.length) q.sizeFilter = sizeFilter
     return q
   }, [
     sort,
     page,
     qText,
-    llmProfileType,
-    llmMainCategory,
-    llmGender,
-    llmLanguage,
-    llmAudienceType,
-    llmToneOfVoice,
-    llmRiskLevelRaw,
+    profileType,
+    mainCategory,
+    gender,
+    language,
+    audienceType,
+    toneOfVoice,
+    riskLevelRaw,
     brandSafetyFilter,
     sizeFilter,
   ])
@@ -296,7 +296,7 @@ export default function AdminBulkPurgeInfluencers() {
                       style={{ width: '100%' }}
                       placeholder="Qualquer"
                       options={facetOptions(llmFacets?.profileType)}
-                      value={llmProfileType}
+                      value={profileType}
                       onChange={(v) => {
                         setLlmProfileType(v)
                         setPage(1)
@@ -313,7 +313,7 @@ export default function AdminBulkPurgeInfluencers() {
                       style={{ width: '100%' }}
                       placeholder="Qualquer"
                       options={facetOptions(llmFacets?.mainCategory)}
-                      value={llmMainCategory}
+                      value={mainCategory}
                       onChange={(v) => {
                         setLlmMainCategory(v)
                         setPage(1)
@@ -330,7 +330,7 @@ export default function AdminBulkPurgeInfluencers() {
                       style={{ width: '100%' }}
                       placeholder="Qualquer"
                       options={facetOptions(llmFacets?.gender)}
-                      value={llmGender}
+                      value={gender}
                       onChange={(v) => {
                         setLlmGender(v)
                         setPage(1)
@@ -347,7 +347,7 @@ export default function AdminBulkPurgeInfluencers() {
                       style={{ width: '100%' }}
                       placeholder="Qualquer"
                       options={facetOptions(llmFacets?.language)}
-                      value={llmLanguage}
+                      value={language}
                       onChange={(v) => {
                         setLlmLanguage(v)
                         setPage(1)
@@ -364,7 +364,7 @@ export default function AdminBulkPurgeInfluencers() {
                       style={{ width: '100%' }}
                       placeholder="Qualquer"
                       options={facetOptions(llmFacets?.audienceType)}
-                      value={llmAudienceType}
+                      value={audienceType}
                       onChange={(v) => {
                         setLlmAudienceType(v)
                         setPage(1)
@@ -381,7 +381,7 @@ export default function AdminBulkPurgeInfluencers() {
                       style={{ width: '100%' }}
                       placeholder="Qualquer"
                       options={facetOptions(llmFacets?.toneOfVoice)}
-                      value={llmToneOfVoice}
+                      value={toneOfVoice}
                       onChange={(v) => {
                         setLlmToneOfVoice(v)
                         setPage(1)
@@ -395,7 +395,7 @@ export default function AdminBulkPurgeInfluencers() {
                     <Input
                       allowClear
                       placeholder="ex.: low, medium, high (separados por vírgula)"
-                      value={llmRiskLevelRaw}
+                      value={riskLevelRaw}
                       onChange={(e) => {
                         setLlmRiskLevelRaw(e.target.value)
                         setPage(1)

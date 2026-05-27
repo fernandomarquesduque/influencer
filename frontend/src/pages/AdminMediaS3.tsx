@@ -1,64 +1,63 @@
 /**
- * Admin: perfis com LLM concluído, sem mídia estável no S3, e fila de re-extração (Playwright → S3).
+ * Admin: fila de re-extração (Playwright → S3). Enfileiramento em lote sem auditoria completa na tela.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   App,
   Button,
   Card,
   Input,
-  Select,
+  Progress,
   Space,
-  Table,
   Tag,
   Typography,
-  Row,
-  Col,
-  Statistic,
 } from 'antd'
-import type { TableRowSelection } from 'antd/es/table/interface'
 import {
   ArrowLeftOutlined,
   CloudUploadOutlined,
+  DatabaseOutlined,
+  DeleteOutlined,
   PlusOutlined,
-  ReloadOutlined,
-  SearchOutlined,
+  StopOutlined,
 } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 import {
-  adminEnqueueAllFilteredExtractQueue,
+  adminBulkEnqueueExtractQueueBatch,
+  adminClearExtractQueue,
   adminEnqueueExtractQueue,
   fetchAdminExtractQueue,
-  fetchAdminMediaS3Audit,
+  type AdminBulkEnqueueMode,
   type AdminExtractQueueStatus,
-  type AdminMediaS3AuditResponse,
-  type AdminMediaS3Filter,
-  type AdminMediaS3MissingRow,
 } from '../api'
 import './AdminDashboard.css'
 
-const PAGE_SIZE = 50
 const QUEUE_POLL_MS = 4000
+const BULK_BATCH_SIZE = 40
 
 function formatInt(n: number): string {
   return n.toLocaleString('pt-BR')
+}
+
+type BulkProgress = {
+  mode: AdminBulkEnqueueMode
+  offset: number
+  totalHandles: number
+  scanned: number
+  added: number
+  skipped: number
 }
 
 export default function AdminMediaS3() {
   const { message, modal } = App.useApp()
   const { isAdm } = useAuth()
 
-  const [filter, setFilter] = useState<AdminMediaS3Filter>('any')
-  const [q, setQ] = useState('')
-  const [page, setPage] = useState(1)
-  const [audit, setAudit] = useState<AdminMediaS3AuditResponse | null>(null)
-  const [loadingAudit, setLoadingAudit] = useState(false)
   const [queue, setQueue] = useState<AdminExtractQueueStatus | null>(null)
-  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [addHandleInput, setAddHandleInput] = useState('')
-  const [enqueuingHandles, setEnqueuingHandles] = useState<Set<string>>(new Set())
-  const [bulkEnqueuing, setBulkEnqueuing] = useState(false)
+  const [enqueuingOne, setEnqueuingOne] = useState(false)
+  const [clearingQueue, setClearingQueue] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null)
+  const bulkAbortRef = useRef(false)
 
   const loadQueue = useCallback(async () => {
     try {
@@ -69,47 +68,6 @@ export default function AdminMediaS3() {
     }
   }, [])
 
-  const patchAuditQueueFlags = useCallback((handles: string[], inQueue: boolean) => {
-    const norm = new Set(handles.map((h) => h.replace(/^@/, '').trim().toLowerCase()))
-    setAudit((prev) => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        items: prev.items.map((row) =>
-          norm.has(row.handle) ? { ...row, in_extract_queue: inQueue } : row
-        ),
-      }
-    })
-  }, [])
-
-  const loadAudit = useCallback(
-    async (opts?: { refresh?: boolean; silent?: boolean }) => {
-      if (!opts?.silent) setLoadingAudit(true)
-      try {
-        const data = await fetchAdminMediaS3Audit({
-          limit: PAGE_SIZE,
-          offset: (page - 1) * PAGE_SIZE,
-          filter,
-          q,
-          refresh: opts?.refresh,
-        })
-        setAudit(data)
-        if (opts?.refresh) message.success('Auditoria atualizada.')
-      } catch (e) {
-        message.error(e instanceof Error ? e.message : 'Erro ao carregar auditoria')
-        setAudit(null)
-      } finally {
-        if (!opts?.silent) setLoadingAudit(false)
-      }
-    },
-    [filter, q, page, message]
-  )
-
-  useEffect(() => {
-    if (!isAdm) return
-    void loadAudit()
-  }, [isAdm, loadAudit])
-
   useEffect(() => {
     if (!isAdm) return
     void loadQueue()
@@ -117,58 +75,19 @@ export default function AdminMediaS3() {
     return () => clearInterval(id)
   }, [isAdm, loadQueue])
 
-  const enqueueAllFiltered = () => {
-    const total = audit?.total ?? 0
-    if (total === 0) {
-      message.warning('Nenhum perfil pendente com os filtros atuais.')
-      return
-    }
-    modal.confirm({
-      title: 'Enfileirar todos?',
-      content: `Serão enfileirados até ${formatInt(total)} perfil(is) com LLM concluído que aparecem na lista filtrada (fora os que já estão na fila). A extração roda uma por vez.`,
-      okText: 'Enfileirar todos',
-      cancelText: 'Cancelar',
-      onOk: async () => {
-        setBulkEnqueuing(true)
-        try {
-          const out = await adminEnqueueAllFilteredExtractQueue({ filter, q })
-          if (out.message && out.added === 0) {
-            message.info(out.message)
-          } else {
-            message.success(
-              `${formatInt(out.added)} enfileirado(s) de ${formatInt(out.total)} · ${formatInt(out.skipped)} já na fila ou ignorado(s). A extração roda em série; pendências de S3 somem após concluir.`
-            )
-          }
-          setSelectedRowKeys([])
-          await loadQueue()
-          void loadAudit({ silent: true })
-        } catch (e) {
-          message.error(e instanceof Error ? e.message : 'Falha ao enfileirar todos')
-        } finally {
-          setBulkEnqueuing(false)
-        }
-      },
-    })
-  }
-
   const enqueueHandles = async (handles: string[]) => {
     const clean = handles.map((h) => h.replace(/^@/, '').trim().toLowerCase()).filter(Boolean)
     if (clean.length === 0) {
       message.warning('Nenhum @ válido.')
       return
     }
-    setEnqueuingHandles((prev) => {
-      const next = new Set(prev)
-      clean.forEach((h) => next.add(h))
-      return next
-    })
+    setEnqueuingOne(true)
     try {
       const out = await adminEnqueueExtractQueue(clean)
       if (out.added > 0) {
         message.success(
           `${out.added} enfileirado(s), ${out.skipped} ignorado(s). Extração em andamento (uma por vez).`
         )
-        patchAuditQueueFlags(clean, true)
       } else {
         const detail = out.results?.find((r) => !r.queued)?.message
         message.info(
@@ -178,25 +97,101 @@ export default function AdminMediaS3() {
               : 'Nenhum perfil enfileirado (exige LLM concluído).')
         )
       }
-      setSelectedRowKeys([])
       setAddHandleInput('')
       await loadQueue()
-      void loadAudit({ silent: true })
     } catch (e) {
       message.error(e instanceof Error ? e.message : 'Falha ao enfileirar')
-      patchAuditQueueFlags(clean, false)
     } finally {
-      setEnqueuingHandles((prev) => {
-        const next = new Set(prev)
-        clean.forEach((h) => next.delete(h))
-        return next
-      })
+      setEnqueuingOne(false)
     }
   }
 
-  const rowSelection: TableRowSelection<AdminMediaS3MissingRow> = {
-    selectedRowKeys,
-    onChange: (keys) => setSelectedRowKeys(keys),
+  const runBulkEnqueue = async (mode: AdminBulkEnqueueMode) => {
+    if (bulkProgress) {
+      message.warning('Já há uma varredura em andamento.')
+      return
+    }
+    bulkAbortRef.current = false
+    let offset = 0
+    let totalHandles = 0
+    let scanned = 0
+    let added = 0
+    let skipped = 0
+
+    setBulkProgress({ mode, offset: 0, totalHandles: 0, scanned: 0, added: 0, skipped: 0 })
+
+    try {
+      for (;;) {
+        if (bulkAbortRef.current) {
+          message.info('Varredura interrompida.')
+          break
+        }
+        const batch = await adminBulkEnqueueExtractQueueBatch({
+          mode,
+          offset,
+          batch_size: BULK_BATCH_SIZE,
+        })
+        totalHandles = batch.total_handles
+        offset = batch.next_offset
+        scanned += batch.scanned
+        added += batch.added
+        skipped += batch.skipped
+        setBulkProgress({ mode, offset, totalHandles, scanned, added, skipped })
+        await loadQueue()
+        if (batch.done) {
+          message.success(
+            `Varredura concluída: ${formatInt(added)} enfileirado(s), ${formatInt(skipped)} ignorado(s) · fila com ${formatInt(batch.queue_length)} item(ns).`
+          )
+          break
+        }
+      }
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : 'Falha na varredura em lote')
+    } finally {
+      setBulkProgress(null)
+      bulkAbortRef.current = false
+    }
+  }
+
+  const stopBulk = () => {
+    bulkAbortRef.current = true
+  }
+
+  const confirmClearQueue = () => {
+    const pendingCount = queue?.pending.length ?? 0
+    if (pendingCount === 0 && !queue?.processing_handle) {
+      message.info('A fila já está vazia.')
+      return
+    }
+    modal.confirm({
+      title: 'Limpar fila de extração?',
+      content: queue?.processing_handle
+        ? `Serão removidos ${formatInt(pendingCount)} perfil(is) aguardando. A extração de @${queue.processing_handle} em andamento não é cancelada.`
+        : `Serão removidos ${formatInt(pendingCount)} perfil(is) da fila.`,
+      okText: 'Limpar fila',
+      okType: 'danger',
+      cancelText: 'Cancelar',
+      onOk: async () => {
+        setClearingQueue(true)
+        try {
+          const out = await adminClearExtractQueue()
+          if (out.cleared_pending === 0) {
+            message.info('Nenhum pendente para remover.')
+          } else {
+            message.success(
+              `${formatInt(out.cleared_pending)} removido(s) da fila${
+                out.processing_handle ? ` · @${out.processing_handle} ainda em extração` : ''
+              }.`
+            )
+          }
+          await loadQueue()
+        } catch (e) {
+          message.error(e instanceof Error ? e.message : 'Falha ao limpar fila')
+        } finally {
+          setClearingQueue(false)
+        }
+      },
+    })
   }
 
   if (!isAdm) {
@@ -207,12 +202,21 @@ export default function AdminMediaS3() {
     )
   }
 
-  const summary = audit?.summary
   const blockedUntil = queue?.extract_blocked_until
   const blockedLabel =
     blockedUntil && blockedUntil > Date.now()
       ? `Extração bloqueada até ${new Date(blockedUntil).toLocaleString('pt-BR')}`
       : null
+
+  const bulkPct =
+    bulkProgress && bulkProgress.totalHandles > 0
+      ? Math.min(100, Math.round((bulkProgress.offset / bulkProgress.totalHandles) * 100))
+      : undefined
+
+  const bulkModeLabel =
+    bulkProgress?.mode === 'all_llm'
+      ? 'Toda a base (com LLM concluído)'
+      : 'Sem mídia estável no S3 (com LLM)'
 
   return (
     <div className="admin-dashboard">
@@ -226,21 +230,11 @@ export default function AdminMediaS3() {
             </Link>
             <h1 style={{ margin: 0 }}>Mídia S3 e fila de extração</h1>
             <p style={{ margin: 0 }}>
-              Perfis com classificação LLM concluída, sem avatar ou capas estáveis no S3, e fila de re-extração (só
-              enfileira quem tem LLM preenchido).
+              Enfileira perfis para re-extração (Playwright → S3). Só entra na fila quem tem classificação LLM
+              concluída. A varredura da base roda em lotes — não carrega todos os perfis na tela de uma vez.
             </p>
           </Space>
         </div>
-        <Space wrap>
-          <Button
-            type="primary"
-            icon={<ReloadOutlined />}
-            loading={loadingAudit}
-            onClick={() => void loadAudit({ refresh: true })}
-          >
-            Atualizar auditoria
-          </Button>
-        </Space>
       </div>
 
       {blockedLabel ? (
@@ -249,44 +243,61 @@ export default function AdminMediaS3() {
         </div>
       ) : null}
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-        <Col xs={12} sm={8} md={4}>
-          <Card size="small">
-            <Statistic
-              title="Com LLM classificado"
-              value={summary?.llm_done_profiles ?? '—'}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card size="small">
-            <Statistic title="Sem avatar S3" value={summary?.missing_avatar ?? '—'} valueStyle={{ color: '#e11d48' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card size="small">
-            <Statistic title="Sem capas S3" value={summary?.missing_covers ?? '—'} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card size="small">
-            <Statistic title="Com pendência" value={summary?.missing_any ?? '—'} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card size="small">
-            <Statistic title="Na fila agora" value={queue?.length ?? summary?.extract_queue_length ?? '—'} />
-          </Card>
-        </Col>
-      </Row>
-
       <section className="admin-dashboard__section" style={{ marginBottom: 24 }}>
+        <div className="admin-dashboard__section-head">
+          <span className="admin-dashboard__section-accent" style={{ background: '#6366f1' }} />
+          <div className="admin-dashboard__section-head-text">
+            <h2>Enfileirar em massa</h2>
+            <span className="admin-dashboard__section-muted">
+              Varre a base aos poucos e adiciona na fila · extração serial (prioridade admin)
+            </span>
+          </div>
+        </div>
+        <Card size="small" style={{ marginBottom: 12 }}>
+          <Space wrap>
+            <Button
+              type="primary"
+              icon={<CloudUploadOutlined />}
+              disabled={!!bulkProgress}
+              onClick={() => void runBulkEnqueue('missing_s3')}
+            >
+              Enfileirar todos sem S3
+            </Button>
+            <Button
+              icon={<DatabaseOutlined />}
+              disabled={!!bulkProgress}
+              onClick={() => void runBulkEnqueue('all_llm')}
+            >
+              Enfileirar toda a base (LLM ok)
+            </Button>
+            {bulkProgress ? (
+              <Button danger icon={<StopOutlined />} onClick={stopBulk}>
+                Parar varredura
+              </Button>
+            ) : null}
+          </Space>
+          {bulkProgress ? (
+            <div style={{ marginTop: 16 }}>
+              <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                {bulkModeLabel} · {formatInt(bulkProgress.added)} enfileirado(s) ·{' '}
+                {formatInt(bulkProgress.skipped)} ignorado(s) ·{' '}
+                {bulkProgress.totalHandles > 0
+                  ? `${formatInt(bulkProgress.offset)} / ${formatInt(bulkProgress.totalHandles)} handles`
+                  : 'iniciando…'}
+              </Typography.Text>
+              <Progress percent={bulkPct} status="active" />
+            </div>
+          ) : null}
+        </Card>
+      </section>
+
+      <section className="admin-dashboard__section">
         <div className="admin-dashboard__section-head">
           <span className="admin-dashboard__section-accent" style={{ background: '#14b8a6' }} />
           <div className="admin-dashboard__section-head-text">
             <h2>Fila de extração</h2>
             <span className="admin-dashboard__section-muted">
-              Re-extração serial (prioridade admin ignora intervalo de 60 min)
+              {queue?.length != null ? `${formatInt(queue.length)} na fila agora` : '—'} · re-extração serial
             </span>
           </div>
         </div>
@@ -298,34 +309,25 @@ export default function AdminMediaS3() {
               onChange={(e) => setAddHandleInput(e.target.value)}
               onPressEnter={() => void enqueueHandles([addHandleInput])}
               style={{ minWidth: 220 }}
+              disabled={!!bulkProgress}
             />
             <Button
               type="primary"
               icon={<PlusOutlined />}
-              loading={bulkEnqueuing}
+              loading={enqueuingOne}
+              disabled={!!bulkProgress}
               onClick={() => void enqueueHandles([addHandleInput])}
             >
               Adicionar à fila
             </Button>
             <Button
-              loading={bulkEnqueuing}
-              disabled={selectedRowKeys.length === 0}
-              onClick={() => void enqueueHandles(selectedRowKeys as string[])}
+              danger
+              icon={<DeleteOutlined />}
+              loading={clearingQueue}
+              disabled={!!bulkProgress || !queue?.pending.length}
+              onClick={confirmClearQueue}
             >
-              Enfileirar selecionados ({selectedRowKeys.length})
-            </Button>
-            <Button
-              loading={bulkEnqueuing}
-              disabled={!audit?.summary?.missing_any}
-              onClick={() => {
-                if (!audit?.items?.length) {
-                  message.info('Atualize a auditoria e filtre perfis pendentes.')
-                  return
-                }
-                void enqueueHandles(audit.items.map((r) => r.handle))
-              }}
-            >
-              Enfileirar página atual
+              Limpar fila
             </Button>
           </Space>
         </Card>
@@ -337,157 +339,19 @@ export default function AdminMediaS3() {
         {queue && queue.pending.length > 0 ? (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {queue.pending.map((h) => (
-              <Tag
-                key={h}
-                color={queue.priority_handles.includes(h) ? 'purple' : 'blue'}
-              >
+              <Tag key={h} color={queue.priority_handles.includes(h) ? 'purple' : 'blue'}>
                 @{h}
                 {queue.priority_handles.includes(h) ? ' · prio' : ''}
               </Tag>
             ))}
           </div>
         ) : queue?.processing_handle ? (
-          <Typography.Text type="secondary">Aguardando na fila: nenhum (só o perfil em processamento acima).</Typography.Text>
+          <Typography.Text type="secondary">
+            Aguardando na fila: nenhum (só o perfil em processamento acima).
+          </Typography.Text>
         ) : (
           <Typography.Text type="secondary">Fila vazia.</Typography.Text>
         )}
-      </section>
-
-      <section className="admin-dashboard__section">
-        <div className="admin-dashboard__section-head">
-          <span className="admin-dashboard__section-accent" style={{ background: '#6366f1' }} />
-          <div className="admin-dashboard__section-head-text">
-            <h2>Perfis sem mídia S3 (com LLM)</h2>
-            <span className="admin-dashboard__section-muted">
-              {audit
-                ? `Gerado em ${new Date(audit.generated_at).toLocaleString('pt-BR')} · só perfis com LLM concluído`
-                : '—'}
-            </span>
-          </div>
-        </div>
-        <Space wrap style={{ marginBottom: 16 }}>
-          <Input
-            placeholder="Buscar @ ou nome"
-            prefix={<SearchOutlined />}
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value)
-              setPage(1)
-            }}
-            onPressEnter={() => void loadAudit()}
-            style={{ width: 220 }}
-            allowClear
-          />
-          <Select
-            value={filter}
-            onChange={(v) => {
-              setFilter(v)
-              setPage(1)
-            }}
-            style={{ width: 200 }}
-            options={[
-              { value: 'any', label: 'Avatar ou capas' },
-              { value: 'avatar', label: 'Só avatar' },
-              { value: 'covers', label: 'Só capas de posts' },
-            ]}
-          />
-          <Button icon={<SearchOutlined />} onClick={() => void loadAudit()}>
-            Filtrar
-          </Button>
-          <Button
-            type="primary"
-            icon={<CloudUploadOutlined />}
-            loading={bulkEnqueuing}
-            disabled={!audit?.total}
-            onClick={enqueueAllFiltered}
-          >
-            Enfileirar todos ({audit?.total != null ? formatInt(audit.total) : '…'})
-          </Button>
-        </Space>
-        <Table<AdminMediaS3MissingRow>
-          rowKey="handle"
-          loading={loadingAudit}
-          dataSource={audit?.items ?? []}
-          rowSelection={rowSelection}
-          pagination={{
-            current: page,
-            pageSize: PAGE_SIZE,
-            total: audit?.total ?? 0,
-            showSizeChanger: false,
-            onChange: (p) => setPage(p),
-            showTotal: (t) => `${formatInt(t)} perfil(is)`,
-          }}
-          size="small"
-          columns={[
-            {
-              title: '@',
-              dataIndex: 'handle',
-              render: (h: string, row) => (
-                <Link to={`/app/influencer/${encodeURIComponent(row.profile_ref)}`}>@{h}</Link>
-              ),
-            },
-            {
-              title: 'Nome',
-              dataIndex: 'full_name',
-              ellipsis: true,
-              render: (v: string | undefined) => v || '—',
-            },
-            {
-              title: 'Seguidores',
-              dataIndex: 'followers_count',
-              width: 100,
-              render: (n: number | undefined) => (n != null ? formatInt(n) : '—'),
-            },
-            {
-              title: 'Pendências',
-              key: 'issues',
-              render: (_: unknown, row) => (
-                <Space size={4} wrap>
-                  {row.missing_avatar ? <Tag color="red">Avatar</Tag> : null}
-                  {row.posts_missing_stable_cover > 0 ? (
-                    <Tag color="orange">
-                      Capas {row.posts_missing_stable_cover}/{row.posts_with_media}
-                    </Tag>
-                  ) : null}
-                  {row.in_extract_queue ||
-                  queue?.processing_handle === row.handle ||
-                  queue?.pending.includes(row.handle) ? (
-                    <Tag color="processing">
-                      {queue?.processing_handle === row.handle ? 'Extraindo' : 'Na fila'}
-                    </Tag>
-                  ) : null}
-                </Space>
-              ),
-            },
-            {
-              title: 'Última extração',
-              dataIndex: 'collected_at',
-              width: 160,
-              render: (v: string | undefined) => (v ? new Date(v).toLocaleString('pt-BR') : '—'),
-            },
-            {
-              title: '',
-              key: 'action',
-              width: 120,
-              render: (_: unknown, row) => (
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<CloudUploadOutlined />}
-                  disabled={
-                    row.in_extract_queue ||
-                    queue?.processing_handle === row.handle ||
-                    enqueuingHandles.has(row.handle)
-                  }
-                  loading={enqueuingHandles.has(row.handle)}
-                  onClick={() => void enqueueHandles([row.handle])}
-                >
-                  Enfileirar
-                </Button>
-              ),
-            },
-          ]}
-        />
       </section>
     </div>
   )

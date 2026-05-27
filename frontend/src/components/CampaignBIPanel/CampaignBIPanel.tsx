@@ -1,6 +1,6 @@
 /**
- * Painel BI: compilado das informações do relatório de campanha.
- * Exibido na coluna esquerda da tela de influenciadores da campanha.
+ * Painel BI: filtros e ordenação do relatório de campanha.
+ * Cada chip selecionado restringe os resultados (só perfis/posts que casam).
  */
 import { useState, useEffect, useMemo } from 'react'
 import { Card, Typography, Input, Select } from 'antd'
@@ -15,6 +15,7 @@ import {
 import { formatFacetLabel } from '../../utils/facetLabels'
 import { CONTENT_TYPE_LABELS } from '../../constants/contentTypes'
 import { getInfluencerTierSolidHexForBucketKey } from '../../utils/influencerTier'
+import { followersSizeKeyToUiKey } from '@repo/followersSizeBuckets'
 import { trackAppFilter } from '../../utils/metaPixelFunnel'
 import './CampaignBIPanel.css'
 
@@ -28,7 +29,7 @@ function llmPillColor(seed: string): string {
   return `hsl(${hue}, 42%, 40%)`
 }
 
-type LlmArrayFilterKey = 'llmMainCategory' | 'llmGender' | 'llmAudienceType'
+type LlmArrayFilterKey = 'mainCategory' | 'gender' | 'audienceType'
 
 type LlmNameCountRow = { name: string; count: number }
 
@@ -87,7 +88,7 @@ export default function CampaignBIPanel({
   const sizeBucketsFromFacets =
     facets?.size_buckets ??
     facets?.followers_buckets?.map((b) => ({
-      key: b.key === 'medio' ? 'mid' : b.key,
+      key: followersSizeKeyToUiKey(b.key),
       label: b.label,
       count: b.count,
     })) ??
@@ -108,9 +109,9 @@ export default function CampaignBIPanel({
   }
 
   const llm = facets?.llm
-  const selectedLlmMainCategory = (query?.llmMainCategory ?? []) as string[]
-  const selectedLlmGender = (query?.llmGender ?? []) as string[]
-  const selectedLlmAudienceType = (query?.llmAudienceType ?? []) as string[]
+  const selectedLlmMainCategory = (query?.mainCategory ?? []) as string[]
+  const selectedLlmGender = (query?.gender ?? []) as string[]
+  const selectedLlmAudienceType = (query?.audienceType ?? []) as string[]
 
   const facetChipSelected = (selected: string[], facetName: string): boolean => {
     const only = selected[0]
@@ -165,9 +166,9 @@ export default function CampaignBIPanel({
 
   const handleLlmArrayToggle = (key: LlmArrayFilterKey, facetName: string) => {
     const selected =
-      key === 'llmMainCategory'
+      key === 'mainCategory'
         ? selectedLlmMainCategory
-        : key === 'llmGender'
+        : key === 'gender'
           ? selectedLlmGender
           : selectedLlmAudienceType
     const has = facetChipSelected(selected, facetName)
@@ -195,7 +196,7 @@ export default function CampaignBIPanel({
         title={
           <span className="campaign-bi-card-title-row">
             <FilterOutlined className="campaign-bi-card-title-icon" aria-hidden />
-            Ordenar relatório
+            Filtrar e ordenar
           </span>
         }
       >
@@ -232,8 +233,8 @@ export default function CampaignBIPanel({
                     className={`campaign-bi-clickable ${facetChipSelected(selectedLlmAudienceType, name) ? 'campaign-bi-selected' : ''}`}
                     role="button"
                     tabIndex={0}
-                    onClick={() => handleLlmArrayToggle('llmAudienceType', name)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmAudienceType', name)}
+                    onClick={() => handleLlmArrayToggle('audienceType', name)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('audienceType', name)}
                     style={{ color: llmPillColor(`aud-${name}`) }}
                   >
                     {formatFacetLabel(name)}
@@ -255,8 +256,8 @@ export default function CampaignBIPanel({
                     className={`campaign-bi-clickable ${facetChipSelected(selectedLlmGender, name) ? 'campaign-bi-selected' : ''}`}
                     role="button"
                     tabIndex={0}
-                    onClick={() => handleLlmArrayToggle('llmGender', name)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmGender', name)}
+                    onClick={() => handleLlmArrayToggle('gender', name)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('gender', name)}
                     style={{ color: llmPillColor(`g-${name}`) }}
                   >
                     {formatFacetLabel(name)}
@@ -267,28 +268,28 @@ export default function CampaignBIPanel({
           )}
 
         {onFilter && sizeBuckets.length > 0 && (
-            <div className="campaign-bi-section">
-              <Text strong className="campaign-bi-section-title">Tamanho</Text>
-              <div className="campaign-bi-price">
-                {sizeBuckets.map(({ key, label }) => {
-                    const selected = sizeChipSelected(key)
-                    return (
-                      <span
-                        key={key}
-                        className={`campaign-bi-clickable ${selected ? 'campaign-bi-selected' : ''}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => handleSize(key, label)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSize(key, label)}
-                        style={{ color: getInfluencerTierSolidHexForBucketKey(key) }}
-                      >
-                        {label}
-                      </span>
-                    )
-                  })}
-              </div>
+          <div className="campaign-bi-section">
+            <Text strong className="campaign-bi-section-title">Tamanho</Text>
+            <div className="campaign-bi-price">
+              {sizeBuckets.map(({ key, label }) => {
+                const selected = sizeChipSelected(key)
+                return (
+                  <span
+                    key={key}
+                    className={`campaign-bi-clickable ${selected ? 'campaign-bi-selected' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleSize(key, label)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSize(key, label)}
+                    style={{ color: getInfluencerTierSolidHexForBucketKey(key) }}
+                  >
+                    {label}
+                  </span>
+                )
+              })}
             </div>
-          )}
+          </div>
+        )}
 
         {onFilter && engagementBuckets.some((b) => (b.count ?? 0) > 0) && (
           <div className="campaign-bi-section">
@@ -413,8 +414,8 @@ export default function CampaignBIPanel({
                       className={`campaign-bi-clickable ${facetChipSelected(selectedLlmMainCategory, name) ? 'campaign-bi-selected' : ''}`}
                       role="button"
                       tabIndex={0}
-                      onClick={() => handleLlmArrayToggle('llmMainCategory', name)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('llmMainCategory', name)}
+                      onClick={() => handleLlmArrayToggle('mainCategory', name)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleLlmArrayToggle('mainCategory', name)}
                       style={{ color: llmPillColor(`cat-${name}`) }}
                     >
                       {formatFacetLabel(name)}

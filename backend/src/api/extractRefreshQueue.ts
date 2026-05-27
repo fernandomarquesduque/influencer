@@ -96,3 +96,18 @@ export function isExtractRefreshPriority(handle: string): boolean {
 export function clearExtractRefreshPriority(handle: string): void {
   refreshPriorityHandles.delete(handle.toLowerCase().replace(/^@/, ''));
 }
+
+/** Remove todos os pendentes da fila (não cancela extração já em andamento). */
+export function clearExtractRefreshQueue(): {
+  cleared_pending: number;
+  processing_handle: string | null;
+} {
+  const processing = refreshProfileProcessingHandle;
+  const cleared = refreshProfileQueue.length;
+  for (const h of refreshProfileQueue) {
+    refreshProfileQueueSet.delete(h);
+    refreshPriorityHandles.delete(h);
+  }
+  refreshProfileQueue.length = 0;
+  return { cleared_pending: cleared, processing_handle: processing };
+}

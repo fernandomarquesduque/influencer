@@ -1,11 +1,10 @@
-import { Button } from 'antd'
 import {
   ThunderboltOutlined,
   CheckOutlined,
   UserOutlined,
-  ArrowRightOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
+import LoginCtaButton from '../LoginCtaButton/LoginCtaButton'
 import { trackMetaPixel } from '../../utils/metaPixel'
 import './InfluencerLoginHeroPanel.css'
 
@@ -50,7 +49,7 @@ export default function InfluencerLoginHeroPanel() {
       <div className="influencer-login-hero-panel__content">
         <div className="influencer-login-hero-panel__badge">
           <ThunderboltOutlined aria-hidden />
-          <span>Mais parcerias, mais resultados</span>
+          <span>Influencer</span>
         </div>
 
         <h1 className="influencer-login-hero-panel__title">
@@ -74,19 +73,14 @@ export default function InfluencerLoginHeroPanel() {
           ))}
         </ul>
 
-        <Button
-          type="primary"
-          size="large"
+        <LoginCtaButton
+          ctaColor="influencer"
+          leadingIcon={<UserOutlined aria-hidden />}
           onClick={goToCreate}
-          className="influencer-login-hero-panel__cta login-btn-primary"
-          block
+          className="influencer-login-hero-panel__cta"
         >
-          <span className="influencer-login-hero-panel__cta-inner">
-            <UserOutlined aria-hidden />
-            <span>Criar meu cadastro</span>
-            <ArrowRightOutlined aria-hidden />
-          </span>
-        </Button>
+          Criar meu cadastro
+        </LoginCtaButton>
       </div>
     </div>
   )

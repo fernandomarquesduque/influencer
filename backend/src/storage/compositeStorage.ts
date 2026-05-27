@@ -115,8 +115,19 @@ export class CompositeStorage {
     return this.rocks.listKeys(bucket);
   }
 
+  async iterateKeysInBucket(bucket: string, onKey: (key: string) => void): Promise<number> {
+    return this.rocks.iterateKeysInBucket(bucket, onKey);
+  }
+
   async countKeysInBucket(bucket: string): Promise<number> {
     return this.rocks.countKeysInBucket(bucket);
+  }
+
+  async reservoirSampleKeysInBucket(
+    bucket: string,
+    sampleSize: number
+  ): Promise<{ sample: string[]; totalKeys: number }> {
+    return this.rocks.reservoirSampleKeysInBucket(bucket, sampleSize);
   }
 
   async get<T = unknown>(bucket: string, key: string): Promise<T | null> {
@@ -177,7 +188,7 @@ export class CompositeStorage {
         costTier: payload.costTier ?? null,
         llmQualificationJson: payload.llmQualificationJson,
         llmBrandLevel: payload.llmBrandLevel,
-        llmPostSentiment: payload.llmPostSentiment,
+        llmPostSentiment: payload.postSentiment,
       }
     );
   }

@@ -6,6 +6,7 @@
 import {
   FOLLOWERS_SIZE_BUCKETS,
   followersCountToSizeKey,
+  normalizeFollowersSizeFilterKey,
   type FollowersSizeBucketDef,
   type FollowersSizeKey,
 } from '@repo/followersSizeBuckets'
@@ -78,12 +79,8 @@ export function getInfluencerTierLongLabel(followers: number | undefined | null)
 
 /** Chave de porte vinda da API (`size`, buckets de busca). */
 export function sizeBucketKeyToTierLabel(key: string | undefined | null): InfluencerTierLabel {
-  const k = String(key ?? '').trim().toLowerCase()
-  if (k === 'mid') return 'Mid'
-  if (k === 'subnano') return 'Nano'
-  if (k === 'nano' || k === 'micro' || k === 'medio' || k === 'macro' || k === 'elite' || k === 'celebridade') {
-    return sizeKeyToShortTierLabel(k as FollowersSizeKey)
-  }
+  const canon = normalizeFollowersSizeFilterKey(String(key ?? ''))
+  if (canon) return sizeKeyToShortTierLabel(canon)
   return '—'
 }
 

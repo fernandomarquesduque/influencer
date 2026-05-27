@@ -1,0 +1,69 @@
+/* Botão pill: ícone à esquerda, texto central, seta à direita (mesmo layout do CTA do login influenciador). */
+.login-btn-cta.ant-btn-primary {
+  height: 52px !important;
+  border-radius: 14px !important;
+  font-weight: 700 !important;
+  font-size: 15px !important;
+  border: none !important;
+  padding-inline: 20px !important;
+  transition: box-shadow 0.2s ease, background 0.2s ease !important;
+}
+
+.login-btn-cta.ant-btn-primary:hover:not(:disabled),
+.login-btn-cta.ant-btn-primary:focus:not(:disabled) {
+  filter: none !important;
+}
+
+.login-btn-cta__inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.login-btn-cta__icon {
+  display: inline-flex;
+  font-size: 16px;
+  flex-shrink: 0;
+  width: 16px;
+}
+
+.login-btn-cta__icon--spacer {
+  visibility: hidden;
+}
+
+.login-btn-cta__label {
+  flex: 1;
+  text-align: center;
+}
+
+.login-btn-cta__arrow {
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0.95;
+}
+
+/* Influenciador: rosa → laranja (tela /influencer/login) */
+.login-btn-cta--influencer.ant-btn-primary {
+  background: linear-gradient(135deg, #ff0080 0%, #e11d74 55%, #f97316 100%) !important;
+  box-shadow: 0 12px 32px rgba(255, 0, 128, 0.28) !important;
+}
+
+.login-btn-cta--influencer.ant-btn-primary:hover:not(:disabled),
+.login-btn-cta--influencer.ant-btn-primary:focus:not(:disabled) {
+  background: linear-gradient(135deg, #ff1a8c 0%, #ec4899 55%, #fb923c 100%) !important;
+  box-shadow: 0 14px 36px rgba(255, 0, 128, 0.34) !important;
+}
+
+/* Agência / recuperação de senha: roxo → dourado (marca) */
+.login-btn-cta--agency.ant-btn-primary {
+  background: linear-gradient(135deg, var(--app-primary) 0%, #9333ea 52%, var(--app-accent) 100%) !important;
+  box-shadow: 0 12px 32px rgba(104, 39, 143, 0.28) !important;
+}
+
+.login-btn-cta--agency.ant-btn-primary:hover:not(:disabled),
+.login-btn-cta--agency.ant-btn-primary:focus:not(:disabled) {
+  background: linear-gradient(135deg, #7a2f9e 0%, #a855f7 52%, #f0c808 100%) !important;
+  box-shadow: 0 14px 36px rgba(104, 39, 143, 0.34) !important;
+}

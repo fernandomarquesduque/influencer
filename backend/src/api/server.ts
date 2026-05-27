@@ -53,7 +53,6 @@ import {
   getPostSearchableNormalized,
   getPostTimestamp,
   computePostsPerWeek,
-  collectMentionHandlesFromPostItem,
   computeCampaignFacetBoostScore,
   hasCampaignFacetBoostInQuery,
   sortProfileListItemsByCampaignFacetBoost,
@@ -67,6 +66,10 @@ import {
   sortScratchRowsByFacetDiversity,
   sortScratchRowsByBoostThenDiversity,
   sortScratchRowsWithinBoostPriority,
+  sortPostMatchScratchRowsForResponse,
+  parseOriginPostSort,
+  httpQueryStrList,
+  httpQueryBool01,
   type HandleFacetBoostMeta,
   type HandleDiversityMeta,
   stripCampaignFacetBoostFromProfilesQuery,
@@ -117,6 +120,7 @@ import { verifyPassword, hashPassword } from '../auth/password.js';
 import type { AuthScope } from '../auth/types.js';
 import { listTables, queryTable, isAllowedTable } from './dbQueries.js';
 import { getAdminStatsSnapshot } from './adminStats.js';
+import { getUnregisteredMentionsReport } from './adminUnregisteredMentions.js';
 import { createCollectorController } from './controllers/collectorController.js';
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
 import { requireCollectorIngestSecret } from './middleware/collectorIngestAuth.js';
@@ -143,6 +147,7 @@ import { profileAvatarMediaPath } from '../utils/profileMediaUrls.js';
 import {
   REFRESH_MIN_INTERVAL_MS,
   clearExtractRefreshPriority,
+  clearExtractRefreshQueue,
   dequeueExtractRefreshHandle,
   enqueueExtractRefresh,
   getExtractRefreshQueueSnapshot,
@@ -152,7 +157,13 @@ import {
   setExtractRefreshProcessingHandle,
   shiftNextExtractRefreshHandle,
 } from './extractRefreshQueue.js';
-import { getAdminMediaS3Audit, listAdminMediaS3FilteredHandles, type AdminMediaS3Filter } from './adminMediaS3.js';
+import {
+  getAdminMediaS3Audit,
+  listAdminMediaS3FilteredHandles,
+  scanBulkEnqueueBatch,
+  type AdminBulkEnqueueMode,
+  type AdminMediaS3Filter,
+} from './adminMediaS3.js';
 import {
   isProfileNotFoundExtractError,
   removeInfluencerNotFoundOnInstagram,
@@ -1852,34 +1863,14 @@ app.get('/api/admin/stats', requireScopes('adm'), async (req: Request, res: Resp
 });
 
 /**
- * Admin: varre todos os posts (RocksDB), extrai @menções em legendas/texto auxiliar e retorna as que
- * não possuem entrada no bucket `profile`.
+ * Admin: @ citados em posts sem cadastro no bucket `profile`.
+ * Padrão `strategy=profiles` (rápido). `strategy=posts` varre amostra aleatória de posts (máx. 5k).
+ * Query: strategy, sample, limit, maxPostsPerProfile (só profiles).
  */
-app.get('/api/admin/reports/unregistered-mentions', requireScopes('adm'), async (_req: Request, res: Response) => {
+app.get('/api/admin/reports/unregistered-mentions', requireScopes('adm'), async (req: Request, res: Response) => {
   try {
-    const [postRows, profileRows] = await Promise.all([
-      db.getByBucket<Record<string, unknown>>('post'),
-      db.getByBucket<Record<string, unknown>>('profile'),
-    ]);
-    const profileSet = new Set(
-      profileRows
-        .map(({ key }) => String(key ?? '').replace(/^@+/, '').trim().toLowerCase())
-        .filter((k) => k.length > 0)
-    );
-    const allMentions = new Set<string>();
-    for (const { value } of postRows) {
-      for (const h of collectMentionHandlesFromPostItem(value as Record<string, unknown>)) {
-        allMentions.add(h);
-      }
-    }
-    const missing = [...allMentions].filter((h) => !profileSet.has(h)).sort((a, b) => a.localeCompare(b));
-    res.json({
-      postsScanned: postRows.length,
-      profilesInDb: profileSet.size,
-      uniqueMentions: allMentions.size,
-      notRegisteredCount: missing.length,
-      notRegistered: missing.map((h) => `@${h}`),
-    });
+    const report = await getUnregisteredMentionsReport(db, req.query);
+    res.json(report);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -2798,20 +2789,8 @@ app.get('/api/profiles/search', rateLimitDataApiUnlessPublicSearch, async (req: 
       const a = parseStrList(v);
       return a?.length ? a : undefined;
     };
-    const llmFamilyRaw = req.query.llmFamilySafe;
-    const llmIsFamilySafe =
-      llmFamilyRaw === '1' || llmFamilyRaw === 'true'
-        ? true
-        : llmFamilyRaw === '0' || llmFamilyRaw === 'false'
-          ? false
-          : undefined;
-    const llmAdultRaw = req.query.llmAdultContent;
-    const llmIsAdultContent =
-      llmAdultRaw === '1' || llmAdultRaw === 'true'
-        ? true
-        : llmAdultRaw === '0' || llmAdultRaw === 'false'
-          ? false
-          : undefined;
+    const isFamilySafe = httpQueryBool01(req.query as Record<string, unknown>, 'familySafe', 'llmFamilySafe');
+    const isAdultContent = httpQueryBool01(req.query as Record<string, unknown>, 'adultContent', 'llmAdultContent');
 
     const quantitativosOnly = Number(req.query.limit) === 0;
     const isPublicOrAnonymous = !quantitativosOnly && (!req.user || req.user.scope === 'public');
@@ -2878,16 +2857,16 @@ app.get('/api/profiles/search', rateLimitDataApiUnlessPublicSearch, async (req: 
       pricingDestaque: parseNumList(req.query.pricingDestaque),
       costTierFilter: parseCostTierFilter(req.query.costTierFilter),
       sizeFilter: sizeFilterArr?.length ? sizeFilterArr : undefined,
-      llmProfileType: optStrList(req.query.llmProfileType),
-      llmMainCategory: optStrList(req.query.llmMainCategory),
-      llmGender: optStrList(req.query.llmGender),
-      llmLanguage: optStrList(req.query.llmLanguage),
-      llmAudienceType: optStrList(req.query.llmAudienceType),
-      llmToneOfVoice: optStrList(req.query.llmToneOfVoice),
-      llmRiskLevel: optStrList(req.query.llmRiskLevel),
-      llmPostSentiment: optStrList(req.query.llmPostSentiment),
-      ...(llmIsFamilySafe !== undefined ? { llmIsFamilySafe } : {}),
-      ...(llmIsAdultContent !== undefined ? { llmIsAdultContent } : {}),
+      profileType: httpQueryStrList(req.query as Record<string, unknown>, 'profileType', 'llmProfileType'),
+      mainCategory: httpQueryStrList(req.query as Record<string, unknown>, 'mainCategory', 'llmMainCategory'),
+      gender: httpQueryStrList(req.query as Record<string, unknown>, 'gender', 'llmGender'),
+      language: httpQueryStrList(req.query as Record<string, unknown>, 'language', 'llmLanguage'),
+      audienceType: httpQueryStrList(req.query as Record<string, unknown>, 'audienceType', 'llmAudienceType'),
+      toneOfVoice: httpQueryStrList(req.query as Record<string, unknown>, 'toneOfVoice', 'llmToneOfVoice'),
+      riskLevel: httpQueryStrList(req.query as Record<string, unknown>, 'riskLevel', 'llmRiskLevel'),
+      postSentiment: httpQueryStrList(req.query as Record<string, unknown>, 'postSentiment', 'llmPostSentiment'),
+      ...(isFamilySafe !== undefined ? { isFamilySafe } : {}),
+      ...(isAdultContent !== undefined ? { isAdultContent } : {}),
       sort,
       limit,
       offset,
@@ -5092,31 +5071,31 @@ async function getCampaignStats(campaignId: string, userId: number): Promise<Cam
     .slice(0, 8)
     .map((v) => ({ label: v.label, count: v.count }));
 
-  const llmGenderByNorm = new Map<string, { count: number; label: string }>();
-  const llmProfileTypeByNorm = new Map<string, { count: number; label: string }>();
+  const genderByNorm = new Map<string, { count: number; label: string }>();
+  const profileTypeByNorm = new Map<string, { count: number; label: string }>();
   for (const item of result.items) {
     const q = getLlmQualification(item as unknown as Record<string, unknown>);
     if (!q) continue;
     const genderRaw = String(q.gender ?? '').trim();
     if (genderRaw && genderRaw !== '-') {
       const gn = genderRaw.toLowerCase();
-      const gCur = llmGenderByNorm.get(gn);
+      const gCur = genderByNorm.get(gn);
       if (gCur) gCur.count += 1;
-      else llmGenderByNorm.set(gn, { count: 1, label: genderRaw });
+      else genderByNorm.set(gn, { count: 1, label: genderRaw });
     }
     const ptRaw = String(q.profileType ?? '').trim();
     if (ptRaw && ptRaw !== '-') {
       const pn = ptRaw.toLowerCase();
-      const pCur = llmProfileTypeByNorm.get(pn);
+      const pCur = profileTypeByNorm.get(pn);
       if (pCur) pCur.count += 1;
-      else llmProfileTypeByNorm.set(pn, { count: 1, label: ptRaw });
+      else profileTypeByNorm.set(pn, { count: 1, label: ptRaw });
     }
   }
-  const topLlmGenders = [...llmGenderByNorm.values()]
+  const topLlmGenders = [...genderByNorm.values()]
     .sort((a, b) => b.count - a.count)
     .slice(0, 8)
     .map((v) => ({ label: v.label, count: v.count }));
-  const topLlmProfileTypes = [...llmProfileTypeByNorm.values()]
+  const topLlmProfileTypes = [...profileTypeByNorm.values()]
     .sort((a, b) => b.count - a.count)
     .slice(0, 8)
     .map((v) => ({ label: v.label, count: v.count }));
@@ -5799,20 +5778,8 @@ function buildCampaignProfilesQuery(
     const a = parseStrList(v);
     return a?.length ? a : undefined;
   };
-  const llmFamilyRaw = req.query.llmFamilySafe;
-  const llmIsFamilySafe =
-    llmFamilyRaw === '1' || llmFamilyRaw === 'true'
-      ? true
-      : llmFamilyRaw === '0' || llmFamilyRaw === 'false'
-        ? false
-        : undefined;
-  const llmAdultRaw = req.query.llmAdultContent;
-  const llmIsAdultContent =
-    llmAdultRaw === '1' || llmAdultRaw === 'true'
-      ? true
-      : llmAdultRaw === '0' || llmAdultRaw === 'false'
-        ? false
-        : undefined;
+  const isFamilySafe = httpQueryBool01(req.query as Record<string, unknown>, 'familySafe', 'llmFamilySafe');
+  const isAdultContent = httpQueryBool01(req.query as Record<string, unknown>, 'adultContent', 'llmAdultContent');
   const minFollowers = req.query.minFollowers != null ? Number(req.query.minFollowers) : undefined;
   const maxFollowers = req.query.maxFollowers != null ? Number(req.query.maxFollowers) : undefined;
   const minEngagementRate = req.query.minEngagementRate != null ? Number(req.query.minEngagementRate) : undefined;
@@ -5860,17 +5827,18 @@ function buildCampaignProfilesQuery(
     pricingDestaque: parseNumList(req.query.pricingDestaque),
     costTierFilter: parseCostTierFilter(req.query.costTierFilter),
     sizeFilter: sizeFilterArr?.length ? sizeFilterArr : undefined,
-    llmProfileType: optStrList(req.query.llmProfileType),
-    llmMainCategory: optStrList(req.query.llmMainCategory),
-    llmGender: optStrList(req.query.llmGender),
-    llmLanguage: optStrList(req.query.llmLanguage),
-    llmAudienceType: optStrList(req.query.llmAudienceType),
-    llmToneOfVoice: optStrList(req.query.llmToneOfVoice),
-    llmRiskLevel: optStrList(req.query.llmRiskLevel),
-    llmPostSentiment: optStrList(req.query.llmPostSentiment),
-    ...(llmIsFamilySafe !== undefined ? { llmIsFamilySafe } : {}),
-    ...(llmIsAdultContent !== undefined ? { llmIsAdultContent } : {}),
+    profileType: httpQueryStrList(req.query as Record<string, unknown>, 'profileType', 'llmProfileType'),
+    mainCategory: httpQueryStrList(req.query as Record<string, unknown>, 'mainCategory', 'llmMainCategory'),
+    gender: httpQueryStrList(req.query as Record<string, unknown>, 'gender', 'llmGender'),
+    language: httpQueryStrList(req.query as Record<string, unknown>, 'language', 'llmLanguage'),
+    audienceType: httpQueryStrList(req.query as Record<string, unknown>, 'audienceType', 'llmAudienceType'),
+    toneOfVoice: httpQueryStrList(req.query as Record<string, unknown>, 'toneOfVoice', 'llmToneOfVoice'),
+    riskLevel: httpQueryStrList(req.query as Record<string, unknown>, 'riskLevel', 'llmRiskLevel'),
+    postSentiment: httpQueryStrList(req.query as Record<string, unknown>, 'postSentiment', 'llmPostSentiment'),
+    ...(isFamilySafe !== undefined ? { isFamilySafe } : {}),
+    ...(isAdultContent !== undefined ? { isAdultContent } : {}),
     sort,
+    originPostSort: parseOriginPostSort(req.query.originPostSort),
     limit,
     offset,
   };
@@ -5885,10 +5853,7 @@ async function searchCampaignProfilesFromRequest(
   const rawQuery = buildCampaignProfilesQuery(req, { maxLimit: 10000 });
   const facetBoostSort =
     req.query.facetBoostSort === '1' && hasCampaignFacetBoostInQuery(rawQuery);
-  const filterQuery = facetBoostSort
-    ? stripCampaignFacetBoostFromProfilesQuery(rawQuery)
-    : rawQuery;
-  const result = await searchProfiles(db, filterQuery, {
+  const result = await searchProfiles(db, rawQuery, {
     initialItems: contextItems,
     ...(campaignBaseFacets != null ? { campaignBaseFacets } : {}),
     ...(extra?.skipInstagramBi ? { skipInstagramBi: true } : {}),
@@ -6963,10 +6928,11 @@ function postMatchesCacheKey(
   normHandles: string[],
   qRaw: string,
   typeFilters: string[],
-  boostFp: string
+  boostFp: string,
+  originPostSort: string
 ): string {
   const fp = crypto.createHash('sha256').update([...normHandles].sort().join('\0')).digest('hex').slice(0, 24);
-  return `${userId}|${fp}|${qRaw}|${typeFilters.join(',')}|${boostFp}`;
+  return `${userId}|${fp}|${qRaw}|${typeFilters.join(',')}|${boostFp}|${originPostSort}`;
 }
 
 function postMatchesFacetBoostFingerprint(req: RequestWithAuth): string {
@@ -7146,36 +7112,35 @@ function postMatchesHasProfileSideFilters(pq: ProfilesSearchQuery): boolean {
   if ((pq.costTierFilter?.length ?? 0) > 0) return true;
   if ((pq.sizeFilter?.length ?? 0) > 0) return true;
   const llmArr = [
-    pq.llmProfileType,
-    pq.llmMainCategory,
-    pq.llmGender,
-    pq.llmLanguage,
-    pq.llmAudienceType,
-    pq.llmToneOfVoice,
-    pq.llmRiskLevel,
-    pq.llmPostSentiment,
+    pq.profileType,
+    pq.mainCategory,
+    pq.gender,
+    pq.language,
+    pq.audienceType,
+    pq.toneOfVoice,
+    pq.riskLevel,
+    pq.postSentiment,
   ];
   if (llmArr.some((a) => (a?.length ?? 0) > 0)) return true;
-  if (pq.llmIsFamilySafe === true || pq.llmIsFamilySafe === false) return true;
-  if (pq.llmIsAdultContent === true || pq.llmIsAdultContent === false) return true;
+  if (pq.isFamilySafe === true || pq.isFamilySafe === false) return true;
+  if (pq.isAdultContent === true || pq.isAdultContent === false) return true;
   return false;
 }
 
 /** Restringe handles aos que passam nos mesmos filtros de perfil da listagem (exceto `q` de legenda). */
-function narrowPostMatchHandlesByProfileFilters(
+async function narrowPostMatchHandlesByProfileFilters(
   req: RequestWithAuth,
   scopedHandles: string[]
-): string[] {
+): Promise<string[]> {
   if (scopedHandles.length === 0) return scopedHandles;
   const base = buildCampaignProfilesQuery(req, { maxLimit: 1 });
   const pq: ProfilesSearchQuery = { ...base, q: undefined };
-  /** Porte/LLM do painel BI só ordenam (`facetBoostSort`); não restringem handles na legenda. */
-  if (!postMatchesHasProfileSideFilters(stripCampaignFacetBoostFromProfilesQuery(pq))) return scopedHandles;
+  if (!postMatchesHasProfileSideFilters(pq)) return scopedHandles;
   const norm = scopedHandles.map((h) => normalizeHandle(h)).filter(Boolean);
   const nKey = postMatchNarrowCacheKey(norm, pq);
   const hit = postMatchNarrowCacheGet(nKey);
   if (hit) return hit;
-  const narrowed = narrowHandlesByProfilesQuery(db, norm, pq);
+  const narrowed = await narrowHandlesByProfilesQuery(db, norm, pq);
   postMatchNarrowCacheSet(nKey, narrowed);
   return narrowed;
 }
@@ -7203,9 +7168,12 @@ async function runPostMatchesForHandles(
     const userId = Number(req.user?.sub ?? 0);
     const cacheOwner = Number.isFinite(userId) && userId > 0 ? userId : 0;
     const boostFp = postMatchesFacetBoostFingerprint(req);
+    const originPostSort = parseOriginPostSort(req.query.originPostSort);
+    const originSortKey = originPostSort ?? '';
+    const disableEarlyStop = Boolean(originPostSort);
     const cacheKey =
       normHandles.length > 0
-        ? postMatchesCacheKey(cacheOwner, normHandles, qRaw, typeFilters, boostFp)
+        ? postMatchesCacheKey(cacheOwner, normHandles, qRaw, typeFilters, boostFp, originSortKey)
         : '';
     const cachedFresh = cacheKey ? postMatchesCacheGet(cacheKey) : null;
     const cached =
@@ -7320,13 +7288,13 @@ async function runPostMatchesForHandles(
         handlesScanned = Math.min(i + batch.length, maxScan);
 
         const ftsOrderedScan = qRaw && ftsRankByHandle.size > 0 && !ftsPrefilterMiss;
-        if (needCount > 0 && qRaw && !ftsOrderedScan) {
+        if (!disableEarlyStop && needCount > 0 && qRaw && !ftsOrderedScan) {
           const rowsSoFar = buildFilteredSorted();
           if (rowsSoFar.length >= needCount + POST_MATCHES_EARLY_STOP_BUFFER) {
             if (handlesScanned < scanHandles.length) scanPartial = true;
             break;
           }
-        } else if (needCount > 0 && !richFacetScan) {
+        } else if (!disableEarlyStop && needCount > 0 && !richFacetScan) {
           const rowsSoFar = buildFilteredSorted();
           if (rowsSoFar.length >= needCount + POST_MATCHES_EARLY_STOP_BUFFER) {
             if (handlesScanned < scanHandles.length) scanPartial = true;
@@ -7346,7 +7314,43 @@ async function runPostMatchesForHandles(
         handleDiversityMeta = await loadHandleDiversityMeta(db, rowHandles);
       }
 
-      orderedRows = buildFilteredSorted();
+      const finalizePostMatchRows = async (): Promise<PostMatchesCachedRow[]> => {
+        let scratch = [...bestPerHandle.values()];
+        if (typeFilters.length > 0) {
+          scratch = scratch.filter((x) => typeFilters.includes(x.ct));
+        }
+        if (scratch.length < 2) {
+          return scratch.map(({ key, value, ct }) => ({ key, value, ct }));
+        }
+        const scratchForSort = scratch.map((row) => {
+          const h = postBucketKeyToHandle(row.key);
+          let relevance = row.relevance;
+          if (qRaw) {
+            const searchable = getPostSearchableNormalized(row.value);
+            const mq = matchesQuery(searchable, qRaw);
+            relevance = mq.match
+              ? combineSearchRelevance(mq.relevance, ftsRankByHandle.get(h))
+              : 0;
+          }
+          return {
+            key: row.key,
+            relevance,
+            ts: row.ts,
+            ct: row.ct,
+            value: row.value,
+          };
+        });
+        const sorted = await sortPostMatchScratchRowsForResponse(db, scratchForSort, {
+          sortQuery,
+          qRaw,
+          originPostSort,
+          facetBoostSortActive,
+          preloadedBoostMeta: handleBoostMeta.size > 0 ? handleBoostMeta : undefined,
+        });
+        return sorted.map(({ key, value, ct }) => ({ key, value, ct }));
+      };
+
+      orderedRows = await finalizePostMatchRows();
 
       mediaKindCounts = {};
       for (const row of bestPerHandle.values()) {
@@ -7369,46 +7373,6 @@ async function runPostMatchesForHandles(
           qRaw
         );
       }
-    }
-
-    if (qRaw && orderedRows.length > 1) {
-      const scratchRows = orderedRows.map((row) => {
-        const item = row.value;
-        let relevance = 0;
-        const h = postBucketKeyToHandle(row.key);
-        const searchable = getPostSearchableNormalized(item);
-        const mq = matchesQuery(searchable, qRaw);
-        if (mq.match) {
-          relevance = combineSearchRelevance(mq.relevance, ftsRankByHandle.get(h));
-        }
-        return {
-          key: row.key,
-          relevance,
-          value: item,
-          ts: getPostTimestamp(item) ?? 0,
-          ct: row.ct,
-        };
-      });
-      const rowHandles = [...new Set(scratchRows.map((r) => postBucketKeyToHandle(r.key)).filter(Boolean))];
-      if (handleDiversityMeta.size === 0) {
-        handleDiversityMeta = await loadHandleDiversityMeta(db, rowHandles);
-      }
-      let sortedScratch = scratchRows;
-      if (facetBoostSortActive) {
-        if (handleBoostMeta.size === 0) {
-          handleBoostMeta = await loadHandleFacetBoostMeta(db, rowHandles, sortQuery);
-        }
-        sortedScratch = sortScratchRowsByBoostThenDiversity(
-          scratchRows,
-          sortQuery,
-          handleBoostMeta,
-          handleDiversityMeta,
-          qRaw
-        );
-      } else {
-        sortedScratch = sortScratchRowsWithinBoostPriority(scratchRows, qRaw);
-      }
-      orderedRows = sortedScratch.map(({ key, value, ct }) => ({ key, value, ct }));
     }
 
     const scanMeta =
@@ -7504,18 +7468,9 @@ async function runPostMatchesForHandles(
       };
     }
 
-    let itemsForResponse: typeof slice = slice;
-    if (qRaw.trim() && facetBoostSortActive && slice.length > 1) {
-      itemsForResponse = sortPostMatchItemsByBoostThenSearchRelevance(slice, sortQuery, qRaw) as typeof slice;
-    } else if (qRaw.trim() && slice.length > 1) {
-      itemsForResponse = sortPostMatchItemsBySearchRelevance(slice, qRaw) as typeof slice;
-    } else if (facetBoostSortActive && slice.length > 1) {
-      itemsForResponse = sortPostMatchItemsByCampaignFacetBoost(slice, sortQuery) as typeof slice;
-    }
-
     res.json({
       total,
-      items: preparePostItemsForApiResponse(itemsForResponse, req),
+      items: preparePostItemsForApiResponse(slice, req),
       q: qRaw || undefined,
       mediaKindCounts,
       ...(scanMeta ? { scanMeta } : {}),
@@ -7553,7 +7508,7 @@ app.get('/api/campaigns/all/post-matches', rateLimitDataApiUnlessPublicSearch, a
       res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
       return;
     }
-    const narrowedAll = narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
+    const narrowedAll = await narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
     await runPostMatchesForHandles(req, res, narrowedAll, scoped.ftsRankByHandle, {
       ftsPrefilterMiss: scoped.ftsPrefilterMiss,
     });
@@ -7598,7 +7553,7 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApiUnlessPublicSearch, a
       res.json({ total: 0, items: [], q: qRaw || undefined, mediaKindCounts: {} });
       return;
     }
-    const narrowed = narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
+    const narrowed = await narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
     await runPostMatchesForHandles(req, res, narrowed, scoped.ftsRankByHandle, {
       ftsPrefilterMiss: scoped.ftsPrefilterMiss,
     });
@@ -7971,6 +7926,63 @@ app.get('/api/admin/extract-queue', requireScopes('adm'), (_req: RequestWithAuth
     length: snap.length,
     extract_blocked_until: apiExtractBlockedUntil > Date.now() ? apiExtractBlockedUntil : null,
   });
+});
+
+app.delete('/api/admin/extract-queue', requireScopes('adm'), (_req: RequestWithAuth, res: Response) => {
+  const out = clearExtractRefreshQueue();
+  res.json({
+    cleared_pending: out.cleared_pending,
+    processing_handle: out.processing_handle,
+    queue_length: getExtractRefreshQueueSnapshot().length,
+  });
+});
+
+/** Varre a base em lotes e enfileira (sem auditoria completa na resposta). */
+app.post('/api/admin/extract-queue/bulk-scan', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {
+  const modeRaw = String(req.body?.mode ?? '').trim().toLowerCase();
+  const mode: AdminBulkEnqueueMode = modeRaw === 'all_llm' ? 'all_llm' : 'missing_s3';
+  const offset = Math.max(0, Number(req.body?.offset) || 0);
+  const batchSize = Number(req.body?.batch_size);
+  const priority = req.body?.priority !== false;
+
+  try {
+    const batch = await scanBulkEnqueueBatch(db, {
+      mode,
+      offset,
+      batch_size: Number.isFinite(batchSize) ? batchSize : undefined,
+    });
+
+    let added = 0;
+    let skipped = 0;
+    for (const handle of batch.handles) {
+      if (isHandleInExtractRefreshQueue(handle)) {
+        skipped++;
+        continue;
+      }
+      const profile = (await db.loadByHandle(handle)) as Record<string, unknown> | null;
+      if (!profile || !hasCompletedLlmProfile(profile)) {
+        skipped++;
+        continue;
+      }
+      const enq = enqueueExtractRefresh(handle, priority);
+      if (enq.queued) added++;
+      else skipped++;
+    }
+    if (added > 0) processNextRefresh();
+
+    res.status(202).json({
+      mode,
+      added,
+      skipped,
+      scanned: batch.scanned,
+      next_offset: batch.next_offset,
+      total_handles: batch.total_handles,
+      done: batch.done,
+      queue_length: getExtractRefreshQueueSnapshot().length,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
 });
 
 app.post('/api/admin/extract-queue', requireScopes('adm'), async (req: RequestWithAuth, res: Response) => {

@@ -81,7 +81,7 @@ export default function AppTopBar() {
         <div className="app-top-bar__search">
           <Space.Compact style={{ flex: 1, minWidth: 0 }}>
             <Input
-              placeholder={isMobile ? 'Buscar…' : 'Digite uma palavra'}
+              placeholder={isMobile ? 'Buscar…' : 'Digite uma palavra, cidade ou marca'}
               prefix={<SearchOutlined style={{ color: 'var(--app-text-tertiary)', fontSize: isMobile ? 14 : 16 }} />}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}

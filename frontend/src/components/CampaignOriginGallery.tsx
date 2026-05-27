@@ -38,8 +38,8 @@ import {
   sortPostsByCampaignFacetBoost,
   sortPostsByBoostThenSearchRelevance,
   sortPostsBySearchRelevance,
-  sortPostsByOriginDisplay,
   filterPostsBySearchWhere,
+  filterPostsByCampaignFacetFilters,
 } from '../utils/campaignFilterClient'
 
 const { Text } = Typography
@@ -61,9 +61,12 @@ function orderPostMatchItems(
   }
 ): PostItem[] {
   const qTrim = opts.searchQuery.trim()
-  const filtered = qTrim ? filterPostsBySearchWhere(posts, qTrim) : posts
+  let filtered = qTrim ? filterPostsBySearchWhere(posts, qTrim) : posts
+  if (opts.facetBoostQuery && hasCampaignFacetBoost(opts.facetBoostQuery)) {
+    filtered = filterPostsByCampaignFacetFilters(filtered, opts.facetBoostQuery)
+  }
   if (opts.originPostSort) {
-    return sortPostsByOriginDisplay(filtered, opts.originPostSort)
+    return filtered
   }
   if (qTrim && opts.facetBoostQuery && hasCampaignFacetBoost(opts.facetBoostQuery)) {
     return sortPostsByBoostThenSearchRelevance(filtered, opts.facetBoostQuery, qTrim)
@@ -85,10 +88,14 @@ function mergePostMatchPage(
     facetBoostQuery: Partial<ProfilesSearchQuery> | undefined
     hasSearchTerm: boolean
     searchQuery: string
+    originPostSort?: OriginPostSort
   }
 ): PostItem[] {
   const seen = new Set(prev.map((p) => p.key))
   const rawAppended = pageItems.filter((p) => !seen.has(p.key))
+  if (opts.originPostSort) {
+    return [...prev, ...rawAppended]
+  }
   const mergedRaw = [...prev, ...rawAppended]
   return orderPostMatchItems(mergedRaw, opts)
 }
@@ -333,10 +340,7 @@ export default function CampaignOriginGallery({
     [facetBoostForApi, facetBoostQuery, hasSearchTerm, textQuery, originPostSort]
   )
 
-  useEffect(() => {
-    if (!hasSearchTerm) return
-    setItems((prev) => (prev.length ? orderPostMatchItems(prev, mergeOpts) : prev))
-  }, [originPostSort, mergeOpts, hasSearchTerm])
+  const originPostSortKey = originPostSort ?? ''
 
   const prefetchFacetGrowthPages = useCallback(
     async (
@@ -365,7 +369,12 @@ export default function CampaignOriginGallery({
               limit: PAGE,
               offset,
             },
-            { signal, profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
+            {
+              signal,
+              profileFilters: profileFiltersRef.current,
+              facetBoost: facetBoostForApi,
+              originPostSort,
+            }
           )
           if (signal.aborted) return
           if (res.items.length === 0) break
@@ -391,7 +400,7 @@ export default function CampaignOriginGallery({
         }
       }
     },
-    [campaignId, textQuery, kindsKey, facetBoostForApi, mergeOpts]
+    [campaignId, textQuery, kindsKey, facetBoostForApi, originPostSort, mergeOpts]
   )
 
   const reload = useCallback(
@@ -424,15 +433,15 @@ export default function CampaignOriginGallery({
             limit: PAGE,
             offset: 0,
           },
-          { signal, profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
+          {
+            signal,
+            profileFilters: profileFiltersRef.current,
+            facetBoost: facetBoostForApi,
+            originPostSort,
+          }
         )
         if (signal?.aborted) return
-        const items = orderPostMatchItems(res.items, {
-          facetBoostForApi,
-          facetBoostQuery,
-          hasSearchTerm,
-          searchQuery: textQuery,
-        })
+        const items = orderPostMatchItems(res.items, mergeOpts)
         setItems(items)
         setTotal(res.total)
         setServerOffset(res.items.length)
@@ -468,6 +477,8 @@ export default function CampaignOriginGallery({
       captionFilterReady,
       facetBoostForApi,
       facetBoostQuery,
+      originPostSort,
+      mergeOpts,
       prefetchFacetGrowthPages,
     ]
   )
@@ -496,7 +507,7 @@ export default function CampaignOriginGallery({
     const ac = new AbortController()
     void reload(ac.signal)
     return () => ac.abort()
-  }, [campaignId, textQuery, kindsKey, hasSearchTerm, captionFilterReady, facetBoostKey, reload])
+  }, [campaignId, textQuery, kindsKey, hasSearchTerm, captionFilterReady, facetBoostKey, originPostSortKey, reload])
 
   const loadMore = useCallback(async () => {
     if (!hasSearchTerm || loadMoreExhausted) return
@@ -514,7 +525,11 @@ export default function CampaignOriginGallery({
           limit: PAGE,
           offset,
         },
-        { profileFilters: profileFiltersRef.current, facetBoost: facetBoostForApi }
+        {
+          profileFilters: profileFiltersRef.current,
+          facetBoost: facetBoostForApi,
+          originPostSort,
+        }
       )
       let prevLen = 0
       let mergedLen = 0
@@ -622,15 +637,7 @@ export default function CampaignOriginGallery({
       ) : (
         <>
           {viewMode === 'grid' ? (
-            <div
-              className="campaign-origin-grid"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: 3,
-                minWidth: 0,
-              }}
-            >
+            <div className="campaign-origin-grid">
               {items.map((post) => {
                 const stableBg = getPostStablePreviewUrl(post)
                 const displayUrl = getPostCoverDisplayUrl(post)

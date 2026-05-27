@@ -92,20 +92,20 @@ const STEPS = [
     subtitle: 'Digite tema, nicho, nome ou @ do criador e continue refinando ao lado da lista',
   },
   {
-    key: 'llmMainCategory',
+    key: 'mainCategory',
     icon: ApartmentOutlined,
     title: 'Qual a categoria deseja buscar?',
     subtitle: `Selecione de 1 a ${LLM_MAIN_CATEGORY_MAX} itens para buscar o influencer ideal para sua campanha`,
   },
   { key: 'porte', icon: TeamOutlined, title: 'Qual o tamanho do influencer?', subtitle: 'Escolha uma faixa de seguidores' },
-  { key: 'llmAudience', icon: TeamOutlined, title: 'Qual o público-alvo que você busca?', subtitle: 'Opcional' },
+  { key: 'audience', icon: TeamOutlined, title: 'Qual o público-alvo que você busca?', subtitle: 'Opcional' },
 ] as const
 
 export const STEP_QUERY = 0
-const STEP_LLM_MAIN_CATEGORY = 1
+const STEP_MAIN_CATEGORY = 1
 const STEP_PORTE = 2
-const STEP_LLM_AUDIENCE = 3
-const STEP_LLM_LAST = 3
+const STEP_AUDIENCE = 3
+const STEP_LAST = 3
 
 /**
  * Alinha `sizeFilter` aos buckets com count > 0 (igual aos chips renderizados).
@@ -343,16 +343,16 @@ export interface WizardState {
   accountTypeFilter?: number[]
   /** 'activated' | 'not_activated' — quando ['activated'], só perfis ativados. */
   activationFilter?: string[]
-  llmProfileType?: string[]
-  llmMainCategory?: string[]
-  llmGender?: string[]
-  llmLanguage?: string[]
-  llmAudienceType?: string[]
-  llmToneOfVoice?: string[]
-  llmRiskLevel?: string[]
-  llmPostSentiment?: string[]
-  llmIsFamilySafe?: boolean
-  llmIsAdultContent?: boolean
+  profileType?: string[]
+  mainCategory?: string[]
+  gender?: string[]
+  language?: string[]
+  audienceType?: string[]
+  toneOfVoice?: string[]
+  riskLevel?: string[]
+  postSentiment?: string[]
+  isFamilySafe?: boolean
+  isAdultContent?: boolean
 }
 
 /** Converte estado do wizard em query para a API. */
@@ -375,16 +375,16 @@ function stateToQuery(state: WizardState): Partial<ProfilesSearchQuery> {
     excludePrivate: state.excludePrivate || undefined,
     accountTypeFilter: state.accountTypeFilter?.length ? state.accountTypeFilter : undefined,
     activationFilter: state.activationFilter?.length ? state.activationFilter : undefined,
-    llmProfileType: state.llmProfileType?.length ? state.llmProfileType : undefined,
-    llmMainCategory: state.llmMainCategory?.length ? state.llmMainCategory : undefined,
-    llmGender: state.llmGender?.length ? state.llmGender : undefined,
-    llmLanguage: state.llmLanguage?.length ? state.llmLanguage : undefined,
-    llmAudienceType: state.llmAudienceType?.length ? state.llmAudienceType : undefined,
-    llmToneOfVoice: state.llmToneOfVoice?.length ? state.llmToneOfVoice : undefined,
-    llmRiskLevel: state.llmRiskLevel?.length ? state.llmRiskLevel : undefined,
-    llmPostSentiment: state.llmPostSentiment?.length ? state.llmPostSentiment : undefined,
-    ...(state.llmIsFamilySafe === true || state.llmIsFamilySafe === false ? { llmIsFamilySafe: state.llmIsFamilySafe } : {}),
-    ...(state.llmIsAdultContent === true || state.llmIsAdultContent === false ? { llmIsAdultContent: state.llmIsAdultContent } : {}),
+    profileType: state.profileType?.length ? state.profileType : undefined,
+    mainCategory: state.mainCategory?.length ? state.mainCategory : undefined,
+    gender: state.gender?.length ? state.gender : undefined,
+    language: state.language?.length ? state.language : undefined,
+    audienceType: state.audienceType?.length ? state.audienceType : undefined,
+    toneOfVoice: state.toneOfVoice?.length ? state.toneOfVoice : undefined,
+    riskLevel: state.riskLevel?.length ? state.riskLevel : undefined,
+    postSentiment: state.postSentiment?.length ? state.postSentiment : undefined,
+    ...(state.isFamilySafe === true || state.isFamilySafe === false ? { isFamilySafe: state.isFamilySafe } : {}),
+    ...(state.isAdultContent === true || state.isAdultContent === false ? { isAdultContent: state.isAdultContent } : {}),
   }
 }
 
@@ -448,15 +448,15 @@ function boundsToSizeKeyFromBuckets(
 /** Maior índice de etapa LLM com filtro preenchido (para retomar a jornada pela URL). */
 function maxLlmStepFromFilters(f: Partial<WizardState>): number {
   let max = -1
-  if ((f.llmMainCategory?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_MAIN_CATEGORY)
+  if ((f.mainCategory?.length ?? 0) > 0) max = Math.max(max, STEP_MAIN_CATEGORY)
   /** Links antigos com filtro de gênero (etapa “assuntos” removida). */
-  if ((f.llmGender?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
-  if ((f.llmAudienceType?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
-  if ((f.llmToneOfVoice?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
-  if ((f.llmRiskLevel?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
-  if ((f.llmPostSentiment?.length ?? 0) > 0) max = Math.max(max, STEP_LLM_AUDIENCE)
-  if (f.llmIsFamilySafe === true || f.llmIsFamilySafe === false) max = Math.max(max, STEP_LLM_AUDIENCE)
-  if (f.llmIsAdultContent === true || f.llmIsAdultContent === false) max = Math.max(max, STEP_LLM_AUDIENCE)
+  if ((f.gender?.length ?? 0) > 0) max = Math.max(max, STEP_AUDIENCE)
+  if ((f.audienceType?.length ?? 0) > 0) max = Math.max(max, STEP_AUDIENCE)
+  if ((f.toneOfVoice?.length ?? 0) > 0) max = Math.max(max, STEP_AUDIENCE)
+  if ((f.riskLevel?.length ?? 0) > 0) max = Math.max(max, STEP_AUDIENCE)
+  if ((f.postSentiment?.length ?? 0) > 0) max = Math.max(max, STEP_AUDIENCE)
+  if (f.isFamilySafe === true || f.isFamilySafe === false) max = Math.max(max, STEP_AUDIENCE)
+  if (f.isAdultContent === true || f.isAdultContent === false) max = Math.max(max, STEP_AUDIENCE)
   return max
 }
 
@@ -464,8 +464,8 @@ function stepFromFilters(f: Partial<WizardState>): number {
   if (!(f.q?.trim())) return STEP_QUERY
   if ((f.sizeFilter?.length ?? 0) > 0 || f.minFollowers != null || f.maxFollowers != null) return STEP_PORTE
   const m = maxLlmStepFromFilters(f)
-  if (m >= STEP_LLM_MAIN_CATEGORY) return m
-  return STEP_LLM_MAIN_CATEGORY
+  if (m >= STEP_MAIN_CATEGORY) return m
+  return STEP_MAIN_CATEGORY
 }
 
 /** Filtro associado a cada índice de etapa do wizard. */
@@ -475,16 +475,16 @@ function filterPatchForWizardStep(stepIndex: number): Partial<WizardState> {
       return {}
     case STEP_PORTE:
       return { sizeFilter: undefined, minFollowers: undefined, maxFollowers: undefined }
-    case STEP_LLM_MAIN_CATEGORY:
-      return { llmMainCategory: undefined }
-    case STEP_LLM_AUDIENCE:
+    case STEP_MAIN_CATEGORY:
+      return { mainCategory: undefined }
+    case STEP_AUDIENCE:
       return {
-        llmAudienceType: undefined,
-        llmRiskLevel: undefined,
-        llmToneOfVoice: undefined,
-        llmPostSentiment: undefined,
-        llmIsFamilySafe: undefined,
-        llmIsAdultContent: undefined,
+        audienceType: undefined,
+        riskLevel: undefined,
+        toneOfVoice: undefined,
+        postSentiment: undefined,
+        isFamilySafe: undefined,
+        isAdultContent: undefined,
       }
     default:
       return {}
@@ -494,7 +494,7 @@ function filterPatchForWizardStep(stepIndex: number): Partial<WizardState> {
 /** Ao voltar: remove filtros da etapa atual e de todas as posteriores (sincroniza URL). */
 function filterPatchesFromStepForward(fromStep: number): Partial<WizardState> {
   let p: Partial<WizardState> = {}
-  for (let i = fromStep; i <= STEP_LLM_LAST; i++) {
+  for (let i = fromStep; i <= STEP_LAST; i++) {
     p = { ...p, ...filterPatchForWizardStep(i) }
   }
   return p
@@ -510,7 +510,7 @@ function filterPatchesBackToFirstStep(): Partial<WizardState> {
  */
 function stateToQueryForHash(state: WizardState, hashStep: number): Partial<ProfilesSearchQuery> {
   let s: WizardState = state
-  if (hashStep === STEP_LLM_MAIN_CATEGORY) {
+  if (hashStep === STEP_MAIN_CATEGORY) {
     s = { ...s, ...filterPatchesFromStepForward(STEP_PORTE) }
   }
   return stateToQuery(s)
@@ -539,20 +539,20 @@ function filtersToWizardState(
     excludePrivate: f.excludePrivate ?? undefined,
     accountTypeFilter: f.accountTypeFilter?.length ? f.accountTypeFilter : undefined,
     activationFilter: f.activationFilter?.length ? f.activationFilter : undefined,
-    llmProfileType: copyStrArr(f.llmProfileType?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmMainCategory: (() => {
-      const v = copyStrArr(f.llmMainCategory?.map((x) => x.trim().toLowerCase()).filter(Boolean))
+    profileType: copyStrArr(f.profileType?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    mainCategory: (() => {
+      const v = copyStrArr(f.mainCategory?.map((x) => x.trim().toLowerCase()).filter(Boolean))
       if (!v?.length) return undefined
       return v.length > LLM_MAIN_CATEGORY_MAX ? v.slice(0, LLM_MAIN_CATEGORY_MAX) : v
     })(),
-    llmGender: copyStrArr(f.llmGender?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmLanguage: copyStrArr(f.llmLanguage?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmAudienceType: copyStrArr(f.llmAudienceType?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmToneOfVoice: copyStrArr(f.llmToneOfVoice?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmRiskLevel: copyStrArr(f.llmRiskLevel?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmPostSentiment: copyStrArr(f.llmPostSentiment?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
-    llmIsFamilySafe: f.llmIsFamilySafe,
-    llmIsAdultContent: f.llmIsAdultContent,
+    gender: copyStrArr(f.gender?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    language: copyStrArr(f.language?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    audienceType: copyStrArr(f.audienceType?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    toneOfVoice: copyStrArr(f.toneOfVoice?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    riskLevel: copyStrArr(f.riskLevel?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    postSentiment: copyStrArr(f.postSentiment?.map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    isFamilySafe: f.isFamilySafe,
+    isAdultContent: f.isAdultContent,
   }
 }
 
@@ -582,7 +582,7 @@ export default function SearchWizard({
 
   /** URL com `#q=` pode abrir direto na etapa categoria: `facets` só vinha do prefetch até passar por “Próximo”. */
   useEffect(() => {
-    if (step !== STEP_LLM_MAIN_CATEGORY || !onEstimate) return
+    if (step !== STEP_MAIN_CATEGORY || !onEstimate) return
     if (!hasTextSearch) return
     if (facets !== null) return
     let cancelled = false
@@ -653,16 +653,16 @@ export default function SearchWizard({
   }
 
   const toggleLlmMainCategory = (norm: string) => {
-    const arr = state.llmMainCategory ?? []
+    const arr = state.mainCategory ?? []
     if (arr.includes(norm)) {
-      toggleArray('llmMainCategory', norm)
+      toggleArray('mainCategory', norm)
       return
     }
     if (arr.length >= LLM_MAIN_CATEGORY_MAX) {
       message.info(`Você pode selecionar no máximo ${LLM_MAIN_CATEGORY_MAX} categorias.`)
       return
     }
-    toggleArray('llmMainCategory', norm)
+    toggleArray('mainCategory', norm)
   }
 
   const syncUrl = (stateOverride?: WizardState, hashStep?: number) => {
@@ -692,7 +692,7 @@ export default function SearchWizard({
           const query = stateToQuery(state)
           const { facets: nextFacets } = await onEstimate(query)
           setFacets(nextFacets ?? null)
-          runSearchWizardSlideTransition('forward', () => setStep(STEP_LLM_MAIN_CATEGORY))
+          runSearchWizardSlideTransition('forward', () => setStep(STEP_MAIN_CATEGORY))
         } catch (e) {
           Modal.error({
             title: 'Não foi possível atualizar',
@@ -704,13 +704,13 @@ export default function SearchWizard({
           setNextStepLoading(false)
         }
       } else {
-        runSearchWizardSlideTransition('forward', () => setStep(STEP_LLM_MAIN_CATEGORY))
+        runSearchWizardSlideTransition('forward', () => setStep(STEP_MAIN_CATEGORY))
       }
       return
     }
-    if (step === STEP_LLM_MAIN_CATEGORY) {
+    if (step === STEP_MAIN_CATEGORY) {
       const hasCats = mainCategoryItems.some((i) => i.count > 0)
-      if (!wizardPrefetchLoading && hasCats && !(state.llmMainCategory?.length ?? 0)) {
+      if (!wizardPrefetchLoading && hasCats && !(state.mainCategory?.length ?? 0)) {
         Modal.warning({
           title: 'Categoria obrigatória',
           content: 'Selecione pelo menos uma categoria para continuar.',
@@ -731,7 +731,7 @@ export default function SearchWizard({
     }
     syncUrl()
     if (step < STEPS.length - 1) {
-      if (step === STEP_LLM_LAST) {
+      if (step === STEP_LAST) {
         finish()
         return
       }
@@ -765,10 +765,10 @@ export default function SearchWizard({
   const prevStep = async () => {
     /** Da etapa “categoria” (2/4) volta à busca (1/4): remove q= e filtros; sem View Transition para não atrasar o estado. */
     const voltarParaBusca =
-      step === STEP_LLM_MAIN_CATEGORY || STEPS[step]?.key === 'llmMainCategory'
+      step === STEP_MAIN_CATEGORY || STEPS[step]?.key === 'mainCategory'
     if (voltarParaBusca) {
       const patch: Partial<WizardState> = {
-        ...filterPatchesFromStepForward(STEP_LLM_MAIN_CATEGORY),
+        ...filterPatchesFromStepForward(STEP_MAIN_CATEGORY),
         q: undefined,
         categories: undefined,
       }
@@ -806,8 +806,8 @@ export default function SearchWizard({
       const cleaned = { ...state, ...patch }
       runSearchWizardSlideTransition('back', () => {
         update(patch)
-        setStep(STEP_LLM_MAIN_CATEGORY)
-        syncUrl(cleaned, STEP_LLM_MAIN_CATEGORY)
+        setStep(STEP_MAIN_CATEGORY)
+        syncUrl(cleaned, STEP_MAIN_CATEGORY)
       })
       if (onEstimate) {
         setNextStepLoading(true)
@@ -844,7 +844,7 @@ export default function SearchWizard({
     if (onEstimate) {
       setNextStepLoading(true)
       try {
-        if (target === STEP_LLM_MAIN_CATEGORY) {
+        if (target === STEP_MAIN_CATEGORY) {
           patch = filterPatchesBackToFirstStep()
         }
         const entryClear = filterPatchForWizardStep(target)
@@ -853,7 +853,7 @@ export default function SearchWizard({
         const { facets: nextFacets } = await onEstimate(query)
         setFacets(nextFacets ?? null)
         const finalPatch =
-          target === STEP_LLM_MAIN_CATEGORY ? filterPatchesBackToFirstStep() : { ...patch, ...entryClear }
+          target === STEP_MAIN_CATEGORY ? filterPatchesBackToFirstStep() : { ...patch, ...entryClear }
         applyPrevStateAndUrl(finalPatch, target)
       } catch (e) {
         Modal.error({
@@ -862,11 +862,11 @@ export default function SearchWizard({
           okText: 'Entendi',
           centered: true,
         })
-        if (target === STEP_LLM_MAIN_CATEGORY) {
+        if (target === STEP_MAIN_CATEGORY) {
           patch = filterPatchesBackToFirstStep()
         }
         const finalPatch =
-          target === STEP_LLM_MAIN_CATEGORY
+          target === STEP_MAIN_CATEGORY
             ? filterPatchesBackToFirstStep()
             : { ...patch, ...filterPatchForWizardStep(target) }
         applyPrevStateAndUrl(finalPatch, target)
@@ -874,11 +874,11 @@ export default function SearchWizard({
         setNextStepLoading(false)
       }
     } else {
-      if (target === STEP_LLM_MAIN_CATEGORY) {
+      if (target === STEP_MAIN_CATEGORY) {
         patch = filterPatchesBackToFirstStep()
       }
       const finalPatch =
-        target === STEP_LLM_MAIN_CATEGORY
+        target === STEP_MAIN_CATEGORY
           ? filterPatchesBackToFirstStep()
           : { ...patch, ...filterPatchForWizardStep(target) }
       applyPrevStateAndUrl(finalPatch, target)
@@ -925,7 +925,7 @@ export default function SearchWizard({
 
       ; (async () => {
         if (!onEstimate) {
-          runSearchWizardSlideTransition('back', () => setStep(STEP_LLM_MAIN_CATEGORY))
+          runSearchWizardSlideTransition('back', () => setStep(STEP_MAIN_CATEGORY))
           return
         }
         setNextStepLoading(true)
@@ -933,7 +933,7 @@ export default function SearchWizard({
           const query = stateToQuery(cleaned)
           const { facets: nextFacets } = await onEstimate(query)
           setFacets(nextFacets ?? null)
-          runSearchWizardSlideTransition('back', () => setStep(STEP_LLM_MAIN_CATEGORY))
+          runSearchWizardSlideTransition('back', () => setStep(STEP_MAIN_CATEGORY))
         } catch (e) {
           Modal.error({
             title: 'Não foi possível atualizar',
@@ -952,13 +952,13 @@ export default function SearchWizard({
   const isLoadingOptions =
     nextStepLoading ||
     (step >= STEP_PORTE && !(facets ?? initialFacets)) ||
-    (step === STEP_LLM_MAIN_CATEGORY && wizardPrefetchLoading)
+    (step === STEP_MAIN_CATEGORY && wizardPrefetchLoading)
   const showFullScreenLoader = step >= STEP_PORTE && !(facets ?? initialFacets)
 
   /** Só bloqueia o botão durante carregamento; validação de etapa mostra erro ao clicar. */
   const nextButtonDisabled = isLoadingOptions
 
-  const isMainCategoryStep = step === STEP_LLM_MAIN_CATEGORY
+  const isMainCategoryStep = step === STEP_MAIN_CATEGORY
   const contentMaxWidth = splitColumnLayout ? '100%' : isMainCategoryStep ? 'min(1040px, 100%)' : 580
 
   const showFooterChrome = step > STEP_QUERY
@@ -1091,11 +1091,11 @@ export default function SearchWizard({
                 </div>
               )}
 
-              {(step === STEP_LLM_MAIN_CATEGORY || step === STEP_LLM_AUDIENCE) && (
+              {(step === STEP_MAIN_CATEGORY || step === STEP_AUDIENCE) && (
                 <div style={{ width: '100%', textAlign: 'center' }}>
                   {(() => {
                     const llm = (facets ?? initialFacets)?.llm
-                    if (step === STEP_LLM_MAIN_CATEGORY && wizardPrefetchLoading) {
+                    if (step === STEP_MAIN_CATEGORY && wizardPrefetchLoading) {
                       return (
                         <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0', width: '100%' }}>
                           <Spin size="large" />
@@ -1109,36 +1109,36 @@ export default function SearchWizard({
                     const chipOrHint = (items: { name: string; count: number }[], el: ReactElement) =>
                       (items ?? []).some((i) => i.count > 0) ? el : emptyHint
                     switch (step) {
-                      case STEP_LLM_MAIN_CATEGORY: {
+                      case STEP_MAIN_CATEGORY: {
                         if (!mainCategoryItems.some((i) => i.count > 0)) return emptyHint
                         return (
                           <div className="search-wizard-category-pane">
                             <MainCategoryGridSection
                               items={mainCategoryItems}
-                              selected={state.llmMainCategory}
+                              selected={state.mainCategory}
                               maxSelectable={LLM_MAIN_CATEGORY_MAX}
                               onToggle={toggleLlmMainCategory}
                             />
                           </div>
                         )
                       }
-                      case STEP_LLM_AUDIENCE:
+                      case STEP_AUDIENCE:
                         return (
                           <>
                             {chipOrHint(llm.audienceType ?? [], (
                               <LlmChipSection
                                 title="Público-alvo"
                                 items={llm.audienceType ?? []}
-                                selected={state.llmAudienceType}
-                                onToggle={(k) => toggleArray('llmAudienceType', k)}
+                                selected={state.audienceType}
+                                onToggle={(k) => toggleArray('audienceType', k)}
                               />
                             ))}
                             {chipOrHint(llm.postSentiment ?? [], (
                               <LlmChipSection
                                 title="Sentimento nas legendas"
                                 items={llm.postSentiment ?? []}
-                                selected={state.llmPostSentiment}
-                                onToggle={(k) => toggleArray('llmPostSentiment', k)}
+                                selected={state.postSentiment}
+                                onToggle={(k) => toggleArray('postSentiment', k)}
                               />
                             ))}
                           </>

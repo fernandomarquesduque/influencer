@@ -54,10 +54,10 @@ function buildActiveFilters(
       })
     })
   }
-  pushLlmArr('llmProfileType', 'llm-pt', (v) => `Perfil: ${formatFacetLabel(v)}`)
-  pushLlmArr('llmMainCategory', 'llm-cat', (v) => `Categoria: ${formatFacetLabel(v)}`)
-  pushLlmArr('llmGender', 'llm-gen', (v) => `Gênero: ${formatFacetLabel(v)}`)
-  pushLlmArr('llmAudienceType', 'llm-aud', (v) => `Público: ${formatFacetLabel(v)}`)
+  pushLlmArr('profileType', 'llm-pt', (v) => `Perfil: ${formatFacetLabel(v)}`)
+  pushLlmArr('mainCategory', 'llm-cat', (v) => `Categoria: ${formatFacetLabel(v)}`)
+  pushLlmArr('gender', 'llm-gen', (v) => `Gênero: ${formatFacetLabel(v)}`)
+  pushLlmArr('audienceType', 'llm-aud', (v) => `Público: ${formatFacetLabel(v)}`)
   if (query.q?.trim()) {
     out.push({ id: 'q', label: `Busca: "${query.q.trim().slice(0, 20)}${query.q!.trim().length > 20 ? '…' : ''}"`, onRemove: () => onFilter({ q: undefined }) })
   }

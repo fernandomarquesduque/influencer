@@ -36,6 +36,24 @@ export function followersCountToSizeKey(followers: number): FollowersSizeKey {
   return FOLLOWERS_SIZE_BUCKETS[FOLLOWERS_SIZE_BUCKETS.length - 1]!.key;
 }
 
+/** Normaliza chave de filtro/URL/UI para chave canônica da API (`celeb`→`celebridade`, `mid`→`medio`). */
+export function normalizeFollowersSizeFilterKey(s: string): FollowersSizeKey | null {
+  const x = s.toLowerCase().trim();
+  if (x === 'mid' || x === 'medio') return 'medio';
+  if (x === 'subnano') return 'nano';
+  if (x === 'celeb' || x === 'celebridade') return 'celebridade';
+  if (x === 'nano' || x === 'micro' || x === 'macro' || x === 'elite') return x;
+  return null;
+}
+
+/** Chave canônica → chave curta na UI (`medio`→`mid`, `celebridade`→`celeb`). */
+export function followersSizeKeyToUiKey(key: string): string {
+  const canon = normalizeFollowersSizeFilterKey(key);
+  if (canon === 'medio') return 'mid';
+  if (canon === 'celebridade') return 'celeb';
+  return canon ?? key;
+}
+
 export type FollowersBucketFacetRow = {
   key: string;
   label: string;

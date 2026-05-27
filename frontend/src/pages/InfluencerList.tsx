@@ -30,6 +30,7 @@ import {
 } from '../api'
 import { expiresAtIsoFromDurationDays, FALLBACK_CAMPAIGN_ACCESS_DAYS } from '../utils/campaignExpires'
 import { withDiscoveryDefaultLlmProfileTypeQuery } from '../utils/discoveryLlmProfileType'
+import { firstUrlParam } from '../utils/qualificationFilterUrl'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { facetOptionLabel } from '../utils/facetLabels'
@@ -76,18 +77,18 @@ function queryToUrlParams(query: ProfilesSearchQuery): Record<string, string> {
   if (query.pricingDestaque?.length) params.pricingDestaque = query.pricingDestaque.join(',')
   if (query.sort) params.sort = query.sort
   if (query.offset != null && query.offset > 0) params.offset = String(query.offset)
-  if (query.llmProfileType?.length) params.llmProfileType = query.llmProfileType.join(',')
-  if (query.llmMainCategory?.length) params.llmMainCategory = query.llmMainCategory.join(',')
-  if (query.llmGender?.length) params.llmGender = query.llmGender.join(',')
-  if (query.llmLanguage?.length) params.llmLanguage = query.llmLanguage.join(',')
-  if (query.llmAudienceType?.length) params.llmAudienceType = query.llmAudienceType.join(',')
-  if (query.llmToneOfVoice?.length) params.llmToneOfVoice = query.llmToneOfVoice.join(',')
-  if (query.llmRiskLevel?.length) params.llmRiskLevel = query.llmRiskLevel.join(',')
-  if (query.llmPostSentiment?.length) params.llmPostSentiment = query.llmPostSentiment.join(',')
-  if (query.llmIsFamilySafe === true) params.llmFamilySafe = '1'
-  if (query.llmIsFamilySafe === false) params.llmFamilySafe = '0'
-  if (query.llmIsAdultContent === true) params.llmAdultContent = '1'
-  if (query.llmIsAdultContent === false) params.llmAdultContent = '0'
+  if (query.profileType?.length) params.profileType = query.profileType.join(',')
+  if (query.mainCategory?.length) params.mainCategory = query.mainCategory.join(',')
+  if (query.gender?.length) params.gender = query.gender.join(',')
+  if (query.language?.length) params.language = query.language.join(',')
+  if (query.audienceType?.length) params.audienceType = query.audienceType.join(',')
+  if (query.toneOfVoice?.length) params.toneOfVoice = query.toneOfVoice.join(',')
+  if (query.riskLevel?.length) params.riskLevel = query.riskLevel.join(',')
+  if (query.postSentiment?.length) params.postSentiment = query.postSentiment.join(',')
+  if (query.isFamilySafe === true) params.familySafe = '1'
+  if (query.isFamilySafe === false) params.familySafe = '0'
+  if (query.isAdultContent === true) params.adultContent = '1'
+  if (query.isAdultContent === false) params.adultContent = '0'
   return params
 }
 
@@ -147,16 +148,16 @@ function urlParamsToQuery(params: URLSearchParams): Partial<ProfilesSearchQuery>
     pricingDestaque: parseNumList(params.get('pricingDestaque')),
     sort: (params.get('sort') as ProfilesSort) || undefined,
     offset: params.has('offset') ? Number(params.get('offset')) : undefined,
-    llmProfileType: parseStrList(params.get('llmProfileType')),
-    llmMainCategory: parseStrList(params.get('llmMainCategory')),
-    llmGender: parseStrList(params.get('llmGender')),
-    llmLanguage: parseStrList(params.get('llmLanguage')),
-    llmAudienceType: parseStrList(params.get('llmAudienceType')),
-    llmToneOfVoice: parseStrList(params.get('llmToneOfVoice')),
-    llmRiskLevel: parseStrList(params.get('llmRiskLevel')),
-    llmPostSentiment: parseStrList(params.get('llmPostSentiment')),
-    llmIsFamilySafe: parseBool01(params.get('llmFamilySafe')),
-    llmIsAdultContent: parseBool01(params.get('llmAdultContent')),
+    profileType: parseStrList(firstUrlParam(params, 'profileType', 'llmProfileType')),
+    mainCategory: parseStrList(firstUrlParam(params, 'mainCategory', 'llmMainCategory')),
+    gender: parseStrList(firstUrlParam(params, 'gender', 'llmGender')),
+    language: parseStrList(firstUrlParam(params, 'language', 'llmLanguage')),
+    audienceType: parseStrList(firstUrlParam(params, 'audienceType', 'llmAudienceType')),
+    toneOfVoice: parseStrList(firstUrlParam(params, 'toneOfVoice', 'llmToneOfVoice')),
+    riskLevel: parseStrList(firstUrlParam(params, 'riskLevel', 'llmRiskLevel')),
+    postSentiment: parseStrList(firstUrlParam(params, 'postSentiment', 'llmPostSentiment')),
+    isFamilySafe: parseBool01(firstUrlParam(params, 'familySafe', 'llmFamilySafe')),
+    isAdultContent: parseBool01(firstUrlParam(params, 'adultContent', 'llmAdultContent')),
   }
 }
 
@@ -328,21 +329,21 @@ export default function InfluencerList() {
       excludePrivate: parsedUrl.excludePrivate,
       accountTypeFilter: parsedUrl.accountTypeFilter,
       activationFilter: parsedUrl.activationFilter?.length ? parsedUrl.activationFilter : undefined,
-      llmProfileType: withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
-        llmProfileType: parsedUrl.llmProfileType?.length ? parsedUrl.llmProfileType : undefined,
+      profileType: withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, {
+        profileType: parsedUrl.profileType?.length ? parsedUrl.profileType : undefined,
         limit: PAGE_SIZE,
         offset: 0,
         sort: 'relevance_desc' as ProfilesSort,
-      }).llmProfileType,
-      llmMainCategory: parsedUrl.llmMainCategory?.length ? parsedUrl.llmMainCategory : undefined,
-      llmGender: parsedUrl.llmGender?.length ? parsedUrl.llmGender : undefined,
-      llmLanguage: parsedUrl.llmLanguage?.length ? parsedUrl.llmLanguage : undefined,
-      llmAudienceType: parsedUrl.llmAudienceType?.length ? parsedUrl.llmAudienceType : undefined,
-      llmToneOfVoice: parsedUrl.llmToneOfVoice?.length ? parsedUrl.llmToneOfVoice : undefined,
-      llmRiskLevel: parsedUrl.llmRiskLevel?.length ? parsedUrl.llmRiskLevel : undefined,
-      llmPostSentiment: parsedUrl.llmPostSentiment?.length ? parsedUrl.llmPostSentiment : undefined,
-      llmIsFamilySafe: parsedUrl.llmIsFamilySafe,
-      llmIsAdultContent: parsedUrl.llmIsAdultContent,
+      }).profileType,
+      mainCategory: parsedUrl.mainCategory?.length ? parsedUrl.mainCategory : undefined,
+      gender: parsedUrl.gender?.length ? parsedUrl.gender : undefined,
+      language: parsedUrl.language?.length ? parsedUrl.language : undefined,
+      audienceType: parsedUrl.audienceType?.length ? parsedUrl.audienceType : undefined,
+      toneOfVoice: parsedUrl.toneOfVoice?.length ? parsedUrl.toneOfVoice : undefined,
+      riskLevel: parsedUrl.riskLevel?.length ? parsedUrl.riskLevel : undefined,
+      postSentiment: parsedUrl.postSentiment?.length ? parsedUrl.postSentiment : undefined,
+      isFamilySafe: parsedUrl.isFamilySafe,
+      isAdultContent: parsedUrl.isAdultContent,
     }),
     [parsedUrl, location.pathname]
   )
@@ -717,18 +718,18 @@ export default function InfluencerList() {
     selectedPricingDestaque.length > 0
 
   const hasLlmFilters =
-    (query.llmProfileType?.length ?? 0) > 0 ||
-    (query.llmMainCategory?.length ?? 0) > 0 ||
-    (query.llmGender?.length ?? 0) > 0 ||
-    (query.llmLanguage?.length ?? 0) > 0 ||
-    (query.llmAudienceType?.length ?? 0) > 0 ||
-    (query.llmToneOfVoice?.length ?? 0) > 0 ||
-    (query.llmRiskLevel?.length ?? 0) > 0 ||
-    (query.llmPostSentiment?.length ?? 0) > 0 ||
-    query.llmIsFamilySafe === true ||
-    query.llmIsFamilySafe === false ||
-    query.llmIsAdultContent === true ||
-    query.llmIsAdultContent === false
+    (query.profileType?.length ?? 0) > 0 ||
+    (query.mainCategory?.length ?? 0) > 0 ||
+    (query.gender?.length ?? 0) > 0 ||
+    (query.language?.length ?? 0) > 0 ||
+    (query.audienceType?.length ?? 0) > 0 ||
+    (query.toneOfVoice?.length ?? 0) > 0 ||
+    (query.riskLevel?.length ?? 0) > 0 ||
+    (query.postSentiment?.length ?? 0) > 0 ||
+    query.isFamilySafe === true ||
+    query.isFamilySafe === false ||
+    query.isAdultContent === true ||
+    query.isAdultContent === false
 
   const updateFilter = (overrides: Partial<ProfilesSearchQuery>) => {
     const newQuery = withDiscoveryDefaultLlmProfileTypeQuery(location.pathname, { ...query, ...overrides, offset: 0 })
@@ -771,16 +772,16 @@ export default function InfluencerList() {
       pricingReels: undefined,
       pricingStory: undefined,
       pricingDestaque: undefined,
-      llmProfileType: undefined,
-      llmMainCategory: undefined,
-      llmGender: undefined,
-      llmLanguage: undefined,
-      llmAudienceType: undefined,
-      llmToneOfVoice: undefined,
-      llmRiskLevel: undefined,
-      llmPostSentiment: undefined,
-      llmIsFamilySafe: undefined,
-      llmIsAdultContent: undefined,
+      profileType: undefined,
+      mainCategory: undefined,
+      gender: undefined,
+      language: undefined,
+      audienceType: undefined,
+      toneOfVoice: undefined,
+      riskLevel: undefined,
+      postSentiment: undefined,
+      isFamilySafe: undefined,
+      isAdultContent: undefined,
     })
   }
 

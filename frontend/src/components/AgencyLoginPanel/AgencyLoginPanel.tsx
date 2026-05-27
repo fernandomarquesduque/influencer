@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import { App, Segmented, Form, Input, Button } from 'antd'
+import { App, Segmented, Form, Input } from 'antd'
 import { Link } from 'react-router-dom'
 import {
   MailOutlined,
   LockOutlined,
   UserOutlined,
+  LoginOutlined,
   RightOutlined,
   GlobalOutlined,
 } from '@ant-design/icons'
+import LoginCtaButton from '../LoginCtaButton/LoginCtaButton'
 import { useAuth } from '../../contexts/AuthContext'
 import { registerAssinanteApi, type AuthScope } from '../../api'
 import { trackAgencyLogin, trackAgencyRegistration } from '../../utils/metaPixelFunnel'
@@ -117,16 +119,14 @@ export default function AgencyLoginPanel({ onSuccess }: AgencyLoginPanelProps) {
               style={{ borderRadius: 8 }}
             />
           </Form.Item>
-          <Button
-            type="primary"
+          <LoginCtaButton
+            ctaColor="agency"
             htmlType="submit"
-            block
             loading={loading}
-            className="login-btn-primary"
-            style={{ height: 40, fontWeight: 600, borderRadius: 8 }}
+            leadingIcon={<LoginOutlined aria-hidden />}
           >
             Entrar
-          </Button>
+          </LoginCtaButton>
         </Form>
       ) : (
         <Form form={signupForm} layout="vertical" onFinish={onSignup} requiredMark={false}>
@@ -196,16 +196,14 @@ export default function AgencyLoginPanel({ onSuccess }: AgencyLoginPanelProps) {
               style={{ borderRadius: 8 }}
             />
           </Form.Item>
-          <Button
-            type="primary"
+          <LoginCtaButton
+            ctaColor="agency"
             htmlType="submit"
-            block
             loading={loading}
-            className="login-btn-primary"
-            style={{ height: 40, fontWeight: 600, borderRadius: 8 }}
+            leadingIcon={<UserOutlined aria-hidden />}
           >
             Criar conta
-          </Button>
+          </LoginCtaButton>
         </Form>
       )}
 
@@ -225,7 +223,7 @@ export default function AgencyLoginPanel({ onSuccess }: AgencyLoginPanelProps) {
           type="button"
           className="agency-login-panel-footer__link"
           onClick={() => {
-            window.location.href = '/landing/index.html'
+            window.location.href = '/'
           }}
         >
           <GlobalOutlined aria-hidden />

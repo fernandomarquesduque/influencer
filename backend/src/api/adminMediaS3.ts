@@ -271,3 +271,80 @@ export function profileMissingStableAvatar(profile: Record<string, unknown>): bo
   const igUrl = getProfilePicUrlFromRecord(profile);
   return Boolean(igUrl?.startsWith('http'));
 }
+
+export type AdminBulkEnqueueMode = 'missing_s3' | 'all_llm';
+
+export type AdminBulkEnqueueBatchResult = {
+  /** Handles elegíveis neste lote (ainda não na fila; o caller enfileira). */
+  handles: string[];
+  scanned: number;
+  next_offset: number;
+  total_handles: number;
+  done: boolean;
+};
+
+let sortedHandlesCache: { handles: string[]; expiresAt: number } | null = null;
+
+async function getSortedHandles(storage: CompositeStorage): Promise<string[]> {
+  const now = Date.now();
+  if (sortedHandlesCache && now < sortedHandlesCache.expiresAt) {
+    return sortedHandlesCache.handles;
+  }
+  const handles = Array.from(await storage.listHandles())
+    .map(normalizeHandle)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  sortedHandlesCache = { handles, expiresAt: now + 300_000 };
+  return handles;
+}
+
+export async function profileMissingS3Media(
+  storage: CompositeStorage,
+  handle: string,
+  profile: Record<string, unknown>
+): Promise<boolean> {
+  if (!hasCompletedLlmProfile(profile)) return false;
+  const missing_avatar = !hasStableS3ImageUrl(profile.stable_profile_pic_url);
+  if (missing_avatar) return true;
+  const { withMedia, missingStable } = await countPostsMissingStableCover(storage, handle);
+  return withMedia > 0 && missingStable > 0;
+}
+
+/**
+ * Varre a base em lotes (sem montar auditoria completa). `offset` é índice na lista ordenada de handles.
+ */
+export async function scanBulkEnqueueBatch(
+  storage: CompositeStorage,
+  opts: {
+    mode: AdminBulkEnqueueMode;
+    offset?: number;
+    batch_size?: number;
+  }
+): Promise<AdminBulkEnqueueBatchResult> {
+  const batchSize = Math.min(Math.max(1, opts.batch_size ?? 40), 200);
+  const offset = Math.max(0, opts.offset ?? 0);
+  const allHandles = await getSortedHandles(storage);
+  const slice = allHandles.slice(offset, offset + batchSize);
+  const handles: string[] = [];
+
+  for (const handle of slice) {
+    const profile = (await storage.loadByHandle(handle)) as Record<string, unknown> | null;
+    if (!profile || !hasCompletedLlmProfile(profile)) continue;
+    if (opts.mode === 'all_llm') {
+      handles.push(handle);
+      continue;
+    }
+    if (await profileMissingS3Media(storage, handle, profile)) {
+      handles.push(handle);
+    }
+  }
+
+  const nextOffset = offset + slice.length;
+  return {
+    handles,
+    scanned: slice.length,
+    next_offset: nextOffset,
+    total_handles: allHandles.length,
+    done: nextOffset >= allHandles.length,
+  };
+}
