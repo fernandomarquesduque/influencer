@@ -16,7 +16,7 @@ import { getCostTier } from './pricing'
 import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
 import { snapMainCategoryToTaxonomy } from '@repo/mainCategoryTaxonomy'
-import { foldSearchText, matchesQuery, passesSearchWhere } from './queryRelevance'
+import { foldSearchText, matchesQuery, passesSearchWhere, passesProfileIdentityWhere } from './queryRelevance'
 
 type CostTier = 'low' | 'medium' | 'high' | 'very_high'
 
@@ -680,11 +680,26 @@ export function filterPostsByCampaignFacetFilters(
   )
 }
 
-/** WHERE da busca em legendas (aspas = frase exata obrigatória). */
+function getPostInfluencerIdentityText(post: PostItem): string {
+  const inf = post.influencer
+  const handle = String(post.profile_handle ?? inf?.username ?? '')
+    .toLowerCase()
+    .replace(/^@/, '')
+    .trim()
+  const fullName = typeof inf?.full_name === 'string' ? inf.full_name.trim() : ''
+  const username = typeof inf?.username === 'string' ? inf.username.trim() : ''
+  return foldSearchText([handle, fullName, username].filter(Boolean).join(' '))
+}
+
+/** Legenda OU identidade do influenciador (@, nome, bio) — alinhado ao post-matches no backend. */
 export function filterPostsBySearchWhere(posts: PostItem[], q: string): PostItem[] {
   const qTrim = q.trim()
   if (!qTrim) return posts
-  return posts.filter((p) => passesSearchWhere(getPostCaptionSearchText(p), qTrim))
+  return posts.filter(
+    (p) =>
+      passesSearchWhere(getPostCaptionSearchText(p), qTrim) ||
+      passesProfileIdentityWhere(getPostInfluencerIdentityText(p), qTrim)
+  )
 }
 
 function getPostCaptionSearchText(post: PostItem): string {

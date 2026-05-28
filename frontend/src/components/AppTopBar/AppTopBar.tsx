@@ -3,6 +3,7 @@ import { Button, Dropdown, Input, Space } from 'antd'
 import { SearchOutlined, UserOutlined } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppAccountMenuItems } from '../../hooks/useAppAccountMenuItems'
+import { useFavoritePostsOptional } from '../../contexts/FavoritePostsContext'
 import BuscaInfluencerPlansModal from '../BuscaInfluencerPlansModal/BuscaInfluencerPlansModal'
 import { trackAppUiClick } from '../../utils/metaPixel'
 import { trackInfluencerSearch } from '../../utils/metaPixelFunnel'
@@ -23,7 +24,11 @@ export default function AppTopBar() {
   const navigate = useNavigate()
   const isSearchRoute = checkIsSearchRoute(location.pathname)
   const [searchInput, setSearchInput] = useState(() => readSearchTermFromLocation(location))
-  const { items: userMenuItems, plansModalOpen, setPlansModalOpen } = useAppAccountMenuItems()
+  const { items: userMenuItems, plansModalOpen, setPlansModalOpen, user } = useAppAccountMenuItems()
+  const favoritePosts = useFavoritePostsOptional()
+  const showFavoriteBadge =
+    !!user && user.scope !== 'influencer' && (favoritePosts?.showFavoritesNotificationBadge ?? false)
+  const favoriteBadgeCount = favoritePosts?.unreadFavoritesCount ?? 0
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
   )
@@ -105,8 +110,29 @@ export default function AppTopBar() {
             trigger={['click']}
             placement="bottomRight"
           >
-            <button type="button" className="app-top-bar-account-btn" aria-label="Abrir menu da conta">
-              <UserOutlined className="app-top-bar-account-btn__user" aria-hidden />
+            <button
+              type="button"
+              className="app-top-bar-account-btn"
+              aria-label={
+                showFavoriteBadge
+                  ? `Notificações: ${favoriteBadgeCount} favorito${favoriteBadgeCount === 1 ? '' : 's'}. Abrir menu da conta`
+                  : 'Abrir menu da conta'
+              }
+            >
+              <span className="app-top-bar-account-btn__icon-wrap">
+                {showFavoriteBadge ? (
+                  <span className="app-top-bar-account-btn__bell" aria-hidden>
+                    🔔
+                  </span>
+                ) : (
+                  <UserOutlined className="app-top-bar-account-btn__user" aria-hidden />
+                )}
+                {showFavoriteBadge ? (
+                  <span className="app-count-badge" aria-hidden>
+                    {favoriteBadgeCount > 99 ? '99+' : favoriteBadgeCount}
+                  </span>
+                ) : null}
+              </span>
             </button>
           </Dropdown>
         </div>

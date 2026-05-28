@@ -109,9 +109,59 @@
   outline-offset: 2px;
 }
 
+.app-top-bar-account-btn__icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .app-top-bar-account-btn__user {
   font-size: 17px;
   flex-shrink: 0;
+}
+
+.app-top-bar-account-btn__bell {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+  display: block;
+  transform-origin: top center;
+  animation: app-top-bar-bell-ring 1.8s ease-in-out infinite;
+}
+
+@keyframes app-top-bar-bell-ring {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  10% {
+    transform: rotate(14deg);
+  }
+  20% {
+    transform: rotate(-12deg);
+  }
+  30% {
+    transform: rotate(10deg);
+  }
+  40% {
+    transform: rotate(-8deg);
+  }
+  50% {
+    transform: rotate(0deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-top-bar-account-btn__bell {
+    animation: none;
+  }
+}
+
+.app-top-bar-account-btn__icon-wrap .app-count-badge {
+  top: -3px;
+  right: -3px;
+  transform: translate(62%, -62%);
 }
 
 .app-top-bar-spacer {

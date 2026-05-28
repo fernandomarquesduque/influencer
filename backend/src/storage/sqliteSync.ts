@@ -254,6 +254,15 @@ export class SqliteSync {
         PRIMARY KEY (user_id, profile_handle)
       );
       CREATE INDEX IF NOT EXISTS idx_user_favorite_user ON user_favorite(user_id);
+      CREATE TABLE IF NOT EXISTS user_favorite_post (
+        user_id INTEGER NOT NULL,
+        post_key TEXT NOT NULL,
+        profile_handle TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, post_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_favorite_post_user ON user_favorite_post(user_id);
+      CREATE INDEX IF NOT EXISTS idx_user_favorite_post_handle ON user_favorite_post(user_id, profile_handle);
     `);
     this.migrateActivationColumns();
     this.migrateMessageTemplatesRejectHashes();
@@ -304,6 +313,7 @@ export class SqliteSync {
     tryAdd('ALTER TABLE profile_search_aux ADD COLUMN llm_qualification_json TEXT');
     tryAdd('ALTER TABLE profile_search_aux ADD COLUMN llm_brand_level TEXT');
     tryAdd('ALTER TABLE profile_search_aux ADD COLUMN llm_post_sentiment TEXT');
+    tryAdd("ALTER TABLE profile_search_aux ADD COLUMN identity_blob TEXT NOT NULL DEFAULT ''");
     try {
       this.db.exec(`
         UPDATE profile_search_aux SET
@@ -343,6 +353,7 @@ export class SqliteSync {
     engagementJson: string,
     hashtagsJson: string,
     searchBlob: string,
+    identityBlob: string,
     metrics?: {
       followersCount: number;
       engagementRate: number;
@@ -384,15 +395,16 @@ export class SqliteSync {
     const insFts = this.db.prepare('INSERT INTO profile_search_fts (handle, content) VALUES (?, ?)');
     const upsertAux = this.db.prepare(`
       INSERT INTO profile_search_aux (
-        handle, engagement_json, hashtags_json, search_blob,
+        handle, engagement_json, hashtags_json, search_blob, identity_blob,
         followers_count, engagement_rate, avg_likes, posts_count, account_type,
         is_private, categories_json, cost_tier, llm_qualification_json, llm_brand_level, llm_post_sentiment
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(handle) DO UPDATE SET
         engagement_json = excluded.engagement_json,
         hashtags_json = excluded.hashtags_json,
         search_blob = excluded.search_blob,
+        identity_blob = excluded.identity_blob,
         followers_count = excluded.followers_count,
         engagement_rate = excluded.engagement_rate,
         avg_likes = excluded.avg_likes,
@@ -413,6 +425,7 @@ export class SqliteSync {
         engagementJson,
         hashtagsJson,
         searchBlob,
+        identityBlob,
         fc,
         er,
         al,
@@ -900,6 +913,51 @@ export class SqliteSync {
     return out;
   }
 
+  /** `posts_per_week` denormalizado em `engagement_json` — evita reler bucket de posts no enrich. */
+  getProfilePostsPerWeekForHandles(handles: string[]): Map<string, number> {
+    const out = new Map<string, number>();
+    if (handles.length === 0) return out;
+    const chunk = 500;
+    for (let i = 0; i < handles.length; i += chunk) {
+      const slice = handles.slice(i, i + chunk).map((h) => h.toLowerCase().replace(/^@/, ''));
+      const ph = slice.map(() => '?').join(', ');
+      const sql = `SELECT handle, engagement_json FROM profile_search_aux WHERE handle IN (${ph})`;
+      const rows = this.db.prepare(sql).all(...slice) as { handle: string; engagement_json: string }[];
+      for (const r of rows) {
+        const h = String(r.handle ?? '').toLowerCase().replace(/^@/, '');
+        if (!h) continue;
+        try {
+          const eng = JSON.parse(r.engagement_json ?? '{}') as { posts_per_week?: unknown };
+          const ppw = eng.posts_per_week;
+          if (typeof ppw === 'number' && Number.isFinite(ppw) && ppw >= 0) out.set(h, ppw);
+        } catch {
+          /* ignora JSON inválido */
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Texto de identidade (handle, nome, bio) para match em post-matches sem ler RocksDB. */
+  getProfileIdentityBlobsForHandles(handles: string[]): { handle: string; identity_blob: string }[] {
+    if (handles.length === 0) return [];
+    const out: { handle: string; identity_blob: string }[] = [];
+    const chunk = 500;
+    for (let i = 0; i < handles.length; i += chunk) {
+      const slice = handles.slice(i, i + chunk).map((h) => h.toLowerCase().replace(/^@/, ''));
+      const ph = slice.map(() => '?').join(', ');
+      const sql = `SELECT handle, COALESCE(identity_blob, '') AS identity_blob FROM profile_search_aux WHERE handle IN (${ph})`;
+      const rows = this.db.prepare(sql).all(...slice) as { handle: string; identity_blob: string }[];
+      for (const r of rows) {
+        out.push({
+          handle: String(r.handle ?? '').toLowerCase().replace(/^@/, ''),
+          identity_blob: String(r.identity_blob ?? ''),
+        });
+      }
+    }
+    return out;
+  }
+
   /**
    * Soma facetas numéricas (engajamento, likes, posts, porte, tipo de conta) para um conjunto de handles,
    * lendo só `profile_search_aux` — alinhado aos mesmos patamares do loop em `profilesSearch`.
@@ -1184,6 +1242,73 @@ export class SqliteSync {
     const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
     if (!handle) return;
     this.db.prepare('DELETE FROM user_favorite WHERE profile_handle = ?').run(handle);
+    this.db.prepare('DELETE FROM user_favorite_post WHERE profile_handle = ?').run(handle);
+  }
+
+  /** Lista post_keys favoritados pelo usuário (mais recentes primeiro). */
+  getFavoritePosts(userId: number): { post_key: string; profile_handle: string; created_at: string }[] {
+    return this.db
+      .prepare(
+        'SELECT post_key, profile_handle, created_at FROM user_favorite_post WHERE user_id = ? ORDER BY created_at DESC'
+      )
+      .all(userId) as { post_key: string; profile_handle: string; created_at: string }[];
+  }
+
+  getFavoritePostKeys(userId: number): string[] {
+    const rows = this.db
+      .prepare('SELECT post_key FROM user_favorite_post WHERE user_id = ? ORDER BY created_at DESC')
+      .all(userId) as { post_key: string }[];
+    return rows.map((r) => r.post_key);
+  }
+
+  getFavoritePostCount(userId: number): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS c FROM user_favorite_post WHERE user_id = ?')
+      .get(userId) as { c: number };
+    return row?.c ?? 0;
+  }
+
+  /** Quantidade de posts favoritados por perfil (handle normalizado). */
+  getFavoritePostCountByProfileHandle(userId: number, profileHandle: string): number {
+    const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
+    if (!handle) return 0;
+    const row = this.db
+      .prepare(
+        'SELECT COUNT(*) AS c FROM user_favorite_post WHERE user_id = ? AND profile_handle = ?'
+      )
+      .get(userId, handle) as { c: number };
+    return row?.c ?? 0;
+  }
+
+  addFavoritePost(userId: number, postKey: string, profileHandle: string): void {
+    const key = postKey.trim();
+    const handle = profileHandle.toLowerCase().replace(/^@/, '').trim();
+    if (!key || !handle) return;
+    this.db
+      .prepare(
+        `INSERT INTO user_favorite_post (user_id, post_key, profile_handle) VALUES (?, ?, ?)
+         ON CONFLICT(user_id, post_key) DO NOTHING`
+      )
+      .run(userId, key, handle);
+  }
+
+  removeFavoritePost(userId: number, postKey: string): void {
+    const key = postKey.trim();
+    if (!key) return;
+    this.db.prepare('DELETE FROM user_favorite_post WHERE user_id = ? AND post_key = ?').run(userId, key);
+  }
+
+  isFavoritePost(userId: number, postKey: string): boolean {
+    const key = postKey.trim();
+    if (!key) return false;
+    const row = this.db
+      .prepare('SELECT 1 FROM user_favorite_post WHERE user_id = ? AND post_key = ? LIMIT 1')
+      .get(userId, key);
+    return !!row;
+  }
+
+  deleteAllFavoritePostsByUserId(userId: number): void {
+    this.db.prepare('DELETE FROM user_favorite_post WHERE user_id = ?').run(userId);
   }
 
   /** Remove candidaturas do perfil em projetos (LGPD: exclusão de conta). */

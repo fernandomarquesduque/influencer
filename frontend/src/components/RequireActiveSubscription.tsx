@@ -7,6 +7,7 @@ import { fetchMySubscription } from '../api'
 const PAYMENTS_PATH = '/app/payments'
 import { isSearchRoute, isSearchLandingHome } from '../constants/searchRoute'
 const PROFILE_PATH = '/app/profile'
+const FAVORITES_PATH = '/app/favorites'
 
 type RequireActiveSubscriptionProps = {
   children: ReactNode
@@ -25,7 +26,10 @@ export function RequireActiveSubscription({ children }: RequireActiveSubscriptio
   const isSearchLanding = isSearchLandingHome(location.pathname, location.search, location.hash)
   const isProfilePage =
     location.pathname === PROFILE_PATH || location.pathname.startsWith(`${PROFILE_PATH}/`)
-  const exempt = isAdm || user?.scope !== 'assinante' || isPaymentsPage || isSearchPage || isProfilePage
+  const isFavoritesPage =
+    location.pathname === FAVORITES_PATH || location.pathname.startsWith(`${FAVORITES_PATH}/`)
+  const exempt =
+    isAdm || user?.scope !== 'assinante' || isPaymentsPage || isSearchPage || isProfilePage || isFavoritesPage
 
   useEffect(() => {
     if (authLoading) return

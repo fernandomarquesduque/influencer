@@ -25,14 +25,15 @@ export function getProfilePersonaSummary(record: Record<string, unknown> | null 
   if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) return ''
   const q = (llm as Record<string, unknown>).qualification
   if (q == null || typeof q !== 'object' || Array.isArray(q)) return ''
-  return String((q as Record<string, unknown>).personaSummary ?? '').trim()
+  const qo = q as Record<string, unknown>
+  return String(qo.personaSummary ?? qo.description ?? '').trim()
 }
 
 /** Texto curto da qualificação LLM (personaSummary ou fallback) para listagem — ex.: abaixo do @. */
 export function getLlmDescriptionLine(item: ProfileListItem): { line: string; tooltip?: string } | null {
   const q = getLlmQualification(item as unknown as Record<string, unknown>)
   if (!q) return null
-  const summary = String(q.personaSummary ?? '').trim()
+  const summary = String(q.personaSummary ?? q.description ?? '').trim()
   if (summary) {
     const max = 140
     if (summary.length > max) return { line: `${summary.slice(0, max)}…`, tooltip: summary }

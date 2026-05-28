@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { SEARCH_ROUTE_PATH } from './constants/searchRoute'
 import { AuthProvider } from './contexts/AuthContext'
+import { FavoritePostsProvider } from './contexts/FavoritePostsContext'
+import { AgencySignupModalProvider } from './contexts/AgencySignupModalContext'
 import { CreditsProvider } from './contexts/CreditsContext'
 import { PendingPaymentCelebrationProvider } from './contexts/PendingPaymentCelebrationContext'
 import { RequireAuth } from './components/RequireAuth'
@@ -50,6 +52,7 @@ import AdminMediaS3 from './pages/AdminMediaS3'
 import ListAndDetailModal from './pages/ListAndDetailModal'
 import MyCampaigns from './pages/MyCampaigns'
 import CampaignInfluencers from './pages/CampaignInfluencers'
+import FavoritePosts from './pages/FavoritePosts'
 import InfluencerDetail from './pages/InfluencerDetail'
 import Projects from './pages/Projects'
 import Extraction from './pages/Extraction'
@@ -84,6 +87,8 @@ function SearchLegacyRedirect() {
 export default function App() {
   return (
     <AuthProvider>
+      <FavoritePostsProvider>
+      <AgencySignupModalProvider>
       <CreditsProvider>
         <PendingPaymentCelebrationProvider>
           <MetaPixelSpaPageViewBridge />
@@ -111,6 +116,7 @@ export default function App() {
               <Route path="campaigns/all" element={<AllCampaignsRedirect />} />
               <Route path="campaigns/:campaignId" element={<CampaignInfluencers />} />
               <Route path="campaigns/:campaignId/influencer/:profileRef" element={<InfluencerDetail />} />
+              <Route path="favorites" element={<FavoritePosts />} />
               <Route path="payments" element={<Payments />} />
               <Route path="profile" element={<Profile />} />
               <Route path="projects" element={<Projects />} />
@@ -188,6 +194,8 @@ export default function App() {
           </Routes>
         </PendingPaymentCelebrationProvider>
       </CreditsProvider>
+      </AgencySignupModalProvider>
+      </FavoritePostsProvider>
     </AuthProvider >
   )
 }

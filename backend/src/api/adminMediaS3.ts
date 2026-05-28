@@ -285,17 +285,30 @@ export type AdminBulkEnqueueBatchResult = {
 
 let sortedHandlesCache: { handles: string[]; expiresAt: number } | null = null;
 
+function collectedAtMs(profile: Record<string, unknown> | null): number {
+  if (!profile) return Number.POSITIVE_INFINITY;
+  const raw = profile._collected_at;
+  if (typeof raw !== 'string' || !raw.trim()) return Number.POSITIVE_INFINITY;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+}
+
 async function getSortedHandles(storage: CompositeStorage): Promise<string[]> {
   const now = Date.now();
   if (sortedHandlesCache && now < sortedHandlesCache.expiresAt) {
     return sortedHandlesCache.handles;
   }
-  const handles = Array.from(await storage.listHandles())
-    .map(normalizeHandle)
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  sortedHandlesCache = { handles, expiresAt: now + 300_000 };
-  return handles;
+
+  const handles = Array.from(await storage.listHandles()).map(normalizeHandle).filter(Boolean);
+  const rows: { handle: string; collectedAtMs: number }[] = [];
+  for (const handle of handles) {
+    const profile = (await storage.loadByHandle(handle)) as Record<string, unknown> | null;
+    rows.push({ handle, collectedAtMs: collectedAtMs(profile) });
+  }
+  rows.sort((a, b) => a.collectedAtMs - b.collectedAtMs || a.handle.localeCompare(b.handle));
+  const ordered = rows.map((row) => row.handle);
+  sortedHandlesCache = { handles: ordered, expiresAt: now + 300_000 };
+  return ordered;
 }
 
 export async function profileMissingS3Media(

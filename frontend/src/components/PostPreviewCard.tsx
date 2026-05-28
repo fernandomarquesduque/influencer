@@ -55,6 +55,7 @@ export interface PostPreviewMediaProps {
   fill?: boolean
   overlayLines?: string[]
   topBadges?: ReactNode
+  topRight?: ReactNode
   bottomRight?: ReactNode
   showHoverGradient?: boolean
   isHovered?: boolean
@@ -73,6 +74,7 @@ export function PostPreviewMedia({
   fill,
   overlayLines,
   topBadges,
+  topRight,
   bottomRight,
   showHoverGradient = false,
   isHovered = false,
@@ -119,6 +121,9 @@ export function PostPreviewMedia({
       ) : null}
       {topBadges ? (
         <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 2, display: 'flex', flexWrap: 'wrap', gap: 4 }}>{topBadges}</div>
+      ) : null}
+      {topRight ? (
+        <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 4, display: 'flex', pointerEvents: 'auto' }}>{topRight}</div>
       ) : null}
       {overlayLines && overlayLines.length > 0 ? (
         <div

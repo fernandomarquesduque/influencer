@@ -1030,6 +1030,76 @@ export async function removeFavorite(profileRef: string, options?: { campaignId?
   }
 }
 
+export interface FavoritePostItem {
+  post_key: string
+  profile_ref: string
+  created_at?: string
+}
+
+/** Lista posts favoritados (chaves + metadados). */
+export async function fetchFavoritePosts(options?: { signal?: AbortSignal }): Promise<{
+  count: number
+  post_keys: string[]
+  items: FavoritePostItem[]
+}> {
+  const res = await fetch(`${API_BASE}/me/favorite-posts`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) throw new Error('Falha ao carregar posts favoritos')
+  return res.json()
+}
+
+/** Feed paginado de posts favoritados. */
+export async function fetchFavoritePostsFeed(
+  params?: { limit?: number; offset?: number },
+  options?: { signal?: AbortSignal }
+): Promise<PostsResponse> {
+  const p = new URLSearchParams()
+  if (params?.limit != null) p.set('limit', String(params.limit))
+  if (params?.offset != null) p.set('offset', String(params.offset))
+  const qs = p.toString()
+  const res = await fetch(`${API_BASE}/me/favorite-posts/feed${qs ? `?${qs}` : ''}`, {
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) throw new Error('Falha ao carregar feed de favoritos')
+  return res.json()
+}
+
+/** Favorita um post. */
+export async function addFavoritePost(
+  postKey: string,
+  options?: { profileRef?: string | null }
+): Promise<{ count: number }> {
+  const body: { post_key: string; profile_ref?: string } = { post_key: postKey.trim() }
+  const ref = options?.profileRef?.trim()
+  if (ref) body.profile_ref = ref
+  const res = await fetch(`${API_BASE}/me/favorite-posts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao favoritar post')
+  }
+  return res.json()
+}
+
+/** Remove post dos favoritos. */
+export async function removeFavoritePost(postKey: string): Promise<{ count: number }> {
+  const res = await fetch(`${API_BASE}/me/favorite-posts/${encodeURIComponent(postKey.trim())}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao desfavoritar post')
+  }
+  return res.json()
+}
+
 /** Cria campanha (compra do relatório) e debita créditos. */
 export interface CreateCampaignResponse {
   campaignId: string
@@ -1457,6 +1527,7 @@ export interface PostItem {
   content_type?: MediaKind
   influencer?: {
     username?: string
+    /** Visível para adm/assinante pagante (com `profile_handle` no item). */
     full_name?: string
     profile_pic_url?: string
     stable_profile_pic_url?: string
@@ -1466,6 +1537,8 @@ export interface PostItem {
     posts_per_week?: number
     /** Qualificação LLM do perfil (post-matches), quando existir no storage. */
     llm?: unknown
+    /** Bio do perfil (post-matches), quando existir no storage. */
+    biography?: string
   }
   post?: { shortcode?: string; media_type?: number; taken_at?: number; collected_at?: string;[k: string]: unknown }
   content?: PostContent
@@ -1513,7 +1586,7 @@ export interface PostsResponse {
   scanMeta?: { partial: true; handlesScanned: number; handlesTotal: number }
 }
 
-/** Posts dos perfis da campanha onde `q` bate em legenda/hashtags (dados atuais). */
+/** Posts dos perfis da campanha onde `q` bate em legenda, @, nome ou bio (dados atuais). */
 export async function fetchCampaignPostMatches(
   campaignId: string,
   params: {
@@ -2539,7 +2612,7 @@ export async function adminEnqueueExtractQueue(handles: string[]): Promise<{
   const res = await fetch(`${API_BASE}/admin/extract-queue`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ handles, priority: true }),
+    body: JSON.stringify({ handles }),
   })
   const data = (await res.json().catch(() => ({}))) as {
     added?: number
@@ -2581,7 +2654,6 @@ export async function adminBulkEnqueueExtractQueueBatch(opts: {
       mode: opts.mode,
       offset: opts.offset,
       batch_size: opts.batch_size,
-      priority: true,
     }),
   })
   const data = (await res.json().catch(() => ({}))) as AdminBulkEnqueueBatchResponse & { error?: string }

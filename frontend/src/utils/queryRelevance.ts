@@ -352,6 +352,61 @@ export function passesSearchWhere(searchableText: string, q: string): boolean {
   return scoreQueryMatch(searchableText, q).match
 }
 
+/** Query parece nome de pessoa (2–5 palavras), não @ de handle. */
+export function looksLikeInfluencerNameQuery(q: string): boolean {
+  const raw = q.trim()
+  if (!raw || raw.length > 80 || /[#@/]/.test(raw)) return false
+  if (/^[a-z0-9._]+$/i.test(raw.replace(/^@/, '')) && !raw.includes(' ')) return false
+  const words = tokenizeQueryWords(foldSearchText(raw.replace(/\./g, ' ')))
+  if (words.length < 2 || words.length > 5) return false
+  return words.every((w) => /^[a-z0-9_]+$/.test(w))
+}
+
+/** Nome, @ ou bio do perfil (não legenda do post). Tolerante a iniciais e prefixo (Esfeck ~ Esfeckm). */
+export function passesProfileIdentityWhere(identityText: string, q: string): boolean {
+  const blob = identityText.trim()
+  const trimmed = q.trim()
+  if (!blob || !trimmed) return false
+  if (passesSearchWhere(blob, trimmed)) return true
+
+  const qNorm = foldSearchText(trimmed)
+    .replace(/\./g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (qNorm && qNorm !== foldSearchText(trimmed) && passesSearchWhere(blob, qNorm)) return true
+
+  const words = tokenizeQueryWords(qNorm || foldSearchText(trimmed))
+  if (words.length < 2) return false
+  const search = foldSearchText(blob)
+  const pattern = words
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[\\s.]+')
+  if (new RegExp(`(?:^|[^a-z0-9_])${pattern}(?=[^a-z0-9_]|$)`).test(search)) return true
+
+  const tokens = search.match(/[a-z0-9_]+/g) ?? []
+  let hits = 0
+  for (const w of words) {
+    if (passesSearchWhere(search, w)) {
+      hits++
+      continue
+    }
+    if (
+      w.length >= 4 &&
+      tokens.some((tok) => {
+        if (tok === w || tok.startsWith(w) || w.startsWith(tok)) {
+          return Math.min(tok.length, w.length) >= 4
+        }
+        return false
+      })
+    ) {
+      hits++
+    }
+  }
+  if (hits >= words.length) return true
+  if (hits >= words.length - 1 && words.some((w) => w.length >= 5)) return true
+  return false
+}
+
 export function matchesQuery(searchableText: string, q: string): { match: boolean; relevance: number } {
   return scoreQueryMatch(searchableText, q)
 }

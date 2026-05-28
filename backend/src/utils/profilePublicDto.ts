@@ -3,6 +3,7 @@ import type { ProfileRefDb } from '../storage/profileRefDb.js';
 import type { ProfileListItem } from '../api/profilesSearch.js';
 import { profileAvatarMediaPath, profileCoverMediaPath, postMediaKeyFromItem } from './profileMediaUrls.js';
 import { redactContactInfoInProfile, redactContactInfoInPostItems, redactContactInfoInProfileListItem } from './redactContactInfo.js';
+import { shouldIncludeHandleInApi } from './influencerIdentityAccess.js';
 
 const HANDLE_FIELDS = ['handle', 'username', 'key'] as const;
 
@@ -149,8 +150,10 @@ export function sanitizePostItemsForClient(
       const inf = { ...(out.influencer as Record<string, unknown>) };
       delete inf.stable_profile_pic_url;
       delete inf.profile_pic_url;
-      delete inf.username;
-      delete inf.handle;
+      if (!includeHandleForAdmin) {
+        delete inf.username;
+        delete inf.handle;
+      }
       out.influencer = inf;
     }
     if (!includeHandleForAdmin) {
@@ -163,16 +166,15 @@ export function sanitizePostItemsForClient(
   });
 }
 
-export function shouldIncludeHandleInApi(req: RequestWithAuth | undefined): boolean {
-  return req?.user?.scope === 'adm';
-}
+export { shouldIncludeHandleInApi };
 
 export function enrichListItemsWithRefs(
   items: ProfileListItem[],
   profileRefDb: ProfileRefDb,
-  req?: RequestWithAuth
+  req?: RequestWithAuth,
+  identityCtx?: { campaignId?: string }
 ): ProfileListItem[] {
-  const includeHandle = shouldIncludeHandleInApi(req);
+  const includeHandle = shouldIncludeHandleInApi(req, identityCtx);
   return items.map((item) => {
     const handle = (item.handle ?? item.key ?? '').toLowerCase().replace(/^@/, '');
     const ref = handle ? profileRefDb.getOrCreateRef(handle) : '';
@@ -185,9 +187,10 @@ export function enrichListItemsWithRefs(
 export function enrichPostItemsWithRefs(
   items: Array<{ key: string; [k: string]: unknown }>,
   profileRefDb: ProfileRefDb,
-  req?: RequestWithAuth
+  req?: RequestWithAuth,
+  identityCtx?: { campaignId?: string }
 ): Array<Record<string, unknown>> {
-  const includeHandle = shouldIncludeHandleInApi(req);
+  const includeHandle = shouldIncludeHandleInApi(req, identityCtx);
   return items.map((item) => {
     const ph = typeof item.profile_handle === 'string' ? item.profile_handle : '';
     const handle = ph.replace(/^@/, '').trim().toLowerCase();

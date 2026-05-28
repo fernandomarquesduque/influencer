@@ -659,7 +659,6 @@ export default function CampaignInfluencers() {
   const hasAutoOpenedNameModalRef = useRef(false)
   const [buyCreditsModalOpen, setBuyCreditsModalOpen] = useState(false)
   const [buyCreditsResume, setBuyCreditsResume] = useState<CreatePaymentForCreditsResponse | null>(null)
-  const [signupGateModalOpen, setSignupGateModalOpen] = useState(false)
   const [connectModal, setConnectModal] = useState<{
     handle: string
     snapshot?: InfluencerConnectSnapshot
@@ -990,7 +989,7 @@ export default function CampaignInfluencers() {
       setLoading(true)
       const baseQuery = queryOverride ?? query
       const hasWordSearch = !!(baseQuery.q?.trim())
-      /** `q` aqui é só busca em legendas/posts (post-matches + cliente); não enviar para /profiles — senão o backend filtra nome/bio e zera a lista (ex.: "marcado" só em posts marcados). */
+      /** `q` na busca por palavra vai para post-matches (legenda + @/nome); não enviar para /profiles — evita filtrar perfis sem hit em post. */
       const { q: _wordSearchOmit, ...baseWithoutWordSearch } = baseQuery
       if (!pendingPayment && isAllCampaignsView && !hasWordSearch) {
         const quickQuery = stripCampaignFacetBoostFromQuery({
@@ -1292,6 +1291,22 @@ export default function CampaignInfluencers() {
       setCampaignInfoLoaded(true)
       return
     }
+    /** Busca pública: não derrubar a UI ao logar (evita remontar galeria e refazer post-matches). */
+    if (isAllCampaignsView) {
+      if (campaignInfoLoaded) return
+      const controller = new AbortController()
+      getCampaign(campaignId, { signal: controller.signal })
+        .then((info) => {
+          setCampaignCredits(info.credits_used)
+          setCampaignInfo(info)
+        })
+        .catch(() => {
+          setCampaignCredits(null)
+          setCampaignInfo(null)
+        })
+        .finally(() => setCampaignInfoLoaded(true))
+      return () => controller.abort()
+    }
     setCampaignInfoLoaded(false)
     const controller = new AbortController()
     getCampaign(campaignId, { signal: controller.signal })
@@ -1306,7 +1321,7 @@ export default function CampaignInfluencers() {
         setCampaignInfoLoaded(true)
       })
     return () => controller.abort()
-  }, [campaignId, user?.id, isAllCampaignsView, isSearchLanding])
+  }, [campaignId, user?.id, isAllCampaignsView, isSearchLanding, campaignInfoLoaded])
 
   useEffect(() => {
     if (contextItems == null) return
@@ -1646,7 +1661,8 @@ export default function CampaignInfluencers() {
 
   if (
     !isSearchLanding &&
-    (authLoading || (campaignId != null && !user && !isAllCampaignsView))
+    !isAllCampaignsView &&
+    (authLoading || (campaignId != null && !user))
   ) {
     return (
       <div style={{ padding: '48px 24px', textAlign: 'center' }}>
@@ -1666,7 +1682,7 @@ export default function CampaignInfluencers() {
     )
   }
 
-  if (!isSearchLanding && !campaignInfoLoaded) {
+  if (!isSearchLanding && !isAllCampaignsView && !campaignInfoLoaded) {
     return (
       <div style={{ padding: '48px 24px', textAlign: 'center' }}>
         <Spin size="large" />
@@ -1756,29 +1772,6 @@ export default function CampaignInfluencers() {
         profileRef={profileDetailRef ?? ''}
         campaignId={isAllCampaignsView ? ALL_CAMPAIGNS_SLUG : campaignId}
       />
-
-      <Modal
-        title="Cadastro necessário"
-        open={signupGateModalOpen}
-        onCancel={() => setSignupGateModalOpen(false)}
-        footer={null}
-        destroyOnHidden
-      >
-        <Typography.Paragraph style={{ marginBottom: 16 }}>
-          Para ver os dados completos do influenciador neste relatório, acesse a área da agência: faça login ou cadastro na mesma página.
-        </Typography.Paragraph>
-        <Button
-          type="primary"
-          size="large"
-          block
-          onClick={() => {
-            setSignupGateModalOpen(false)
-            navigate('/login')
-          }}
-        >
-          Entrar ou cadastrar
-        </Button>
-      </Modal>
 
       {!showOriginSearchOnly && !isAllCampaignsView && (
         <div

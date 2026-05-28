@@ -53,7 +53,8 @@ export type EnqueueRefreshResult = {
 };
 
 /**
- * Enfileira handle para re-extração. `priority` ignora intervalo de 60 min e vai ao início da fila.
+ * Enfileira handle para re-extração.
+ * A ordem de processamento é sempre FIFO (mais antigo na fila sai primeiro).
  */
 export function enqueueExtractRefresh(handle: string, priority: boolean): EnqueueRefreshResult {
   const h = handle.replace(/^@/, '').trim().toLowerCase();
@@ -63,17 +64,13 @@ export function enqueueExtractRefresh(handle: string, priority: boolean): Enqueu
   if (refreshProfileQueueSet.has(h)) {
     return { handle: h, queued: false, message: 'Já está na fila.' };
   }
-  if (priority) {
-    refreshProfileQueue.unshift(h);
-    refreshPriorityHandles.add(h);
-  } else {
-    refreshProfileQueue.push(h);
-  }
+  refreshProfileQueue.push(h);
+  if (priority) refreshPriorityHandles.add(h);
   refreshProfileQueueSet.add(h);
   return {
     handle: h,
     queued: true,
-    message: priority ? 'Na fila com prioridade.' : 'Na fila para re-extração.',
+    message: 'Na fila para re-extração.',
   };
 }
 

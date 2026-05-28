@@ -50,9 +50,13 @@ import {
   ftsRowsToRankMap,
   mergeFtsRankMaps,
   userQueryToFtsMatchExpressions,
+  looksLikeInfluencerNameQuery,
+  ftsIntersectRankMapForNameLikeQuery,
   getPostSearchableNormalized,
   getPostTimestamp,
   computePostsPerWeek,
+  normalizeInstagramHandleQuery,
+  buildPostMatchIdentityRelevanceMap,
   computeCampaignFacetBoostScore,
   hasCampaignFacetBoostInQuery,
   sortProfileListItemsByCampaignFacetBoost,
@@ -143,6 +147,7 @@ import {
   sanitizeProfileForClient,
   shouldIncludeHandleInApi,
 } from '../utils/profilePublicDto.js';
+import { registerInfluencerIdentityAccessChecks } from '../utils/influencerIdentityAccess.js';
 import { profileAvatarMediaPath } from '../utils/profileMediaUrls.js';
 import {
   REFRESH_MIN_INTERVAL_MS,
@@ -266,6 +271,12 @@ const authDb = new AuthDb(sqlitePath);
 const profileRefDb = new ProfileRefDb(sqlitePath);
 const creditsCampaignsDb = new CreditsCampaignsDb(sqlitePath);
 const paymentsDb = new PaymentsDb(sqlitePath);
+
+registerInfluencerIdentityAccessChecks({
+  hasActivePlanSubscription: (userId) => paymentsDb.hasActivePlanSubscription(userId),
+  isCampaignPaidForUser: (campaignId, userId) =>
+    Boolean(creditsCampaignsDb.getCampaignIfActiveAndPaid(campaignId, userId)),
+});
 
 /** Hash do template usado para convocar perfis aprovados para seleção. */
 const SELECTION_QUEUE_HASH = 'selecao';
@@ -1946,6 +1957,7 @@ async function purgeInfluencerAsAdminCore(rawInput: string): Promise<AdminPurgeC
       creditsCampaignsDb.deleteAllByUserId(userId);
       paymentsDb.deleteAllByUserId(userId);
       sqlite.deleteAllFavoritesByUserId(userId);
+      sqlite.deleteAllFavoritePostsByUserId(userId);
       authDb.clearProfileVerificationByUserId(userId);
       authDb.deleteUser(userId);
     } catch (e) {
@@ -2174,6 +2186,7 @@ app.delete('/api/account', requireScopes('adm', 'assinante', 'influencer'), asyn
   safeRun('creditsCampaignsDb.deleteAllByUserId', () => creditsCampaignsDb.deleteAllByUserId(userId));
   safeRun('paymentsDb.deleteAllByUserId', () => paymentsDb.deleteAllByUserId(userId));
   safeRun('sqlite.deleteAllFavoritesByUserId', () => sqlite.deleteAllFavoritesByUserId(userId));
+  safeRun('sqlite.deleteAllFavoritePostsByUserId', () => sqlite.deleteAllFavoritePostsByUserId(userId));
   safeRun('clearProfileVerificationByUserId', () => authDb.clearProfileVerificationByUserId(userId));
 
   try {
@@ -2558,9 +2571,10 @@ function redactPostsItems(items: Array<{ key: string;[k: string]: unknown }>): A
 /** Posts para resposta da API: oculta @ e inclui `profile_ref` opaco por item. */
 function preparePostItemsForApiResponse(
   items: Array<{ key: string;[k: string]: unknown }>,
-  req?: RequestWithAuth
+  req?: RequestWithAuth,
+  identityCtx?: { campaignId?: string }
 ): Array<Record<string, unknown>> {
-  return enrichPostItemsWithRefs(items, profileRefDb, req);
+  return enrichPostItemsWithRefs(items, profileRefDb, req, identityCtx);
 }
 
 function prepareProfileListItemsForApiResponse(items: ProfileListItem[], req?: RequestWithAuth): ProfileListItem[] {
@@ -4966,6 +4980,242 @@ app.delete('/api/me/favorites/:handle', async (req: RequestWithAuth, res: Respon
   }
 });
 
+/** Chave opaca enviada ao cliente (sem handle no prefixo). */
+function clientPostKeyFromBucketKey(bucketKey: string): string {
+  const parts = bucketKey.trim().split(':');
+  if (parts.length >= 3) return `${parts[1]}:${parts.slice(2).join(':')}`;
+  return bucketKey.trim();
+}
+
+function postShortcodeForFavoriteLookup(key: string, item?: Record<string, unknown>): string {
+  const post = item?.post as Record<string, unknown> | undefined;
+  const sc = post?.shortcode ?? item?.shortcode;
+  if (sc != null && String(sc).trim()) return String(sc).trim().toLowerCase();
+  const parts = key.split(':');
+  return String(parts[parts.length - 1] ?? key).toLowerCase();
+}
+
+/** Resolve post no RocksDB (chave completa `handle:tipo:id` ou curta `tipo:id` do cliente). */
+async function resolvePostRecordForFavorite(
+  postKey: string,
+  profileHandle: string
+): Promise<{ bucketKey: string; value: Record<string, unknown> } | null> {
+  const key = postKey.trim();
+  if (!key) return null;
+  const handle = normalizeHandle(profileHandle);
+
+  const tryGet = async (k: string) => {
+    const v = await db.get<Record<string, unknown>>('post', k);
+    if (v && typeof v === 'object') return { bucketKey: k, value: v };
+    return null;
+  };
+
+  const direct = await tryGet(key);
+  if (direct) return direct;
+
+  if (handle) {
+    if (!key.startsWith(`${handle}:`)) {
+      const prefixed = await tryGet(`${handle}:${key}`);
+      if (prefixed) return prefixed;
+    }
+    const shortcode = postShortcodeForFavoriteLookup(key);
+    if (shortcode) {
+      const bucket = await db.getByBucket<Record<string, unknown>>('post', `${handle}:`, { sort: false });
+      for (const { key: k, value } of bucket) {
+        if (!value || typeof value !== 'object') continue;
+        if (k === key || k.endsWith(`:${shortcode}`)) {
+          return { bucketKey: k, value: value as Record<string, unknown> };
+        }
+        if (postShortcodeForFavoriteLookup(k, value as Record<string, unknown>) === shortcode) {
+          return { bucketKey: k, value: value as Record<string, unknown> };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Lista posts favoritados (chaves + contagem). */
+app.get('/api/me/favorite-posts', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const rows = sqlite.getFavoritePosts(userId);
+    const items = rows.map((r) => ({
+      post_key: clientPostKeyFromBucketKey(r.post_key),
+      profile_ref: profileRefDb.getOrCreateRef(r.profile_handle),
+      created_at: r.created_at,
+    }));
+    res.json({
+      count: items.length,
+      post_keys: items.map((i) => i.post_key),
+      items,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Feed paginado de posts favoritados (dados do RocksDB). */
+app.get('/api/me/favorite-posts/feed', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const limit = Math.min(Number(req.query.limit) || 36, 100);
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const rows = sqlite.getFavoritePosts(userId);
+    const total = rows.length;
+    const page = rows.slice(offset, offset + limit);
+    const slice: Record<string, unknown>[] = [];
+    for (const row of page) {
+      const resolved = await resolvePostRecordForFavorite(row.post_key, row.profile_handle);
+      if (!resolved) continue;
+      const { bucketKey, value: raw } = resolved;
+      const item = { ...raw };
+      const post = item.post as Record<string, unknown> | undefined;
+      const content = item.content as Record<string, unknown> | undefined;
+      if (post && post.taken_at == null && content?.caption_created_at != null && typeof content.caption_created_at === 'number') {
+        item.post = { ...post, taken_at: content.caption_created_at };
+      }
+      if (!item.content_type) item.content_type = getContentTypeFromItem(bucketKey, item);
+      slice.push({ key: bucketKey, profile_handle: row.profile_handle, ...item });
+    }
+    const handlesInSlice = new Set(
+      slice
+        .map((row) => {
+          const ph = row.profile_handle;
+          return typeof ph === 'string' && ph.trim() ? normalizeHandle(ph) : postBucketKeyToHandle(String(row.key ?? ''));
+        })
+        .filter(Boolean)
+    );
+    const influencerByHandle = new Map<string, ReturnType<typeof influencerFieldsFromProfile>>();
+    await Promise.all(
+      [...handlesInSlice].map(async (h) => {
+        const profile = await db.loadByHandle(h);
+        const fields = influencerFieldsFromProfile(profile as Record<string, unknown> | null);
+        const postsRaw = await db.getByBucket<Record<string, unknown>>('post', `${h}:`, { sort: false });
+        const posts_per_week = computePostsPerWeek(postsRaw.map(({ value }) => value));
+        influencerByHandle.set(h, { ...fields, posts_per_week });
+      })
+    );
+    for (const row of slice) {
+      const ph = row.profile_handle;
+      const h =
+        typeof ph === 'string' && ph.trim()
+          ? normalizeHandle(ph)
+          : postBucketKeyToHandle(String(row.key ?? ''));
+      const fromProfile = influencerByHandle.get(h) ?? { followers_count: 0 };
+      const prev = row.influencer;
+      const base =
+        typeof prev === 'object' && prev !== null && !Array.isArray(prev)
+          ? { ...(prev as Record<string, unknown>) }
+          : {};
+      delete base.full_name;
+      delete base.username;
+      delete base.profile_pic_url;
+      delete base.hd_profile_pic_url;
+      delete base.hd_profile_pic_url_info;
+      delete base.stable_profile_pic_url;
+      delete base.biography;
+      const llmFromPost =
+        base.llm != null && typeof base.llm === 'object' && !Array.isArray(base.llm) ? base.llm : undefined;
+      delete base.llm;
+      const llmMerged = fromProfile.llm ?? llmFromPost;
+      row.influencer = {
+        ...base,
+        ...fromProfile,
+        ...(llmMerged ? { llm: llmMerged } : {}),
+        username: fromProfile.username ?? h,
+      };
+    }
+    res.json({
+      total,
+      items: preparePostItemsForApiResponse(
+        slice as { key: string; [k: string]: unknown }[],
+        req
+      ),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Favorita um post. Body: { post_key, profile_ref? }. */
+app.post('/api/me/favorite-posts', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const postKey = (req.body?.post_key ?? req.body?.postKey ?? '').toString().trim();
+    if (!postKey) {
+      res.status(400).json({ error: 'post_key é obrigatório' });
+      return;
+    }
+    let handle = postBucketKeyToHandle(postKey);
+    const ident = (req.body?.profile_ref ?? req.body?.handle ?? req.body?.profile_handle ?? '')
+      .toString()
+      .trim();
+    if (ident) {
+      handle = resolveProfileParam(ident) ?? normalizeHandle(ident);
+    }
+    if (!handle) {
+      res.status(400).json({ error: 'Perfil do post inválido' });
+      return;
+    }
+    profileRefDb.getOrCreateRef(handle);
+    const resolved = await resolvePostRecordForFavorite(postKey, handle);
+    const bucketKey = resolved?.bucketKey ?? postKey;
+    sqlite.addFavoritePost(userId, bucketKey, handle);
+    res.status(201).json({
+      ok: true,
+      post_key: clientPostKeyFromBucketKey(bucketKey),
+      profile_ref: profileRefDb.getOrCreateRef(handle),
+      count: sqlite.getFavoritePostCount(userId),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** Remove post dos favoritos. */
+app.delete('/api/me/favorite-posts/:postKey', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const postKey = decodeURIComponent((req.params.postKey ?? '').trim());
+    if (!postKey) {
+      res.status(400).json({ error: 'post_key inválido' });
+      return;
+    }
+    let handle = postBucketKeyToHandle(postKey);
+    const ident = (req.query.profile_ref ?? req.query.handle ?? '')
+      .toString()
+      .trim();
+    if (ident) {
+      handle = resolveProfileParam(ident) ?? normalizeHandle(ident);
+    }
+    const resolved = handle ? await resolvePostRecordForFavorite(postKey, handle) : null;
+    if (resolved) {
+      sqlite.removeFavoritePost(userId, resolved.bucketKey);
+    }
+    sqlite.removeFavoritePost(userId, postKey);
+    res.json({ ok: true, post_key: postKey, count: sqlite.getFavoritePostCount(userId) });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 /** Resultado de stats e preview de uma campanha (compilado para exibição em pagamento pendente). */
 interface CampaignStatsResult {
   totalLikes: number;
@@ -6772,6 +7022,8 @@ function influencerFieldsFromProfile(profile: Record<string, unknown> | null | u
   profile_pic_url?: string;
   stable_profile_pic_url?: string;
   username?: string;
+  llm?: Record<string, unknown>;
+  biography?: string;
 } {
   if (!profile || typeof profile !== 'object') {
     return { followers_count: 0 };
@@ -6815,8 +7067,16 @@ function influencerFieldsFromProfile(profile: Record<string, unknown> | null | u
   const username =
     typeof unameRaw === 'string' && unameRaw.trim() ? normalizeHandle(unameRaw) : undefined;
   const llmRaw = profile.llm;
-  const llm =
-    llmRaw != null && typeof llmRaw === 'object' && !Array.isArray(llmRaw) ? llmRaw : undefined;
+  const llm: Record<string, unknown> | undefined =
+    llmRaw != null && typeof llmRaw === 'object' && !Array.isArray(llmRaw)
+      ? (llmRaw as Record<string, unknown>)
+      : undefined;
+  const bioRaw =
+    (typeof profile.biography === 'string' ? profile.biography.trim() : '') ||
+    (u && typeof u.biography === 'string' ? String(u.biography).trim() : '') ||
+    (uRoot && typeof uRoot.biography === 'string' ? String(uRoot.biography).trim() : '') ||
+    '';
+  const biography = bioRaw ? redactContactInfoInText(bioRaw) : undefined;
   return {
     followers_count,
     ...(full_name ? { full_name } : {}),
@@ -6824,6 +7084,7 @@ function influencerFieldsFromProfile(profile: Record<string, unknown> | null | u
     ...(stable_profile_pic_url ? { stable_profile_pic_url } : {}),
     ...(username ? { username } : {}),
     ...(llm ? { llm } : {}),
+    ...(biography ? { biography } : {}),
   };
 }
 
@@ -6844,6 +7105,19 @@ const POST_MATCHES_FTS_MISS_MAX_SCAN = Math.max(
 );
 /** Posts além de offset+limit antes de parar o scan (1 post/perfil → poucos perfis bastam). */
 const POST_MATCHES_EARLY_STOP_BUFFER = 4;
+/** Fill de identidade só com match forte (bio/nome/@) — evita bucket scan por FTS fraco em termos genéricos. */
+const POST_MATCH_IDENTITY_FILL_MIN_RELEVANCE = Math.max(
+  400,
+  Number(process.env.POST_MATCH_IDENTITY_FILL_MIN_RELEVANCE) || 500
+);
+const POST_MATCH_IDENTITY_FILL_MAX = Math.max(
+  8,
+  Number(process.env.POST_MATCH_IDENTITY_FILL_MAX) || 32
+);
+const POST_MATCH_IDENTITY_FILL_MAX_NAME = Math.max(
+  POST_MATCH_IDENTITY_FILL_MAX,
+  Number(process.env.POST_MATCH_IDENTITY_FILL_MAX_NAME) || 48
+);
 
 type PostMatchRowScratch = {
   key: string;
@@ -6877,6 +7151,65 @@ function isBetterPostMatchRow(a: PostMatchRowScratch, b: PostMatchRowScratch, so
   if (rankA !== rankB) return rankA < rankB;
   if (a.ts !== b.ts) return a.ts > b.ts;
   return a.key.localeCompare(b.key) < 0;
+}
+
+/** Perfis com hit em identidade primeiro (evita early-stop antes de achar o nome buscado). */
+function orderScanHandlesForPostMatches(
+  scanHandles: string[],
+  identityRelByHandle: Map<string, number>,
+  ftsRankByHandle: Map<string, number>
+): string[] {
+  const scored = scanHandles.map((raw) => {
+    const h = normalizeHandle(raw);
+    const idRel = identityRelByHandle.get(h) ?? 0;
+    const fts = ftsRankByHandle.get(h) ?? 0;
+    return { raw, score: (idRel > 0 ? 1_000_000 : 0) + idRel * 1000 + fts };
+  });
+  scored.sort((a, b) => b.score - a.score || a.raw.localeCompare(b.raw));
+  return scored.map((x) => x.raw);
+}
+
+/** Perfil casou por nome/@/bio mas nenhum post passou no scan — melhor post do bucket (engajamento/data). */
+async function fillPostMatchesForIdentityOnlyHandles(
+  bestPerHandle: Map<string, PostMatchRowScratch>,
+  identityRelByHandle: Map<string, number>,
+  handleSet: Set<string>,
+  qRaw: string,
+  ftsRankByHandle: Map<string, number>
+): Promise<void> {
+  const nameLike = looksLikeInfluencerNameQuery(qRaw);
+  const minRel = nameLike ? 400 : POST_MATCH_IDENTITY_FILL_MIN_RELEVANCE;
+  const fillCap = nameLike ? POST_MATCH_IDENTITY_FILL_MAX_NAME : POST_MATCH_IDENTITY_FILL_MAX;
+  let missing = [...identityRelByHandle.entries()].filter(
+    ([h, rel]) => rel >= minRel && handleSet.has(h) && !bestPerHandle.has(h)
+  );
+  if (missing.length === 0) return;
+  missing.sort((a, b) => b[1] - a[1]);
+  if (missing.length > fillCap) missing = missing.slice(0, fillCap);
+
+  const fillOne = async ([h, identityRel]: [string, number]): Promise<void> => {
+    const items = await db.getByBucket<Record<string, unknown>>('post', `${h}:`, { sort: false });
+    let best: PostMatchRowScratch | null = null;
+    for (const { key, value } of items) {
+      const item = value as Record<string, unknown>;
+      const ct = getContentTypeFromItem(key, item);
+      if (ct === 'tagged') continue;
+      const searchable = getPostSearchableNormalized(item);
+      const mq = matchesQuery(searchable, qRaw);
+      const textRel = mq.match ? mq.relevance : 0;
+      const baseRel = textRel > 0 ? textRel + identityRel : identityRel;
+      const relevance = combineSearchRelevance(baseRel, ftsRankByHandle.get(h));
+      const ts = getPostTimestamp(item) ?? 0;
+      const candidate: PostMatchRowScratch = { key, value: item, ts, ct, relevance };
+      if (!best || isBetterPostMatchRow(candidate, best, true)) best = candidate;
+    }
+    if (best) bestPerHandle.set(h, best);
+  };
+
+  const batch = 8;
+  for (let i = 0; i < missing.length; i += batch) {
+    await Promise.all(missing.slice(i, i + batch).map(fillOne));
+  }
 }
 
 /** Limite FTS menor para termos curtos/ambíguos (ex.: "das") — menos handles → scan mais rápido. */
@@ -7041,9 +7374,8 @@ function postMatchNarrowCacheSet(key: string, handles: string[]): void {
 }
 
 /**
- * Pré-filtra handles pelo índice FTS (legendas/posts agregados no SQLite).
- * FTS com AND entre tokens (todas as palavras); BM25 ordena entre os que passam.
- * Se o FTS não retornar hits, mantém o universo de handles — o scan no RocksDB ainda casa legenda (`matchesQuery`).
+ * Pré-filtra handles pelo índice FTS (perfil + legendas no SQLite).
+ * FTS com AND entre tokens; BM25 ordena. Scan no RocksDB aplica `matchesQuery` em legenda e identidade do perfil.
  */
 type PostCaptionSearchScope = {
   handles: string[];
@@ -7052,27 +7384,43 @@ type PostCaptionSearchScope = {
   ftsPrefilterMiss: boolean;
 };
 
+const POST_MATCH_IDENTITY_HANDLE_RANK = 2_000_000;
 function scopeHandlesForPostCaptionSearch(handlesUniverse: string[], qRaw: string): PostCaptionSearchScope {
   const trimmed = qRaw.trim();
   if (!trimmed) {
     return { handles: handlesUniverse, ftsRankByHandle: new Map(), ftsPrefilterMiss: false };
   }
-  const limit = postMatchesFtsHandleLimitForQuery(trimmed);
-  const exprs = userQueryToFtsMatchExpressions(trimmed);
-  if (exprs.length === 0) {
-    return { handles: handlesUniverse, ftsRankByHandle: new Map(), ftsPrefilterMiss: true };
-  }
-  const rankMaps: Map<string, number>[] = [];
-  for (const expr of exprs) {
-    const rows = db.searchProfileHandlesFts(expr, limit);
-    if (rows.length === 0) continue;
-    rankMaps.push(ftsRowsToRankMap(rows));
-  }
-  if (rankMaps.length === 0) {
-    return { handles: handlesUniverse, ftsRankByHandle: new Map(), ftsPrefilterMiss: true };
-  }
-  const ftsRankByHandle = mergeFtsRankMaps(rankMaps);
   const universe = new Set(handlesUniverse.map((h) => normalizeHandle(h)).filter(Boolean));
+  const ftsQuery = trimmed.replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
+  const limit = postMatchesFtsHandleLimitForQuery(ftsQuery);
+  const exprs = userQueryToFtsMatchExpressions(ftsQuery);
+  const rankMaps: Map<string, number>[] = [];
+  if (exprs.length > 0) {
+    for (const expr of exprs) {
+      const rows = db.searchProfileHandlesFts(expr, limit);
+      if (rows.length === 0) continue;
+      rankMaps.push(ftsRowsToRankMap(rows));
+    }
+  }
+  let ftsRankByHandle = rankMaps.length > 0 ? mergeFtsRankMaps(rankMaps) : new Map<string, number>();
+  if (looksLikeInfluencerNameQuery(ftsQuery)) {
+    const intersect = ftsIntersectRankMapForNameLikeQuery(ftsQuery, (expr, lim) =>
+      db.searchProfileHandlesFts(expr, lim)
+    );
+    for (const [h, r] of intersect) {
+      ftsRankByHandle.set(h, Math.max(ftsRankByHandle.get(h) ?? 0, r + 1_500_000));
+    }
+  }
+  const handleCandidate = normalizeInstagramHandleQuery(trimmed);
+  if (handleCandidate && universe.has(handleCandidate)) {
+    ftsRankByHandle.set(
+      handleCandidate,
+      Math.max(ftsRankByHandle.get(handleCandidate) ?? 0, POST_MATCH_IDENTITY_HANDLE_RANK)
+    );
+  }
+  if (ftsRankByHandle.size === 0) {
+    return { handles: handlesUniverse, ftsRankByHandle, ftsPrefilterMiss: true };
+  }
   const out: string[] = [];
   const seen = new Set<string>();
   const byRank = [...ftsRankByHandle.entries()].sort((a, b) => b[1] - a[1]);
@@ -7082,12 +7430,12 @@ function scopeHandlesForPostCaptionSearch(handlesUniverse: string[], qRaw: strin
     out.push(h);
   }
   if (out.length === 0) {
-    return { handles: handlesUniverse, ftsRankByHandle: new Map(), ftsPrefilterMiss: true };
+    return { handles: handlesUniverse, ftsRankByHandle, ftsPrefilterMiss: true };
   }
   return { handles: out, ftsRankByHandle, ftsPrefilterMiss: false };
 }
 
-/** Filtros de perfil na query string (LLM, porte, geo, etc.) — `q` aqui é só legenda dos posts (tratado à parte). */
+/** Filtros de perfil na query string (LLM, porte, geo, etc.) — `q` de texto é legenda + identidade (tratado à parte). */
 function postMatchesHasProfileSideFilters(pq: ProfilesSearchQuery): boolean {
   if (pq.minFollowers != null || pq.maxFollowers != null) return true;
   if (pq.minEngagementRate != null || pq.minAvgLikes != null || pq.minPostsCount != null) return true;
@@ -7146,15 +7494,19 @@ async function narrowPostMatchHandlesByProfileFilters(
 }
 
 /**
- * Posts/reels/etc. dos handles informados (`q` na legenda/hashtags). Usado por campanha única e visão "Todos".
+ * Posts/reels/etc. dos handles informados (`q` na legenda ou identidade: @, nome, bio). Campanha única e visão "Todos".
  */
 async function runPostMatchesForHandles(
   req: RequestWithAuth,
   res: Response,
   normHandles: string[],
   ftsRankByHandle: Map<string, number> = new Map(),
-  opts?: { ftsPrefilterMiss?: boolean }
+  opts?: { ftsPrefilterMiss?: boolean; campaignId?: string }
 ): Promise<void> {
+  const identityCtx =
+    opts?.campaignId?.trim() && isCampaignIdGuid(opts.campaignId.trim())
+      ? { campaignId: opts.campaignId.trim() }
+      : undefined;
   try {
     const handleSet = new Set(normHandles.map((h) => normalizeHandle(h)));
     const qRaw = (req.query.q as string | undefined)?.trim() ?? '';
@@ -7192,6 +7544,7 @@ async function runPostMatchesForHandles(
     const handlesTotal = normHandles.length;
     let handleBoostMeta = new Map<string, HandleFacetBoostMeta>();
     let handleDiversityMeta = new Map<string, HandleDiversityMeta>();
+    let identityRelByHandle = new Map<string, number>();
 
     if (cached) {
       orderedRows = cached.rows;
@@ -7218,6 +7571,43 @@ async function runPostMatchesForHandles(
       }
       if (facetBoostSortActive) {
         handleBoostMeta = await loadHandleFacetBoostMeta(db, scanHandles, sortQuery);
+      }
+
+      const ftsPrefilterMiss = opts?.ftsPrefilterMiss === true;
+      const ftsNarrowed = Boolean(qRaw && ftsRankByHandle.size > 0 && !ftsPrefilterMiss);
+      const needCount = limit > 0 ? offset + limit : 0;
+      const maxScan = qRaw
+        ? ftsPrefilterMiss
+          ? Math.min(scanHandles.length, POST_MATCHES_FTS_MISS_MAX_SCAN)
+          : ftsNarrowed
+            ? Math.min(
+                scanHandles.length,
+                Math.max(
+                  needCount + POST_MATCHES_EARLY_STOP_BUFFER + POST_MATCHES_HANDLE_BATCH,
+                  Math.min(POST_MATCHES_MAX_SCAN_HANDLES, ftsRankByHandle.size + POST_MATCHES_HANDLE_BATCH * 2)
+                )
+              )
+            : Math.min(scanHandles.length, POST_MATCHES_MAX_SCAN_HANDLES)
+        : Math.min(scanHandles.length, POST_MATCHES_MAX_SCAN_HANDLES);
+
+      if (qRaw) {
+        const identityUniverse = [
+          ...new Set(
+            [
+              ...scanHandles,
+              ...[...ftsRankByHandle.keys()].filter((h) => handleSet.has(h)),
+            ]
+              .map((h) => normalizeHandle(h))
+              .filter(Boolean)
+          ),
+        ];
+        identityRelByHandle = buildPostMatchIdentityRelevanceMap(
+          db,
+          identityUniverse,
+          qRaw,
+          ftsRankByHandle
+        );
+        scanHandles = orderScanHandlesForPostMatches(scanHandles, identityRelByHandle, ftsRankByHandle);
       }
 
       const buildFilteredSorted = (): PostMatchesCachedRow[] => {
@@ -7254,10 +7644,13 @@ async function runPostMatchesForHandles(
           if (!qRaw && ct === 'tagged') continue;
           let relevance = 0;
           if (qRaw) {
+            const identityRel = identityRelByHandle.get(h) ?? 0;
             const searchable = getPostSearchableNormalized(item);
             const mq = matchesQuery(searchable, qRaw);
-            if (!mq.match) continue;
-            relevance = combineSearchRelevance(mq.relevance, ftsRankByHandle.get(h));
+            if (!mq.match && identityRel <= 0) continue;
+            const textRel = mq.match ? mq.relevance : 0;
+            const baseRel = textRel > 0 && identityRel > 0 ? textRel + identityRel : textRel > 0 ? textRel : identityRel;
+            relevance = combineSearchRelevance(baseRel, ftsRankByHandle.get(h));
           }
           const ts = getPostTimestamp(item) ?? 0;
           const candidate: PostMatchRowScratch = { key, value: item, ts, ct, relevance };
@@ -7267,15 +7660,6 @@ async function runPostMatchesForHandles(
           }
         }
       };
-
-      const richFacetScan = Boolean(qRaw);
-      const ftsPrefilterMiss = opts?.ftsPrefilterMiss === true;
-      const maxScan = qRaw
-        ? ftsPrefilterMiss
-          ? Math.min(scanHandles.length, POST_MATCHES_FTS_MISS_MAX_SCAN)
-          : Math.min(scanHandles.length, Math.max(POST_MATCHES_MAX_SCAN_HANDLES, 500))
-        : Math.min(scanHandles.length, POST_MATCHES_MAX_SCAN_HANDLES);
-      const needCount = limit > 0 ? offset + limit : 0;
 
       for (let i = 0; i < maxScan; i += POST_MATCHES_HANDLE_BATCH) {
         const batch = scanHandles.slice(i, i + POST_MATCHES_HANDLE_BATCH);
@@ -7287,14 +7671,7 @@ async function runPostMatchesForHandles(
         for (const items of parts) ingestPosts(items);
         handlesScanned = Math.min(i + batch.length, maxScan);
 
-        const ftsOrderedScan = qRaw && ftsRankByHandle.size > 0 && !ftsPrefilterMiss;
-        if (!disableEarlyStop && needCount > 0 && qRaw && !ftsOrderedScan) {
-          const rowsSoFar = buildFilteredSorted();
-          if (rowsSoFar.length >= needCount + POST_MATCHES_EARLY_STOP_BUFFER) {
-            if (handlesScanned < scanHandles.length) scanPartial = true;
-            break;
-          }
-        } else if (!disableEarlyStop && needCount > 0 && !richFacetScan) {
+        if (!disableEarlyStop && needCount > 0 && qRaw) {
           const rowsSoFar = buildFilteredSorted();
           if (rowsSoFar.length >= needCount + POST_MATCHES_EARLY_STOP_BUFFER) {
             if (handlesScanned < scanHandles.length) scanPartial = true;
@@ -7305,6 +7682,16 @@ async function runPostMatchesForHandles(
 
       if (handlesScanned < scanHandles.length && handlesScanned >= maxScan) {
         scanPartial = true;
+      }
+
+      if (qRaw && identityRelByHandle.size > 0) {
+        await fillPostMatchesForIdentityOnlyHandles(
+          bestPerHandle,
+          identityRelByHandle,
+          handleSet,
+          qRaw,
+          ftsRankByHandle
+        );
       }
 
       if (qRaw && bestPerHandle.size > 0 && handleDiversityMeta.size === 0) {
@@ -7326,11 +7713,18 @@ async function runPostMatchesForHandles(
           const h = postBucketKeyToHandle(row.key);
           let relevance = row.relevance;
           if (qRaw) {
+            const identityRel = identityRelByHandle.get(h) ?? 0;
             const searchable = getPostSearchableNormalized(row.value);
             const mq = matchesQuery(searchable, qRaw);
-            relevance = mq.match
-              ? combineSearchRelevance(mq.relevance, ftsRankByHandle.get(h))
-              : 0;
+            const textRel = mq.match ? mq.relevance : 0;
+            const baseRel =
+              textRel > 0 && identityRel > 0
+                ? textRel + identityRel
+                : textRel > 0
+                  ? textRel
+                  : identityRel;
+            relevance =
+              baseRel > 0 ? combineSearchRelevance(baseRel, ftsRankByHandle.get(h)) : 0;
           }
           return {
             key: row.key,
@@ -7351,6 +7745,16 @@ async function runPostMatchesForHandles(
       };
 
       orderedRows = await finalizePostMatchRows();
+
+      if (qRaw && looksLikeInfluencerNameQuery(qRaw)) {
+        const identityRows = orderedRows.filter((row) => {
+          const h = postBucketKeyToHandle(row.key);
+          return (identityRelByHandle.get(h) ?? 0) > 0;
+        });
+        if (identityRows.length > 0) {
+          orderedRows = identityRows;
+        }
+      }
 
       mediaKindCounts = {};
       for (const row of bestPerHandle.values()) {
@@ -7394,12 +7798,26 @@ async function runPostMatchesForHandles(
         profileHandlesSeen.add(h);
         profileHandlesOrdered.push(h);
       }
+      const handleCandidate = normalizeInstagramHandleQuery(qRaw);
+      if (
+        handleCandidate &&
+        handleSet.has(handleCandidate) &&
+        !profileHandlesSeen.has(handleCandidate)
+      ) {
+        profileHandlesSeen.add(handleCandidate);
+        profileHandlesOrdered.unshift(handleCandidate);
+      }
+      for (const [h, rel] of identityRelByHandle) {
+        if (rel <= 0 || !handleSet.has(h) || profileHandlesSeen.has(h)) continue;
+        profileHandlesSeen.add(h);
+        profileHandlesOrdered.unshift(h);
+      }
       const profileRefs = profileHandlesOrdered.map((h) => profileRefDb.getOrCreateRef(h));
       const payload = {
         total,
         items: [] as unknown[],
         profileRefs,
-        ...(shouldIncludeHandleInApi(req) ? { profileHandles: profileHandlesOrdered } : {}),
+        ...(shouldIncludeHandleInApi(req, identityCtx) ? { profileHandles: profileHandlesOrdered } : {}),
         mediaKindCounts,
         q: qRaw || undefined,
         ...(scanMeta ? { scanMeta } : {}),
@@ -7433,12 +7851,27 @@ async function runPostMatchesForHandles(
       string,
       ReturnType<typeof influencerFieldsFromProfile>
     >();
+    const ppwByHandle = db.getProfilePostsPerWeekForHandles([...handlesInSlice]);
+    const handlesNeedingPpwCompute: string[] = [];
+    for (const h of handlesInSlice) {
+      if (!ppwByHandle.has(h)) handlesNeedingPpwCompute.push(h);
+    }
+    if (handlesNeedingPpwCompute.length > 0) {
+      const batch = 8;
+      for (let i = 0; i < handlesNeedingPpwCompute.length; i += batch) {
+        await Promise.all(
+          handlesNeedingPpwCompute.slice(i, i + batch).map(async (h) => {
+            const postsRaw = await db.getByBucket<Record<string, unknown>>('post', `${h}:`, { sort: false });
+            ppwByHandle.set(h, computePostsPerWeek(postsRaw.map(({ value }) => value)));
+          })
+        );
+      }
+    }
     await Promise.all(
       [...handlesInSlice].map(async (h) => {
         const profile = await db.loadByHandle(h);
         const fields = influencerFieldsFromProfile(profile as Record<string, unknown> | null);
-        const postsRaw = await db.getByBucket<Record<string, unknown>>('post', `${h}:`);
-        const posts_per_week = computePostsPerWeek(postsRaw.map(({ value }) => value));
+        const posts_per_week = ppwByHandle.get(h) ?? 0;
         influencerByHandle.set(h, { ...fields, posts_per_week });
       })
     );
@@ -7460,17 +7893,24 @@ async function runPostMatchesForHandles(
       delete base.hd_profile_pic_url;
       delete base.hd_profile_pic_url_info;
       delete base.stable_profile_pic_url;
+      delete base.biography;
+      const llmFromPost =
+        base.llm != null && typeof base.llm === 'object' && !Array.isArray(base.llm)
+          ? base.llm
+          : undefined;
       delete base.llm;
+      const llmMerged = fromProfile.llm ?? llmFromPost;
       (row as Record<string, unknown>).influencer = {
         ...base,
         ...fromProfile,
+        ...(llmMerged ? { llm: llmMerged } : {}),
         username: fromProfile.username ?? h,
       };
     }
 
     res.json({
       total,
-      items: preparePostItemsForApiResponse(slice, req),
+      items: preparePostItemsForApiResponse(slice, req, identityCtx),
       q: qRaw || undefined,
       mediaKindCounts,
       ...(scanMeta ? { scanMeta } : {}),
@@ -7518,7 +7958,7 @@ app.get('/api/campaigns/all/post-matches', rateLimitDataApiUnlessPublicSearch, a
 });
 
 /**
- * Posts/reels/etc. dos perfis da campanha onde `q` aparece na legenda/hashtags (dados atuais do storage).
+ * Posts/reels/etc. dos perfis da campanha onde `q` aparece na legenda ou na identidade (@, nome, bio).
  * Sem `q`, retorna todos os itens da campanha (filtráveis por `type`).
  */
 app.get('/api/campaigns/:id/post-matches', rateLimitDataApiUnlessPublicSearch, async (req: RequestWithAuth, res: Response) => {
@@ -7556,6 +7996,7 @@ app.get('/api/campaigns/:id/post-matches', rateLimitDataApiUnlessPublicSearch, a
     const narrowed = await narrowPostMatchHandlesByProfileFilters(req, scoped.handles);
     await runPostMatchesForHandles(req, res, narrowed, scoped.ftsRankByHandle, {
       ftsPrefilterMiss: scoped.ftsPrefilterMiss,
+      campaignId,
     });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });

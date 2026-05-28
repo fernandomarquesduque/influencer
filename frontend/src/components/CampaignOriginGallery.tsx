@@ -2,12 +2,18 @@
  * Galeria estilo Instagram: posts/reels onde o termo de busca aparece (dados atuais do índice).
  */
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react'
-import { Typography, Tooltip } from 'antd'
+import { useNavigate } from 'react-router-dom'
+import { Typography, Tooltip, Empty, Button } from 'antd'
+import { useAuth } from '../contexts/AuthContext'
+import { useAgencySignupModalOptional } from '../contexts/AgencySignupModalContext'
+import { useFavoritePostsOptional } from '../contexts/FavoritePostsContext'
+import PostFavoriteHeartButton from './PostFavoriteHeartButton'
 import OriginSearchEmptyState from './OriginSearchEmptyState'
 import { openBuscaInfluencerPlansModal } from '../utils/openPlansModal'
 import './CampaignOriginGallery.css'
 import {
   fetchCampaignPostMatches,
+  fetchFavoritePostsFeed,
   isPublicSearchLimitError,
   isRateLimitError,
   publicSearchLimitRetryAfterSeconds,
@@ -177,11 +183,17 @@ function influencerLlmDescriptionText(post: PostItem): string | null {
   return row.tooltip ?? row.line
 }
 
-function influencerCardHeadline(post: PostItem, bar: ReturnType<typeof influencerBarData>): string {
-  const text = influencerLlmDescriptionText(post)
-  if (text) return text
-  const name = bar.displayName
-  return name !== '—' ? name : '—'
+function influencerBioHeadlineText(post: PostItem): string | null {
+  const bio = typeof post.influencer?.biography === 'string' ? post.influencer.biography.trim() : ''
+  if (!bio) return null
+  const max = 200
+  if (bio.length <= max) return bio
+  return `${bio.slice(0, max - 1)}…`
+}
+
+/** Resumo LLM ao lado do avatar; sem LLM, bio do perfil. */
+function influencerCardHeadline(post: PostItem, _bar: ReturnType<typeof influencerBarData>): string {
+  return influencerLlmDescriptionText(post) ?? influencerBioHeadlineText(post) ?? ''
 }
 
 function influencerBarData(post: PostItem): {
@@ -194,30 +206,69 @@ function influencerBarData(post: PostItem): {
 } {
   const profileRef = (post.profile_ref ?? '').trim()
   const inf = post.influencer
+  const handleRaw = (post.profile_handle ?? inf?.username ?? '').replace(/^@/, '').trim()
   const fullNameRaw = typeof inf?.full_name === 'string' ? inf.full_name.trim() : ''
   const avatarPath = typeof post.avatar_url === 'string' ? post.avatar_url.trim() : ''
   const avatarSrc = avatarPath ? resolveMediaUrl(avatarPath) : undefined
   return {
     profileRef,
-    handleKey: profileRef ? '·' : '—',
-    displayName: fullNameRaw || '—',
+    handleKey: handleRaw || (profileRef ? '·' : '—'),
+    displayName: fullNameRaw || (handleRaw ? `@${handleRaw}` : '—'),
     avatarSrc,
     avatarStable: undefined,
   }
+}
+
+/** Adm/assinante pagante: API envia `profile_handle` no item. */
+function showsInfluencerIdentityInListing(post: PostItem): boolean {
+  return !!(post.profile_handle ?? '').trim()
+}
+
+function InfluencerIdentityHeading({
+  post,
+  bar,
+}: {
+  post: PostItem
+  bar: ReturnType<typeof influencerBarData>
+}) {
+  if (!showsInfluencerIdentityInListing(post)) return null
+  const handleRaw = (post.profile_handle ?? post.influencer?.username ?? '').replace(/^@/, '').trim()
+  if (!handleRaw) return null
+  const fullName = typeof post.influencer?.full_name === 'string' ? post.influencer.full_name.trim() : ''
+  const nameLine = fullName || bar.displayName
+  const showHandleLine = fullName.length > 0
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          lineHeight: 1.3,
+          color: 'var(--app-text)',
+          wordBreak: 'break-word',
+        }}
+      >
+        {nameLine}
+      </div>
+      {showHandleLine ? (
+        <div style={{ fontSize: 10, color: 'var(--app-text-secondary)', marginTop: 2, marginBottom: 4 }}>@{handleRaw}</div>
+      ) : null}
+    </>
+  )
 }
 
 function postToConnectSnapshot(post: PostItem): InfluencerConnectSnapshot {
   const bar = influencerBarData(post)
   const fc = post.influencer?.followers_count
   const ppw = getInfluencerPostsPerWeek(post)
-  const llmText = influencerLlmDescriptionText(post)
+  const headline = influencerCardHeadline(post, bar)
   return {
     displayName: bar.displayName,
     profilePicUrl: bar.avatarSrc,
     stableProfilePicUrl: bar.avatarStable,
     followersCount: typeof fc === 'number' && Number.isFinite(fc) ? fc : undefined,
     postsPerWeek: ppw ?? undefined,
-    llmDescription: llmText ?? undefined,
+    llmDescription: headline || undefined,
   }
 }
 
@@ -254,6 +305,7 @@ export default function CampaignOriginGallery({
   onOpenInfluencerDetail,
   captionFilterReady = true,
   onSearchSuggestion,
+  favoritesFeed = false,
 }: {
   campaignId: string
   /** Termo da URL / busca; vazio = todo conteúdo indexado dos perfis da campanha. */
@@ -278,7 +330,14 @@ export default function CampaignOriginGallery({
   captionFilterReady?: boolean
   /** Clique em chip de sugestão no empty state. */
   onSearchSuggestion?: (term: string) => void
+  /** Carrega apenas posts favoritados do usuário (tela Favoritos). */
+  favoritesFeed?: boolean
 }) {
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const signupModal = useAgencySignupModalOptional()
+  const favoritePostsCtx = useFavoritePostsOptional()
+  const showPostFavorite = !user || user.scope !== 'influencer'
   const [items, setItems] = useState<PostItem[]>([])
   const [total, setTotal] = useState(0)
   const [scanMeta, setScanMeta] = useState<PostsResponse['scanMeta']>()
@@ -290,13 +349,16 @@ export default function CampaignOriginGallery({
   const [loadMoreExhausted, setLoadMoreExhausted] = useState(false)
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
+  const favoritesContextRetryDoneRef = useRef(false)
+  /** Posts brutos do feed de favoritos (antes do filtro BI no cliente). */
+  const favoritePostsRawRef = useRef<PostItem[]>([])
   const profileFiltersRef = useRef(profileFilters)
   profileFiltersRef.current = profileFilters
   const onLoadedPostsForFacetsRef = useRef(onLoadedPostsForFacets)
   onLoadedPostsForFacetsRef.current = onLoadedPostsForFacets
 
   const kindsKey = mediaKinds?.length ? [...mediaKinds].sort().join(',') : ''
-  const hasSearchTerm = textQuery.trim().length > 0
+  const hasSearchTerm = favoritesFeed || textQuery.trim().length > 0
   const facetBoostForApi = useMemo(
     () =>
       hasCampaignFacetBoost(facetBoostQuery ?? {})
@@ -328,6 +390,59 @@ export default function CampaignOriginGallery({
     queueMediaRefreshFromPost(post)
     setFailedPostImages((prev) => new Set(prev).add(post.key))
   }, [])
+
+  const handleFavoriteClick = useCallback(
+    async (post: PostItem, e: React.MouseEvent | React.KeyboardEvent) => {
+      e.stopPropagation()
+      if (!user) {
+        if (signupModal) {
+          signupModal.openSignupModal({ pendingAction: { kind: 'favorite_post', post } })
+        } else {
+          navigate('/login')
+        }
+        return
+      }
+      if (!favoritePostsCtx) return
+      const wasFav = favoritePostsCtx.isFavorite(post.key)
+      await favoritePostsCtx.toggleFavorite(post)
+      if (favoritesFeed && wasFav) {
+        setItems((prev) => prev.filter((p) => p.key !== post.key))
+        setTotal((t) => Math.max(0, t - 1))
+      }
+    },
+    [user, navigate, signupModal, favoritePostsCtx, favoritesFeed]
+  )
+
+  const renderPostFavoriteHeart = useCallback(
+    (post: PostItem) => {
+      if (!showPostFavorite) return undefined
+      const isFav = favoritePostsCtx?.isFavorite(post.key) ?? false
+      return (
+        <PostFavoriteHeartButton
+          isFavorite={isFav}
+          onToggle={(e) => void handleFavoriteClick(post, e)}
+        />
+      )
+    },
+    [showPostFavorite, favoritePostsCtx, handleFavoriteClick]
+  )
+
+  const renderProfileAvatar = useCallback(
+    (
+      bar: ReturnType<typeof influencerBarData>,
+      size: number,
+      fallbackIconSize: number
+    ) => (
+      <ProfileAvatar
+        src={bar.avatarSrc}
+        stableBackgroundUrl={bar.avatarStable}
+        handle={bar.profileRef || undefined}
+        size={size}
+        fallbackIconSize={fallbackIconSize}
+      />
+    ),
+    []
+  )
 
   const mergeOpts = useMemo(
     () => ({
@@ -415,7 +530,7 @@ export default function CampaignOriginGallery({
         setLoadingMore(false)
         return
       }
-      if (!captionFilterReady) {
+      if (!favoritesFeed && !captionFilterReady) {
         setLoading(true)
         return
       }
@@ -425,6 +540,20 @@ export default function CampaignOriginGallery({
       setSearchQuotaError(null)
       setLoading(true)
       try {
+        if (favoritesFeed) {
+          const res = await fetchFavoritePostsFeed({ limit: PAGE, offset: 0 }, { signal })
+          if (signal?.aborted) return
+          favoritePostsRawRef.current = res.items
+          const ordered = orderPostMatchItems(res.items, mergeOpts)
+          setItems(ordered)
+          setTotal(
+            hasCampaignFacetBoost(facetBoostQuery ?? {}) ? ordered.length : res.total
+          )
+          setServerOffset(res.items.length)
+          setScanMeta(undefined)
+          onLoadedPostsForFacetsRef.current?.(res.items)
+          return
+        }
         const res = await fetchCampaignPostMatches(
           campaignId,
           {
@@ -480,6 +609,7 @@ export default function CampaignOriginGallery({
       originPostSort,
       mergeOpts,
       prefetchFacetGrowthPages,
+      favoritesFeed,
     ]
   )
 
@@ -488,26 +618,63 @@ export default function CampaignOriginGallery({
       onLoadedPostsForFacetsRef.current?.([])
       return
     }
+    if (favoritesFeed) return
     if (items.length === 0) return
     onLoadedPostsForFacetsRef.current?.(items)
-  }, [items, hasSearchTerm])
+  }, [items, hasSearchTerm, favoritesFeed])
 
   /** Loader no mesmo frame do clique no painel BI (antes do fetch no useEffect). */
   useLayoutEffect(() => {
-    if (!hasSearchTerm || !captionFilterReady) return
+    if (favoritesFeed || !hasSearchTerm || !captionFilterReady) return
     const prev = lastFacetBoostKeyForLoaderRef.current
     if (prev !== undefined && prev !== facetBoostKey) {
       setLoading(true)
       setItems([])
     }
     lastFacetBoostKeyForLoaderRef.current = facetBoostKey
-  }, [facetBoostKey, hasSearchTerm, captionFilterReady])
+  }, [facetBoostKey, hasSearchTerm, captionFilterReady, favoritesFeed])
 
   useEffect(() => {
     const ac = new AbortController()
     void reload(ac.signal)
     return () => ac.abort()
-  }, [campaignId, textQuery, kindsKey, hasSearchTerm, captionFilterReady, facetBoostKey, originPostSortKey, reload])
+  }, [
+    campaignId,
+    textQuery,
+    kindsKey,
+    hasSearchTerm,
+    captionFilterReady,
+    reload,
+    favoritesFeed,
+    ...(favoritesFeed ? [] : [facetBoostKey, originPostSortKey]),
+  ])
+
+  /** Favoritos: refiltra no cliente ao mudar facet/ordenação (sem novo fetch). */
+  useEffect(() => {
+    if (!favoritesFeed || favoritePostsRawRef.current.length === 0) return
+    const ordered = orderPostMatchItems(favoritePostsRawRef.current, mergeOpts)
+    setItems(ordered)
+    setTotal(
+      hasCampaignFacetBoost(facetBoostQuery ?? {})
+        ? ordered.length
+        : favoritePostsRawRef.current.length
+    )
+  }, [favoritesFeed, facetBoostKey, originPostSortKey, mergeOpts, facetBoostQuery])
+
+  /** Contexto pode carregar depois do feed; uma rebusca se há favoritos mas a lista veio vazia. */
+  useEffect(() => {
+    if (!favoritesFeed) {
+      favoritesContextRetryDoneRef.current = false
+      return
+    }
+    if (!favoritePostsCtx || favoritePostsCtx.loading || favoritesContextRetryDoneRef.current) return
+    if (favoritePostsCtx.count > 0 && items.length === 0 && !loading) {
+      favoritesContextRetryDoneRef.current = true
+      const ac = new AbortController()
+      void reload(ac.signal)
+      return () => ac.abort()
+    }
+  }, [favoritesFeed, favoritePostsCtx, favoritePostsCtx?.loading, favoritePostsCtx?.count, items.length, loading, reload])
 
   const loadMore = useCallback(async () => {
     if (!hasSearchTerm || loadMoreExhausted) return
@@ -517,6 +684,31 @@ export default function CampaignOriginGallery({
     setLoadingMore(true)
     const offset = serverOffset
     try {
+      if (favoritesFeed) {
+        const res = await fetchFavoritePostsFeed({ limit: PAGE, offset })
+        const seenRaw = new Set(favoritePostsRawRef.current.map((p) => p.key))
+        const appendedRaw = res.items.filter((p) => !seenRaw.has(p.key))
+        favoritePostsRawRef.current = [...favoritePostsRawRef.current, ...appendedRaw]
+        onLoadedPostsForFacetsRef.current?.(favoritePostsRawRef.current)
+        let prevLen = 0
+        let mergedLen = 0
+        setItems((prev) => {
+          prevLen = prev.length
+          const merged = mergePostMatchPage(prev, res.items, mergeOpts)
+          mergedLen = merged.length
+          return merged
+        })
+        const nextServerOffset = offset + res.items.length
+        setServerOffset(nextServerOffset)
+        const orderedAll = orderPostMatchItems(favoritePostsRawRef.current, mergeOpts)
+        setTotal(
+          hasCampaignFacetBoost(facetBoostQuery ?? {}) ? orderedAll.length : res.total
+        )
+        const noProgress = res.items.length === 0 || mergedLen <= prevLen
+        const caughtUp = nextServerOffset >= res.total
+        if (noProgress || caughtUp) setLoadMoreExhausted(true)
+        return
+      }
       const res = await fetchCampaignPostMatches(
         campaignId,
         {
@@ -565,6 +757,7 @@ export default function CampaignOriginGallery({
     facetBoostQuery,
     scanMeta,
     mergeOpts,
+    favoritesFeed,
   ])
 
   const partialScanMore =
@@ -617,6 +810,39 @@ export default function CampaignOriginGallery({
         <OriginGalleryLoadingState />
       ) : !hasSearchTerm ? (
         <OriginSearchEmptyState variant="prompt" onSuggestionClick={onSearchSuggestion} />
+      ) : favoritesFeed && items.length === 0 ? (
+        <div className="campaign-origin-search-loader">
+          <div className="campaign-origin-search-loader__inner">
+            {(favoritePostsCtx?.count ?? 0) > 0 ? (
+              <>
+                <Text type="secondary" style={{ display: 'block', textAlign: 'center', marginBottom: 12 }}>
+                  Não foi possível carregar suas publicações salvas. Tente novamente.
+                </Text>
+                <div style={{ textAlign: 'center' }}>
+                  <Button
+                    type="primary"
+                    onClick={() => {
+                      const ac = new AbortController()
+                      void reload(ac.signal)
+                    }}
+                  >
+                    Recarregar favoritos
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <Empty
+                description={
+                  <span>
+                    Você ainda não favoritou nenhuma publicação.
+                    <br />
+                    Use o coração nas fotos da busca para salvar aqui.
+                  </span>
+                }
+              />
+            )}
+          </div>
+        </div>
       ) : searchQuotaError ? (
         <OriginSearchEmptyState
           variant="search-quota"
@@ -685,6 +911,7 @@ export default function CampaignOriginGallery({
                         stableBackgroundUrl={stableBg}
                         imageUnavailable={failed || !displayUrl}
                         onImageError={() => handlePostImageError(post)}
+                        topRight={renderPostFavoriteHeart(post)}
                       />
                     </div>
                     <div
@@ -707,13 +934,7 @@ export default function CampaignOriginGallery({
                           width: 32,
                         }}
                       >
-                        <ProfileAvatar
-                          src={bar.avatarSrc}
-                          stableBackgroundUrl={bar.avatarStable}
-                          handle={bar.profileRef || undefined}
-                          size={32}
-                          fallbackIconSize={16}
-                        />
+                        {renderProfileAvatar(bar, 32, 16)}
                         {getInfluencerTierShort(followersCount) !== '—' ? (
                           <div style={{ marginTop: 6, display: 'flex', justifyContent: 'center', width: '100%' }}>
                             <InfluencerTierPill followers={followersCount} />
@@ -721,18 +942,21 @@ export default function CampaignOriginGallery({
                         ) : null}
                       </div>
                       <div style={{ minWidth: 0, flex: 1, paddingTop: 2 }}>
-                        <div
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 500,
-                            lineHeight: 1.35,
-                            color: 'var(--app-text)',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word',
-                          }}
-                        >
-                          {headline}
-                        </div>
+                        <InfluencerIdentityHeading post={post} bar={bar} />
+                        {headline ? (
+                          <div
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 500,
+                              lineHeight: 1.35,
+                              color: 'var(--app-text)',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                            }}
+                          >
+                            {headline}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -783,6 +1007,7 @@ export default function CampaignOriginGallery({
                             stableBackgroundUrl={stableBg}
                             imageUnavailable={failed || !displayUrl}
                             onImageError={() => handlePostImageError(post)}
+                            topRight={renderPostFavoriteHeart(post)}
                           />
                         </div>
                         <div
@@ -816,13 +1041,7 @@ export default function CampaignOriginGallery({
                                 width: 56,
                               }}
                             >
-                              <ProfileAvatar
-                                src={bar.avatarSrc}
-                                stableBackgroundUrl={bar.avatarStable}
-                                handle={bar.profileRef || undefined}
-                                size={56}
-                                fallbackIconSize={24}
-                              />
+                              {renderProfileAvatar(bar, 56, 24)}
                               {getInfluencerTierShort(fc) !== '—' ? (
                                 <div style={{ marginTop: 6, display: 'flex', justifyContent: 'center', width: '100%' }}>
                                   <InfluencerTierPill followers={fc} />
@@ -837,18 +1056,21 @@ export default function CampaignOriginGallery({
                                 textAlign: 'left',
                               }}
                             >
-                              <div
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 500,
-                                  color: 'var(--app-text)',
-                                  lineHeight: 1.35,
-                                  whiteSpace: 'pre-wrap',
-                                  wordBreak: 'break-word',
-                                }}
-                              >
-                                {headline}
-                              </div>
+                              <InfluencerIdentityHeading post={post} bar={bar} />
+                              {headline ? (
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: 500,
+                                    color: 'var(--app-text)',
+                                    lineHeight: 1.35,
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-word',
+                                  }}
+                                >
+                                  {headline}
+                                </div>
+                              ) : null}
                               {postsPerWeekLabel != null || followersLabel ? (
                                 <div
                                   style={{

@@ -34,6 +34,8 @@ import {
   ftsRowsToRankMap,
   mergeFtsRankMaps,
   foldSearchText,
+  tokenizeQueryWords,
+  looksLikeInfluencerNameQuery,
 } from '../search/queryRelevance.js';
 
 export {
@@ -46,6 +48,8 @@ export {
   ftsRowsToRankMap,
   userQueryToFtsMatchExpressions,
   mergeFtsRankMaps,
+  looksLikeInfluencerNameQuery,
+  ftsIntersectRankMapForNameLikeQuery,
 } from '../search/queryRelevance.js';
 
 /**
@@ -653,6 +657,154 @@ function getSearchableText(
     parts.push(getPostTextForSearch(posts[i]!));
   }
   return foldSearchText(parts.filter(Boolean).join(' '));
+}
+
+/** Query que parece um @ do Instagram (sem espaços). */
+export function normalizeInstagramHandleQuery(q: string): string | null {
+  const raw = q.trim();
+  if (!raw || /\s/.test(raw)) return null;
+  const t = raw.toLowerCase().replace(/^@/, '');
+  if (!t || t.length > 30) return null;
+  if (!/^[a-z0-9._]+$/.test(t)) return null;
+  return t;
+}
+
+/** Texto pesquisável só do perfil (handle, nome, bio, categorias) — sem legendas de posts. */
+export function buildProfileIdentitySearchableText(
+  profile: Record<string, unknown>,
+  key: string,
+  fullName: string,
+  categories: string[]
+): string {
+  return getSearchableTextProfileOnly(profile, key, fullName, categories);
+}
+
+/** Match de nome/bio: tolera iniciais ("Felipe D. Koiffman") e pontuação. */
+export function matchesProfileIdentityQuery(
+  identityBlob: string,
+  q: string
+): { match: boolean; relevance: number } {
+  const blob = identityBlob.trim();
+  const trimmed = q.trim();
+  if (!blob || !trimmed) return { match: false, relevance: 0 };
+
+  const primary = matchesQuery(blob, trimmed);
+  if (primary.match) return primary;
+
+  const qNorm = foldSearchText(trimmed)
+    .replace(/\./g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (qNorm && qNorm !== foldSearchText(trimmed)) {
+    const relaxed = matchesQuery(blob, qNorm);
+    if (relaxed.match) return relaxed;
+  }
+
+  const words = tokenizeQueryWords(qNorm || foldSearchText(trimmed));
+  if (words.length >= 2) {
+    const search = foldSearchText(blob);
+    const pattern = words
+      .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[\\s.]+');
+    if (new RegExp(`(?:^|[^a-z0-9_])${pattern}(?=[^a-z0-9_]|$)`).test(search)) {
+      return { match: true, relevance: 520 };
+    }
+    const tokens = search.match(/[a-z0-9_]+/g) ?? [];
+    let wordHits = 0;
+    for (const w of words) {
+      if (matchesQuery(search, w).match) {
+        wordHits++;
+        continue;
+      }
+      if (
+        w.length >= 4 &&
+        tokens.some((tok) => {
+          if (tok === w || tok.startsWith(w) || w.startsWith(tok)) {
+            return Math.min(tok.length, w.length) >= 4;
+          }
+          return false;
+        })
+      ) {
+        wordHits++;
+      }
+    }
+    if (wordHits >= words.length) {
+      return { match: true, relevance: 500 };
+    }
+    if (wordHits >= words.length - 1 && words.some((w) => w.length >= 5)) {
+      return { match: true, relevance: 450 };
+    }
+  }
+  return { match: false, relevance: 0 };
+}
+
+/**
+ * Mapa handle → relevância de identidade (@, nome, bio) para post-matches.
+ * Uma leitura SQLite em lote (`identity_blob`); sem `loadByHandle` no RocksDB.
+ */
+export function buildPostMatchIdentityRelevanceMap(
+  db: Pick<CompositeStorage, 'getProfileIdentityBlobsForHandles'>,
+  handles: string[],
+  qRaw: string,
+  ftsRankByHandle: Map<string, number>
+): Map<string, number> {
+  const out = new Map<string, number>();
+  const q = qRaw.trim();
+  if (!q || handles.length === 0) return out;
+
+  const candidate = normalizeInstagramHandleQuery(q);
+  const normList: string[] = [];
+  for (const raw of handles) {
+    const h = String(raw).toLowerCase().replace(/^@/, '');
+    if (!h) continue;
+    normList.push(h);
+    if (candidate && h === candidate) {
+      out.set(h, 600);
+    }
+  }
+  if (normList.length === 0) return out;
+
+  const rows = db.getProfileIdentityBlobsForHandles(normList);
+  const blobByHandle = new Map(rows.map((r) => [r.handle, r.identity_blob]));
+
+  for (const h of normList) {
+    if (out.get(h) === 600) continue;
+    const blob = blobByHandle.get(h)?.trim() ?? '';
+    if (blob) {
+      const mq = matchesProfileIdentityQuery(blob, q);
+      if (mq.match) {
+        out.set(h, Math.max(out.get(h) ?? 0, mq.relevance));
+        continue;
+      }
+    }
+    const fts = ftsRankByHandle.get(h) ?? 0;
+    /** Interseção por nome (rank alto) ou FTS genérico só fora de busca por nome. */
+    if (fts >= 1_000_000) {
+      out.set(h, Math.max(out.get(h) ?? 0, 520));
+    }
+  }
+  return out;
+}
+
+/** `q` casa com identidade do perfil (arroba, nome, bio), não com legenda de post. */
+export function profileIdentityMatchesQuery(
+  profile: Record<string, unknown> | null | undefined,
+  key: string,
+  q: string
+): { match: boolean; relevance: number } {
+  const handle = getHandle(profile ?? {}, key);
+  const candidate = normalizeInstagramHandleQuery(q);
+  if (candidate && handle && candidate === handle) {
+    return { match: true, relevance: 600 };
+  }
+  if (!profile) return { match: false, relevance: 0 };
+  const identityText = buildProfileIdentitySearchableText(
+    profile,
+    key,
+    getFullName(profile),
+    getCategories(profile)
+  );
+  return matchesProfileIdentityQuery(identityText, q);
 }
 
 /** Texto pesquisável só do perfil (sem posts). Usado para early match e evitar custo com posts quando desnecessário. */
@@ -1987,6 +2139,8 @@ function computeEngagement(posts: Record<string, unknown>[], followersCount: num
 /** Payload gravado no SQLite (FTS + aux) a cada sync de perfil/posts. */
 export interface ProfileSearchIndexPayload {
   ftsText: string;
+  /** Handle, nome, username, bio, categorias e LLM — sem legendas (post-matches / identidade). */
+  identityBlob: string;
   engagementJson: string;
   hashtagsJson: string;
   searchBlob: string;
@@ -2034,8 +2188,10 @@ export function buildProfileSearchIndexPayload(
     llmBrandLevel = normalizeBrandSafetyLevel(qual.brandSafety);
   }
   const postSentiment = computeProfilePostSentimentFromPosts(posts);
+  const identityBlob = buildProfileIdentitySearchableText(profile, key, fullName, categories);
   return {
     ftsText,
+    identityBlob,
     engagementJson: JSON.stringify(engagement),
     hashtagsJson: JSON.stringify(hashtags),
     searchBlob: ftsText,

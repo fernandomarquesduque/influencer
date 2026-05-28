@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MenuProps } from 'antd'
 import {
   CreditCardOutlined,
+  HeartOutlined,
   LoginOutlined,
   LogoutOutlined,
   SettingOutlined,
@@ -9,6 +10,8 @@ import {
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useAgencySignupModal } from '../contexts/AgencySignupModalContext'
+import { useFavoritePostsOptional } from '../contexts/FavoritePostsContext'
 import type { AuthUser } from '../contexts/AuthContext'
 import { INFLUENCER_LANDING_PATH } from '../constants/landingPaths'
 import { activatePath, influencerDetailPath } from '../constants/profilePaths'
@@ -70,7 +73,23 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout, isAdm } = useAuth()
+  const { openSignupModal } = useAgencySignupModal()
+  const favoritePosts = useFavoritePostsOptional()
   const [plansModalOpen, setPlansModalOpen] = useState(false)
+
+  const favoritesMenuBadgeCount = favoritePosts?.unreadFavoritesCount ?? 0
+  const showFavoritesMenuBadge = (favoritePosts?.showFavoritesNotificationBadge ?? false) && favoritesMenuBadgeCount > 0
+
+  const favoritesMenuLabel = (
+    <span className="app-account-menu-item-label">
+      <span>Favoritos</span>
+      {showFavoritesMenuBadge ? (
+        <span className="app-account-menu-item-badge" aria-hidden>
+          {favoritesMenuBadgeCount > 99 ? '99+' : favoritesMenuBadgeCount}
+        </span>
+      ) : null}
+    </span>
+  )
 
   useEffect(() => {
     setPlansModalOpen(false)
@@ -96,8 +115,8 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
           icon: <LoginOutlined aria-hidden />,
           label: 'Login',
           onClick: () => {
-            trackAppUiClick('menu_login', { target_path: '/login' })
-            navigate('/login')
+            trackAppUiClick('menu_login', { target_path: 'signup_modal' })
+            openSignupModal()
           },
         },
         {
@@ -107,6 +126,15 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
           onClick: () => {
             trackPlansIntent('modal_open', { source: 'account_menu_guest' })
             setPlansModalOpen(true)
+          },
+        },
+        {
+          key: 'favorites',
+          icon: <HeartOutlined aria-hidden />,
+          label: 'Favoritos',
+          onClick: () => {
+            trackAppUiClick('menu_favoritos_guest', { target_path: 'signup_modal' })
+            openSignupModal()
           },
         },
         { type: 'divider' },
@@ -157,6 +185,16 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
         ? []
         : [
           {
+            key: 'favorites',
+            icon: <HeartOutlined aria-hidden />,
+          label: favoritesMenuLabel,
+          onClick: () => {
+            trackAppUiClick('menu_favoritos', { target_path: '/app/favorites' })
+            favoritePosts?.acknowledgeFavoritesMenu()
+            navigate('/app/favorites')
+          },
+          },
+          {
             key: 'invoice',
             icon: <CreditCardOutlined aria-hidden />,
             label: 'Assinatura',
@@ -180,7 +218,17 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
       { type: 'divider' },
       influencerLandingItem,
     ]
-  }, [user, navigate, logout, isAdm, location.pathname, includeGuestMenu])
+  }, [
+    user,
+    navigate,
+    logout,
+    isAdm,
+    location.pathname,
+    includeGuestMenu,
+    openSignupModal,
+    favoritesMenuLabel,
+    favoritePosts,
+  ])
 
   const accountLabel = user ? getAccountMenuLabel(user) : ''
 

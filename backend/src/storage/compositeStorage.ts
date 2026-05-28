@@ -177,6 +177,7 @@ export class CompositeStorage {
       payload.engagementJson,
       payload.hashtagsJson,
       payload.searchBlob,
+      payload.identityBlob ?? '',
       {
         followersCount: payload.followersCount ?? 0,
         engagementRate: payload.engagementRate ?? 0,
@@ -210,6 +211,14 @@ export class CompositeStorage {
     llm_post_sentiment: string | null;
   }[] {
     return this.sqlite.getAllProfileSearchAuxRows();
+  }
+
+  getProfileIdentityBlobsForHandles(handles: string[]): { handle: string; identity_blob: string }[] {
+    return this.sqlite.getProfileIdentityBlobsForHandles(handles);
+  }
+
+  getProfilePostsPerWeekForHandles(handles: string[]): Map<string, number> {
+    return this.sqlite.getProfilePostsPerWeekForHandles(handles);
   }
 
   getProfileSearchAuxRowsForHandles(

@@ -478,6 +478,63 @@ export function ftsRowsToRankMap(rows: { handle: string }[]): Map<string, number
   return map;
 }
 
+/** Query com 2–5 palavras (nome de pessoa), sem @ ou hashtag. */
+export function looksLikeInfluencerNameQuery(q: string): boolean {
+  const raw = q.trim();
+  if (!raw || raw.length > 80 || /[#@/]/.test(raw)) return false;
+  if (/^[a-z0-9._]+$/i.test(raw.replace(/^@/, '')) && !raw.includes(' ')) return false;
+  const words = tokenizeQueryWords(foldSearchText(raw.replace(/\./g, ' ')));
+  if (words.length < 2 || words.length > 5) return false;
+  return words.every((w) => /^[a-z0-9_]+$/.test(w));
+}
+
+/**
+ * Pré-filtro FTS para nomes: interseção de handles que contêm **cada** token no índice.
+ * Evita perder "Lane Esfeckm" quando OR/AND amplos não ranqueiam o perfil (ex.: token "lane" comum).
+ */
+export function ftsIntersectRankMapForNameLikeQuery(
+  q: string,
+  searchFts: (matchExpr: string, limit: number) => { handle: string }[]
+): Map<string, number> {
+  const words = tokenizeQueryWords(foldSearchText(q.trim().replace(/\./g, ' ')));
+  if (words.length < 2) return new Map();
+
+  const byRarity = [...words].sort((a, b) => b.length - a.length || a.localeCompare(b));
+  let intersect: Set<string> | null = null;
+  const rankAcc = new Map<string, number>();
+
+  for (const w of byRarity) {
+    const lim = w.length >= 7 ? 600 : w.length >= 5 ? 1200 : 3000;
+    const rows = searchFts(escapeFtsToken(w), lim);
+    const set = new Set<string>();
+    const n = rows.length;
+    for (let i = 0; i < n; i++) {
+      const h = rows[i]!.handle.toLowerCase().replace(/^@/, '');
+      if (!h) continue;
+      set.add(h);
+      rankAcc.set(h, (rankAcc.get(h) ?? 0) + (n - i));
+    }
+    if (intersect === null) intersect = set;
+    else {
+      const next = new Set<string>();
+      for (const h of intersect) {
+        if (set.has(h)) next.add(h);
+      }
+      intersect = next;
+    }
+    if (intersect.size === 0) return new Map();
+  }
+
+  if (!intersect || intersect.size === 0) return new Map();
+  const out = new Map<string, number>();
+  const sorted = [...intersect].sort((a, b) => (rankAcc.get(b) ?? 0) - (rankAcc.get(a) ?? 0));
+  let rank = sorted.length;
+  for (const h of sorted) {
+    out.set(h, rank--);
+  }
+  return out;
+}
+
 /** Une resultados de várias queries FTS; mantém o melhor rank por handle. */
 export function mergeFtsRankMaps(maps: Map<string, number>[]): Map<string, number> {
   const out = new Map<string, number>();

@@ -10,6 +10,7 @@ import type { CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppAccountMenu from '../AppAccountMenu'
 import { useAuth } from '../../contexts/AuthContext'
+import { useAgencySignupModalOptional } from '../../contexts/AgencySignupModalContext'
 import { INFLUENCER_LANDING_PATH } from '../../constants/landingPaths'
 import { SEARCH_ROUTE_PATH } from '../../constants/searchRoute'
 import { trackAppUiClick } from '../../utils/metaPixel'
@@ -113,6 +114,7 @@ export default function DiscoveryHomeHero({
 }: DiscoveryHomeHeroProps) {
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
+  const signupModal = useAgencySignupModalOptional()
   const isCompact = variant === 'compact'
   const placeholder =
     searchPlaceholder ??
@@ -128,8 +130,9 @@ export default function DiscoveryHomeHero({
   }
 
   const goToAgencyLogin = () => {
-    trackAppUiClick('hero_agency_login', { target_path: '/login' })
-    navigate('/login')
+    trackAppUiClick('hero_agency_login', { target_path: 'signup_modal' })
+    if (signupModal) signupModal.openSignupModal()
+    else navigate('/login')
   }
 
   return (
