@@ -47,6 +47,27 @@ function finalizePersistSearch(storage: CrawlStorage, handle: string): void {
 const MIN_FOLLOWERS_FLOOR = process.env.MIN_FOLLOWERS ? (parseInt(process.env.MIN_FOLLOWERS, 10) || 0) : 0;
 const EXTRACT_TIMEOUT_MS = Number(process.env.PROFILE_PROCESS_TIMEOUT_MS) || 180_000;
 
+function classifyExtractFailure(errorMessage: string): { error: string; rejectionReason?: string } {
+  const msg = String(errorMessage || '').trim();
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes('perfil privado') ||
+    lower.includes('este perfil é privado') ||
+    lower.includes('conta privada') ||
+    lower.includes('this account is private') ||
+    lower.includes('this profile is private')
+  ) {
+    return { error: 'Perfil privado (sem acesso)', rejectionReason: 'perfil_privado_inacessivel' };
+  }
+  if (lower.includes('perfil não encontrado') || lower.includes("page isn't available")) {
+    return { error: 'Perfil não encontrado', rejectionReason: 'perfil_nao_encontrado' };
+  }
+  if (lower.includes('sessão') || lower.includes('login') || lower.includes('challenge')) {
+    return { error: msg || 'Sessão do Instagram expirada ou não logada', rejectionReason: 'sessao_indisponivel' };
+  }
+  return { error: msg || 'Falha ao extrair perfil (página ou API)' };
+}
+
 export function buildConfigFromEnv(): CrawlConfig {
   const raw = (() => {
     const v = process.env.MIN_FOLLOWERS?.trim();
@@ -132,9 +153,25 @@ export async function extractSingleProfileWithPage(
     /** Destaques desligados: UI não usa; abrir cada highlight no IG é lento. */
     extractHighlights: false,
   };
-  const extracted = await extractProfile(page, cleanHandle, 'seed', '', config, extractOpts);
+  let extracted: Awaited<ReturnType<typeof extractProfile>> | null = null;
+  try {
+    extracted = await extractProfile(page, cleanHandle, 'seed', '', config, extractOpts);
+  } catch (e) {
+    const classified = classifyExtractFailure(e instanceof Error ? e.message : String(e));
+    return {
+      success: false,
+      handle: cleanHandle,
+      error: classified.error,
+      rejectionReason: classified.rejectionReason,
+    };
+  }
   if (!extracted) {
-    return { success: false, handle: cleanHandle, error: 'Falha ao extrair perfil (página ou API)' };
+    return {
+      success: false,
+      handle: cleanHandle,
+      error: 'Falha ao extrair perfil: sem dados utilizáveis da API',
+      rejectionReason: 'falha_api_sem_dados',
+    };
   }
   const t0 = Date.now();
   const logStep = (msg: string) => console.log(`[extractSingleProfile] ${logTimestamp()} @${cleanHandle} +${Date.now() - t0}ms ${msg}`);

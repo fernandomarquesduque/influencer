@@ -447,6 +447,12 @@ function getEdgesFromRawTimeline(raw: unknown): unknown[] {
   return getEdgesFromRaw(raw, TIMELINE_EDGES_PATHS);
 }
 
+function pageLooksLikePrivateProfile(text: string): boolean {
+  return /this account is private|conta privada|perfil privado|este perfil é privado|esta conta é privada|this profile is private/i.test(
+    text
+  );
+}
+
 /** Verifica se um array parece ser edges de mídia (objetos com node.shortcode ou node.code). */
 function isMediaEdgesArray(arr: unknown): arr is unknown[] {
   if (!Array.isArray(arr) || arr.length === 0) return false;
@@ -975,6 +981,11 @@ export async function extractProfile(
     }).catch(() => false);
     if (pageNotAvailable) {
       throw new Error('Perfil não encontrado');
+    }
+
+    const pageTextForPrivacy = await page.evaluate(() => document.body?.innerText ?? '').catch(() => '');
+    if (pageLooksLikePrivateProfile(pageTextForPrivacy)) {
+      throw new Error('Perfil privado (sem acesso)');
     }
 
     await page.waitForTimeout(d(pageAlreadyOnProfile ? 400 : 1000));

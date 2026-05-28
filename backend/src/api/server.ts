@@ -165,6 +165,7 @@ import {
 import {
   getAdminMediaS3Audit,
   listAdminMediaS3FilteredHandles,
+  profileMissingS3Media,
   scanBulkEnqueueBatch,
   type AdminBulkEnqueueMode,
   type AdminMediaS3Filter,
@@ -182,6 +183,27 @@ const openApiSqlite = require('./openapi-sqlite.json');
 const PORT = Number(process.env.PORT) || Number(process.env.API_PORT) || 3500;
 const rocksPath = process.env.STORAGE_DB_PATH ?? './data/rocksdb';
 const sqlitePath = process.env.SQLITE_DB_PATH ?? './data/influencer.db';
+const EXTRACT_AUTO_DELETE_ENABLED = process.env.EXTRACT_AUTO_DELETE_ENABLED !== 'false';
+/** Padrão: exclusão real. Só simula se EXTRACT_AUTO_DELETE_DRY_RUN=true no .env */
+const EXTRACT_AUTO_DELETE_DRY_RUN = process.env.EXTRACT_AUTO_DELETE_DRY_RUN === 'true';
+const EXTRACT_AUTO_DELETE_REQUIRED_CONSECUTIVE = Math.max(
+  1,
+  Number(process.env.EXTRACT_AUTO_DELETE_REQUIRED_CONSECUTIVE) || 1
+);
+const EXTRACT_AUTO_DELETE_MAX_PER_RUN = Math.max(
+  1,
+  Number(process.env.EXTRACT_AUTO_DELETE_MAX_PER_RUN) || 20
+);
+const EXTRACT_AUTO_DELETE_MAX_PERCENT_PER_RUN = Math.max(
+  0.01,
+  Number(process.env.EXTRACT_AUTO_DELETE_MAX_PERCENT_PER_RUN) || 0.5
+);
+const EXTRACT_AUTO_DELETE_REASON_SET = new Set(
+  String(process.env.EXTRACT_AUTO_DELETE_REASONS ?? 'not_found,private,api_no_s3')
+    .split(',')
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean)
+);
 
 const app = express();
 
@@ -576,6 +598,150 @@ async function runSupplementReelsAndTagged(
 }
 
 /** Processa o próximo handle da fila de refresh (re-extração por falha de imagem). Uma execução por vez. Só executa se última extração foi há mais de 60 min. */
+type ExtractAutoDeleteReason = 'not_found' | 'private' | 'api_no_s3';
+const extractAutoDeleteFailures = new Map<string, { reason: ExtractAutoDeleteReason; count: number }>();
+let extractAutoDeleteCountThisRun = 0;
+let extractAutoDeleteTotalProfilesCache: { value: number; expiresAt: number } | null = null;
+
+function isFalhaApiSemDados(
+  error: string | undefined | null,
+  rejectionReason?: string | undefined | null
+): boolean {
+  const rej = String(rejectionReason ?? '').toLowerCase();
+  if (rej === 'falha_api_sem_dados') return true;
+  const err = String(error ?? '').toLowerCase();
+  return err.includes('sem dados utilizáveis da api');
+}
+
+function classifyExtractAutoDeleteReason(
+  error: string | undefined | null,
+  rejectionReason?: string | undefined | null
+): ExtractAutoDeleteReason | null {
+  if (isProfileNotFoundExtractError(error)) return 'not_found';
+  const err = String(error ?? '').toLowerCase();
+  const rej = String(rejectionReason ?? '').toLowerCase();
+  const isPrivate =
+    rej.includes('perfil_privado') ||
+    err.includes('perfil_privado') ||
+    err.includes('perfil privado') ||
+    err.includes('conta privada') ||
+    err.includes('este perfil é privado') ||
+    err.includes('this account is private') ||
+    err.includes('private account');
+  return isPrivate ? 'private' : null;
+}
+
+async function resolveExtractAutoDeleteReason(
+  handle: string,
+  error: string | undefined | null,
+  rejectionReason?: string | undefined | null
+): Promise<ExtractAutoDeleteReason | null> {
+  const direct = classifyExtractAutoDeleteReason(error, rejectionReason);
+  if (direct) return direct;
+  if (!isFalhaApiSemDados(error, rejectionReason)) return null;
+  const profile = (await db.loadByHandle(handle)) as Record<string, unknown> | null;
+  if (!profile) return null;
+  const missingS3 = await profileMissingS3Media(db, handle, profile);
+  return missingS3 ? 'api_no_s3' : null;
+}
+
+async function getAutoDeleteTotalProfiles(): Promise<number> {
+  const now = Date.now();
+  if (extractAutoDeleteTotalProfilesCache && now < extractAutoDeleteTotalProfilesCache.expiresAt) {
+    return extractAutoDeleteTotalProfilesCache.value;
+  }
+  try {
+    const total = Array.from(await db.listHandles()).length;
+    extractAutoDeleteTotalProfilesCache = { value: total, expiresAt: now + 30_000 };
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
+async function maybeAutoDeleteAfterExtractFailure(
+  handleRaw: string,
+  opts: {
+    error?: string | null;
+    rejectionReason?: string | null;
+    source: 'refresh_queue' | 'extract_profile';
+  }
+): Promise<void> {
+  const handle = handleRaw.replace(/^@/, '').trim().toLowerCase();
+  if (!handle) return;
+  if (!EXTRACT_AUTO_DELETE_ENABLED) return;
+
+  const reason = await resolveExtractAutoDeleteReason(handle, opts.error, opts.rejectionReason);
+  if (!reason) {
+    extractAutoDeleteFailures.delete(handle);
+    return;
+  }
+  if (!EXTRACT_AUTO_DELETE_REASON_SET.has(reason)) {
+    return;
+  }
+
+  // Só auto-delete: exclusão manual (DELETE /api/admin/influencers, DELETE /api/account) não passa aqui.
+  const profile = (await db.loadByHandle(handle)) as Record<string, unknown> | null;
+  if (profile && !(await profileMissingS3Media(db, handle, profile))) {
+    extractAutoDeleteFailures.delete(handle);
+    console.warn(
+      `[auto-delete] @${handle} preservado: mídia S3 completa (motivo=${reason} ignorado) source=${opts.source}`
+    );
+    return;
+  }
+
+  const prev = extractAutoDeleteFailures.get(handle);
+  const count = prev && prev.reason === reason ? prev.count + 1 : 1;
+  extractAutoDeleteFailures.set(handle, { reason, count });
+
+  if (count < EXTRACT_AUTO_DELETE_REQUIRED_CONSECUTIVE) {
+    console.warn(
+      `[auto-delete] @${handle} aguardando confirmação (${count}/${EXTRACT_AUTO_DELETE_REQUIRED_CONSECUTIVE}) motivo=${reason} source=${opts.source}`
+    );
+    return;
+  }
+  if (extractAutoDeleteCountThisRun >= EXTRACT_AUTO_DELETE_MAX_PER_RUN) {
+    console.error(
+      `[auto-delete] bloqueado por limite de execução (${EXTRACT_AUTO_DELETE_MAX_PER_RUN}) @${handle} motivo=${reason}`
+    );
+    return;
+  }
+
+  const totalProfiles = await getAutoDeleteTotalProfiles();
+  if (totalProfiles > 0) {
+    const projectedPercent = ((extractAutoDeleteCountThisRun + 1) / totalProfiles) * 100;
+    if (projectedPercent > EXTRACT_AUTO_DELETE_MAX_PERCENT_PER_RUN) {
+      console.error(
+        `[auto-delete] bloqueado por percentual (${projectedPercent.toFixed(3)}% > ${EXTRACT_AUTO_DELETE_MAX_PERCENT_PER_RUN}%) @${handle}`
+      );
+      return;
+    }
+  }
+
+  if (EXTRACT_AUTO_DELETE_DRY_RUN) {
+    console.warn(
+      `[auto-delete] DRY-RUN @${handle} seria removido motivo=${reason} source=${opts.source} (falhas consecutivas=${count})`
+    );
+    return;
+  }
+
+  try {
+    const removed = await removeInfluencerNotFoundOnInstagram(handle, {
+      db,
+      sqlite,
+      creditsCampaignsDb,
+      authDb,
+    });
+    extractAutoDeleteCountThisRun += 1;
+    extractAutoDeleteFailures.delete(handle);
+    console.log(
+      `[auto-delete] @${handle} removido motivo=${reason}: S3=${removed.s3ObjectsRemoved} objeto(s), banco=${removed.dbRemoved ? 'ok' : 'falhou'}`
+    );
+  } catch (err) {
+    console.error(`[auto-delete] erro ao remover @${handle}:`, err instanceof Error ? err.message : err);
+  }
+}
+
 function processNextRefresh(): void {
   const snap = getExtractRefreshQueueSnapshot();
   if (snap.length === 0) return;
@@ -608,22 +774,18 @@ function processNextRefresh(): void {
       if (result.saved) console.log(`[API] Refresh de imagens concluído: @${handle}`);
       else if (result.error) {
         console.error(`[API] Refresh @${handle} falhou:`, result.error);
-        if (isProfileNotFoundExtractError(result.error)) {
-          try {
-            const removed = await removeInfluencerNotFoundOnInstagram(handle, {
-              db,
-              sqlite,
-              creditsCampaignsDb,
-              authDb,
-            });
-            console.log(
-              `[API] @${handle} removido (não existe no Instagram): S3=${removed.s3ObjectsRemoved} objeto(s), banco=${removed.dbRemoved ? 'ok' : 'falhou'}.`
-            );
-          } catch (err) {
-            console.error(`[API] Erro ao remover @${handle}:`, err instanceof Error ? err.message : err);
-          }
-        }
-      } else if (result.rejectionReason) console.warn(`[API] Refresh @${handle} rejeitado:`, result.rejectionReason);
+        await maybeAutoDeleteAfterExtractFailure(handle, {
+          error: result.error,
+          rejectionReason: result.rejectionReason,
+          source: 'refresh_queue',
+        });
+      } else if (result.rejectionReason) {
+        console.warn(`[API] Refresh @${handle} rejeitado:`, result.rejectionReason);
+        await maybeAutoDeleteAfterExtractFailure(handle, {
+          rejectionReason: result.rejectionReason,
+          source: 'refresh_queue',
+        });
+      }
     })
     .catch((err) => {
       console.error(`[API] Refresh @${handle} erro:`, err instanceof Error ? err.stack : err);
@@ -2156,6 +2318,18 @@ app.delete('/api/account', requireScopes('adm', 'assinante', 'influencer'), asyn
     return;
   }
 
+  /** Com handle: purge completo (S3 + RocksDB + SQLite + auth), inclusive perfil “rico” em S3. */
+  if (handle) {
+    const purge = await purgeInfluencerAsAdminCore(handle);
+    if (!purge.ok) {
+      res.status(purge.statusCode).json({ error: purge.error });
+      return;
+    }
+    clearCampaignContextCache();
+    res.status(204).end();
+    return;
+  }
+
   const safeRun = (name: string, fn: () => void | Promise<void>): void => {
     try {
       const p = fn();
@@ -2167,22 +2341,6 @@ app.delete('/api/account', requireScopes('adm', 'assinante', 'influencer'), asyn
     }
   };
 
-  const safeRunAsync = async (name: string, fn: () => void | Promise<void>): Promise<void> => {
-    try {
-      await Promise.resolve(fn());
-    } catch (err) {
-      console.error(`[DELETE /api/account] ${name}:`, err instanceof Error ? err.message : err);
-    }
-  };
-
-  if (handle) {
-    safeRun('deleteActivation', () => sqlite.deleteActivation(handle!));
-    safeRun('deleteProjectApplicationsByHandle', () => sqlite.deleteProjectApplicationsByHandle(handle!));
-    safeRun('deleteDirectQueueByHandle', () => sqlite.deleteDirectQueueByHandle(handle!));
-    await safeRunAsync('rocks.deleteByKeyPrefix(post)', async () => { await rocks.deleteByKeyPrefix('post', `${handle!}:`); });
-    await safeRunAsync('rocks.delete(profile)', () => rocks.delete('profile', handle!));
-    safeRun('clearProfileVerification', () => authDb.clearProfileVerification(handle!));
-  }
   safeRun('creditsCampaignsDb.deleteAllByUserId', () => creditsCampaignsDb.deleteAllByUserId(userId));
   safeRun('paymentsDb.deleteAllByUserId', () => paymentsDb.deleteAllByUserId(userId));
   safeRun('sqlite.deleteAllFavoritesByUserId', () => sqlite.deleteAllFavoritesByUserId(userId));
@@ -8174,11 +8332,11 @@ async function runExtractAndStore(handle: string, runOptions?: RunOneExtractOpti
           : result.rejectionReason
             ? `Perfil não qualificado: ${result.rejectionReason}`
             : 'Falha ao extrair perfil (página ou API)');
-      if (isProfileNotFoundExtractError(err)) {
-        await removeInfluencerNotFoundOnInstagram(handle, { db, sqlite, creditsCampaignsDb, authDb }).catch(
-          (e) => console.error(`[runExtractAndStore] remove @${handle}:`, e instanceof Error ? e.message : e)
-        );
-      }
+      await maybeAutoDeleteAfterExtractFailure(handle, {
+        error: result.error ?? err,
+        rejectionReason: result.rejectionReason,
+        source: 'extract_profile',
+      });
       extractProfileResults.set(handle, { status: 'error', error: err });
       return;
     }
@@ -8191,9 +8349,10 @@ async function runExtractAndStore(handle: string, runOptions?: RunOneExtractOpti
       ? 'Sessão do Instagram expirada ou não logada. Execute o login na pasta backend: npm run login'
       : msg;
     if (isProfileNotFoundExtractError(msg)) {
-      await removeInfluencerNotFoundOnInstagram(handle, { db, sqlite, creditsCampaignsDb, authDb }).catch(
-        (e) => console.error(`[runExtractAndStore] remove @${handle}:`, e instanceof Error ? e.message : e)
-      );
+      await maybeAutoDeleteAfterExtractFailure(handle, {
+        error: msg,
+        source: 'extract_profile',
+      });
       error = 'Perfil não encontrado. Se o perfil existir, a sessão do Instagram pode ter expirado. Execute na pasta backend: npm run login';
     }
     extractProfileResults.set(handle, { status: 'error', error });
