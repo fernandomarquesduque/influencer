@@ -117,7 +117,7 @@ export default function PaymentInvoiceModal({
     setCancelling(true)
     try {
       await cancelMySubscription()
-      message.success('Assinatura cancelada no Asaas.')
+      message.success('Assinatura cancelada.')
       onClose()
       await Promise.resolve(onSubscriptionCancelled?.())
     } catch (e) {
@@ -145,7 +145,7 @@ export default function PaymentInvoiceModal({
           {showCancelSubscription ? (
             <Popconfirm
               title="Cancelar assinatura?"
-              description="Cancela a recorrência no Asaas. Cobranças futuras não serão geradas. Não dá para desfazer."
+              description="Cancela a recorrência. Cobranças futuras não serão geradas. Não dá para desfazer."
               okText="Sim, cancelar"
               cancelText="Voltar"
               okButtonProps={{ danger: true, loading: cancelling }}
@@ -169,7 +169,7 @@ export default function PaymentInvoiceModal({
             <span className="payment-invoice-modal__mono">{payment.id}</span>
           </Descriptions.Item>
           {payment.asaasPaymentId ? (
-            <Descriptions.Item label="Código Asaas">
+            <Descriptions.Item label="Código">
               <span className="payment-invoice-modal__mono">{payment.asaasPaymentId}</span>
             </Descriptions.Item>
           ) : null}
