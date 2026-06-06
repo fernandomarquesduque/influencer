@@ -738,6 +738,19 @@ export async function fetchMySubscription(options?: { signal?: AbortSignal }): P
   return res.json() as Promise<MySubscriptionStatus>
 }
 
+/** Cancela assinatura recorrente no Asaas (interrompe cobranças futuras). */
+export async function cancelMySubscription(options?: { signal?: AbortSignal }): Promise<void> {
+  const res = await fetch(`${API_BASE}/me/subscription`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Falha ao cancelar assinatura')
+  }
+}
+
 export interface CreatePaymentForCreditsResponse {
   paymentId: string
   asaasPaymentId: string | null

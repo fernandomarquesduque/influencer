@@ -3586,6 +3586,52 @@ app.get('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
   }
 });
 
+/** Cancela assinatura recorrente no Asaas (interrompe cobranças futuras). */
+app.delete('/api/me/subscription', async (req: RequestWithAuth, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Login necessário' });
+      return;
+    }
+    const userId = Number(req.user.sub);
+    const latest = paymentsDb.getLatestPlanPayment(userId);
+    const subId = latest?.asaas_subscription_id?.trim() || null;
+    if (!subId) {
+      res.status(404).json({ error: 'Nenhuma assinatura encontrada.' });
+      return;
+    }
+    if (asaas.isAsaasConfigured()) {
+      try {
+        await asaas.deleteAsaasSubscription(subId);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        res.status(502).json({
+          error: msg || 'Não foi possível cancelar a assinatura no Asaas.',
+        });
+        return;
+      }
+    }
+    const pending = paymentsDb.getFirstPendingForUser(userId);
+    if (pending?.plan_id && pending.status === 'PENDING') {
+      const asaasId = pending.asaas_payment_id?.trim() || null;
+      if (asaas.isAsaasConfigured() && asaasId) {
+        try {
+          await asaas.deleteAsaasPayment(asaasId);
+        } catch (e) {
+          console.warn(
+            '[payments] deleteAsaasPayment ao cancelar assinatura:',
+            e instanceof Error ? e.message : e
+          );
+        }
+      }
+      paymentsDb.deleteByIdForUser(pending.id, userId);
+    }
+    res.status(204).end();
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 /** Remove cobrança pendente (cancela no Asaas quando aplicável e apaga o registro local). */
 app.delete('/api/me/payments/:id', async (req: RequestWithAuth, res: Response) => {
   try {

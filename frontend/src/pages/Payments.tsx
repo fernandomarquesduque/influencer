@@ -12,6 +12,7 @@ import {
   type CreatePaymentForCreditsResponse,
 } from '../api'
 import PendingPaymentCard from '../components/PendingPaymentCard/PendingPaymentCard'
+import PaymentInvoiceModal from '../components/PaymentInvoiceModal/PaymentInvoiceModal'
 import BuscaInfluencerPlansPanel, {
   useBuscaPlansSubscriptionAccess,
 } from '../components/BuscaInfluencerPlansModal/BuscaInfluencerPlansPanel'
@@ -75,6 +76,7 @@ export default function Payments() {
   const [pendingLoading, setPendingLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [invoiceModalPayment, setInvoiceModalPayment] = useState<PaymentItem | null>(null)
   const pendingCardRef = useRef<HTMLDivElement | null>(null)
 
   const loadPendingPayment = useCallback(async () => {
@@ -243,7 +245,7 @@ export default function Payments() {
                       </Button>
                     ) : null}
                     {row.invoiceUrl ? (
-                      <Button type="link" size="small" href={row.invoiceUrl} target="_blank" rel="noopener noreferrer">
+                      <Button type="link" size="small" onClick={() => setInvoiceModalPayment(row)}>
                         Fatura
                       </Button>
                     ) : null}
@@ -254,6 +256,13 @@ export default function Payments() {
           />
         </Card>
       ) : null}
+
+      <PaymentInvoiceModal
+        open={invoiceModalPayment != null}
+        payment={invoiceModalPayment}
+        onClose={() => setInvoiceModalPayment(null)}
+        onSubscriptionCancelled={refreshAll}
+      />
     </div>
   )
 }

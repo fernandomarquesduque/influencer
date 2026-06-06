@@ -1,0 +1,26 @@
+.payment-invoice-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.payment-invoice-modal__footer--split {
+  justify-content: space-between;
+}
+
+.payment-invoice-modal__descriptions .ant-descriptions-item-label {
+  width: 42%;
+  font-weight: 500;
+  color: var(--app-text-secondary, rgba(29, 30, 31, 0.65));
+}
+
+.payment-invoice-modal__descriptions .ant-descriptions-item-content {
+  color: var(--app-text, #1d1e1f);
+}
+
+.payment-invoice-modal__mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  word-break: break-all;
+}

@@ -167,7 +167,7 @@ export class PaymentsDb {
       .prepare(
         `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
                 status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
-                report_query, report_desired_count, campaign_id
+                report_query, report_desired_count, campaign_id, plan_id, asaas_subscription_id, plan_first_due_date
          FROM payment WHERE id = ?`
       )
       .get(id) as PaymentRow | undefined;
@@ -204,7 +204,8 @@ export class PaymentsDb {
     return this.db
       .prepare(
         `SELECT id, user_id, asaas_payment_id, asaas_customer_id, amount_cents, credits_granted,
-                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at
+                status, billing_type, invoice_url, bank_slip_url, pix_copy_paste, created_at, updated_at,
+                plan_id, asaas_subscription_id, plan_first_due_date
          FROM payment WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
       )
       .all(userId, limit, offset) as PaymentRow[];
