@@ -28,6 +28,45 @@ function llmMainCategoryBucketsMatch(rawProfileMc: string, filterRaw: string): b
   return foldMainCategoryKey(a) === foldMainCategoryKey(b);
 }
 
+type LlmMainCategoryLabelsPayload = {
+  items: Array<{ label: string; count: number }>;
+  labels: string[];
+  totalDistinct: number;
+  returned: number;
+  totalInfluencersLlm: number;
+  listTruncated: boolean;
+  cached?: boolean;
+};
+
+const LLM_MAIN_CATEGORIES_CACHE_TTL_MS = 10 * 60 * 1000;
+let llmMainCategoryLabelsCache: { data: LlmMainCategoryLabelsPayload; fetchedAt: number } | null = null;
+
+function invalidateLlmMainCategoryLabelsCache(): void {
+  llmMainCategoryLabelsCache = null;
+}
+
+function aggregateLlmMainCategoryLabelsFromStorage(storage: CompositeStorage): LlmMainCategoryLabelsPayload {
+  const rawRows = storage.aggregateLlmMainCategoryLabelCounts();
+  const acc = new Map<string, number>();
+  for (const { label, count } of rawRows) {
+    const bucket = llmMainCategoryBucket(label);
+    if (!bucket) continue;
+    acc.set(bucket, (acc.get(bucket) ?? 0) + count);
+  }
+  const sorted = [...acc.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'));
+  let totalInfluencersLlm = 0;
+  for (const [, c] of sorted) totalInfluencersLlm += c;
+  const rowsAll = sorted.map(([label, count]) => ({ label, count }));
+  return {
+    items: rowsAll,
+    labels: rowsAll.map((r) => r.label),
+    totalDistinct: acc.size,
+    returned: rowsAll.length,
+    totalInfluencersLlm,
+    listTruncated: false,
+  };
+}
+
 type JsonRecord = Record<string, unknown>;
 
 export interface CollectorIngestResponse {
@@ -519,7 +558,7 @@ export function createCollectorController(storage: CompositeStorage) {
     },
 
     /**
-     * Agrega `qualification.mainCategory` (LLM concluído): varre todo o bucket `profile` no RocksDB.
+     * Agrega `qualification.mainCategory` (LLM concluído) via índice SQLite (`profile_search_aux`).
      * Chave = taxonomia canônica ou texto bruto se o snap não encaixar (alinhado à busca / filtro da fila).
      * Sem `limit` na query: devolve todas as facetas + contagens. `limit` positivo corta a lista ordenada (máx. 100k).
      */
@@ -530,30 +569,34 @@ export function createCollectorController(storage: CompositeStorage) {
           limitStr != null && String(limitStr).trim() !== '' ? Number(limitStr) : Number.NaN;
         const hasCap = Number.isFinite(limitParsed) && limitParsed > 0;
         const cap = hasCap ? Math.max(1, Math.min(100_000, Math.floor(limitParsed))) : null;
-        const profiles = await storage.getByBucket<Record<string, unknown>>('profile');
-        const acc = new Map<string, number>();
-        for (const { value } of profiles) {
-          const q = getLlmQualification(value);
-          if (!q) continue;
-          const raw = String(q.mainCategory ?? '').trim();
-          const bucket = llmMainCategoryBucket(raw);
-          if (!bucket) continue;
-          acc.set(bucket, (acc.get(bucket) ?? 0) + 1);
-        }
-        const sorted = [...acc.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'));
-        let totalInfluencersLlm = 0;
-        for (const [, c] of sorted) totalInfluencersLlm += c;
-        const rowsAll = sorted.map(([label, count]) => ({ label, count }));
+        const forceRefresh =
+          String(req.query.refresh ?? '').trim() === '1' ||
+          String(req.query.refresh ?? '').trim().toLowerCase() === 'true';
+
+        const now = Date.now();
+        const cache = llmMainCategoryLabelsCache;
+        const cacheFresh =
+          !forceRefresh && cache != null && now - cache.fetchedAt < LLM_MAIN_CATEGORIES_CACHE_TTL_MS;
+        const base = cacheFresh
+          ? cache.data
+          : (() => {
+              const data = aggregateLlmMainCategoryLabelsFromStorage(storage);
+              llmMainCategoryLabelsCache = { data, fetchedAt: now };
+              return data;
+            })();
+
+        const rowsAll = base.items;
         const rows = cap != null ? rowsAll.slice(0, cap) : rowsAll;
         const labels = rows.map((r) => r.label);
         res.status(200).json({
           ok: true,
           items: rows,
           labels,
-          totalDistinct: acc.size,
+          totalDistinct: base.totalDistinct,
           returned: rows.length,
-          totalInfluencersLlm,
-          listTruncated: cap != null && sorted.length > rows.length,
+          totalInfluencersLlm: base.totalInfluencersLlm,
+          listTruncated: cap != null && rowsAll.length > rows.length,
+          cached: cacheFresh,
         });
       } catch (e) {
         console.error('[collectorController.listLlmMainCategoryLabels]', e instanceof Error ? e.stack : e);
@@ -625,6 +668,7 @@ export function createCollectorController(storage: CompositeStorage) {
           llm,
         };
         await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
+        invalidateLlmMainCategoryLabelsCache();
         // Nao await warmSearchCache aqui: recarrega profile+post inteiro do disco e pode levar minutos,
         // fazendo o qualify abortar o POST (QUALIFY_INGEST_TIMEOUT_MS). Rewarm em background mantem o mesmo destino final.
         scheduleSearchCacheRewarmDebounced(storage);

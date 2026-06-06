@@ -250,6 +250,10 @@ export class CompositeStorage {
     return this.sqlite.countProfileSearchAuxRows();
   }
 
+  aggregateLlmMainCategoryLabelCounts(): { label: string; count: number }[] {
+    return this.sqlite.aggregateLlmMainCategoryLabelCounts();
+  }
+
   deleteProfileSearchIndex(handle: string): void {
     this.sqlite.deleteProfileSearchIndex(handle);
     void deleteInfluencerFromMeilisearch(handle).catch((e) =>

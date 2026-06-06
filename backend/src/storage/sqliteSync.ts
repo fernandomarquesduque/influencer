@@ -524,6 +524,42 @@ export class SqliteSync {
     return row?.c ?? 0;
   }
 
+  /**
+   * Agrega mainCategory por perfil com LLM indexado (`llm_qualification_json`).
+   * Retorna rótulos brutos/canônicos antes do snap final (feito no caller).
+   */
+  aggregateLlmMainCategoryLabelCounts(): { label: string; count: number }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           COALESCE(
+             NULLIF(trim(json_extract(llm_qualification_json, '$.mainCategoryCanonical')), ''),
+             NULLIF(trim(json_extract(llm_qualification_json, '$.mainCategory')), '')
+           ) AS label,
+           COUNT(*) AS cnt
+         FROM profile_search_aux
+         WHERE json_valid(llm_qualification_json)
+           AND llm_qualification_json IS NOT NULL
+           AND length(trim(llm_qualification_json)) > 2
+           AND COALESCE(
+             NULLIF(trim(json_extract(llm_qualification_json, '$.mainCategoryCanonical')), ''),
+             NULLIF(trim(json_extract(llm_qualification_json, '$.mainCategory')), '')
+           ) IS NOT NULL
+           AND length(trim(COALESCE(
+             NULLIF(trim(json_extract(llm_qualification_json, '$.mainCategoryCanonical')), ''),
+             NULLIF(trim(json_extract(llm_qualification_json, '$.mainCategory')), '')
+           ))) > 0
+         GROUP BY label`
+      )
+      .all() as { label: string; cnt: number }[];
+    return rows
+      .map((r) => ({
+        label: String(r.label ?? '').trim(),
+        count: Math.max(0, Math.floor(Number(r.cnt) || 0)),
+      }))
+      .filter((r) => r.label.length > 0 && r.count > 0);
+  }
+
   /** Limite de handles retornados pelo atalho SQL (alinhado ao FTS). */
   static readonly GLOBAL_AUX_SQL_HANDLE_CAP = 50_000;
 
