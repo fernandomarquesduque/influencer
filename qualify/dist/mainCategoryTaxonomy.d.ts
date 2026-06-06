@@ -1,7 +1,7 @@
 /**
  * Taxonomia fechada de mainCategory (macro, uma palavra) + subCategories → main (V2).
  * Prioridade: subCategories (mapa fechado) → bio/contexto (aliases + sinais) → snap do LLM.
- * Duplicado em crawl/src/lib/mainCategoryTaxonomy.ts — altere nos dois arquivos.
+ * Duplicado em backend/src/lib/mainCategoryTaxonomy.ts — altere nos dois arquivos.
  */
 export declare const MAIN_CATEGORY_CANONICAL_LABELS: readonly ["Beleza", "Moda", "Fitness", "Saúde", "Alimentação", "Viagens", "Entretenimento", "Humor", "Música", "Esportes", "Tecnologia", "Educação", "Negócios", "Finanças", "Maternidade", "Lifestyle", "Política", "Pets", "Games", "Casa", "Automotivo", "Religião"];
 export type MainCategoryCanonical = (typeof MAIN_CATEGORY_CANONICAL_LABELS)[number];

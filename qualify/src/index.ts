@@ -1296,25 +1296,47 @@ function getIngestPushTimeoutMs(): number {
   return DEFAULT_INGEST_TIMEOUT_MS;
 }
 
-async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<JsonRecord> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...init, signal: ac.signal });
-    const text = await res.text();
-    let data: JsonRecord = {};
+async function fetchJson(url: string, init: RequestInit, timeoutMs: number, retries = 2): Promise<JsonRecord> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500 * attempt));
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
-      data = text ? (JSON.parse(text) as JsonRecord) : {};
-    } catch {
-      throw new Error(`Resposta invalida da API (${res.status}): ${text.slice(0, 220)}`);
+      const res = await fetch(url, { ...init, signal: ac.signal });
+      const text = await res.text();
+      let data: JsonRecord = {};
+      try {
+        data = text ? (JSON.parse(text) as JsonRecord) : {};
+      } catch {
+        const err = new Error(`Resposta invalida da API (${res.status}): ${text.slice(0, 220)}`);
+        if (attempt < retries && (res.status >= 500 || res.status === 429)) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+      if (!res.ok) {
+        const err = new Error(`${res.status} ${String(data.error ?? text ?? 'Erro na API')}`);
+        if (attempt < retries && (res.status >= 500 || res.status === 429)) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+      return data;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      if (attempt < retries && (err.name === 'AbortError' || err.message.includes('fetch failed'))) {
+        lastError = err;
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    if (!res.ok) {
-      throw new Error(`${res.status} ${String(data.error ?? text ?? 'Erro na API')}`);
-    }
-    return data;
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastError ?? new Error('Falha na requisicao apos tentativas');
 }
 
 function getLlmMediaContextLimit(): number {
@@ -1341,7 +1363,8 @@ async function fetchPendingFromApi(
   offset = 0,
   refreshAll = true,
   mainCategory?: string,
-  mediaLimitOverride?: number
+  mediaLimitOverride?: number,
+  includeContent = false
 ): Promise<{ totalPending: number; items: Array<{ handle: string; profile: JsonRecord }> }> {
   const refreshAllQuery = refreshAll ? '1' : '0';
   const mediaLimit =
@@ -1352,7 +1375,7 @@ async function fetchPendingFromApi(
     limit: String(limit),
     offset: String(offset),
     refreshAll: refreshAllQuery,
-    includeContent: '1',
+    includeContent: includeContent ? '1' : '0',
     mediaLimit: String(mediaLimit),
   });
   const mc = String(mainCategory ?? '').trim();
@@ -1476,38 +1499,135 @@ async function fetchLlmMainCategoryLabelsFromApi(
   };
 }
 
+type LlmMainCategoryLabels = Awaited<ReturnType<typeof fetchLlmMainCategoryLabelsFromApi>>;
+type LlmMainCategoryLabelsResponse = LlmMainCategoryLabels & {
+  cached?: boolean;
+  stale?: boolean;
+  fromTaxonomy?: boolean;
+};
+
+const MAIN_CATEGORIES_CACHE_TTL_MS = 10 * 60 * 1000;
+let mainCategoriesCache: { data: LlmMainCategoryLabels; fetchedAt: number } | null = null;
+let mainCategoriesRefreshPromise: Promise<LlmMainCategoryLabels> | null = null;
+
+function getMainCategoryTaxonomyFallback(): LlmMainCategoryLabels {
+  const labels = [...MAIN_CATEGORY_CANONICAL_LABELS];
+  return {
+    items: labels.map((label) => ({ label, count: 0 })),
+    labels,
+    totalDistinct: labels.length,
+    totalInfluencersLlm: 0,
+  };
+}
+
+async function refreshMainCategoriesCache(apiBase: string, ingestKey: string): Promise<LlmMainCategoryLabels> {
+  if (mainCategoriesRefreshPromise) return mainCategoriesRefreshPromise;
+  mainCategoriesRefreshPromise = (async () => {
+    try {
+      const data = await fetchLlmMainCategoryLabelsFromApi(apiBase, ingestKey);
+      mainCategoriesCache = { data, fetchedAt: Date.now() };
+      return data;
+    } finally {
+      mainCategoriesRefreshPromise = null;
+    }
+  })();
+  return mainCategoriesRefreshPromise;
+}
+
+/** Cache local + fallback taxonomico: evita bloquear o painel ~60s na API remota. */
+async function getLlmMainCategoryLabelsCached(
+  apiBase: string,
+  ingestKey: string,
+  forceRefresh = false
+): Promise<LlmMainCategoryLabelsResponse> {
+  const now = Date.now();
+  const cache = mainCategoriesCache;
+  const fresh = cache != null && now - cache.fetchedAt < MAIN_CATEGORIES_CACHE_TTL_MS;
+
+  if (!forceRefresh && fresh) return { ...cache.data, cached: true };
+
+  if (!forceRefresh && cache != null) {
+    void refreshMainCategoriesCache(apiBase, ingestKey).catch(() => {});
+    return { ...cache.data, cached: true, stale: true };
+  }
+
+  if (mainCategoriesRefreshPromise && !forceRefresh) {
+    const base = cache?.data ?? getMainCategoryTaxonomyFallback();
+    return { ...base, cached: cache != null, stale: true, fromTaxonomy: cache == null };
+  }
+
+  if (!forceRefresh) {
+    void refreshMainCategoriesCache(apiBase, ingestKey).catch(() => {});
+    return { ...getMainCategoryTaxonomyFallback(), fromTaxonomy: true, stale: true };
+  }
+
+  try {
+    const data = await refreshMainCategoriesCache(apiBase, ingestKey);
+    return { ...data, cached: false };
+  } catch {
+    if (cache != null) return { ...cache.data, cached: true, stale: true };
+    return { ...getMainCategoryTaxonomyFallback(), fromTaxonomy: true, stale: true };
+  }
+}
+
 async function fetchLlmCoverageStats(
   apiBase: string,
   ingestKey: string
 ): Promise<{ totalProfiles: number; withoutLlm: number; withLlm: number }> {
-  const [all, pendingOnly] = await Promise.all([
-    fetchJson(
-      `${apiBase}/crawl/collector-llm-pending?limit=1&offset=0&refreshAll=1&includeContent=0`,
-      {
-        method: 'GET',
-        headers: {
-          'X-Collector-Key': ingestKey,
-        },
+  const all = await fetchJson(
+    `${apiBase}/crawl/collector-llm-pending?limit=1&offset=0&refreshAll=1&includeContent=0`,
+    {
+      method: 'GET',
+      headers: {
+        'X-Collector-Key': ingestKey,
       },
-      getTimeoutMs()
-    ),
-    fetchJson(
-      `${apiBase}/crawl/collector-llm-pending?limit=1&offset=0&refreshAll=0&includeContent=0`,
-      {
-        method: 'GET',
-        headers: {
-          'X-Collector-Key': ingestKey,
-        },
+    },
+    getTimeoutMs()
+  );
+  const pendingOnly = await fetchJson(
+    `${apiBase}/crawl/collector-llm-pending?limit=1&offset=0&refreshAll=0&includeContent=0`,
+    {
+      method: 'GET',
+      headers: {
+        'X-Collector-Key': ingestKey,
       },
-      getTimeoutMs()
-    ),
-  ]);
+    },
+    getTimeoutMs()
+  );
   const totalProfilesRaw = Number(all.totalPending ?? 0);
   const withoutLlmRaw = Number(pendingOnly.totalPending ?? 0);
   const totalProfiles = Number.isFinite(totalProfilesRaw) ? Math.max(0, Math.floor(totalProfilesRaw)) : 0;
   const withoutLlm = Number.isFinite(withoutLlmRaw) ? Math.max(0, Math.floor(withoutLlmRaw)) : 0;
   const withLlm = Math.max(0, totalProfiles - withoutLlm);
   return { totalProfiles, withoutLlm, withLlm };
+}
+
+type LlmCoverageStats = Awaited<ReturnType<typeof fetchLlmCoverageStats>>;
+const COVERAGE_STATS_CACHE_TTL_MS = 2 * 60 * 1000;
+let coverageStatsCache: { data: LlmCoverageStats; fetchedAt: number } | null = null;
+let coverageStatsRefreshPromise: Promise<LlmCoverageStats> | null = null;
+
+async function fetchLlmCoverageStatsCached(
+  apiBase: string,
+  ingestKey: string,
+  forceRefresh = false
+): Promise<LlmCoverageStats> {
+  const now = Date.now();
+  const cache = coverageStatsCache;
+  if (!forceRefresh && cache != null && now - cache.fetchedAt < COVERAGE_STATS_CACHE_TTL_MS) {
+    return cache.data;
+  }
+  if (coverageStatsRefreshPromise) return coverageStatsRefreshPromise;
+  coverageStatsRefreshPromise = (async () => {
+    try {
+      const data = await fetchLlmCoverageStats(apiBase, ingestKey);
+      coverageStatsCache = { data, fetchedAt: Date.now() };
+      return data;
+    } finally {
+      coverageStatsRefreshPromise = null;
+    }
+  })();
+  return coverageStatsRefreshPromise;
 }
 
 async function pushLlmToApi(
@@ -2209,12 +2329,37 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
   const useCategoryFilter =
     mainCategoryFilter.length > 0 && (onlyWithLlm || sentimentOnlyMode);
   const queueMediaLimit = postSentimentEnabled ? getLlmMediaContextLimit() : undefined;
-  const coverage = await fetchLlmCoverageStats(apiBase, ingestKey);
+  const queueIncludeContent = false;
   const refreshAll = sentimentOnlyMode ? true : onlyWithLlm;
+  const needsCoverageForOffset = onlyWithLlm && !sentimentOnlyMode && !useCategoryFilter;
+
+  const runStartedAtMs = Date.now();
+  const progress: BatchProgress = {
+    total: 0,
+    processed: 0,
+    done: 0,
+    failed: 0,
+    excluded: 0,
+    currentHandle: 'Consultando fila na API…',
+    runStartedAt: new Date(runStartedAtMs).toISOString(),
+    elapsedMs: 0,
+    estimatedRemainingMs: null,
+    onlyWithLlm,
+    mainCategoryFilter: useCategoryFilter ? mainCategoryFilter : null,
+  };
+  options.onProgress?.(progress);
+
+  let coverage: LlmCoverageStats = { totalProfiles: 0, withoutLlm: 0, withLlm: 0 };
+  if (needsCoverageForOffset) {
+    options.onLog?.('Consultando estatisticas da base (pode levar ~1 min)…');
+    coverage = await fetchLlmCoverageStatsCached(apiBase, ingestKey);
+  }
+
   const queueOffset =
     sentimentOnlyMode || useCategoryFilter ? 0 : onlyWithLlm ? coverage.withoutLlm : 0;
   const processedHandles = new Set<string>();
   let listOffset = queueOffset;
+  options.onLog?.('Carregando primeiros perfis da fila (pode levar ~1 min)…');
   let firstBatch = await fetchPendingFromApi(
     apiBase,
     ingestKey,
@@ -2222,7 +2367,8 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     listOffset,
     refreshAll,
     useCategoryFilter ? mainCategoryFilter : undefined,
-    queueMediaLimit
+    queueMediaLimit,
+    queueIncludeContent
   );
   const emitLog = (msg: string) => {
     const line = `[qualify] ${msg}`;
@@ -2241,18 +2387,19 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
       listOffset,
       refreshAll,
       useCategoryFilter ? mainCategoryFilter : undefined,
-      queueMediaLimit
+      queueMediaLimit,
+      queueIncludeContent
     );
   }
   const targetTotal = sentimentOnlyMode
     ? useCategoryFilter
       ? firstBatch.totalPending
-      : coverage.totalProfiles
+      : firstBatch.totalPending
     : onlyWithLlm
       ? useCategoryFilter
         ? firstBatch.totalPending
         : coverage.withLlm
-      : coverage.withoutLlm;
+      : firstBatch.totalPending;
   const modoLabel = sentimentOnlyMode
     ? 'so_sentimento'
     : onlyWithLlm
@@ -2266,20 +2413,8 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
       `mainCategory: taxonomia fechada com ${MAIN_CATEGORY_CANONICAL_LABELS.length} rotulos canonicos (+ normalizacao de aliases no servidor)`
     );
   }
-  const runStartedAtMs = Date.now();
-  const progress: BatchProgress = {
-    total: targetTotal,
-    processed: 0,
-    done: 0,
-    failed: 0,
-    excluded: 0,
-    currentHandle: null,
-    runStartedAt: new Date(runStartedAtMs).toISOString(),
-    elapsedMs: 0,
-    estimatedRemainingMs: null,
-    onlyWithLlm,
-    mainCategoryFilter: useCategoryFilter ? mainCategoryFilter : null,
-  };
+  progress.total = targetTotal;
+  progress.currentHandle = firstBatch.items.length > 0 ? null : 'Fila vazia';
   options.onProgress?.(progress);
   if (targetTotal === 0 || firstBatch.items.length === 0) {
     return { total: 0, done: 0, failed: 0, excluded: 0, stopped: false };
@@ -2324,7 +2459,8 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
             listOffset,
             refreshAll,
             useCategoryFilter ? mainCategoryFilter : undefined,
-            queueMediaLimit
+            queueMediaLimit,
+            queueIncludeContent
           );
           if (!onlyWithLlm) progress.total = Math.max(progress.total, wrapBatch.totalPending);
           currentBatch = wrapBatch.items;
@@ -2343,7 +2479,8 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
         listOffset,
         refreshAll,
         useCategoryFilter ? mainCategoryFilter : undefined,
-        queueMediaLimit
+        queueMediaLimit,
+        queueIncludeContent
       );
       if (!onlyWithLlm) progress.total = Math.max(progress.total, skippedBatch.totalPending);
       currentBatch = skippedBatch.items;
@@ -2631,7 +2768,8 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
       listOffset,
       refreshAll,
       useCategoryFilter ? mainCategoryFilter : undefined,
-      queueMediaLimit
+      queueMediaLimit,
+      queueIncludeContent
     );
     if (!onlyWithLlm) progress.total = Math.max(progress.total, nextBatch.totalPending);
     currentBatch = nextBatch.items;
@@ -3046,7 +3184,8 @@ function renderUiHtml(): string {
           opt0.value = '';
           const nCat = data.totalDistinct != null ? data.totalDistinct : (items.length || labels.length);
           const nInf = data.totalInfluencersLlm != null ? data.totalInfluencersLlm : '-';
-          opt0.textContent = 'Todas (' + nCat + ' categorias · ' + nInf + ' perfis com LLM)';
+          const loadingHint = data.stale || data.fromTaxonomy ? ' · carregando contagens…' : '';
+          opt0.textContent = 'Todas (' + nCat + ' categorias · ' + nInf + ' perfis com LLM)' + loadingHint;
           sel.appendChild(opt0);
           if(items.length > 0){
             for(let i = 0; i < items.length; i++){
@@ -3077,7 +3216,7 @@ function renderUiHtml(): string {
         }
       }
       loadCategories();
-      setInterval(loadCategories, 20000);
+      setInterval(loadCategories, 60000);
       if(sel){
         sel.addEventListener('change', (ev)=>{
           setStringParam('mainCategory', ev.target && ev.target.value ? ev.target.value : '');
@@ -3182,7 +3321,7 @@ async function startUiServer(): Promise<void> {
     if (statsRefreshInFlight) return;
     statsRefreshInFlight = true;
     try {
-      const stats = await fetchLlmCoverageStats(getApiBaseOrThrow(), getIngestKeyOrThrow());
+      const stats = await fetchLlmCoverageStatsCached(getApiBaseOrThrow(), getIngestKeyOrThrow());
       state.withLlm = stats.withLlm;
       state.withoutLlm = stats.withoutLlm;
       state.totalProfiles = stats.totalProfiles;
@@ -3210,8 +3349,13 @@ async function startUiServer(): Promise<void> {
     state.results = [];
     state.lastStartedAt = new Date().toISOString();
     pushLog('Execucao iniciada.');
+    const runStartedAtMs = Date.now();
+    const elapsedTicker = setInterval(() => {
+      if (!state.running) return;
+      state.elapsedMs = Math.max(0, Date.now() - runStartedAtMs);
+    }, 1000);
     try {
-      await refreshCoverageStats();
+      state.currentHandle = 'Consultando fila na API…';
       const summary = await runBatch({
         shouldStop: () => state.stopRequested,
         onlyWithLlm: state.onlyWithLlm,
@@ -3219,7 +3363,14 @@ async function startUiServer(): Promise<void> {
         sentimentOnlyMode: state.sentimentOnlyMode,
         mainCategory: state.mainCategoryFilter ?? undefined,
         concurrency: state.parallelThreads,
-        onLog: (message) => pushLog(message),
+        onLog: (message) => {
+          pushLog(message);
+          if (message.startsWith('Carregando primeiros perfis')) {
+            state.currentHandle = 'Carregando fila na API…';
+          } else if (message.startsWith('Consultando estatisticas')) {
+            state.currentHandle = 'Consultando estatísticas…';
+          }
+        },
         onProgress: (p) => {
           state.total = p.total;
           state.processed = p.processed;
@@ -3228,7 +3379,7 @@ async function startUiServer(): Promise<void> {
           state.failed = p.failed;
           state.currentHandle = p.currentHandle;
           state.estimatedRemainingMs = p.estimatedRemainingMs;
-          state.elapsedMs = p.elapsedMs;
+          if (p.processed > 0) state.elapsedMs = p.elapsedMs;
           state.mainCategoryFilter = p.mainCategoryFilter ?? null;
         },
         onResult: (row) => {
@@ -3259,6 +3410,7 @@ async function startUiServer(): Promise<void> {
       const message = error instanceof Error ? error.message : String(error);
       pushLog(`Falha fatal: ${message}`);
     } finally {
+      clearInterval(elapsedTicker);
       state.running = false;
       state.stopRequested = false;
       state.currentHandle = null;
@@ -3282,7 +3434,12 @@ async function startUiServer(): Promise<void> {
 
     if (method === 'GET' && url.pathname === '/api/llm-main-categories') {
       try {
-        const data = await fetchLlmMainCategoryLabelsFromApi(getApiBaseOrThrow(), getIngestKeyOrThrow());
+        const forceRefresh = url.searchParams.get('refresh') === '1';
+        const data = await getLlmMainCategoryLabelsCached(
+          getApiBaseOrThrow(),
+          getIngestKeyOrThrow(),
+          forceRefresh
+        );
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -3295,6 +3452,9 @@ async function startUiServer(): Promise<void> {
             labels: data.labels,
             totalDistinct: data.totalDistinct,
             totalInfluencersLlm: data.totalInfluencersLlm,
+            cached: data.cached === true,
+            stale: data.stale === true,
+            fromTaxonomy: data.fromTaxonomy === true,
           })
         );
       } catch (error) {
