@@ -47,12 +47,6 @@ export function createCollectorCrawlRouter(controller: CollectorController): Rou
     asyncHandler((req, res) => controller.ingestLlm(req, res))
   );
 
-  router.post(
-    '/collector-ingest-post-sentiments',
-    requireCollectorIngestSecret,
-    asyncHandler((req, res) => controller.ingestPostSentiments(req, res))
-  );
-
   /** Opcional: verificar se o ingest está habilitado (sem gravar). Útil para health do collector. */
   router.get('/collector-ingest-status', (_req, res) => {
     const enabled = Boolean(process.env.COLLECTOR_INGEST_SECRET?.trim());

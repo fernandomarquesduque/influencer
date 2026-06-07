@@ -40,11 +40,6 @@ Painel web (checkboxes, fila, logs):
 npm run qualify -- ui
 ```
 
-No painel:
-
-- **Sentimento por post (com qualificação)** — qualifica o perfil e depois analisa legendas.
-- **Só sentimento (sem qualificação)** — pula a qualificação; varre os perfis da base e só grava `post.llm.sentiment` (`POST /api/crawl/collector-ingest-post-sentiments`).
-
 ## Variaveis de ambiente
 
 - `OLLAMA_HOST` (default: `http://localhost:11434`)
@@ -54,8 +49,4 @@ No painel:
 - `QUALIFY_BATCH_SIZE` (default: `20`)
 - `QUALIFY_MAX_REASONING` (default: `3`)
 - `QUALIFY_API_TIMEOUT_MS` (default: `30000`)
-- `QUALIFY_MEDIA_CONTEXT_LIMIT` (legendas na fila quando sentimento por post ou 2a fase LLM)
-- `QUALIFY_POST_SENTIMENT` (`1`/`true` — sentimento após qualificação no CLI)
-- `QUALIFY_SENTIMENT_ONLY` (`1`/`true` — só sentimento, sem qualificação no CLI)
-- `QUALIFY_SENTIMENT_BATCH_SIZE` (default `3` — posts por chamada Ollama; use `1` se muitos erros)
-- Grava em `post.llm.sentiment` **a palavra do LLM** (`positivo` ou `negativo`), sem alterar depois
+- `QUALIFY_MEDIA_CONTEXT_LIMIT` (legendas na 2a fase LLM quando personaSummary falha validacao)
