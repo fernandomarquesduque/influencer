@@ -1195,6 +1195,46 @@ function shuffleQueueItems(items) {
     }
     return out;
 }
+/** Particao estavel da fila entre workers/máquinas (hash do handle). */
+function getQualifyShardConfig() {
+    const combined = process.env.QUALIFY_SHARD?.trim();
+    if (combined && combined.includes('/')) {
+        const parts = combined.split('/').map((s) => s.trim());
+        const countRaw = Number(parts[1]);
+        const indexRaw = Number(parts[0]);
+        const count = Number.isFinite(countRaw) && countRaw > 0 ? Math.max(1, Math.min(32, Math.floor(countRaw))) : 1;
+        const index = Number.isFinite(indexRaw)
+            ? Math.max(0, Math.min(count - 1, Math.floor(indexRaw)))
+            : 0;
+        return { index, count, active: count > 1 };
+    }
+    const countRaw = Number(process.env.QUALIFY_SHARD_COUNT ?? 1);
+    const indexRaw = Number(process.env.QUALIFY_SHARD_INDEX ?? 0);
+    const count = Number.isFinite(countRaw) && countRaw > 0 ? Math.max(1, Math.min(32, Math.floor(countRaw))) : 1;
+    const index = Number.isFinite(indexRaw)
+        ? Math.max(0, Math.min(count - 1, Math.floor(indexRaw)))
+        : 0;
+    return { index, count, active: count > 1 };
+}
+function handleShardSlot(handle, shardCount) {
+    const h = toHandle(handle);
+    let x = 2166136261;
+    for (let i = 0; i < h.length; i++) {
+        x ^= h.charCodeAt(i);
+        x = Math.imul(x, 16777619);
+    }
+    return (x >>> 0) % shardCount;
+}
+function handleBelongsToShard(handle, shard) {
+    if (!shard.active)
+        return true;
+    return handleShardSlot(handle, shard.count) === shard.index;
+}
+function formatShardLabel(shard) {
+    if (!shard.active)
+        return '';
+    return `${shard.index}/${shard.count}`;
+}
 function getIngestPushTimeoutMs() {
     const raw = process.env.QUALIFY_INGEST_TIMEOUT_MS?.trim();
     if (raw) {
@@ -1253,11 +1293,6 @@ async function fetchJson(url, init, timeoutMs, retries = 2) {
 function getLlmMediaContextLimit() {
     const n = Number(process.env.QUALIFY_MEDIA_CONTEXT_LIMIT ?? 24);
     return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(60, Math.floor(n))) : 24;
-}
-/** Posts por chamada Ollama na classificacao de sentimento (lotes menores = menos troca de rotulos). */
-function getSentimentBatchSize() {
-    const n = Number(process.env.QUALIFY_SENTIMENT_BATCH_SIZE ?? 3);
-    return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(8, Math.floor(n))) : 3;
 }
 /** Quantidade de midias mais recentes (post/reel/tagged) na fila inicial; padrao 4. */
 function getQualifyInitialMediaLimit() {
@@ -1435,8 +1470,9 @@ async function getLlmMainCategoryLabelsCached(apiBase, ingestKey, forceRefresh =
         return { ...getMainCategoryTaxonomyFallback(), fromTaxonomy: true, stale: true };
     }
 }
-async function fetchLlmCoverageStats(apiBase, ingestKey) {
-    const data = await fetchJson(`${apiBase}/crawl/collector-llm-pending?coverageStats=1`, {
+async function fetchLlmCoverageStats(apiBase, ingestKey, forceRefresh = false) {
+    const qs = forceRefresh ? 'coverageStats=1&refresh=1' : 'coverageStats=1';
+    const data = await fetchJson(`${apiBase}/crawl/collector-llm-pending?${qs}`, {
         method: 'GET',
         headers: {
             'X-Collector-Key': ingestKey,
@@ -1465,7 +1501,7 @@ async function fetchLlmCoverageStatsCached(apiBase, ingestKey, forceRefresh = fa
         return coverageStatsRefreshPromise;
     coverageStatsRefreshPromise = (async () => {
         try {
-            const data = await fetchLlmCoverageStats(apiBase, ingestKey);
+            const data = await fetchLlmCoverageStats(apiBase, ingestKey, forceRefresh);
             coverageStatsCache = { data, fetchedAt: Date.now() };
             return data;
         }
@@ -1494,204 +1530,6 @@ async function pushLlmToApi(apiBase, ingestKey, handle, llm, allowLlmReplace) {
             return 'already_completed';
         throw error;
     }
-}
-function formatPostSentimentMonitorLog(kind, shortcode, sentiment, legenda) {
-    const preview = truncateLogLine(String(legenda ?? '').replace(/\s+/g, ' ').trim(), 220);
-    return `${kind}/${shortcode} | ${sentiment} | "${preview}"`;
-}
-/** Uma unica palavra do LLM: positivo | negativo (sinonimos curtos aceitos). */
-function normalizePostSentimentLabel(raw) {
-    const s = String(raw ?? '')
-        .trim()
-        .toLowerCase();
-    const first = s.split(/\s+/)[0]?.replace(/[^a-z]/g, '') ?? '';
-    if (first === 'positivo' || first === 'positive' || first === 'pos')
-        return 'positivo';
-    if (first === 'negativo' || first === 'negative' || first === 'neg')
-        return 'negativo';
-    if (s.startsWith('positiv'))
-        return 'positivo';
-    if (s.startsWith('negativ'))
-        return 'negativo';
-    return null;
-}
-const POST_SENTIMENT_SYSTEM_PROMPT = [
-    'Voce classifica o TOM EMOCIONAL DOMINANTE de legendas de Instagram (portugues do Brasil, contexto influencer).',
-    'Responda SOMENTE JSON valido: { "items": [ { "shortcode": "...", "sentiment": "positivo" } ] }.',
-    'Campo sentiment: UMA UNICA PALAVRA — exatamente "positivo" ou "negativo" (sem frases, sem explicacao).',
-    'Um objeto por publicacao da lista, com o MESMO shortcode.',
-    '',
-    'Use "negativo" SOMENTE quando o tom negativo for CLARO e DOMINANTE.',
-    'Na duvida, ambiguidade, tom neutro, informativo, promocional ou misto: use "positivo".',
-    '',
-    'Exemplos de sentiment (uma palavra):',
-    '- legenda feliz / promo / neutra -> positivo',
-    '- reclamacao forte / luto / indignacao clara -> negativo',
-].join('\n');
-function buildPostSentimentPrompt(posts) {
-    const compact = posts.map((p) => ({
-        shortcode: p.shortcode,
-        tipo: p.kind,
-        legenda: p.texto,
-        hashtags: p.hashtags.length > 0 ? p.hashtags : undefined,
-    }));
-    return [
-        'Classifique cada publicacao. Campo sentiment: uma palavra — "positivo" ou "negativo".',
-        'Padrao positivo; negativo so se tom claramente negativo (reclamacao, tristeza forte, raiva, luto).',
-        'Nao troque shortcodes entre publicacoes.',
-        JSON.stringify({ publicacoes: compact }, null, 0),
-    ].join('\n');
-}
-async function classifyPostSentimentBatch(ollamaClient, model, posts, onLog) {
-    const prompt = buildPostSentimentPrompt(posts);
-    const chatOpts = {
-        model,
-        messages: [
-            { role: 'system', content: POST_SENTIMENT_SYSTEM_PROMPT },
-            { role: 'user', content: prompt },
-        ],
-        stream: false,
-        format: 'json',
-        options: { temperature: 0 },
-    };
-    const response = await ollamaClient.chat(chatOpts);
-    const content = response.message?.content?.trim() ?? '';
-    let parsed = tryParseJsonObject(content);
-    if (!parsed) {
-        const retry = await ollamaClient.chat({
-            ...chatOpts,
-            messages: [
-                {
-                    role: 'system',
-                    content: 'Converta para JSON valido estrito. Somente { "items": [ { "shortcode", "sentiment" } ] }. sentiment = uma palavra: positivo ou negativo.',
-                },
-                { role: 'user', content: prompt },
-                { role: 'assistant', content: content || '{}' },
-                { role: 'user', content: 'Reescreva agora apenas o JSON solicitado, um item por publicacao.' },
-            ],
-        });
-        parsed = tryParseJsonObject(retry.message?.content?.trim() ?? '');
-    }
-    if (!parsed) {
-        throw new Error(`Sentimento por post: resposta invalida: ${content.slice(0, 200)}`);
-    }
-    const itemsRaw = Array.isArray(parsed.items) ? parsed.items : [];
-    const byShortcode = new Map();
-    for (const row of itemsRaw) {
-        if (row == null || typeof row !== 'object' || Array.isArray(row))
-            continue;
-        const o = row;
-        const sc = String(o.shortcode ?? '').trim();
-        const sentiment = normalizePostSentimentLabel(o.sentiment);
-        if (!sc || !sentiment)
-            continue;
-        byShortcode.set(sc, sentiment);
-    }
-    if (byShortcode.size === 0) {
-        onLog?.(`sentimento | lote sem itens validos no JSON (${posts.length} legenda(s))`);
-    }
-    return byShortcode;
-}
-async function classifyPostsSentiment(profile, model, onLog) {
-    const raw = profile._llm_content;
-    if (raw == null || typeof raw !== 'object' || Array.isArray(raw))
-        return [];
-    const samples = raw.samples;
-    if (!Array.isArray(samples))
-        return [];
-    const posts = [];
-    for (const s of samples) {
-        if (s == null || typeof s !== 'object' || Array.isArray(s))
-            continue;
-        const o = s;
-        const texto = String(o.text ?? '').trim().slice(0, 720);
-        if (!texto)
-            continue;
-        const shortcode = String(o.shortcode ?? '').trim();
-        if (!shortcode)
-            continue;
-        const kind = String(o.kind ?? 'post').trim().toLowerCase() || 'post';
-        const hashtags = Array.isArray(o.hashtags)
-            ? o.hashtags.map((t) => String(t ?? '').trim().replace(/^#/, '')).filter(Boolean).slice(0, 12)
-            : [];
-        posts.push({ kind, shortcode, texto, hashtags });
-        if (posts.length >= getLlmMediaContextLimit())
-            break;
-    }
-    if (posts.length === 0)
-        return [];
-    const ollamaClient = getOllamaClient();
-    const batchSize = getSentimentBatchSize();
-    const byShortcode = new Map();
-    onLog?.(`>> Ollama: sentimento por post (${posts.length} legenda(s), lotes de ${batchSize}; grava palavra do LLM)...`);
-    for (let i = 0; i < posts.length; i += batchSize) {
-        const chunk = posts.slice(i, i + batchSize);
-        const batchNum = Math.floor(i / batchSize) + 1;
-        const batchTotal = Math.ceil(posts.length / batchSize);
-        onLog?.(`>> Ollama: lote ${batchNum}/${batchTotal} (${chunk.length} post(s))...`);
-        const batchMap = await classifyPostSentimentBatch(ollamaClient, model, chunk, onLog);
-        for (const [sc, sent] of batchMap)
-            byShortcode.set(sc, sent);
-    }
-    const out = [];
-    for (const p of posts) {
-        const sentiment = byShortcode.get(p.shortcode);
-        if (!sentiment) {
-            onLog?.(`sentimento (ignorado) | ${formatPostSentimentMonitorLog(p.kind, p.shortcode, 'sem resposta LLM', p.texto)}`);
-            continue;
-        }
-        out.push({ kind: p.kind, shortcode: p.shortcode, sentiment, legenda: p.texto });
-        onLog?.(`sentimento | ${formatPostSentimentMonitorLog(p.kind, p.shortcode, sentiment, p.texto)}`);
-    }
-    if (out.length > 0) {
-        onLog?.(`sentimento | resumo: ${summarizePostSentiments(out)} em ${out.length}/${posts.length} post(s) com legenda`);
-    }
-    return out;
-}
-async function pushPostSentimentsToApi(apiBase, ingestKey, handle, model, items) {
-    if (items.length === 0)
-        return { updated: 0, skipped: 0 };
-    const url = `${apiBase}/crawl/collector-ingest-post-sentiments`;
-    const data = await fetchJson(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Collector-Key': ingestKey,
-        },
-        body: JSON.stringify({ handle, model, items }),
-    }, getIngestPushTimeoutMs());
-    return {
-        updated: Number(data.updated ?? 0),
-        skipped: Number(data.skipped ?? 0),
-    };
-}
-async function resolveProfileForPostSentiment(profile, postCtx) {
-    if (profileHasPostTextSamples(profile))
-        return profile;
-    const enriched = await fetchProfilePostContextFromApi(postCtx.apiBase, postCtx.ingestKey, toHandle(profile.handle ?? ''), postCtx.refreshAll);
-    return mergePostContextFromApiProfile(profile, enriched);
-}
-/** Classifica e persiste sentimento por post; nao altera profile.llm. */
-async function processProfilePostSentiment(handle, profile, model, postCtx, emitLog) {
-    const profForSent = await resolveProfileForPostSentiment(profile, postCtx);
-    emitLog(`@${handle} | >> sentimento: analisando legendas dos posts...`);
-    const sentiments = await classifyPostsSentiment(profForSent, model, (m) => emitLog(`@${handle} | ${m}`));
-    const postSentimentSummary = summarizePostSentiments(sentiments);
-    if (sentiments.length === 0) {
-        emitLog(`@${handle} | sentimentos: sem legendas com texto nos posts recentes`);
-        return { postSentimentSummary: null, saved: 0 };
-    }
-    emitLog(`@${handle} | >> API collector: ingest sentimentos (${sentiments.length} post(s))...`);
-    const sentT0 = Date.now();
-    const ingestItems = sentiments.map(({ kind, shortcode, sentiment, confidence }) => ({
-        kind,
-        shortcode,
-        sentiment,
-        ...(confidence != null ? { confidence } : {}),
-    }));
-    const sentRes = await pushPostSentimentsToApi(postCtx.apiBase, postCtx.ingestKey, handle, model, ingestItems);
-    emitLog(`@${handle} | sentimentos OK | gravados=${sentRes.updated} pulados=${sentRes.skipped}${postSentimentSummary ? ` | ${postSentimentSummary}` : ''} | ${Date.now() - sentT0}ms`);
-    return { postSentimentSummary, saved: sentRes.updated };
 }
 function displayFieldsFromProfileForResultRow(profile) {
     const llm = profile.llm;
@@ -1973,19 +1811,6 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
     }
     throw new LlmValidationExhaustedError(`Saida LLM invalida apos reprocessamento: ${validationErrors.join('; ')}`, llm);
 }
-function summarizePostSentiments(items) {
-    if (items.length === 0)
-        return null;
-    let pos = 0;
-    let neg = 0;
-    for (const it of items) {
-        if (it.sentiment === 'positivo')
-            pos++;
-        else if (it.sentiment === 'negativo')
-            neg++;
-    }
-    return `${pos} pos / ${neg} neg`;
-}
 async function runBatch(options = {}) {
     const apiBase = getApiBaseOrThrow();
     const ingestKey = getIngestKeyOrThrow();
@@ -1993,18 +1818,14 @@ async function runBatch(options = {}) {
     const batchSize = Math.max(1, Number(process.env.QUALIFY_BATCH_SIZE ?? DEFAULT_BATCH_SIZE) || DEFAULT_BATCH_SIZE);
     const maxReasoning = Math.max(1, Number(process.env.QUALIFY_MAX_REASONING ?? DEFAULT_MAX_REASONING) || DEFAULT_MAX_REASONING);
     const concurrency = Math.max(1, Math.min(16, Math.floor(Number(options.concurrency ?? process.env.QUALIFY_CONCURRENCY ?? 1)) || 1));
+    const shard = getQualifyShardConfig();
+    const fetchBatchSize = shard.active ? batchSize * shard.count : batchSize;
     const onlyWithLlm = options.onlyWithLlm === true;
-    const sentimentOnlyMode = options.sentimentOnlyMode === true ||
-        ['1', 'true', 'yes'].includes(String(process.env.QUALIFY_SENTIMENT_ONLY ?? '').trim().toLowerCase());
-    const postSentimentEnabled = sentimentOnlyMode ||
-        options.postSentimentEnabled === true ||
-        ['1', 'true', 'yes'].includes(String(process.env.QUALIFY_POST_SENTIMENT ?? '').trim().toLowerCase());
     const mainCategoryFilter = String(options.mainCategory ?? '').trim();
-    const useCategoryFilter = mainCategoryFilter.length > 0 && (onlyWithLlm || sentimentOnlyMode);
-    const queueMediaLimit = postSentimentEnabled ? getLlmMediaContextLimit() : undefined;
+    const useCategoryFilter = mainCategoryFilter.length > 0 && onlyWithLlm;
     const queueIncludeContent = false;
-    const refreshAll = sentimentOnlyMode ? true : onlyWithLlm;
-    const needsCoverageForOffset = onlyWithLlm && !sentimentOnlyMode && !useCategoryFilter;
+    const refreshAll = onlyWithLlm;
+    const needsCoverageForOffset = onlyWithLlm && !useCategoryFilter;
     const runStartedAtMs = Date.now();
     const progress = {
         total: 0,
@@ -2018,6 +1839,7 @@ async function runBatch(options = {}) {
         estimatedRemainingMs: null,
         onlyWithLlm,
         mainCategoryFilter: useCategoryFilter ? mainCategoryFilter : null,
+        shardLabel: shard.active ? formatShardLabel(shard) : null,
     };
     options.onProgress?.(progress);
     let coverage = { totalProfiles: 0, withoutLlm: 0, withLlm: 0 };
@@ -2025,11 +1847,11 @@ async function runBatch(options = {}) {
         options.onLog?.('Consultando estatisticas da base (pode levar ~1 min)…');
         coverage = await fetchLlmCoverageStatsCached(apiBase, ingestKey);
     }
-    const queueOffset = sentimentOnlyMode || useCategoryFilter ? 0 : onlyWithLlm ? coverage.withoutLlm : 0;
+    const queueOffset = useCategoryFilter ? 0 : onlyWithLlm ? coverage.withoutLlm : 0;
     const processedHandles = new Set();
     let listOffset = queueOffset;
     options.onLog?.('Carregando primeiros perfis da fila (pode levar ~1 min)…');
-    let firstBatch = await fetchPendingFromApi(apiBase, ingestKey, batchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, queueMediaLimit, queueIncludeContent);
+    let firstBatch = await fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent);
     const emitLog = (msg) => {
         const line = `[qualify] ${msg}`;
         console.log(line);
@@ -2038,30 +1860,25 @@ async function runBatch(options = {}) {
     if (firstBatch.items.length === 0 && queueOffset > 0) {
         emitLog(`Aviso: pagina vazia com offset inicial ${queueOffset}; tentando offset 0 (fila pode ter mudado vs estatistica inicial).`);
         listOffset = 0;
-        firstBatch = await fetchPendingFromApi(apiBase, ingestKey, batchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, queueMediaLimit, queueIncludeContent);
+        firstBatch = await fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent);
     }
-    const targetTotal = sentimentOnlyMode
+    const rawTargetTotal = onlyWithLlm
         ? useCategoryFilter
             ? firstBatch.totalPending
-            : firstBatch.totalPending
-        : onlyWithLlm
-            ? useCategoryFilter
-                ? firstBatch.totalPending
-                : coverage.withLlm
-            : firstBatch.totalPending;
-    const modoLabel = sentimentOnlyMode
-        ? 'so_sentimento'
-        : onlyWithLlm
-            ? 'com_llm'
-            : 'sem_llm';
-    emitLog(`Perfis alvo via API: ${targetTotal} (modo=${modoLabel}${useCategoryFilter ? `, categoria=${mainCategoryFilter}` : ''}, paralelo=${concurrency}${postSentimentEnabled ? ', sentimento_por_post=on' : ''})`);
-    if (!sentimentOnlyMode) {
-        emitLog(`mainCategory: taxonomia fechada com ${MAIN_CATEGORY_CANONICAL_LABELS.length} rotulos canonicos (+ normalizacao de aliases no servidor)`);
-    }
+            : coverage.withLlm
+        : firstBatch.totalPending;
+    const targetTotal = shard.active ? Math.max(1, Math.ceil(rawTargetTotal / shard.count)) : rawTargetTotal;
+    const modoLabel = onlyWithLlm ? 'com_llm' : 'sem_llm';
+    const shardSuffix = shard.active ? `, ${formatShardLabel(shard)} (~${targetTotal} perfis nesta particao)` : '';
+    emitLog(`Perfis alvo via API: ${rawTargetTotal} (modo=${modoLabel}${useCategoryFilter ? `, categoria=${mainCategoryFilter}` : ''}, paralelo=${concurrency}${shardSuffix})`);
+    emitLog(`mainCategory: taxonomia fechada com ${MAIN_CATEGORY_CANONICAL_LABELS.length} rotulos canonicos (+ normalizacao de aliases no servidor)`);
     progress.total = targetTotal;
     progress.currentHandle = firstBatch.items.length > 0 ? null : 'Fila vazia';
     options.onProgress?.(progress);
-    if (targetTotal === 0 || firstBatch.items.length === 0) {
+    if (rawTargetTotal === 0) {
+        return { total: 0, done: 0, failed: 0, excluded: 0, stopped: false };
+    }
+    if (!shard.active && firstBatch.items.length === 0) {
         return { total: 0, done: 0, failed: 0, excluded: 0, stopped: false };
     }
     let currentBatch = shuffleQueueItems(firstBatch.items);
@@ -2080,7 +1897,7 @@ async function runBatch(options = {}) {
         }
         const todo = currentBatch.filter((item) => {
             const handle = toHandle(item.handle || item.profile.handle);
-            return Boolean(handle) && !processedHandles.has(handle);
+            return Boolean(handle) && !processedHandles.has(handle) && handleBelongsToShard(handle, shard);
         });
         if (todo.length === 0) {
             if (currentBatch.length === 0) {
@@ -2091,7 +1908,7 @@ async function runBatch(options = {}) {
                         break;
                     }
                     listOffset = queueOffset;
-                    const wrapBatch = await fetchPendingFromApi(apiBase, ingestKey, batchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, queueMediaLimit, queueIncludeContent);
+                    const wrapBatch = await fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent);
                     if (!onlyWithLlm)
                         progress.total = Math.max(progress.total, wrapBatch.totalPending);
                     currentBatch = shuffleQueueItems(wrapBatch.items);
@@ -2101,7 +1918,7 @@ async function runBatch(options = {}) {
             }
             listOffset += currentBatch.length;
             emitLog(`(fila) ${currentBatch.length} perfil(is) nesta janela ja processado(s) nesta execucao — avancando offset para ${listOffset}.`);
-            const skippedBatch = await fetchPendingFromApi(apiBase, ingestKey, batchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, queueMediaLimit, queueIncludeContent);
+            const skippedBatch = await fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent);
             if (!onlyWithLlm)
                 progress.total = Math.max(progress.total, skippedBatch.totalPending);
             currentBatch = shuffleQueueItems(skippedBatch.items);
@@ -2143,27 +1960,6 @@ async function runBatch(options = {}) {
                         refreshAll,
                         logHandle: handle,
                     };
-                    if (sentimentOnlyMode) {
-                        emitLog(`@${handle} | >> modo: somente sentimento (sem qualificacao LLM)`);
-                        const { postSentimentSummary, saved } = await processProfilePostSentiment(handle, item.profile, model, postCtx, emitLog);
-                        const disp = displayFieldsFromProfileForResultRow(item.profile);
-                        const totalMs = Date.now() - startedAt;
-                        emitLog(`@${handle} | ok sentimento | gravados=${saved}${postSentimentSummary ? ` | ${postSentimentSummary}` : ' | sem posts com legenda'} | ${totalMs}ms`);
-                        progress.done++;
-                        options.onResult?.({
-                            handle,
-                            result: 'ok',
-                            llmStatus: 'sentiment_only',
-                            confidence: disp.confidence,
-                            mainCategory: disp.mainCategory,
-                            brandSafety: disp.brandSafety,
-                            qualification: disp.qualification,
-                            postSentimentSummary,
-                            processedAt: new Date().toISOString(),
-                            error: null,
-                        });
-                        return;
-                    }
                     if (!refreshAll) {
                         if (profileRecordAlreadyHasLlm(item.profile)) {
                             const disp = displayFieldsFromProfileForResultRow(item.profile);
@@ -2176,7 +1972,6 @@ async function runBatch(options = {}) {
                                 mainCategory: disp.mainCategory,
                                 brandSafety: disp.brandSafety,
                                 qualification: disp.qualification,
-                                postSentimentSummary: null,
                                 processedAt: new Date().toISOString(),
                                 error: 'Pulado: LLM ja persistido',
                             });
@@ -2193,7 +1988,6 @@ async function runBatch(options = {}) {
                                 mainCategory: '-',
                                 brandSafety: null,
                                 qualification: null,
-                                postSentimentSummary: null,
                                 processedAt: new Date().toISOString(),
                                 error: 'Pulado: outro worker concluiu',
                             });
@@ -2210,7 +2004,6 @@ async function runBatch(options = {}) {
                                 mainCategory: disp.mainCategory,
                                 brandSafety: disp.brandSafety,
                                 qualification: disp.qualification,
-                                postSentimentSummary: null,
                                 processedAt: new Date().toISOString(),
                                 error: 'Pulado: LLM ja persistido',
                             });
@@ -2249,7 +2042,6 @@ async function runBatch(options = {}) {
                                 mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
                                 brandSafety: pickBrandSafetyFromQualification(qualOk),
                                 qualification: qualOk,
-                                postSentimentSummary: null,
                                 processedAt: new Date().toISOString(),
                                 error: keepMsg,
                             });
@@ -2274,7 +2066,6 @@ async function runBatch(options = {}) {
                                 mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
                                 brandSafety: pickBrandSafetyFromQualification(qualOk),
                                 qualification: qualOk,
-                                postSentimentSummary: null,
                                 processedAt: new Date().toISOString(),
                                 error: reason,
                             });
@@ -2295,22 +2086,10 @@ async function runBatch(options = {}) {
                                 mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
                                 brandSafety: pickBrandSafetyFromQualification(qualOk),
                                 qualification: qualOk,
-                                postSentimentSummary: null,
                                 processedAt: new Date().toISOString(),
                                 error: 'Pulado: outro worker concluiu (409)',
                             });
                             return;
-                        }
-                        let postSentimentSummary = null;
-                        if (postSentimentEnabled) {
-                            try {
-                                const sentOut = await processProfilePostSentiment(handle, item.profile, model, postCtx, emitLog);
-                                postSentimentSummary = sentOut.postSentimentSummary;
-                            }
-                            catch (sentErr) {
-                                const sentMsg = sentErr instanceof Error ? sentErr.message : String(sentErr);
-                                emitLog(`@${handle} | AVISO sentimento: ${truncateLogLine(sentMsg, 200)}`);
-                            }
                         }
                         const totalMs = Date.now() - startedAt;
                         emitLog(`@${handle} | ok | ${Math.round(llm.confidence * 100)}% | ingest ${ingestMs}ms | total ${totalMs}ms`);
@@ -2323,7 +2102,6 @@ async function runBatch(options = {}) {
                             mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
                             brandSafety: pickBrandSafetyFromQualification(qualOk),
                             qualification: qualOk,
-                            postSentimentSummary,
                             processedAt: new Date().toISOString(),
                             error: null,
                         });
@@ -2347,7 +2125,6 @@ async function runBatch(options = {}) {
                                 mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? ''),
                                 brandSafety: pickBrandSafetyFromQualification(qualBad),
                                 qualification: qualBad,
-                                postSentimentSummary: null,
                                 processedAt: new Date().toISOString(),
                                 error: keepMsg,
                             });
@@ -2373,7 +2150,6 @@ async function runBatch(options = {}) {
                                     mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? ''),
                                     brandSafety: pickBrandSafetyFromQualification(qualBad),
                                     qualification: qualBad,
-                                    postSentimentSummary: null,
                                     processedAt: new Date().toISOString(),
                                     error: reason,
                                 });
@@ -2390,7 +2166,6 @@ async function runBatch(options = {}) {
                                     mainCategory: '-',
                                     brandSafety: null,
                                     qualification: null,
-                                    postSentimentSummary: null,
                                     processedAt: new Date().toISOString(),
                                     error: message,
                                 });
@@ -2409,7 +2184,6 @@ async function runBatch(options = {}) {
                             mainCategory: '-',
                             brandSafety: null,
                             qualification: null,
-                            postSentimentSummary: null,
                             processedAt: new Date().toISOString(),
                             error: message,
                         });
@@ -2432,7 +2206,7 @@ async function runBatch(options = {}) {
         }
         queueWrapsWithoutWork = 0;
         listOffset = queueOffset;
-        const nextBatch = await fetchPendingFromApi(apiBase, ingestKey, batchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, queueMediaLimit, queueIncludeContent);
+        const nextBatch = await fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent);
         if (!onlyWithLlm)
             progress.total = Math.max(progress.total, nextBatch.totalPending);
         currentBatch = shuffleQueueItems(nextBatch.items);
@@ -2506,8 +2280,6 @@ function renderUiHtml() {
       <label class="check"><input id="refreshAll" type="checkbox" /> Atualizar perfis que ja tem LLM</label>
       <label class="check">Só mainCategory <select id="mainCategory" style="min-width:180px;max-width:260px;padding:6px 8px;border-radius:6px;border:1px solid #334155;background:#0b1220;color:#e2e8f0" title="Lista vinda da API (rotulos ja persistidos). Só aplica com a opcao acima."><option value="">Todas</option></select></label>
       <label class="check">Threads paralelas <input id="concurrency" type="number" min="1" max="16" step="1" value="1" style="width:56px" /></label>
-      <label class="check" title="Apos qualificar o perfil, classifica cada legenda como positivo ou negativo"><input id="postSentiment" type="checkbox" /> Sentimento por post (com qualificacao)</label>
-      <label class="check" title="Nao chama LLM de qualificacao; so analisa sentimento das legendas e grava em post.llm.sentiment"><input id="sentimentOnly" type="checkbox" /> So sentimento (sem qualificacao)</label>
       <div class="muted">Atualizacao automatica a cada 1s</div>
     </div>
     <div class="row">
@@ -2544,12 +2316,11 @@ function renderUiHtml() {
             <th>audienceType</th>
             <th class="td-brand-safety">brandSafety</th>
             <th>personaSummary</th>
-            <th>Sentimento posts</th>
             <th>Conf. / status</th>
           </tr>
         </thead>
         <tbody id="resultsBody">
-          <tr><td colspan="13">Sem resultados ainda.</td></tr>
+          <tr><td colspan="12">Sem resultados ainda.</td></tr>
         </tbody>
       </table>
     </div>
@@ -2619,7 +2390,7 @@ function renderUiHtml() {
       if(list.length === 0){
         const tr0 = document.createElement('tr');
         const td0 = document.createElement('td');
-        td0.colSpan = 13;
+        td0.colSpan = 12;
         td0.textContent = 'Sem resultados ainda.';
         tr0.appendChild(td0);
         body.appendChild(tr0);
@@ -2693,11 +2464,6 @@ function renderUiHtml() {
         tdPs.className = 'persona-cell';
         tdPs.textContent = rawValue(q.personaSummary);
         tr.appendChild(tdPs);
-        const tdSent = document.createElement('td');
-        const sentSum = rawValue(r.postSentimentSummary);
-        tdSent.textContent = sentSum || String.fromCharCode(0x2014);
-        if(sentSum) tdSent.title = 'Resumo dos posts analisados nesta execucao (positivo/negativo)';
-        tr.appendChild(tdSent);
         const tdConf = document.createElement('td');
         if(r.result === 'excluido'){
           tdConf.className = 'excluido';
@@ -2707,10 +2473,6 @@ function renderUiHtml() {
           tdConf.className = 'erro';
           tdConf.textContent = 'erro';
           tdConf.title = String(r.error || '');
-        }else if(r.llmStatus === 'sentiment_only'){
-          tdConf.className = 'ok';
-          tdConf.textContent = 'sentimento';
-          tdConf.title = rawValue(r.postSentimentSummary) || 'Somente analise de sentimento por post';
         }else{
           tdConf.textContent = formatConf(r.confidence);
         }
@@ -2777,15 +2539,11 @@ function renderUiHtml() {
         if(concEl) concEl.disabled = s.running === true;
         const mcEl = document.getElementById('mainCategory');
         if(mcEl) mcEl.disabled = s.running === true;
-        const psEl = document.getElementById('postSentiment');
-        if(psEl) psEl.disabled = s.running === true;
-        const soEl = document.getElementById('sentimentOnly');
-        if(soEl) soEl.disabled = s.running === true;
         renderResults(s.results || [], s.resultsDisplaySeed || s.lastStartedAt || '');
         document.getElementById('meta').textContent =
           'Ultimo inicio: ' + (s.lastStartedAt || '-') + ' | Ultimo fim: ' + (s.lastEndedAt || '-') +
           (s.mainCategoryFilter ? ' | Filtro categoria: ' + s.mainCategoryFilter : '') +
-          (s.sentimentOnlyMode ? ' | Modo: so sentimento' : (s.postSentimentEnabled ? ' | Sentimento por post: ativo' : ''));
+          (s.shardLabel ? ' | Particao: ' + s.shardLabel : '');
         document.getElementById('logs').textContent = (s.logs || []).join('\\n') || 'Sem logs';
       }catch(e){
         document.getElementById('logs').textContent = 'Erro ao atualizar: ' + e.message;
@@ -2795,50 +2553,6 @@ function renderUiHtml() {
     document.getElementById('refreshAll').addEventListener('change', (ev)=>{
       setBoolParam('onlyWithLlm', ev.target.checked === true);
     });
-    function syncSentimentModeUi(){
-      const ps = document.getElementById('postSentiment');
-      const so = document.getElementById('sentimentOnly');
-      const refresh = document.getElementById('refreshAll');
-      if(!ps || !so) return;
-      const onlySent = so.checked === true;
-      if(onlySent){
-        ps.checked = true;
-        ps.disabled = true;
-        if(refresh){ refresh.checked = true; refresh.disabled = true; }
-      }else{
-        ps.disabled = false;
-        if(refresh) refresh.disabled = false;
-      }
-    }
-    (function(){
-      const ps = document.getElementById('postSentiment');
-      const so = document.getElementById('sentimentOnly');
-      if(!ps || !so) return;
-      ps.checked = parseBoolParam('postSentiment', false);
-      so.checked = parseBoolParam('sentimentOnly', false);
-      try{
-        const savedPs = localStorage.getItem('qualifyPostSentiment');
-        if(savedPs === '1') ps.checked = true;
-        else if(savedPs === '0') ps.checked = false;
-        const savedSo = localStorage.getItem('qualifySentimentOnly');
-        if(savedSo === '1') so.checked = true;
-        else if(savedSo === '0') so.checked = false;
-      }catch(_e){}
-      syncSentimentModeUi();
-      ps.addEventListener('change', (ev)=>{
-        const on = ev.target && ev.target.checked === true;
-        if(on && so.checked){ so.checked = false; setBoolParam('sentimentOnly', false); try{ localStorage.setItem('qualifySentimentOnly','0'); }catch(_e){} }
-        setBoolParam('postSentiment', on);
-        try{ localStorage.setItem('qualifyPostSentiment', on ? '1' : '0'); }catch(_e){}
-        syncSentimentModeUi();
-      });
-      so.addEventListener('change', (ev)=>{
-        const on = ev.target && ev.target.checked === true;
-        setBoolParam('sentimentOnly', on);
-        try{ localStorage.setItem('qualifySentimentOnly', on ? '1' : '0'); }catch(_e){}
-        syncSentimentModeUi();
-      });
-    })();
     (function(){
       const sel = document.getElementById('mainCategory');
       const fromUrl = new URLSearchParams(window.location.search).get('mainCategory') || '';
@@ -2932,14 +2646,8 @@ function renderUiHtml() {
         const conc = Math.max(1, Math.min(16, parseInt(concEl && concEl.value ? concEl.value : '1', 10) || 1));
         if(concEl) conc.value = String(conc);
         try{ localStorage.setItem('qualifyConcurrency', String(conc)); }catch(_e){}
-        const postSent = document.getElementById('postSentiment');
-        const sentimentOnly = document.getElementById('sentimentOnly');
-        const sentimentOnlyOn = sentimentOnly && sentimentOnly.checked === true;
-        const postSentOn = sentimentOnlyOn || (postSent && postSent.checked === true);
-        let startUrl = '/api/start?onlyWithLlm=' + (sentimentOnlyOn || refreshAll ? '1' : '0') + '&concurrency=' + encodeURIComponent(String(conc));
-        if(postSentOn) startUrl += '&postSentiment=1';
-        if(sentimentOnlyOn) startUrl += '&sentimentOnly=1';
-        if((sentimentOnlyOn || refreshAll) && mainCat) startUrl += '&mainCategory=' + encodeURIComponent(mainCat);
+        let startUrl = '/api/start?onlyWithLlm=' + (refreshAll ? '1' : '0') + '&concurrency=' + encodeURIComponent(String(conc));
+        if(refreshAll && mainCat) startUrl += '&mainCategory=' + encodeURIComponent(mainCat);
         await call(startUrl,'POST');
         await refresh();
       }catch(e){ alert(e.message); }
@@ -2955,10 +2663,12 @@ async function startUiServer() {
         running: false,
         stopRequested: false,
         onlyWithLlm: false,
-        postSentimentEnabled: false,
-        sentimentOnlyMode: false,
         /** mainCategory canônica quando “só uma categoria”; null = todas */
         mainCategoryFilter: null,
+        shardLabel: (() => {
+            const s = getQualifyShardConfig();
+            return s.active ? formatShardLabel(s) : null;
+        })(),
         parallelThreads: 1,
         total: 0,
         processed: 0,
@@ -2986,12 +2696,12 @@ async function startUiServer() {
     };
     let statsRefreshInFlight = false;
     let statsLastRefreshAt = 0;
-    const refreshCoverageStats = async () => {
+    const refreshCoverageStats = async (forceRefresh = false) => {
         if (statsRefreshInFlight)
             return;
         statsRefreshInFlight = true;
         try {
-            const stats = await fetchLlmCoverageStatsCached(getApiBaseOrThrow(), getIngestKeyOrThrow());
+            const stats = await fetchLlmCoverageStatsCached(getApiBaseOrThrow(), getIngestKeyOrThrow(), forceRefresh || state.running);
             state.withLlm = stats.withLlm;
             state.withoutLlm = stats.withoutLlm;
             state.totalProfiles = stats.totalProfiles;
@@ -3033,8 +2743,6 @@ async function startUiServer() {
             const summary = await runBatch({
                 shouldStop: () => state.stopRequested,
                 onlyWithLlm: state.onlyWithLlm,
-                postSentimentEnabled: state.postSentimentEnabled,
-                sentimentOnlyMode: state.sentimentOnlyMode,
                 mainCategory: state.mainCategoryFilter ?? undefined,
                 concurrency: state.parallelThreads,
                 onLog: (message) => {
@@ -3063,12 +2771,7 @@ async function startUiServer() {
                     if (state.results.length > QUALIFY_UI_RESULTS_MAX)
                         state.results.length = QUALIFY_UI_RESULTS_MAX;
                     if (row.result === 'ok') {
-                        if (row.llmStatus === 'sentiment_only') {
-                            pushLog(`@${row.handle} | OK sentimento | ${row.postSentimentSummary ?? 'sem legendas'}`);
-                        }
-                        else {
-                            pushLog(`@${row.handle} | OK | ${row.mainCategory} | ${row.brandSafety ?? '-'} | ${row.confidence != null ? `${Math.round(row.confidence * 100)}%` : '-'}`);
-                        }
+                        pushLog(`@${row.handle} | OK | ${row.mainCategory} | ${row.brandSafety ?? '-'} | ${row.confidence != null ? `${Math.round(row.confidence * 100)}%` : '-'}`);
                     }
                     else if (row.result === 'excluido') {
                         /* Linhas EXCLUINDO / API / EXCLUIDO OK ja foram enviadas por emitLog no runBatch. */
@@ -3136,7 +2839,7 @@ async function startUiServer() {
             // Durante execucao tambem precisa atualizar com/sem LLM (antes ficava congelado ate parar o lote).
             const statsIntervalMs = state.running ? 5000 : 10000;
             if (Date.now() - statsLastRefreshAt > statsIntervalMs)
-                void refreshCoverageStats();
+                void refreshCoverageStats(state.running);
             res.writeHead(200, {
                 'Content-Type': 'application/json; charset=utf-8',
                 'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -3153,17 +2856,6 @@ async function startUiServer() {
                 state.onlyWithLlm && mainCatRaw ? mainCatRaw : null;
             const concRaw = Number(url.searchParams.get('concurrency') ?? '1');
             state.parallelThreads = Math.max(1, Math.min(16, Math.floor(Number.isFinite(concRaw) ? concRaw : 1) || 1));
-            const postSentRaw = String(url.searchParams.get('postSentiment') ?? '').trim().toLowerCase();
-            const sentimentOnlyRaw = String(url.searchParams.get('sentimentOnly') ?? '').trim().toLowerCase();
-            state.sentimentOnlyMode =
-                sentimentOnlyRaw === '1' || sentimentOnlyRaw === 'true' || sentimentOnlyRaw === 'yes';
-            state.postSentimentEnabled =
-                state.sentimentOnlyMode ||
-                    postSentRaw === '1' ||
-                    postSentRaw === 'true' ||
-                    postSentRaw === 'yes';
-            if (state.sentimentOnlyMode)
-                state.onlyWithLlm = true;
             if (!state.running)
                 void runAsync();
             res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -3171,8 +2863,6 @@ async function startUiServer() {
                 ok: true,
                 running: true,
                 onlyWithLlm: state.onlyWithLlm,
-                postSentimentEnabled: state.postSentimentEnabled,
-                sentimentOnlyMode: state.sentimentOnlyMode,
                 parallelThreads: state.parallelThreads,
             }));
             return;

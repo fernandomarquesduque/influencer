@@ -13,6 +13,7 @@ import { buildNormalizedPost } from '../../utils/slimPost.js';
 import type { SlimProfile } from '../../utils/slimProfile.js';
 import { mergeProfilePreservingLlm } from '../../utils/preserveLlmOnProfileMerge.js';
 import { foldMainCategoryKey, snapMainCategoryToTaxonomy } from '../../lib/mainCategoryTaxonomy.js';
+import { syncProfileSearchIndexForHandle } from '../profileSearchIndexSync.js';
 
 /** Mesma regra que em `bumpFacetMainCategory` (busca): canônico ou texto bruto se o snap falhar. */
 function llmMainCategoryBucket(raw: string): string | null {
@@ -759,6 +760,10 @@ export function createCollectorController(storage: CompositeStorage) {
         };
         await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
         invalidateLlmCollectorStatsCaches();
+        // Atualiza profile_search_aux (contagem Com/Sem LLM) sem rewarm completo do cache de busca.
+        void syncProfileSearchIndexForHandle(storage, handle).catch((e) =>
+          console.warn('[collectorController.ingestLlm] search index sync:', handle, e instanceof Error ? e.message : e)
+        );
         // Nao await warmSearchCache aqui: recarrega profile+post inteiro do disco e pode levar minutos,
         // fazendo o qualify abortar o POST (QUALIFY_INGEST_TIMEOUT_MS). Rewarm em background mantem o mesmo destino final.
         scheduleSearchCacheRewarmDebounced(storage);

@@ -1297,6 +1297,56 @@ function shuffleQueueItems<T>(items: T[]): T[] {
   return out;
 }
 
+interface QualifyShardConfig {
+  index: number;
+  count: number;
+  active: boolean;
+}
+
+/** Particao estavel da fila entre workers/máquinas (hash do handle). */
+function getQualifyShardConfig(): QualifyShardConfig {
+  const combined = process.env.QUALIFY_SHARD?.trim();
+  if (combined && combined.includes('/')) {
+    const parts = combined.split('/').map((s) => s.trim());
+    const countRaw = Number(parts[1]);
+    const indexRaw = Number(parts[0]);
+    const count =
+      Number.isFinite(countRaw) && countRaw > 0 ? Math.max(1, Math.min(32, Math.floor(countRaw))) : 1;
+    const index = Number.isFinite(indexRaw)
+      ? Math.max(0, Math.min(count - 1, Math.floor(indexRaw)))
+      : 0;
+    return { index, count, active: count > 1 };
+  }
+  const countRaw = Number(process.env.QUALIFY_SHARD_COUNT ?? 1);
+  const indexRaw = Number(process.env.QUALIFY_SHARD_INDEX ?? 0);
+  const count =
+    Number.isFinite(countRaw) && countRaw > 0 ? Math.max(1, Math.min(32, Math.floor(countRaw))) : 1;
+  const index = Number.isFinite(indexRaw)
+    ? Math.max(0, Math.min(count - 1, Math.floor(indexRaw)))
+    : 0;
+  return { index, count, active: count > 1 };
+}
+
+function handleShardSlot(handle: string, shardCount: number): number {
+  const h = toHandle(handle);
+  let x = 2166136261;
+  for (let i = 0; i < h.length; i++) {
+    x ^= h.charCodeAt(i);
+    x = Math.imul(x, 16777619);
+  }
+  return (x >>> 0) % shardCount;
+}
+
+function handleBelongsToShard(handle: string, shard: QualifyShardConfig): boolean {
+  if (!shard.active) return true;
+  return handleShardSlot(handle, shard.count) === shard.index;
+}
+
+function formatShardLabel(shard: QualifyShardConfig): string {
+  if (!shard.active) return '';
+  return `${shard.index}/${shard.count}`;
+}
+
 function getIngestPushTimeoutMs(): number {
   const raw = process.env.QUALIFY_INGEST_TIMEOUT_MS?.trim();
   if (raw) {
@@ -1576,10 +1626,12 @@ async function getLlmMainCategoryLabelsCached(
 
 async function fetchLlmCoverageStats(
   apiBase: string,
-  ingestKey: string
+  ingestKey: string,
+  forceRefresh = false
 ): Promise<{ totalProfiles: number; withoutLlm: number; withLlm: number }> {
+  const qs = forceRefresh ? 'coverageStats=1&refresh=1' : 'coverageStats=1';
   const data = await fetchJson(
-    `${apiBase}/crawl/collector-llm-pending?coverageStats=1`,
+    `${apiBase}/crawl/collector-llm-pending?${qs}`,
     {
       method: 'GET',
       headers: {
@@ -1617,7 +1669,7 @@ async function fetchLlmCoverageStatsCached(
   if (coverageStatsRefreshPromise) return coverageStatsRefreshPromise;
   coverageStatsRefreshPromise = (async () => {
     try {
-      const data = await fetchLlmCoverageStats(apiBase, ingestKey);
+      const data = await fetchLlmCoverageStats(apiBase, ingestKey, forceRefresh);
       coverageStatsCache = { data, fetchedAt: Date.now() };
       return data;
     } finally {
@@ -2034,6 +2086,8 @@ interface BatchProgress {
   onlyWithLlm: boolean;
   /** Filtro por mainCategory canônica (só com "com LLM"); vazio = todas. */
   mainCategoryFilter: string | null;
+  /** Particao da fila (ex.: shard 1/2); null = fila inteira. */
+  shardLabel: string | null;
 }
 
 interface ExtractedResultRow {
@@ -2082,6 +2136,8 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     1,
     Math.min(16, Math.floor(Number(options.concurrency ?? process.env.QUALIFY_CONCURRENCY ?? 1)) || 1)
   );
+  const shard = getQualifyShardConfig();
+  const fetchBatchSize = shard.active ? batchSize * shard.count : batchSize;
 
   const onlyWithLlm = options.onlyWithLlm === true;
   const mainCategoryFilter = String(options.mainCategory ?? '').trim();
@@ -2103,6 +2159,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     estimatedRemainingMs: null,
     onlyWithLlm,
     mainCategoryFilter: useCategoryFilter ? mainCategoryFilter : null,
+    shardLabel: shard.active ? formatShardLabel(shard) : null,
   };
   options.onProgress?.(progress);
 
@@ -2119,7 +2176,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
   let firstBatch = await fetchPendingFromApi(
     apiBase,
     ingestKey,
-    batchSize,
+    fetchBatchSize,
     listOffset,
     refreshAll,
     useCategoryFilter ? mainCategoryFilter : undefined,
@@ -2139,7 +2196,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     firstBatch = await fetchPendingFromApi(
       apiBase,
       ingestKey,
-      batchSize,
+      fetchBatchSize,
       listOffset,
       refreshAll,
       useCategoryFilter ? mainCategoryFilter : undefined,
@@ -2147,14 +2204,16 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
       queueIncludeContent
     );
   }
-  const targetTotal = onlyWithLlm
+  const rawTargetTotal = onlyWithLlm
     ? useCategoryFilter
       ? firstBatch.totalPending
       : coverage.withLlm
     : firstBatch.totalPending;
+  const targetTotal = shard.active ? Math.max(1, Math.ceil(rawTargetTotal / shard.count)) : rawTargetTotal;
   const modoLabel = onlyWithLlm ? 'com_llm' : 'sem_llm';
+  const shardSuffix = shard.active ? `, ${formatShardLabel(shard)} (~${targetTotal} perfis nesta particao)` : '';
   emitLog(
-    `Perfis alvo via API: ${targetTotal} (modo=${modoLabel}${useCategoryFilter ? `, categoria=${mainCategoryFilter}` : ''}, paralelo=${concurrency})`
+    `Perfis alvo via API: ${rawTargetTotal} (modo=${modoLabel}${useCategoryFilter ? `, categoria=${mainCategoryFilter}` : ''}, paralelo=${concurrency}${shardSuffix})`
   );
   emitLog(
     `mainCategory: taxonomia fechada com ${MAIN_CATEGORY_CANONICAL_LABELS.length} rotulos canonicos (+ normalizacao de aliases no servidor)`
@@ -2162,7 +2221,10 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
   progress.total = targetTotal;
   progress.currentHandle = firstBatch.items.length > 0 ? null : 'Fila vazia';
   options.onProgress?.(progress);
-  if (targetTotal === 0 || firstBatch.items.length === 0) {
+  if (rawTargetTotal === 0) {
+    return { total: 0, done: 0, failed: 0, excluded: 0, stopped: false };
+  }
+  if (!shard.active && firstBatch.items.length === 0) {
     return { total: 0, done: 0, failed: 0, excluded: 0, stopped: false };
   }
 
@@ -2184,7 +2246,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
 
     const todo = currentBatch.filter((item) => {
       const handle = toHandle(item.handle || item.profile.handle);
-      return Boolean(handle) && !processedHandles.has(handle);
+      return Boolean(handle) && !processedHandles.has(handle) && handleBelongsToShard(handle, shard);
     });
 
     if (todo.length === 0) {
@@ -2201,7 +2263,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
           const wrapBatch = await fetchPendingFromApi(
             apiBase,
             ingestKey,
-            batchSize,
+            fetchBatchSize,
             listOffset,
             refreshAll,
             useCategoryFilter ? mainCategoryFilter : undefined,
@@ -2221,7 +2283,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
       const skippedBatch = await fetchPendingFromApi(
         apiBase,
         ingestKey,
-        batchSize,
+        fetchBatchSize,
         listOffset,
         refreshAll,
         useCategoryFilter ? mainCategoryFilter : undefined,
@@ -2524,7 +2586,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     const nextBatch = await fetchPendingFromApi(
       apiBase,
       ingestKey,
-      batchSize,
+      fetchBatchSize,
       listOffset,
       refreshAll,
       useCategoryFilter ? mainCategoryFilter : undefined,
@@ -2869,7 +2931,8 @@ function renderUiHtml(): string {
         renderResults(s.results || [], s.resultsDisplaySeed || s.lastStartedAt || '');
         document.getElementById('meta').textContent =
           'Ultimo inicio: ' + (s.lastStartedAt || '-') + ' | Ultimo fim: ' + (s.lastEndedAt || '-') +
-          (s.mainCategoryFilter ? ' | Filtro categoria: ' + s.mainCategoryFilter : '');
+          (s.mainCategoryFilter ? ' | Filtro categoria: ' + s.mainCategoryFilter : '') +
+          (s.shardLabel ? ' | Particao: ' + s.shardLabel : '');
         document.getElementById('logs').textContent = (s.logs || []).join('\\n') || 'Sem logs';
       }catch(e){
         document.getElementById('logs').textContent = 'Erro ao atualizar: ' + e.message;
@@ -2992,6 +3055,10 @@ async function startUiServer(): Promise<void> {
     onlyWithLlm: false,
     /** mainCategory canônica quando “só uma categoria”; null = todas */
     mainCategoryFilter: null as string | null,
+    shardLabel: (() => {
+      const s = getQualifyShardConfig();
+      return s.active ? formatShardLabel(s) : null;
+    })(),
     parallelThreads: 1,
     total: 0,
     processed: 0,
@@ -3020,11 +3087,15 @@ async function startUiServer(): Promise<void> {
 
   let statsRefreshInFlight = false;
   let statsLastRefreshAt = 0;
-  const refreshCoverageStats = async () => {
+  const refreshCoverageStats = async (forceRefresh = false) => {
     if (statsRefreshInFlight) return;
     statsRefreshInFlight = true;
     try {
-      const stats = await fetchLlmCoverageStatsCached(getApiBaseOrThrow(), getIngestKeyOrThrow());
+      const stats = await fetchLlmCoverageStatsCached(
+        getApiBaseOrThrow(),
+        getIngestKeyOrThrow(),
+        forceRefresh || state.running
+      );
       state.withLlm = stats.withLlm;
       state.withoutLlm = stats.withoutLlm;
       state.totalProfiles = stats.totalProfiles;
@@ -3164,7 +3235,7 @@ async function startUiServer(): Promise<void> {
     if (method === 'GET' && url.pathname === '/api/status') {
       // Durante execucao tambem precisa atualizar com/sem LLM (antes ficava congelado ate parar o lote).
       const statsIntervalMs = state.running ? 5000 : 10000;
-      if (Date.now() - statsLastRefreshAt > statsIntervalMs) void refreshCoverageStats();
+      if (Date.now() - statsLastRefreshAt > statsIntervalMs) void refreshCoverageStats(state.running);
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-store, no-cache, must-revalidate',
