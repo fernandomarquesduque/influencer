@@ -247,7 +247,6 @@ app.use((req, _res, next) => {
   if (req.path && !req.path.startsWith('/api')) {
     const q = req.url?.includes('?') ? '?' + req.url.split('?')[1] : '';
     req.url = '/api' + req.path + q;
-    (req as { path?: string }).path = '/api' + req.path;
   }
   next();
 });
