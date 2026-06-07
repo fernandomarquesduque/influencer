@@ -1986,7 +1986,7 @@ function buildAutoExclusionReason(qualification: JsonRecord): string {
   return `Exclusao automatica: profileType deve ser pessoal ou criador (recebido: ${profileT || '(vazio)'})`;
 }
 
-/** True se o registro ja tinha classificacao LLM persistida — nunca auto-excluir na API ao falhar revalidacao. */
+/** True se o registro ja tinha classificacao LLM persistida — nunca auto-excluir; tambem skip pre-Ollama no modo sem_llm. */
 function profileRecordAlreadyHasLlm(profile: JsonRecord): boolean {
   const llm = profile.llm;
   if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) return false;
@@ -1995,18 +1995,6 @@ function profileRecordAlreadyHasLlm(profile: JsonRecord): boolean {
   if (status === 'done') return true;
   const q = lo.qualification;
   return q != null && typeof q === 'object' && !Array.isArray(q);
-}
-
-/** Mesmo criterio da fila collector-llm-pending (refreshAll=0): status done + qualifiedAt valido. */
-function isProfileLlmCompleted(profile: JsonRecord): boolean {
-  const llm = profile.llm;
-  const llmObj =
-    llm != null && typeof llm === 'object' && !Array.isArray(llm) ? (llm as JsonRecord) : null;
-  if (!llmObj) return false;
-  const llmStatus = String(llmObj.status ?? '').trim().toLowerCase();
-  const qualifiedAtRaw = String(llmObj.qualifiedAt ?? '').trim();
-  const qualifiedAtMs = qualifiedAtRaw ? Date.parse(qualifiedAtRaw) : Number.NaN;
-  return llmStatus === 'done' && Number.isFinite(qualifiedAtMs);
 }
 
 function isLlmAlreadyCompletedIngestError(error: unknown): boolean {
@@ -2622,20 +2610,20 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
             }
 
             if (!refreshAll) {
-              if (isProfileLlmCompleted(item.profile)) {
+              if (profileRecordAlreadyHasLlm(item.profile)) {
                 const disp = displayFieldsFromProfileForResultRow(item.profile);
-                emitLog(`@${handle} | PULADO | LLM ja concluido (snapshot da fila desatualizado)`);
+                emitLog(`@${handle} | PULADO | LLM ja persistido na base (sem reprocessamento)`);
                 options.onResult?.({
                   handle,
                   result: 'ok',
-                  llmStatus: 'done',
+                  llmStatus: disp.llmStatus || 'done',
                   confidence: disp.confidence,
                   mainCategory: disp.mainCategory,
                   brandSafety: disp.brandSafety,
                   qualification: disp.qualification,
                   postSentimentSummary: null,
                   processedAt: new Date().toISOString(),
-                  error: 'Pulado: LLM ja concluido',
+                  error: 'Pulado: LLM ja persistido',
                 });
                 return;
               }
@@ -2653,6 +2641,23 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
                   postSentimentSummary: null,
                   processedAt: new Date().toISOString(),
                   error: 'Pulado: outro worker concluiu',
+                });
+                return;
+              }
+              if (profileRecordAlreadyHasLlm(freshProfile)) {
+                const disp = displayFieldsFromProfileForResultRow(freshProfile);
+                emitLog(`@${handle} | PULADO | LLM ja persistido na base (consulta API)`);
+                options.onResult?.({
+                  handle,
+                  result: 'ok',
+                  llmStatus: disp.llmStatus || 'done',
+                  confidence: disp.confidence,
+                  mainCategory: disp.mainCategory,
+                  brandSafety: disp.brandSafety,
+                  qualification: disp.qualification,
+                  postSentimentSummary: null,
+                  processedAt: new Date().toISOString(),
+                  error: 'Pulado: LLM ja persistido',
                 });
                 return;
               }
