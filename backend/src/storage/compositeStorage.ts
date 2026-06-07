@@ -250,6 +250,10 @@ export class CompositeStorage {
     return this.sqlite.countProfileSearchAuxRows();
   }
 
+  countProfileSearchAuxWithLlm(): number {
+    return this.sqlite.countProfileSearchAuxWithLlm();
+  }
+
   aggregateLlmMainCategoryLabelCounts(): { label: string; count: number }[] {
     return this.sqlite.aggregateLlmMainCategoryLabelCounts();
   }

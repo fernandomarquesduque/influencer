@@ -524,6 +524,19 @@ export class SqliteSync {
     return row?.c ?? 0;
   }
 
+  /** Perfis com classificação LLM concluída no índice de busca. */
+  countProfileSearchAuxWithLlm(): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM profile_search_aux
+         WHERE json_valid(llm_qualification_json)
+           AND llm_qualification_json IS NOT NULL
+           AND length(trim(llm_qualification_json)) > 2`
+      )
+      .get() as { c: number } | undefined;
+    return row?.c ?? 0;
+  }
+
   /**
    * Agrega mainCategory por perfil com LLM indexado (`llm_qualification_json`).
    * Retorna rótulos brutos/canônicos antes do snap final (feito no caller).

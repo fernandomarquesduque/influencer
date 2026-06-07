@@ -1287,6 +1287,16 @@ function getTimeoutMs(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_API_TIMEOUT_MS;
 }
 
+/** Embaralha copia do lote (API devolve pendentes do mais antigo; front/processamento em ordem aleatoria). */
+function shuffleQueueItems<T>(items: T[]): T[] {
+  const out = items.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 function getIngestPushTimeoutMs(): number {
   const raw = process.env.QUALIFY_INGEST_TIMEOUT_MS?.trim();
   if (raw) {
@@ -1574,8 +1584,8 @@ async function fetchLlmCoverageStats(
   apiBase: string,
   ingestKey: string
 ): Promise<{ totalProfiles: number; withoutLlm: number; withLlm: number }> {
-  const all = await fetchJson(
-    `${apiBase}/crawl/collector-llm-pending?limit=1&offset=0&refreshAll=1&includeContent=0`,
+  const data = await fetchJson(
+    `${apiBase}/crawl/collector-llm-pending?coverageStats=1`,
     {
       method: 'GET',
       headers: {
@@ -1584,21 +1594,14 @@ async function fetchLlmCoverageStats(
     },
     getTimeoutMs()
   );
-  const pendingOnly = await fetchJson(
-    `${apiBase}/crawl/collector-llm-pending?limit=1&offset=0&refreshAll=0&includeContent=0`,
-    {
-      method: 'GET',
-      headers: {
-        'X-Collector-Key': ingestKey,
-      },
-    },
-    getTimeoutMs()
-  );
-  const totalProfilesRaw = Number(all.totalPending ?? 0);
-  const withoutLlmRaw = Number(pendingOnly.totalPending ?? 0);
+  const totalProfilesRaw = Number(data.totalProfiles ?? 0);
+  const withoutLlmRaw = Number(data.withoutLlm ?? 0);
+  const withLlmRaw = Number(data.withLlm ?? 0);
   const totalProfiles = Number.isFinite(totalProfilesRaw) ? Math.max(0, Math.floor(totalProfilesRaw)) : 0;
   const withoutLlm = Number.isFinite(withoutLlmRaw) ? Math.max(0, Math.floor(withoutLlmRaw)) : 0;
-  const withLlm = Math.max(0, totalProfiles - withoutLlm);
+  const withLlm = Number.isFinite(withLlmRaw)
+    ? Math.max(0, Math.floor(withLlmRaw))
+    : Math.max(0, totalProfiles - withoutLlm);
   return { totalProfiles, withoutLlm, withLlm };
 }
 
@@ -1636,21 +1639,27 @@ async function pushLlmToApi(
   handle: string,
   llm: LlmClassification,
   allowLlmReplace: boolean
-): Promise<void> {
+): Promise<'updated' | 'already_completed'> {
   const q = allowLlmReplace ? '?allowLlmReplace=1' : '';
   const url = `${apiBase}/crawl/collector-ingest-llm${q}`;
-  await fetchJson(
-    url,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Collector-Key': ingestKey,
+  try {
+    await fetchJson(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Collector-Key': ingestKey,
+        },
+        body: JSON.stringify({ handle, llm }),
       },
-      body: JSON.stringify({ handle, llm }),
-    },
-    getIngestPushTimeoutMs()
-  );
+      getIngestPushTimeoutMs()
+    );
+    return 'updated';
+  } catch (error) {
+    if (!allowLlmReplace && isLlmAlreadyCompletedIngestError(error)) return 'already_completed';
+    throw error;
+  }
 }
 
 type PostSentimentValue = 'positivo' | 'negativo';
@@ -1986,6 +1995,64 @@ function profileRecordAlreadyHasLlm(profile: JsonRecord): boolean {
   if (status === 'done') return true;
   const q = lo.qualification;
   return q != null && typeof q === 'object' && !Array.isArray(q);
+}
+
+/** Mesmo criterio da fila collector-llm-pending (refreshAll=0): status done + qualifiedAt valido. */
+function isProfileLlmCompleted(profile: JsonRecord): boolean {
+  const llm = profile.llm;
+  const llmObj =
+    llm != null && typeof llm === 'object' && !Array.isArray(llm) ? (llm as JsonRecord) : null;
+  if (!llmObj) return false;
+  const llmStatus = String(llmObj.status ?? '').trim().toLowerCase();
+  const qualifiedAtRaw = String(llmObj.qualifiedAt ?? '').trim();
+  const qualifiedAtMs = qualifiedAtRaw ? Date.parse(qualifiedAtRaw) : Number.NaN;
+  return llmStatus === 'done' && Number.isFinite(qualifiedAtMs);
+}
+
+function isLlmAlreadyCompletedIngestError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    msg.startsWith('409 ') ||
+    msg.includes('COLLECTOR_LLM_ALREADY_COMPLETED') ||
+    msg.includes('classificação LLM concluída') ||
+    msg.includes('classificacao LLM concluida')
+  );
+}
+
+/** Reconsulta a API antes do Ollama (2+ workers): perfil fora da fila = ja qualificado por outro. */
+async function fetchPendingProfileByHandle(
+  apiBase: string,
+  ingestKey: string,
+  handle: string,
+  refreshAll: boolean
+): Promise<JsonRecord | null> {
+  const h = toHandle(handle);
+  if (!h) return null;
+  const qs = new URLSearchParams({
+    handle: h,
+    limit: '1',
+    offset: '0',
+    refreshAll: refreshAll ? '1' : '0',
+    includeContent: '0',
+    mediaLimit: '1',
+  });
+  const url = `${apiBase}/crawl/collector-llm-pending?${qs.toString()}`;
+  const data = await fetchJson(
+    url,
+    {
+      method: 'GET',
+      headers: {
+        'X-Collector-Key': ingestKey,
+      },
+    },
+    getTimeoutMs()
+  );
+  const itemsRaw = Array.isArray(data.items) ? data.items : [];
+  const first = itemsRaw[0] as JsonRecord | undefined;
+  if (!first || typeof first !== 'object') return null;
+  const profile = first.profile as JsonRecord | null;
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return null;
+  return { ...profile, handle: toHandle(first.handle) || h };
 }
 
 /** JWT adm opcional; sem ele usa POST /crawl/collector-delete-profile com a mesma chave do ingest. */
@@ -2420,7 +2487,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     return { total: 0, done: 0, failed: 0, excluded: 0, stopped: false };
   }
 
-  let currentBatch = firstBatch.items;
+  let currentBatch = shuffleQueueItems(firstBatch.items);
   /** Sem itens novos processados desde o ultimo wrap da fila (offset voltou ao base). */
   let queueWrapsWithoutWork = 0;
 
@@ -2463,7 +2530,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
             queueIncludeContent
           );
           if (!onlyWithLlm) progress.total = Math.max(progress.total, wrapBatch.totalPending);
-          currentBatch = wrapBatch.items;
+          currentBatch = shuffleQueueItems(wrapBatch.items);
           continue;
         }
         break;
@@ -2483,7 +2550,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
         queueIncludeContent
       );
       if (!onlyWithLlm) progress.total = Math.max(progress.total, skippedBatch.totalPending);
-      currentBatch = skippedBatch.items;
+      currentBatch = shuffleQueueItems(skippedBatch.items);
       continue;
     }
 
@@ -2554,6 +2621,44 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
               return;
             }
 
+            if (!refreshAll) {
+              if (isProfileLlmCompleted(item.profile)) {
+                const disp = displayFieldsFromProfileForResultRow(item.profile);
+                emitLog(`@${handle} | PULADO | LLM ja concluido (snapshot da fila desatualizado)`);
+                options.onResult?.({
+                  handle,
+                  result: 'ok',
+                  llmStatus: 'done',
+                  confidence: disp.confidence,
+                  mainCategory: disp.mainCategory,
+                  brandSafety: disp.brandSafety,
+                  qualification: disp.qualification,
+                  postSentimentSummary: null,
+                  processedAt: new Date().toISOString(),
+                  error: 'Pulado: LLM ja concluido',
+                });
+                return;
+              }
+              const freshProfile = await fetchPendingProfileByHandle(apiBase, ingestKey, handle, false);
+              if (!freshProfile) {
+                emitLog(`@${handle} | PULADO | LLM ja concluido por outro worker`);
+                options.onResult?.({
+                  handle,
+                  result: 'ok',
+                  llmStatus: 'done',
+                  confidence: null,
+                  mainCategory: '-',
+                  brandSafety: null,
+                  qualification: null,
+                  postSentimentSummary: null,
+                  processedAt: new Date().toISOString(),
+                  error: 'Pulado: outro worker concluiu',
+                });
+                return;
+              }
+              item.profile = freshProfile;
+            }
+
             const promptPhase1 = buildPrompt(item.profile, {
               includePostSamples: profileHasPostTextSamples(item.profile),
             });
@@ -2621,8 +2726,24 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
             } else {
               emitLog(`@${handle} | >> API collector: ingest LLM (POST)...`);
               const ingestT0 = Date.now();
-              await pushLlmToApi(apiBase, ingestKey, handle, llm, refreshAll);
+              const ingestOutcome = await pushLlmToApi(apiBase, ingestKey, handle, llm, refreshAll);
               const ingestMs = Date.now() - ingestT0;
+              if (ingestOutcome === 'already_completed') {
+                emitLog(`@${handle} | PULADO | ingest recusou: LLM ja concluido por outro worker | ${ingestMs}ms`);
+                options.onResult?.({
+                  handle,
+                  result: 'ok',
+                  llmStatus: 'done',
+                  confidence: llm.confidence,
+                  mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
+                  brandSafety: pickBrandSafetyFromQualification(qualOk),
+                  qualification: qualOk,
+                  postSentimentSummary: null,
+                  processedAt: new Date().toISOString(),
+                  error: 'Pulado: outro worker concluiu (409)',
+                });
+                return;
+              }
               let postSentimentSummary: string | null = null;
               if (postSentimentEnabled) {
                 try {
@@ -2772,7 +2893,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
       queueIncludeContent
     );
     if (!onlyWithLlm) progress.total = Math.max(progress.total, nextBatch.totalPending);
-    currentBatch = nextBatch.items;
+    currentBatch = shuffleQueueItems(nextBatch.items);
   }
 
   return {
@@ -2942,9 +3063,20 @@ function renderUiHtml(): string {
         .replace(/"/g,'&quot;')
         .replace(/'/g,'&#039;');
     }
-    function renderResults(items){
+    function resultsSortKey(r, seed){
+      const h = String(r && r.handle != null ? r.handle : '');
+      let x = 2166136261;
+      const s = h + '|' + String(seed || '');
+      for(let i = 0; i < s.length; i++){
+        x ^= s.charCodeAt(i);
+        x = Math.imul(x, 16777619);
+      }
+      return x >>> 0;
+    }
+    function renderResults(items, displaySeed){
       const body = document.getElementById('resultsBody');
-      const list = Array.isArray(items) ? items : [];
+      const list = Array.isArray(items) ? items.slice() : [];
+      list.sort((a,b)=> resultsSortKey(a, displaySeed) - resultsSortKey(b, displaySeed));
       body.replaceChildren();
       if(list.length === 0){
         const tr0 = document.createElement('tr');
@@ -3111,7 +3243,7 @@ function renderUiHtml(): string {
         if(psEl) psEl.disabled = s.running === true;
         const soEl = document.getElementById('sentimentOnly');
         if(soEl) soEl.disabled = s.running === true;
-        renderResults(s.results || []);
+        renderResults(s.results || [], s.resultsDisplaySeed || s.lastStartedAt || '');
         document.getElementById('meta').textContent =
           'Ultimo inicio: ' + (s.lastStartedAt || '-') + ' | Ultimo fim: ' + (s.lastEndedAt || '-') +
           (s.mainCategoryFilter ? ' | Filtro categoria: ' + s.mainCategoryFilter : '') +
@@ -3302,6 +3434,7 @@ async function startUiServer(): Promise<void> {
     withLlm: 0,
     withoutLlm: 0,
     totalProfiles: 0,
+    resultsDisplaySeed: '',
     results: [] as ExtractedResultRow[],
     lastStartedAt: null as string | null,
     lastEndedAt: null as string | null,
@@ -3346,6 +3479,7 @@ async function startUiServer(): Promise<void> {
     state.currentHandle = null;
     state.estimatedRemainingMs = null;
     state.elapsedMs = 0;
+    state.resultsDisplaySeed = String(Date.now());
     state.results = [];
     state.lastStartedAt = new Date().toISOString();
     pushLog('Execucao iniciada.');

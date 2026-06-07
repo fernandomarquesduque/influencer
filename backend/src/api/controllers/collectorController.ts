@@ -45,6 +45,57 @@ function invalidateLlmMainCategoryLabelsCache(): void {
   llmMainCategoryLabelsCache = null;
 }
 
+type LlmCoverageCounts = { totalProfiles: number; withoutLlm: number; withLlm: number };
+
+const LLM_COVERAGE_STATS_CACHE_TTL_MS = 2 * 60 * 1000;
+let llmCoverageStatsCache: { data: LlmCoverageCounts; fetchedAt: number } | null = null;
+
+function invalidateLlmCoverageStatsCache(): void {
+  llmCoverageStatsCache = null;
+}
+
+function invalidateLlmCollectorStatsCaches(): void {
+  invalidateLlmMainCategoryLabelsCache();
+  invalidateLlmCoverageStatsCache();
+}
+
+async function getLlmCoverageCountsFromStorage(storage: CompositeStorage): Promise<LlmCoverageCounts> {
+  const totalProfiles = await storage.countKeysInBucket('profile');
+  const withLlm = storage.countProfileSearchAuxWithLlm();
+  const withoutLlm = Math.max(0, totalProfiles - withLlm);
+  return { totalProfiles, withoutLlm, withLlm };
+}
+
+async function getLlmCoverageCountsCached(
+  storage: CompositeStorage,
+  forceRefresh = false
+): Promise<LlmCoverageCounts & { cached: boolean }> {
+  const now = Date.now();
+  const cache = llmCoverageStatsCache;
+  const cacheFresh =
+    !forceRefresh && cache != null && now - cache.fetchedAt < LLM_COVERAGE_STATS_CACHE_TTL_MS;
+  if (cacheFresh) return { ...cache.data, cached: true };
+  const data = await getLlmCoverageCountsFromStorage(storage);
+  llmCoverageStatsCache = { data, fetchedAt: now };
+  return { ...data, cached: false };
+}
+
+function isLlmPendingStatsOnlyRequest(opts: {
+  includeContent: boolean;
+  limit: number;
+  offset: number;
+  handleFilter: string;
+  mainCategoryRaw: string;
+}): boolean {
+  return (
+    !opts.includeContent &&
+    opts.limit <= 1 &&
+    opts.offset === 0 &&
+    !opts.handleFilter &&
+    !opts.mainCategoryRaw
+  );
+}
+
 function aggregateLlmMainCategoryLabelsFromStorage(storage: CompositeStorage): LlmMainCategoryLabelsPayload {
   const rawRows = storage.aggregateLlmMainCategoryLabelCounts();
   const acc = new Map<string, number>();
@@ -478,6 +529,46 @@ export function createCollectorController(storage: CompositeStorage) {
           .trim()
           .toLowerCase()
           .replace(/^@/, '');
+        const mainCategoryRaw = String(req.query.mainCategory ?? '').trim();
+        const forceRefresh =
+          String(req.query.refresh ?? '').trim() === '1' ||
+          String(req.query.refresh ?? '').trim().toLowerCase() === 'true';
+        const coverageStatsRaw = String(req.query.coverageStats ?? '').trim().toLowerCase();
+        const coverageStats = coverageStatsRaw === '1' || coverageStatsRaw === 'true' || coverageStatsRaw === 'yes';
+
+        if (coverageStats) {
+          const counts = await getLlmCoverageCountsCached(storage, forceRefresh);
+          res.status(200).json({
+            ok: true,
+            totalProfiles: counts.totalProfiles,
+            withoutLlm: counts.withoutLlm,
+            withLlm: counts.withLlm,
+            cached: counts.cached,
+          });
+          return;
+        }
+
+        if (
+          isLlmPendingStatsOnlyRequest({
+            includeContent,
+            limit,
+            offset,
+            handleFilter,
+            mainCategoryRaw,
+          })
+        ) {
+          const counts = await getLlmCoverageCountsCached(storage, forceRefresh);
+          const totalPending = refreshAll ? counts.totalProfiles : counts.withoutLlm;
+          res.status(200).json({
+            ok: true,
+            totalPending,
+            limit,
+            offset,
+            items: [],
+            cached: counts.cached,
+          });
+          return;
+        }
 
         const profiles = await storage.getByBucket<Record<string, unknown>>('profile');
         const pending: LlmQueueCandidate[] = [];
@@ -511,7 +602,6 @@ export function createCollectorController(storage: CompositeStorage) {
           return a.handle.localeCompare(b.handle, 'pt-BR');
         });
 
-        const mainCategoryRaw = String(req.query.mainCategory ?? '').trim();
         let afterMainCategory = pending;
         if (mainCategoryRaw) {
           afterMainCategory = pending.filter((item) => {
@@ -668,7 +758,7 @@ export function createCollectorController(storage: CompositeStorage) {
           llm,
         };
         await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
-        invalidateLlmMainCategoryLabelsCache();
+        invalidateLlmCollectorStatsCaches();
         // Nao await warmSearchCache aqui: recarrega profile+post inteiro do disco e pode levar minutos,
         // fazendo o qualify abortar o POST (QUALIFY_INGEST_TIMEOUT_MS). Rewarm em background mantem o mesmo destino final.
         scheduleSearchCacheRewarmDebounced(storage);
