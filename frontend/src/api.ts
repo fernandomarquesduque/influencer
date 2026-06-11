@@ -718,6 +718,8 @@ export interface MySubscriptionStatus {
   active: boolean
   planId: string | null
   subscriptionId: string | null
+  /** Recorrência cancelada; pagamentos já feitos permanecem confirmados. */
+  subscriptionCancelled?: boolean
   hasPendingPlanPayment: boolean
   /** Primeira fatura ainda não paga, dentro do período de trial (cartão já cadastrado). */
   inTrial?: boolean

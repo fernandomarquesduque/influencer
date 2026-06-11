@@ -2,7 +2,7 @@
  * Diagnostico de lentidao: mede cada etapa do qualify em 1 perfil.
  * Uso: node scripts/bench-one-profile.mjs
  */
-import 'dotenv/config';
+import './load-qualify-env.mjs';
 import { Ollama } from 'ollama';
 
 const DEFAULT_MODEL = 'llama3.1:8b';

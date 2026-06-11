@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-qualify-env.mjs';
 import { Ollama } from 'ollama';
 
 const model = process.env.OLLAMA_MODEL?.trim() || 'llama3.1:8b';

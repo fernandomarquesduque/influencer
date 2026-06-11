@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Modal, Descriptions, Button, Tag, Popconfirm, message } from 'antd'
+import { Modal, Descriptions, Button, Tag } from 'antd'
 import { LinkOutlined } from '@ant-design/icons'
 import type { PaymentItem } from '../../api'
-import { cancelMySubscription, fetchMySubscription } from '../../api'
+import { fetchMySubscription } from '../../api'
 import { getBuscaPlanById } from '../../constants/buscaPlans'
 import './PaymentInvoiceModal.css'
 
@@ -73,33 +73,31 @@ export type PaymentInvoiceModalProps = {
   open: boolean
   payment: PaymentItem | null
   onClose: () => void
-  onSubscriptionCancelled?: () => void | Promise<void>
 }
 
-export default function PaymentInvoiceModal({
-  open,
-  payment,
-  onClose,
-  onSubscriptionCancelled,
-}: PaymentInvoiceModalProps) {
-  const [cancelling, setCancelling] = useState(false)
+export default function PaymentInvoiceModal({ open, payment, onClose }: PaymentInvoiceModalProps) {
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false)
+  const [subscriptionCancelled, setSubscriptionCancelled] = useState(false)
   const planMeta = payment?.planId ? getBuscaPlanById(payment.planId) : null
   const planLabel = planMeta?.name ?? (payment?.planId ? `Plano ${payment.planId}` : null)
-  const showCancelSubscription = isSubscriptionPayment(payment) || hasActiveSubscription
 
   useEffect(() => {
     if (!open) {
       setHasActiveSubscription(false)
+      setSubscriptionCancelled(false)
       return
     }
     let alive = true
     void fetchMySubscription()
       .then((sub) => {
-        if (alive) setHasActiveSubscription(Boolean(sub.active && sub.subscriptionId))
+        if (!alive) return
+        setHasActiveSubscription(Boolean(sub.active && sub.subscriptionId))
+        setSubscriptionCancelled(Boolean(sub.subscriptionCancelled))
       })
       .catch(() => {
-        if (alive) setHasActiveSubscription(false)
+        if (!alive) return
+        setHasActiveSubscription(false)
+        setSubscriptionCancelled(false)
       })
     return () => {
       alive = false
@@ -111,20 +109,6 @@ export default function PaymentInvoiceModal({
       window.open(payment.invoiceUrl, '_blank', 'noopener,noreferrer')
     }
     onClose()
-  }
-
-  const handleCancelSubscription = async () => {
-    setCancelling(true)
-    try {
-      await cancelMySubscription()
-      message.success('Assinatura cancelada.')
-      onClose()
-      await Promise.resolve(onSubscriptionCancelled?.())
-    } catch (e) {
-      message.error((e as Error).message)
-    } finally {
-      setCancelling(false)
-    }
   }
 
   return (
@@ -139,24 +123,8 @@ export default function PaymentInvoiceModal({
       width={520}
       maskClosable={false}
       footer={
-        <div
-          className={`payment-invoice-modal__footer${showCancelSubscription ? ' payment-invoice-modal__footer--split' : ''}`}
-        >
-          {showCancelSubscription ? (
-            <Popconfirm
-              title="Cancelar assinatura?"
-              description="Cancela a recorrência. Cobranças futuras não serão geradas. Não dá para desfazer."
-              okText="Sim, cancelar"
-              cancelText="Voltar"
-              okButtonProps={{ danger: true, loading: cancelling }}
-              disabled={cancelling}
-              onConfirm={() => void handleCancelSubscription()}
-            >
-              <Button danger disabled={cancelling}>
-                Cancelar assinatura
-              </Button>
-            </Popconfirm>
-          ) : null}
+        <div className="payment-invoice-modal__footer">
+          <Button onClick={onClose}>Fechar</Button>
           <Button type="primary" icon={<LinkOutlined />} onClick={handleOpen} disabled={!payment?.invoiceUrl}>
             Abrir
           </Button>
@@ -175,6 +143,17 @@ export default function PaymentInvoiceModal({
           ) : null}
           <Descriptions.Item label="Tipo">{paymentTypeLabel(payment)}</Descriptions.Item>
           {planLabel ? <Descriptions.Item label="Plano">{planLabel}</Descriptions.Item> : null}
+          {isSubscriptionPayment(payment) ? (
+            <Descriptions.Item label="Assinatura">
+              {subscriptionCancelled ? (
+                <Tag color="default">Cancelada</Tag>
+              ) : hasActiveSubscription ? (
+                <Tag color="green">Ativa</Tag>
+              ) : (
+                <Tag color="orange">Pendente</Tag>
+              )}
+            </Descriptions.Item>
+          ) : null}
           {payment.planFirstInvoiceDue ? (
             <Descriptions.Item label="1ª cobrança em">{formatDueDate(payment.planFirstInvoiceDue)}</Descriptions.Item>
           ) : null}

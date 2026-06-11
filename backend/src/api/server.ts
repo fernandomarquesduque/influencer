@@ -3456,6 +3456,27 @@ async function syncPendingPaymentFromAsaasIfConfigured(row: PaymentRow): Promise
   }
 }
 
+/** Sem webhook: alinha cancelamento de assinatura com o status no Asaas. */
+async function syncPlanSubscriptionFromAsaasIfConfigured(userId: number): Promise<void> {
+  const latest = paymentsDb.getLatestPlanPayment(userId);
+  const subId = latest?.asaas_subscription_id?.trim();
+  if (!subId || !asaas.isAsaasConfigured()) return;
+  try {
+    const remote = await asaas.getSubscription(subId);
+    const status = remote?.status?.trim().toUpperCase() ?? '';
+    if (status && status !== 'ACTIVE') {
+      paymentsDb.clearPlanSubscriptionIdForUser(userId);
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/404|not found|não encontrad/i.test(msg)) {
+      paymentsDb.clearPlanSubscriptionIdForUser(userId);
+    } else {
+      console.warn('[payments] Asaas getSubscription (sync):', msg);
+    }
+  }
+}
+
 /** Lista pagamentos do usuário (comprar créditos). */
 app.get('/api/me/payments', async (req: RequestWithAuth, res: Response) => {
   try {
@@ -3522,9 +3543,12 @@ app.get('/api/me/subscription', async (req: RequestWithAuth, res: Response) => {
     if (pending?.plan_id) {
       await syncPendingPaymentFromAsaasIfConfigured(pending);
     }
+    await syncPlanSubscriptionFromAsaasIfConfigured(userId);
     const active = paymentsDb.hasActivePlanSubscription(userId);
     const latest = paymentsDb.getLatestPlanPayment(userId);
     const pendingAfter = paymentsDb.getFirstPendingForUser(userId);
+    const subscriptionCancelled =
+      !active && paymentsDb.hasCancelledPlanSubscription(userId);
     const inTrial = Boolean(
       active && latest && latest.status === 'PENDING' && planPaymentInTrialWindow(latest)
     );
@@ -3532,6 +3556,7 @@ app.get('/api/me/subscription', async (req: RequestWithAuth, res: Response) => {
       active,
       planId: latest?.plan_id ?? null,
       subscriptionId: latest?.asaas_subscription_id ?? null,
+      subscriptionCancelled,
       hasPendingPlanPayment: Boolean(pendingAfter?.plan_id),
       inTrial,
       planFirstInvoiceDue:
@@ -3604,10 +3629,14 @@ app.delete('/api/me/subscription', async (req: RequestWithAuth, res: Response) =
         await asaas.deleteAsaasSubscription(subId);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        res.status(502).json({
-          error: msg || 'Não foi possível cancelar a assinatura no Asaas.',
-        });
-        return;
+        const alreadyGone = /404|not found|não encontrad|inexistente|already|já cancel/i.test(msg);
+        if (!alreadyGone) {
+          res.status(502).json({
+            error: msg || 'Não foi possível cancelar a assinatura no Asaas.',
+          });
+          return;
+        }
+        console.warn('[payments] deleteAsaasSubscription (já removida no Asaas):', msg);
       }
     }
     const pending = paymentsDb.getFirstPendingForUser(userId);
@@ -3625,6 +3654,7 @@ app.delete('/api/me/subscription', async (req: RequestWithAuth, res: Response) =
       }
       paymentsDb.deleteByIdForUser(pending.id, userId);
     }
+    paymentsDb.clearPlanSubscriptionIdForUser(userId);
     res.status(204).end();
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });

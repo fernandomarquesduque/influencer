@@ -1,7 +1,7 @@
 /**
  * Verifica se Com LLM sobe apos um ingest (pos-correcao sync SQLite).
  */
-import 'dotenv/config';
+import './load-qualify-env.mjs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';

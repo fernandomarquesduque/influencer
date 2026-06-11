@@ -212,14 +212,16 @@ export class PaymentsDb {
   }
 
   /**
-   * Assinante ativo: cobrança de plano confirmada, ou período de trial (1ª fatura pendente,
-   * dentro de plan_first_due_date — cartão já cadastrado no Asaas na criação).
+   * Assinante ativo: cobrança de plano confirmada com assinatura recorrente ainda ativa,
+   * ou período de trial (1ª fatura pendente, dentro de plan_first_due_date).
+   * Após cancelar a assinatura, asaas_subscription_id é limpo e o acesso deixa de ser ativo.
    */
   hasActivePlanSubscription(userId: number): boolean {
     const row = this.db
       .prepare(
         `SELECT 1 AS ok FROM payment
          WHERE user_id = ? AND plan_id IS NOT NULL AND plan_id != ''
+           AND asaas_subscription_id IS NOT NULL AND asaas_subscription_id != ''
            AND (
              status IN ('CONFIRMED', 'RECEIVED')
              OR (
@@ -233,6 +235,30 @@ export class PaymentsDb {
       )
       .get(userId) as { ok?: number } | undefined;
     return Boolean(row?.ok);
+  }
+
+  /** Já teve plano pago, mas a recorrência foi cancelada (sem asaas_subscription_id). */
+  hasCancelledPlanSubscription(userId: number): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS ok FROM payment
+         WHERE user_id = ? AND plan_id IS NOT NULL AND plan_id != ''
+           AND status IN ('CONFIRMED', 'RECEIVED')
+           AND (asaas_subscription_id IS NULL OR asaas_subscription_id = '')
+         LIMIT 1`
+      )
+      .get(userId) as { ok?: number } | undefined;
+    return Boolean(row?.ok);
+  }
+
+  /** Remove vínculo com assinatura recorrente no Asaas (após cancelamento). */
+  clearPlanSubscriptionIdForUser(userId: number): void {
+    this.db
+      .prepare(
+        `UPDATE payment SET asaas_subscription_id = NULL, updated_at = datetime('now')
+         WHERE user_id = ? AND plan_id IS NOT NULL AND plan_id != ''`
+      )
+      .run(userId);
   }
 
   /** Última assinatura de plano do usuário (confirmada ou pendente). */
