@@ -692,14 +692,33 @@ const GENERIC_CONTENT_PILLAR_FOLDS: ReadonlySet<string> = new Set(
 
 const CONTENT_PILLAR_FALLBACK_LABEL = 'Outros';
 
-/** Pilares vazios ou incoerentes com os dados: servidor/modelo usam rotulo neutro. */
-function ensureContentPillarsFallback(qualification: JsonRecord): void {
+function isContentPillarsOnlyOutrosFallback(contentPillars: string[]): boolean {
+  const pillars = asStringArray(contentPillars, 100);
+  if (pillars.length !== 1) return false;
+  return foldMainCategoryKey(String(pillars[0] ?? '')) === foldMainCategoryKey(CONTENT_PILLAR_FALLBACK_LABEL);
+}
+
+/** Pilares vazios: preenche Outros só quando allowOutrosFallback (ultima tentativa / fallback pos-reparo). */
+function ensureContentPillarsFallback(qualification: JsonRecord, allowOutrosFallback: boolean): void {
   const pillars = asStringArray(qualification.contentPillars, 100);
   if (pillars.length === 0) {
-    qualification.contentPillars = [CONTENT_PILLAR_FALLBACK_LABEL];
+    qualification.contentPillars = allowOutrosFallback ? [CONTENT_PILLAR_FALLBACK_LABEL] : [];
   } else {
     qualification.contentPillars = pillars;
   }
+}
+
+function validateContentPillarsOutrosReservedForLastAttempt(
+  contentPillars: string[],
+  allowOutrosFallback: boolean
+): string[] {
+  if (allowOutrosFallback) return [];
+  if (isContentPillarsOnlyOutrosFallback(contentPillars)) {
+    return [
+      `contentPillars: rotulo "${CONTENT_PILLAR_FALLBACK_LABEL}" so e permitido na ultima tentativa — escolha temas concretos do perfil (uma palavra, sustentados nos dados).`,
+    ];
+  }
+  return [];
 }
 
 function validationErrorsMentionContentPillars(errors: string[]): boolean {
@@ -1434,13 +1453,20 @@ function normalizeProfileTypeLeakage(qualification: JsonRecord): void {
   else qualification.profileType = parts[0];
 }
 
+type QualificationValidationOptions = {
+  /** Permite contentPillars ["Outros"] e preenchimento servidor de Outros se vazio. */
+  allowContentPillarOutrosFallback?: boolean;
+};
+
 function normalizeClassification(
   raw: JsonRecord,
   profile: JsonRecord,
   model: string,
   _maxReasoning: number,
-  languageFromFranc: string
+  languageFromFranc: string,
+  options: QualificationValidationOptions = {}
 ): LlmClassification {
+  const allowOutrosFallback = options.allowContentPillarOutrosFallback === true;
   const qualificationRaw = asObject(raw.qualification);
   const qualification = Object.keys(qualificationRaw).length > 0 ? qualificationRaw : asObject(raw);
   const bs = pickBrandSafetyFromQualification(qualification);
@@ -1489,7 +1515,7 @@ function normalizeClassification(
     qualification.language = 'pt-br';
   }
 
-  ensureContentPillarsFallback(qualification);
+  ensureContentPillarsFallback(qualification, allowOutrosFallback);
 
   return {
     qualifiedAt: new Date().toISOString(),
@@ -1501,7 +1527,12 @@ function normalizeClassification(
   };
 }
 
-function validateLlmClassification(llm: LlmClassification, profile?: JsonRecord): string[] {
+function validateLlmClassification(
+  llm: LlmClassification,
+  profile?: JsonRecord,
+  options: QualificationValidationOptions = {}
+): string[] {
+  const allowOutrosFallback = options.allowContentPillarOutrosFallback === true;
   const errors: string[] = [];
   const q = asObject(llm.qualification);
   if (Object.keys(q).length === 0) {
@@ -1522,6 +1553,7 @@ function validateLlmClassification(llm: LlmClassification, profile?: JsonRecord)
   errors.push(...validateMacroLabelArray('contentPillars', pillarsArrEarly));
   errors.push(...validateMacroLabelArray('audienceType', audArrEarly));
   errors.push(...validateContentPillarsNotTooGeneric(pillarsArrEarly));
+  errors.push(...validateContentPillarsOutrosReservedForLastAttempt(pillarsArrEarly, allowOutrosFallback));
   if (profile && Object.keys(profile).length > 0) {
     errors.push(...validateSubCategoriesBeautyAgainstProfileEvidence(q, profile));
     errors.push(...validateContentPillarsAgainstProfileEvidence(q, profile));
@@ -1602,7 +1634,7 @@ function buildRepairPrompt(originalPrompt: string, invalidJson: JsonRecord, erro
     '- retorne apenas JSON valido',
     '- mantenha todos os campos obrigatorios',
     '- qualification.subCategories: pelo menos 1 item; prefira termos da amostra/vocabulario fechado do prompt; uma palavra, sem espacos internos. Maquiagem/beleza so com evidencia na bio ou amostras.',
-    `- qualification.contentPillars: pelo menos 1 item; cada item UMA palavra sem espacos (NUNCA frases tipo "recepcao de cafe"). Pilares so com base no texto do perfil/amostras; PROIBIDO "dicas", "moto", "receitas" sem aparecer nos dados. PROIBIDO lista SOMENTE com rotulos de Beleza (beleza, maquiagem, skincare, unhas…) se nada na bio/amostras falar de estetica/make; troque por pilares do nicho real (ex.: direito, negocios, humor, familia). Se nao houver tema concreto evidenciado, use ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
+    `- qualification.contentPillars: pelo menos 1 item; cada item UMA palavra sem espacos (NUNCA frases tipo "recepcao de cafe"). Pilares so com base no texto do perfil/amostras; PROIBIDO "dicas", "moto", "receitas" sem aparecer nos dados. PROIBIDO lista SOMENTE com rotulos de Beleza (beleza, maquiagem, skincare, unhas…) se nada na bio/amostras falar de estetica/make; troque por pilares do nicho real (ex.: direito, negocios, humor, familia). NUNCA use "${CONTENT_PILLAR_FALLBACK_LABEL}" nesta correcao — escolha temas concretos; o servidor so aplica "${CONTENT_PILLAR_FALLBACK_LABEL}" na ultima tentativa se esgotar reparos.`,
     `- qualification.mainCategory OBRIGATORIO: copie LITERAL um unico rotulo da LISTA FECHADA do prompt (uma palavra, sem " & "); nao invente sinonimos nem traducoes.`,
     '- qualification.personaSummary: descricao agregada em terceira pessoa; PROIBIDO @, handle, nome publico, copiar biografia, links, metricas ou texto identico ao JSON; PROIBIDO templates tipo "recepcao de cafe" ou "periodo de tempo dedicado"; se o prompt original trouxer "amostras_textos_publicacoes", use só como pista (nao copie legendas).',
     '- qualification.profileType: marca D2C (cosmeticos/skincare/linha de produtos, voz institucional, ingredientes) → marca, nao criador; criador só quando a pessoa for o centro do posicionamento.',
@@ -1662,7 +1694,7 @@ function buildPrompt(profile: JsonRecord, options: { includePostSamples?: boolea
     'confidence/status: sem base em texto autoral para nicho/persona → status "insufficient_data" e confidence baixo (0.2-0.45). Nunca 1.0 com bio+nome vazios ou só emoji/link.',
     'Arrays nunca vazios.',
     'subCategories, contentPillars e audienceType: uma palavra macro por item (sem frases compostas).',
-    `contentPillars: só temas presentes em "Dados do perfil"; uma palavra. Nao invente; nao copie palavras deste prompt. Evite "dicas","moto","receitas","bastidores","stories" como padrao — só se o texto mostrar (ex.: moto = moto/trilha/grau). Nao repita mainCategory como pillar. Sem tema definivel nos dados → ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
+    `contentPillars: só temas presentes em "Dados do perfil"; uma palavra. Nao invente; nao copie palavras deste prompt. Evite "dicas","moto","receitas","bastidores","stories" como padrao — só se o texto mostrar (ex.: moto = moto/trilha/grau). Nao repita mainCategory como pillar. Nao use "${CONTENT_PILLAR_FALLBACK_LABEL}" — nomeie o nicho concreto; o servidor so preenche "${CONTENT_PILLAR_FALLBACK_LABEL}" na ultima tentativa.`,
     'contentPillars Beleza (validacao): sem gender feminino, PROIBIDO usar APENAS rotulos de vitrine Beleza (beleza, maquiagem, skincare, unhas, estetica, cosmeticos, maquiador...) se NENHUMA bio nem amostra citar make/cosmeticos/salao/pele/tutorial/autocuidado ligado a estetica. Com gender feminino o servidor aceita pilares so Beleza mesmo sem essas palavras. Perfil juridico (adv., OAB, lei, tribunal, escritorio), saude, negocios, fitness sem estetica e sem feminino → pilares = tema REAL do conteudo, nunca "beleza+maquiagem" por estereotipo.',
     'subCategories: fonte do nicho; devem existir no mapa fechado (amostra acima). Ordem: mais especifico primeiro; pt-BR ou EN se no mapa (tv, dj). Maquiagem/beleza/skincare: com evidencia na bio/amostras, ou com gender feminino (servidor aceita sem menção explicita). Maternidade sozinha nao dispensa evidencia. Perfil adv./OAB/juridico sem cosmeticos e sem feminino → subs do oficio (direito, advocacia…), nunca maquiagem. Fora do vocabulario → falha de classificacao.',
     'mainCategory: copiar LITERAL um rotulo da lista (uma palavra). Orientar pelas subCategories (ex.: maquiagem→Beleza; receitas→Alimentacao; viagem→Viagens; tatuagem→Lifestyle, nao Musica; futebol/futsal/esporte→Esportes; video game/gaming/jogos eletronicos→Games, nao só "jogos" que em pt-BR costuma ser esporte). Vaquejada/festa com som→Musica; Esportes só hipismo competitivo sem pilar musical. Ambiguo: macro mais comercial da lista. So rotulos da lista.',
@@ -1672,8 +1704,8 @@ function buildPrompt(profile: JsonRecord, options: { includePostSamples?: boolea
     personaRule,
     'subCategories: prefira nicho comercial especifico; evite "variedades","geral","conteudo" se houver termo melhor no mapa.',
     includePostSamples
-      ? `Incerteza: pouco texto para nicho — contentPillars use ["${CONTENT_PILLAR_FALLBACK_LABEL}"] se nao der para nomear temas; demais campos evite geral/desconhecido salvo necessario.`
-      : `Incerteza: bio curta — contentPillars use ["${CONTENT_PILLAR_FALLBACK_LABEL}"] se nao der para nomear temas; demais campos evite geral/desconhecido salvo necessario.`,
+      ? `Incerteza: pouco texto para nicho — contentPillars: temas concretos do perfil (nao use "${CONTENT_PILLAR_FALLBACK_LABEL}"); demais campos evite geral/desconhecido salvo necessario.`
+      : `Incerteza: bio curta — contentPillars: temas concretos inferidos com cautela (nao use "${CONTENT_PILLAR_FALLBACK_LABEL}"); demais campos evite geral/desconhecido salvo necessario.`,
     'Estrutura obrigatoria:',
     '{',
     '  "confidence": 0.0-1.0 (vagos→<0.5; sem chute em 1.0),',
@@ -2419,7 +2451,7 @@ async function classifyProfile(
         {
           role: 'system',
           content:
-            `Voce responde somente JSON valido. Textos descritivos (personaSummary, rotulos de categoria) em portugues do Brasil. Nao inclua chave "language" no JSON. contentPillars: sem gender feminino, nao preencha só com beleza/maquiagem se a bio e amostras nao citarem estetica ou make; com gender feminino o validador aceita. Sem tema claro nos dados → ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
+            `Voce responde somente JSON valido. Textos descritivos (personaSummary, rotulos de categoria) em portugues do Brasil. Nao inclua chave "language" no JSON. contentPillars: sem gender feminino, nao preencha só com beleza/maquiagem se a bio e amostras nao citarem estetica ou make; com gender feminino o validador aceita. Nao use "${CONTENT_PILLAR_FALLBACK_LABEL}" — escolha temas concretos do perfil.`,
         },
         { role: 'user', content: prompt },
       ],
@@ -2470,10 +2502,20 @@ async function classifyProfile(
     return parsed;
   };
 
+  const pillarValidationOpts: QualificationValidationOptions = { allowContentPillarOutrosFallback: false };
+  const pillarLastAttemptOpts: QualificationValidationOptions = { allowContentPillarOutrosFallback: true };
+
   let parsed = await runInitialGeneration();
   logStep('>> local: normalizar + validar regras...');
-  let llm = normalizeClassification(parsed, workingProfile, model, maxReasoning, languageFromFranc);
-  let validationErrors = validateLlmClassification(llm, workingProfile);
+  let llm = normalizeClassification(
+    parsed,
+    workingProfile,
+    model,
+    maxReasoning,
+    languageFromFranc,
+    pillarValidationOpts
+  );
+  let validationErrors = validateLlmClassification(llm, workingProfile, pillarValidationOpts);
   if (validationErrors.length === 0) {
     logStep('>> ok: qualification valida (sem reparo LLM)');
     return llm;
@@ -2558,8 +2600,15 @@ async function classifyProfile(
     }
     parsed = repairedParsed;
     logStep('>> local: revalidar apos reparo...');
-    llm = normalizeClassification(repairedParsed, workingProfile, model, maxReasoning, languageFromFranc);
-    validationErrors = validateLlmClassification(llm, workingProfile);
+    llm = normalizeClassification(
+      repairedParsed,
+      workingProfile,
+      model,
+      maxReasoning,
+      languageFromFranc,
+      pillarValidationOpts
+    );
+    validationErrors = validateLlmClassification(llm, workingProfile, pillarValidationOpts);
     if (validationErrors.length === 0) {
       logStep('>> ok: qualification valida apos reparo');
       return llm;
@@ -2570,9 +2619,9 @@ async function classifyProfile(
     const qualFallback = asObject(llm.qualification);
     qualFallback.contentPillars = [CONTENT_PILLAR_FALLBACK_LABEL];
     llm = { ...llm, qualification: qualFallback };
-    validationErrors = validateLlmClassification(llm, workingProfile);
+    validationErrors = validateLlmClassification(llm, workingProfile, pillarLastAttemptOpts);
     if (validationErrors.length === 0) {
-      logStep(`>> ok: contentPillars fallback "${CONTENT_PILLAR_FALLBACK_LABEL}" apos reparo`);
+      logStep(`>> ok: contentPillars fallback "${CONTENT_PILLAR_FALLBACK_LABEL}" (ultima tentativa)`);
       return llm;
     }
   }
@@ -3203,6 +3252,7 @@ function renderUiHtml(): string {
       <table>
         <thead>
           <tr>
+            <th>Processado</th>
             <th>Handle</th>
             <th class="td-excl-regra">Excl. regra</th>
             <th>profileType</th>
@@ -3218,7 +3268,7 @@ function renderUiHtml(): string {
           </tr>
         </thead>
         <tbody id="resultsBody">
-          <tr><td colspan="12">Sem resultados ainda.</td></tr>
+          <tr><td colspan="13">Sem resultados ainda.</td></tr>
         </tbody>
       </table>
     </div>
@@ -3270,25 +3320,27 @@ function renderUiHtml(): string {
         .replace(/"/g,'&quot;')
         .replace(/'/g,'&#039;');
     }
-    function resultsSortKey(r, seed){
-      const h = String(r && r.handle != null ? r.handle : '');
-      let x = 2166136261;
-      const s = h + '|' + String(seed || '');
-      for(let i = 0; i < s.length; i++){
-        x ^= s.charCodeAt(i);
-        x = Math.imul(x, 16777619);
-      }
-      return x >>> 0;
+    function processedAtSortMs(r){
+      const t = Date.parse(String(r && r.processedAt != null ? r.processedAt : ''));
+      return Number.isFinite(t) ? t : 0;
     }
-    function renderResults(items, displaySeed){
+    function renderResults(items){
       const body = document.getElementById('resultsBody');
       const list = Array.isArray(items) ? items.slice() : [];
-      list.sort((a,b)=> resultsSortKey(a, displaySeed) - resultsSortKey(b, displaySeed));
+      list.sort((a, b) => {
+        const da = processedAtSortMs(a);
+        const db = processedAtSortMs(b);
+        if (db !== da) return db - da;
+        return String(a && a.handle != null ? a.handle : '').localeCompare(
+          String(b && b.handle != null ? b.handle : ''),
+          'pt-BR'
+        );
+      });
       body.replaceChildren();
       if(list.length === 0){
         const tr0 = document.createElement('tr');
         const td0 = document.createElement('td');
-        td0.colSpan = 12;
+        td0.colSpan = 13;
         td0.textContent = 'Sem resultados ainda.';
         tr0.appendChild(td0);
         body.appendChild(tr0);
@@ -3322,6 +3374,15 @@ function renderUiHtml(): string {
         const policyExcl = matchesAutoExclusionPolicy(q);
         const tr = document.createElement('tr');
         if(r.result === 'excluido' || policyExcl) tr.className = 'row-excluido';
+        const tdProc = document.createElement('td');
+        const procMs = processedAtSortMs(r);
+        if(procMs > 0){
+          tdProc.textContent = new Date(procMs).toLocaleString('pt-BR');
+          tdProc.title = String(r.processedAt ?? '');
+        }else{
+          tdProc.textContent = String.fromCharCode(0x2014);
+        }
+        tr.appendChild(tdProc);
         const tdHandle = document.createElement('td');
         const slug = String(r.handle ?? '').trim().replace(/^@/, '').split(/[/?#]/)[0];
         if(slug){
@@ -3447,7 +3508,7 @@ function renderUiHtml(): string {
         if(concEl) concEl.disabled = s.running === true;
         const mcEl = document.getElementById('mainCategory');
         if(mcEl) mcEl.disabled = s.running === true;
-        renderResults(s.results || [], s.resultsDisplaySeed || s.lastStartedAt || '');
+        renderResults(s.results || []);
         document.getElementById('meta').textContent =
           'Ultimo inicio: ' + (s.lastStartedAt || '-') + ' | Ultimo fim: ' + (s.lastEndedAt || '-') +
           (s.mainCategoryFilter ? ' | Filtro categoria: ' + s.mainCategoryFilter : '') +
