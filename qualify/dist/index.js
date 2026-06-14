@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './loadEnv.js';
 import process from 'node:process';
 import http from 'node:http';
 import { francAll } from 'franc';
@@ -6,6 +6,10 @@ import { Ollama } from 'ollama';
 import { foldMainCategoryKey, formatMainCategoryTaxonomyForPrompt, formatSubcategoryTaxonomyHintsForPrompt, MAIN_CATEGORY_CANONICAL_LABELS, isCanonicalMainCategoryLabel, resolveMainCategoryWithEvidence, scoreMainCategoriesFromEvidence, scoreSubCategoriesToMainCategories, snapMainCategoryToTaxonomy, } from './mainCategoryTaxonomy.js';
 const DEFAULT_MODEL = 'llama3.1:8b';
 const DEFAULT_OLLAMA_HOST = 'http://localhost:11434';
+/** Contexto menor que o padrao do Ollama (4096) — prompt fase1 ~1,8k tok. */
+const DEFAULT_OLLAMA_NUM_CTX = 2048;
+/** Saida JSON de classificacao; limitar evita geracao longa e lenta. */
+const DEFAULT_OLLAMA_NUM_PREDICT = 700;
 const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_MAX_REASONING = 3;
 const DEFAULT_API_TIMEOUT_MS = 30000;
@@ -17,7 +21,7 @@ const QUALIFY_UI_RESULTS_MAX = 100;
 const DEFAULT_LLM_REPAIR_ATTEMPTS = 2;
 /**
  * Validacao ainda falha apos todas as tentativas de reparo LLM.
- * O batch trata como exclusao automatica (purge), nao como "Falha" operacional.
+ * O batch mantém o perfil na base (falha operacional), sem purge automatico.
  */
 class LlmValidationExhaustedError extends Error {
     lastLlm;
@@ -203,6 +207,8 @@ const FRANC_ISO6393_TO_BCP47 = {
 };
 /** Quando franc coloca `eng` no topo mas `por` vem perto, assume pt-BR (bios PT com termos em ingles). */
 const FRANC_POR_ENG_MARGIN = 0.1;
+/** Quando `por` vence por pouco sobre `spa`, desambigua com heuristica (PT/ES muito parecidos). */
+const FRANC_POR_SPA_MARGIN = 0.12;
 function normalizeFrancInputBlob(blob) {
     return stripInvisibleFromString(blob).replace(/\s+/g, ' ').trim();
 }
@@ -216,40 +222,173 @@ function francScoreForIso3(ranked, iso3) {
     const row = ranked.find((x) => x[0] === iso3);
     return row ? row[1] : undefined;
 }
-/**
- * Idioma BCP-47 a partir do texto autoral (franc).
- * Usa limiar de letras baixo (12 por padrao). Quando franc nao decide (und, muito curto, iso fora do mapa) → pt-br (base BR).
- */
-function resolveLanguageFromFrancProfile(profile) {
-    const letters = countAuthorialLettersForProfileEvidence(profile);
-    const minFr = parseFrancMinAuthorialLetters();
-    if (letters < minFr)
+/** TLD/handle LATAM e outros — sinal forte quando a bio e curta ou franc ambiguo. */
+function languageHintFromHandle(handle) {
+    const h = String(handle ?? '').trim().toLowerCase().replace(/^@/, '');
+    if (!h)
+        return null;
+    const latamEs = /(?:^|[._-])(cl|ve|mx|ar|pe|uy|py|bo|ec|gt|cr|pa|do|hn|ni|sv|cu|pr|co)(?:$|[._-])/i.test(h) ||
+        /\.(ve|mx|ar|cl|pe|uy|py|bo|ec|gt|cr|pa|do|hn|ni|sv|cu|pr|co)\b/i.test(h);
+    if (latamEs)
+        return 'es';
+    if (/\.(br|com\.br)\b/i.test(h) || /(?:^|[._-])br(?:$|[._-])/i.test(h))
         return 'pt-br';
-    const blob = normalizeFrancInputBlob(authorialBlobStrippedForLanguage(profile));
-    if (countUnicodeLetters(blob) < minFr)
-        return 'pt-br';
-    let ranked = francRankedForBlob(blob, 10);
-    if ((ranked.length === 0 || ranked[0][0] === 'und') && letters >= 15) {
-        ranked = francRankedForBlob(blob, 8);
-    }
-    if (ranked.length === 0 || ranked[0][0] === 'und')
-        return 'pt-br';
+    if (/\.(it|com\.it)\b/i.test(h))
+        return 'it';
+    if (/\.(fr|com\.fr)\b/i.test(h))
+        return 'fr';
+    if (/\.(de|com\.de)\b/i.test(h))
+        return 'de';
+    return null;
+}
+function hasDistinctiveSpanishSignals(low) {
+    return (/\b(ti\s+misma|tu\s+momento|puedes\s+usar|contáctanos|contactanos|contáctenos|ubicación|ubicacion|tiendas\s+a\s+nivel|nivel\s+nacional|regalos|mañana|manana|para\s+las|solo\s+para\s+las|síguenos|siguenos|es\s+tu\s+momento|la\s+mejor\s+pieza|en\s+ti\s+misma)\b/iu.test(low) ||
+        /\b(confianza|contáct|ubicaci|regalos|premios|mañana|también|información|construyamos|construir|escena|electr[oó]nica|entre\s+todos|confirmado|festival|septiembre|patria|música|musica|nosotros|santiago|chile|bogot[aá]|méxico|mexico|argentina|colombia|per[uú]|caracas|lima)\b/iu.test(low) ||
+        (/\bsantiago\b/iu.test(low) && /\bcl\b/iu.test(low)));
+}
+function hasDistinctivePortugueseSignals(low) {
+    return /\b(você|voce|não|nao|são|sao|também|tambem|obrigad|beleza|seguidores|brasil|parabéns|parabens|gratidão|gratidao|corinthiano|pagode|futebol|vocês|voces)\b/iu.test(low);
+}
+/** Heuristica lexical quando franc devolve idioma nao mapeado (ex.: sco) ou ambiguo. */
+function detectLanguageHeuristicFromBlob(blob, handle) {
+    const low = stripInvisibleFromString(blob).toLowerCase();
+    const handleHint = languageHintFromHandle(handle ?? '');
+    if (!low.trim())
+        return handleHint;
+    const ptStrong = hasDistinctivePortugueseSignals(low);
+    const itStrong = /\b(informazione|edicola|provincia|giornal|notizie|elezioni|della\b|delle\b|degli\b|nell'|sull'|l'informazione|comune di|on demand)\b/iu.test(low);
+    const enStrong = /\b(sandwiches|spreads|coffee|nothing fancy|bagels|shop now|order online|official account|new york|brooklyn|manhattan|williamsburg|soho|follow us|link in bio|in the line)\b/iu.test(low);
+    const esStrong = hasDistinctiveSpanishSignals(low) ||
+        /\b(restaurante|noticias|información|informacion|más información|también|síguenos|pedidos|pero\b|más\b)\b/iu.test(low);
+    const frStrong = /\b(boulangerie|restaurant|commander|suivez|paris|merci)\b/iu.test(low);
+    if (itStrong && !ptStrong)
+        return 'it';
+    if (enStrong && !ptStrong)
+        return 'en';
+    if (esStrong && !ptStrong)
+        return 'es';
+    if (frStrong && !ptStrong)
+        return 'fr';
+    if (handleHint && handleHint !== 'pt-br' && !ptStrong)
+        return handleHint;
+    return null;
+}
+const FRANC_ALT_MAPPED_MIN_SCORE = 0.65;
+/** Converte ranking franc em tag BCP-47; se o topo for nao mapeado (sco, und…), usa o melhor candidato mapeado. */
+function resolveMappedLanguageFromFrancRanked(ranked, blob, handle) {
+    if (ranked.length === 0)
+        return null;
     const topCode = ranked[0][0];
     const topScore = ranked[0][1];
-    if (!topCode)
+    if (!topCode || topCode === 'und')
+        return null;
+    const low = stripInvisibleFromString(blob).toLowerCase();
+    if (topCode === 'por') {
+        const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
+        if (spaScore > topScore - FRANC_POR_SPA_MARGIN) {
+            const h = detectLanguageHeuristicFromBlob(blob, handle);
+            if (h === 'es')
+                return 'es';
+            if (hasDistinctiveSpanishSignals(low))
+                return 'es';
+        }
         return 'pt-br';
-    if (topCode === 'por')
-        return 'pt-br';
+    }
+    if (topCode === 'spa') {
+        const porScore = francScoreForIso3(ranked, 'por') ?? 0;
+        if (porScore > topScore - FRANC_POR_SPA_MARGIN) {
+            const h = detectLanguageHeuristicFromBlob(blob, handle);
+            if (h === 'pt-br' || hasDistinctivePortugueseSignals(low))
+                return 'pt-br';
+        }
+        return 'es';
+    }
     if (topCode === 'eng') {
+        const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
+        if (spaScore > FRANC_ALT_MAPPED_MIN_SCORE && (hasDistinctiveSpanishSignals(low) || languageHintFromHandle(handle) === 'es')) {
+            return 'es';
+        }
         const porScore = francScoreForIso3(ranked, 'por') ?? 0;
         if (porScore > topScore - FRANC_POR_ENG_MARGIN)
             return 'pt-br';
         return 'en';
     }
-    const mapped = FRANC_ISO6393_TO_BCP47[topCode];
-    if (mapped)
-        return mapped;
-    return 'pt-br';
+    if (topCode === 'fra') {
+        const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
+        if (spaScore > 0.8 && (hasDistinctiveSpanishSignals(low) || languageHintFromHandle(handle) === 'es')) {
+            return 'es';
+        }
+        return 'fr';
+    }
+    const mappedTop = FRANC_ISO6393_TO_BCP47[topCode];
+    if (mappedTop) {
+        if (mappedTop === 'fr') {
+            const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
+            if (spaScore > 0.8 && (hasDistinctiveSpanishSignals(low) || languageHintFromHandle(handle) === 'es')) {
+                return 'es';
+            }
+        }
+        return mappedTop;
+    }
+    for (let i = 1; i < ranked.length; i++) {
+        const code = ranked[i][0];
+        const score = ranked[i][1];
+        if (!code || code === 'und' || score < FRANC_ALT_MAPPED_MIN_SCORE)
+            continue;
+        if (code === 'por') {
+            const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
+            if (spaScore > score - FRANC_POR_SPA_MARGIN && hasDistinctiveSpanishSignals(low))
+                return 'es';
+            return 'pt-br';
+        }
+        if (code === 'spa')
+            return 'es';
+        if (code === 'eng') {
+            const porScore = francScoreForIso3(ranked, 'por') ?? 0;
+            if (porScore > score - FRANC_POR_ENG_MARGIN)
+                return 'pt-br';
+            return 'en';
+        }
+        const alt = FRANC_ISO6393_TO_BCP47[code];
+        if (alt)
+            return alt;
+    }
+    return null;
+}
+/**
+ * Idioma BCP-47 a partir do texto autoral (franc + heuristica).
+ * Default pt-br so para texto curto/ambíguo sem sinais internacionais.
+ */
+function resolveLanguageFromFrancProfile(profile) {
+    const handle = toHandle(profile.handle ?? '');
+    const handleHint = languageHintFromHandle(handle);
+    const letters = countAuthorialLettersForProfileEvidence(profile);
+    const minFr = parseFrancMinAuthorialLetters();
+    const blob = normalizeFrancInputBlob(authorialBlobStrippedForLanguage(profile));
+    const blobLetters = countUnicodeLetters(blob);
+    if (letters < minFr || blobLetters < minFr) {
+        return handleHint ?? 'pt-br';
+    }
+    let ranked = francRankedForBlob(blob, 10);
+    if ((ranked.length === 0 || ranked[0][0] === 'und') && letters >= 15) {
+        ranked = francRankedForBlob(blob, 8);
+    }
+    const fromFranc = ranked.length > 0 ? resolveMappedLanguageFromFrancRanked(ranked, blob, handle) : null;
+    if (fromFranc) {
+        if (fromFranc === 'fr' && (handleHint === 'es' || hasDistinctiveSpanishSignals(stripInvisibleFromString(blob).toLowerCase()))) {
+            return 'es';
+        }
+        if (fromFranc === 'en' && (handleHint === 'es' || hasDistinctiveSpanishSignals(stripInvisibleFromString(blob).toLowerCase()))) {
+            const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
+            if (spaScore > FRANC_ALT_MAPPED_MIN_SCORE || handleHint === 'es')
+                return 'es';
+        }
+        return fromFranc;
+    }
+    const fromHeuristic = detectLanguageHeuristicFromBlob(blob, handle);
+    if (fromHeuristic)
+        return fromHeuristic;
+    return handleHint ?? 'pt-br';
 }
 function stripUrlsForLanguageHeuristic(s) {
     return s.replace(/https?:\/\/\S+/gi, ' ').replace(/\bwww\.\S+/gi, ' ');
@@ -324,6 +463,20 @@ function tryExcludeByAuthorialLanguageMismatch(qualification, profile) {
     if (/[\u0600-\u06FF\u0590-\u05FF]/u.test(blob) && isPortugueseLanguageTag(langRaw)) {
         qualification.language = 'en';
         return 'Exclusao automatica: texto autoral em script nao latino com language indicando portugues — idioma assumido internacional (en), fora da politica pt-br';
+    }
+    if (isPortugueseLanguageTag(langRaw)) {
+        const handle = toHandle(profile.handle ?? '');
+        const heuristic = detectLanguageHeuristicFromBlob(blob, handle);
+        const handleHint = languageHintFromHandle(handle);
+        const intl = heuristic && normalizeLanguageTagForExclusionRule(heuristic) !== 'pt-br'
+            ? heuristic
+            : handleHint && handleHint !== 'pt-br'
+                ? handleHint
+                : null;
+        if (intl) {
+            qualification.language = intl;
+            return `Exclusao automatica: texto autoral indica idioma ${intl}, fora da politica pt-br`;
+        }
     }
     return null;
 }
@@ -474,6 +627,20 @@ const GENERIC_CONTENT_PILLAR_FOLDS = new Set([
     'amores',
     'mensagens',
 ].map((w) => foldMainCategoryKey(w)));
+const CONTENT_PILLAR_FALLBACK_LABEL = 'Outros';
+/** Pilares vazios ou incoerentes com os dados: servidor/modelo usam rotulo neutro. */
+function ensureContentPillarsFallback(qualification) {
+    const pillars = asStringArray(qualification.contentPillars, 100);
+    if (pillars.length === 0) {
+        qualification.contentPillars = [CONTENT_PILLAR_FALLBACK_LABEL];
+    }
+    else {
+        qualification.contentPillars = pillars;
+    }
+}
+function validationErrorsMentionContentPillars(errors) {
+    return errors.some((e) => e.toLowerCase().includes('contentpillars'));
+}
 function validateContentPillarsNotTooGeneric(contentPillars) {
     if (contentPillars.length === 0)
         return [];
@@ -865,6 +1032,170 @@ function pickBrandSafetyFromQualification(q) {
         normalizeBrandSafety(rec.brand_safety) ??
         normalizeBrandSafety(rec.BrandSafety));
 }
+function profileAuthorialEvidenceLow(profile, includePosts = true) {
+    const parts = [];
+    const handle = String(profile.handle ?? '').toLowerCase();
+    const fn = String(profile.full_name ?? '').normalize('NFC').toLowerCase();
+    const bio = String(profile.biography ?? '').normalize('NFC').toLowerCase();
+    if (handle)
+        parts.push(handle);
+    if (fn)
+        parts.push(fn);
+    if (bio)
+        parts.push(bio);
+    for (const field of ['category_name', 'business_category_name', 'overall_category_name']) {
+        const v = String(profile[field] ?? '').normalize('NFC').toLowerCase().trim();
+        if (v)
+            parts.push(v);
+    }
+    if (includePosts) {
+        for (const s of buildPostTextSamplesForPrompt(profile)) {
+            if (s.texto)
+                parts.push(String(s.texto).normalize('NFC').toLowerCase());
+            if (s.hashtags.length > 0)
+                parts.push(s.hashtags.join(' ').toLowerCase());
+        }
+    }
+    return parts.join('\n');
+}
+function profilePublicTextLow(profile) {
+    const disc = String(profile._discovered_value ?? '').normalize('NFC').toLowerCase();
+    const authorial = profileAuthorialEvidenceLow(profile, false);
+    return disc ? `${authorial}\n${disc}` : authorial;
+}
+function hasLinhaProductBrandHandle(handle) {
+    const h = String(handle ?? '').trim().toLowerCase().replace(/^@/, '');
+    return /^linha[a-z0-9_]{2,}$/i.test(h);
+}
+function hasInstagramProductServiceCategory(profile) {
+    const cats = ['category_name', 'business_category_name', 'overall_category_name']
+        .map((f) => String(profile[f] ?? '').toLowerCase())
+        .join(' ');
+    return /\bproduto\s*\/\s*servi[cç]o\b|\bproduct\s*\/\s*service\b|\bshopping\b/i.test(cats);
+}
+function hasInstitutionalThirdPersonBrandVoice(bio, fullName) {
+    const b = String(bio ?? '').trim();
+    if (!b)
+        return false;
+    const name = String(fullName ?? '').trim();
+    if (name.length >= 3) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`\\b${escaped}\\s+acredita\\s+que\\b`, 'iu').test(b))
+            return true;
+    }
+    return (/\b\w{3,}\s+acredita\s+que\b/iu.test(b) &&
+        /\b(tempo\s+vale|render|deseja\s+fazer|produto|m[aá]ximo)\b/iu.test(b));
+}
+/** Marca D2C (cosmeticos, limpeza, linha de produtos) — sem termos de busca discovered_*. */
+function hasStrongProductBrandSignalsInProfile(profile) {
+    const low = profileAuthorialEvidenceLow(profile);
+    const handle = String(profile.handle ?? '').toLowerCase();
+    const bio = String(profile.biography ?? '').normalize('NFC').toLowerCase();
+    const fn = String(profile.full_name ?? '').normalize('NFC');
+    if (hasLinhaProductBrandHandle(handle))
+        return true;
+    if (hasInstagramProductServiceCategory(profile) && hasInstitutionalThirdPersonBrandVoice(bio, fn)) {
+        return true;
+    }
+    const cleaningContext = /\b(limpeza|detergente|sab[aã]o|lavanderia|lou[cç]a|amaciante|desinfetante|multiuso|alvejante|limpador|higiene\s+dom[eé]stica|produtos?\s+de\s+limpeza|linha\s+roupas?|linha\s+lou[cç]a|linha\s+casa|rende\s+mais|barraca\s+do\s+detergente|minuano)\b/iu.test(low) || hasLinhaProductBrandHandle(handle);
+    const cleaningVoice = hasInstitutionalThirdPersonBrandVoice(bio, fn) ||
+        /\b(acredita\s+que|rende\s+mais|nossa\s+linha|nossos?\s+produtos?|linha\s+de\s+produtos?|e-?commerce|loja\s+oficial|compre\s+agora)\b/iu.test(low);
+    if (cleaningContext && cleaningVoice)
+        return true;
+    const skinContext = /\b(cosm[eé]tic|skincare|maquiagem|perfum|pele|tallow|sebo\s+bovino)\b/iu.test(low);
+    const skinVoice = /\bmarca\s+de\s+(cosm[eé]tic|beleza|skincare|produtos?)\b/iu.test(low) ||
+        /\b(nossa\s+marca|somos\s+uma\s+marca)\b/iu.test(low);
+    if (skinContext && skinVoice)
+        return true;
+    return false;
+}
+/** Sinais fortes de negocio/instituicao — empresa/marca/midia plausivel. */
+function hasStrongEmpresaSignalsInProfile(profile) {
+    const low = profilePublicTextLow(profile);
+    const handle = String(profile.handle ?? '').toLowerCase();
+    if (/\b(restaurante|bar\b|doceria|pizzaria|lanchonete|café|cafe\b|padaria|delivery|peça já|peca ja|pedidos pelo|whatsapp.*pedido|loja oficial|varejo|clinica|clínica|hospital|agencia de|agência de|escritório cont|b2b|ministério|ministerio|prefeitura|corpo de bombeiros|polícia militar|exército|exercito|oficial\b.*\b(pm|eb|cbm)|bagels?|sandwiches|spreads|coffee shop|square\.site|jornal\b|giornale|informazione|edicola|notizie|liga\s+nacional|liga\s+de\s+|empresa\s+de\s+entretenimento|entretenimento\b.*\b(eventos|licenciamento|media)|licenciamento\b|lnr\s+(eventos|media|music|licenciamento)|federa[cç][aã]o|associa[cç][aã]o|instituto|fund[aá][cç][aã]o|canal oficial|conta oficial|detergente|sab[aã]o|produtos?\s+de\s+limpeza|linha\s+roupas?|linha\s+lou[cç]a|linha\s+casa|rende\s+mais|e-?commerce)\b/iu.test(low)) {
+        return true;
+    }
+    if (/\bempresa\b/iu.test(low))
+        return true;
+    if (hasLinhaProductBrandHandle(handle) || hasStrongProductBrandSignalsInProfile(profile))
+        return true;
+    if (hasInstagramProductServiceCategory(profile))
+        return true;
+    if (/_restaurante|_loja|_store|_shop\b/i.test(handle))
+        return true;
+    return false;
+}
+/** Pessoa fisica / criador de conteudo — musica, esporte, arte, influencia. */
+function hasStrongCreatorPersonSignalsInProfile(profile) {
+    const low = profileAuthorialEvidenceLow(profile);
+    if (hasStrongEmpresaSignalsInProfile(profile) || hasStrongProductBrandSignalsInProfile(profile))
+        return false;
+    if (/\b(criador(a)? de conte[uú]do|influencer|youtuber|blogueir[ao]|digital influencer|content creator)\b/iu.test(low)) {
+        return true;
+    }
+    if (/\b(músico|musico|cantor[a]?|compositor[a]?|violonista|guitarrista|baterista|baixista|dj\b|produtor musical|integrante do|membro do|banda\b|pagode|sertanejo|forró|forro|rapper|artista\b|ator|atriz|humorista|comediante|apresentador[a]?)\b/iu.test(low)) {
+        return true;
+    }
+    if (/\b(jogador[a]? de|atleta\b|personal trainer|coach\b|fotógrafo|fotografo|streamer|cosplayer)\b/iu.test(low)) {
+        return true;
+    }
+    const fn = String(profile.full_name ?? '').trim();
+    if (fn.length >= 4 && /\s/.test(fn) && /\b(sou|sou o|sou a|me chamo)\b/iu.test(low))
+        return true;
+    return false;
+}
+/**
+ * Bio/nome institucional: força empresa/midia mesmo se o LLM rotular criador/pessoal.
+ * Ex.: "Empresa de Entretenimento", Liga Nacional, LNR Eventos/Licenciamento.
+ */
+function correctProfileTypeWhenEmpresaOrInstitutionalSignals(profile, qualification) {
+    if (hasStrongCreatorPersonSignalsInProfile(profile))
+        return;
+    const low = profilePublicTextLow(profile);
+    if (/\bempresa\s+de\b/iu.test(low)) {
+        qualification.profileType = 'empresa';
+        return;
+    }
+    if (/\bliga\s+(nacional|de\s+)/iu.test(low)) {
+        qualification.profileType = 'empresa';
+        return;
+    }
+    if (/\b(licenciamento|lnr\s+eventos|lnr\s+media|lnr\s+music|lnr\s+licenciamento)\b/iu.test(low)) {
+        qualification.profileType = 'empresa';
+        return;
+    }
+    if (/\b(canal oficial|conta oficial|perfil oficial|organiza[cç][aã]o oficial)\b/iu.test(low)) {
+        qualification.profileType = 'empresa';
+        return;
+    }
+    if (/\b(jornal|imprensa|noticias|notícias)\b/iu.test(low) && !/\b(sou|me chamo|criador)\b/iu.test(low)) {
+        qualification.profileType = 'midia';
+        return;
+    }
+    if (/\b(federa[cç][aã]o|associa[cç][aã]o|instituto|fund[aá][cç][aã]o)\b/iu.test(low)) {
+        qualification.profileType = 'empresa';
+        return;
+    }
+    if (/\bempresa\b/iu.test(low)) {
+        qualification.profileType = 'empresa';
+    }
+}
+function qualificationProfileTypeTriggersAutoExclusion(qualification) {
+    const pt = String(qualification.profileType ?? '').trim().toLowerCase();
+    return pt !== 'pessoal' && pt !== 'criador' && pt.length > 0;
+}
+/** LLM rotula empresa/marca/midia mas a bio indica pessoa/criador (ex.: musico, compositor). */
+function correctProfileTypeWhenPersonCreatorSignals(profile, qualification) {
+    const pt = String(qualification.profileType ?? '').trim().toLowerCase();
+    if (pt === 'pessoal' || pt === 'criador' || pt === 'marca')
+        return;
+    if (hasStrongProductBrandSignalsInProfile(profile))
+        return;
+    if (!hasStrongCreatorPersonSignalsInProfile(profile))
+        return;
+    qualification.profileType = 'criador';
+}
 /**
  * Criador/pessoal erroneo para marca de produto (B2C): cosméticos/skincare, bebida empacotada, bio institucional.
  * `marca` = linha de produto / marca D2C; `empresa` = caso legado bebida/institucional já mapeado abaixo.
@@ -876,10 +1207,17 @@ function correctProfileTypeWhenProductBrand(profile, qualification) {
     const fn = String(profile.full_name ?? '').normalize('NFC').toLowerCase();
     const bio = String(profile.biography ?? '').normalize('NFC').toLowerCase();
     const handle = String(profile.handle ?? '').toLowerCase();
-    const disc = String(profile._discovered_value ?? '').normalize('NFC').toLowerCase();
-    const low = `${handle}\n${fn}\n${bio}\n${disc}`;
-    if (/\bcriador(a)?\b.*\bconte[uú]do|\binfluencer\b|\byoutuber\b|\bme\s+chamo\b/i.test(low))
+    const low = profileAuthorialEvidenceLow(profile);
+    if (/\bcriador(a)?\b.*\bconte[uú]do|\binfluencer\b|\byoutuber\b|\bme\s+chamo\b/i.test(`${fn}\n${bio}`)) {
         return;
+    }
+    if (hasStrongProductBrandSignalsInProfile(profile)) {
+        qualification.profileType = 'marca';
+        const g = String(qualification.gender ?? '').trim().toLowerCase();
+        if (g === 'feminino' || g === 'masculino')
+            qualification.gender = 'desconhecido';
+        return;
+    }
     const productOrSkinContext = /\b(cosm[eé]tic|skincare|maquiagem|perfum|pele|skin\s*care|body\s*care|hair\s*care|tallow|sebo\s+bovino|sebo bovino|[oó]leos?\s+nat|ingredient|f[óo]rmula|produtos?\s+nat|vegano|clean\s*beauty|dermato)\b/iu.test(low);
     const institutionalBrandVoice = /\bmarca\s+de\s+(cosm[eé]tic|beleza|skincare|produtos?)\b/iu.test(low) ||
         /\b(nossa\s+marca|somos\s+uma\s+marca|a\s+marca\s+\S+\s+(cria|oferece|desenvolve|acredita))\b/iu.test(low) ||
@@ -891,6 +1229,21 @@ function correctProfileTypeWhenProductBrand(profile, qualification) {
             /\b(loja\s+oficial|compre\s+agora|shop\s+now|link\s+na\s+bio|\.com\.br\b|\.com\/shop)\b/iu.test(low) ||
             /\b(tallow|sebo\s+bovino|cosm[eé]tic(os|as)?\s+natur)\b/iu.test(low));
     if (d2cCosmeticsBrand) {
+        qualification.profileType = 'marca';
+        const g = String(qualification.gender ?? '').trim().toLowerCase();
+        if (g === 'feminino' || g === 'masculino')
+            qualification.gender = 'desconhecido';
+        return;
+    }
+    const cleaningOrHomeProductContext = /\b(limpeza|detergente|sab[aã]o|lavanderia|lou[cç]a|amaciante|desinfetante|multiuso|alvejante|limpador|higiene\s+dom[eé]stica|produtos?\s+de\s+limpeza|linha\s+roupas?|linha\s+lou[cç]a|linha\s+casa|rende\s+mais|barraca\s+do\s+detergente)\b/iu.test(low) ||
+        /\blinha[a-z0-9_]{2,}\b/iu.test(handle);
+    const consumerCleaningBrandVoice = /\b(acredita\s+que|rende\s+mais|nossa\s+linha|nossos?\s+produtos?|linha\s+de\s+produtos?|e-?commerce|loja\s+oficial|compre\s+agora)\b/iu.test(low) ||
+        (/\b\w{3,}\s+acredita\s+que\b/iu.test(low) &&
+            /\b(tempo\s+vale|render|deseja\s+fazer|produto|m[aá]ximo)\b/iu.test(low));
+    const d2cCleaningBrand = cleaningOrHomeProductContext &&
+        (consumerCleaningBrandVoice ||
+            /\b(loja\s+oficial|compre\s+agora|\.com\.br\b|\.com\/shop)\b/iu.test(low));
+    if (d2cCleaningBrand) {
         qualification.profileType = 'marca';
         const g = String(qualification.gender ?? '').trim().toLowerCase();
         if (g === 'feminino' || g === 'masculino')
@@ -921,7 +1274,11 @@ function correctProfileTypeWhenPersonaDescribesProductBrand(qualification) {
         /\bmarca\s+de\s+produtos?\s+nat/.test(ps) ||
         /\be\s+uma\s+marca\s+de\b/.test(ps) ||
         /\bmarca\s+de\s+skincare\b/.test(ps) ||
-        (/\bmarca\s+de\b/.test(ps) && /\b(tallow|sebo|cosm(e|é)tic|skincare|pele)\b/.test(ps))) {
+        /\bmarca\s+de\s+(limpeza|detergente|sab[aã]o)\b/.test(ps) ||
+        /\b(linha\s+de\s+produtos?|produtos?\s+de\s+limpeza|detergente|sab[aã]o\s+l[ií]quido)\b/.test(ps) ||
+        (/\bmarca\s+de\b/.test(ps) &&
+            /\b(tallow|sebo|cosm(e|é)tic|skincare|pele|limpeza|detergente|sab[aã]o|minuano)\b/.test(ps)) ||
+        (/\bacredita\s+que\b/.test(ps) && /\b(tempo\s+vale|render|limpeza|detergente|produto)\b/.test(ps))) {
         qualification.profileType = 'marca';
         const g = String(qualification.gender ?? '').trim().toLowerCase();
         if (g === 'feminino' || g === 'masculino')
@@ -932,13 +1289,45 @@ function correctProfileTypeWhenPersonaDescribesProductBrand(qualification) {
 function buildProfileContextForMainCategoryEvidence(profile) {
     return buildProfileFreeTextForCategoryEvidence(profile);
 }
+const PROFILE_TYPE_CANONICAL = new Set([
+    'criador',
+    'pessoal',
+    'empresa',
+    'noticia',
+    'marca',
+    'midia',
+]);
+/** LLM as vezes copia o schema do prompt (ex.: "criador|pessoal") em vez de escolher um valor. */
+function normalizeProfileTypeLeakage(qualification) {
+    const raw = String(qualification.profileType ?? '').trim().toLowerCase();
+    if (!raw || !raw.includes('|')) {
+        if (PROFILE_TYPE_CANONICAL.has(raw))
+            qualification.profileType = raw;
+        return;
+    }
+    const parts = raw
+        .split('|')
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => PROFILE_TYPE_CANONICAL.has(s));
+    if (parts.length === 0)
+        return;
+    if (parts.includes('criador'))
+        qualification.profileType = 'criador';
+    else if (parts.includes('pessoal'))
+        qualification.profileType = 'pessoal';
+    else
+        qualification.profileType = parts[0];
+}
 function normalizeClassification(raw, profile, model, _maxReasoning, languageFromFranc) {
     const qualificationRaw = asObject(raw.qualification);
     const qualification = Object.keys(qualificationRaw).length > 0 ? qualificationRaw : asObject(raw);
     const bs = pickBrandSafetyFromQualification(qualification);
     if (bs)
         qualification.brandSafety = bs;
+    normalizeProfileTypeLeakage(qualification);
     correctProfileTypeWhenProductBrand(profile, qualification);
+    correctProfileTypeWhenEmpresaOrInstitutionalSignals(profile, qualification);
+    correctProfileTypeWhenPersonCreatorSignals(profile, qualification);
     let mc0 = parseMainCategory(qualification.mainCategory);
     if (mc0) {
         let snapped = snapMainCategoryToTaxonomy(mc0);
@@ -957,6 +1346,7 @@ function normalizeClassification(raw, profile, model, _maxReasoning, languageFro
         qualification.personaSummary = sanitizePersonaSummaryForProfile(ps0, profile);
     }
     correctProfileTypeWhenPersonaDescribesProductBrand(qualification);
+    correctProfileTypeWhenProductBrand(profile, qualification);
     let confidence = clamp(Number(raw.confidence ?? 0), 0, 1);
     const statusRaw = String(raw.status ?? '').trim().toLowerCase();
     let status = statusRaw === 'insufficient_data' ? 'insufficient_data' : 'done';
@@ -977,6 +1367,7 @@ function normalizeClassification(raw, profile, model, _maxReasoning, languageFro
     if (normalizeLanguageTagForExclusionRule(String(qualification.language ?? '')) === 'desconhecido') {
         qualification.language = 'pt-br';
     }
+    ensureContentPillarsFallback(qualification);
     return {
         qualifiedAt: new Date().toISOString(),
         model,
@@ -1075,7 +1466,7 @@ function buildRepairPrompt(originalPrompt, invalidJson, errors) {
         '- retorne apenas JSON valido',
         '- mantenha todos os campos obrigatorios',
         '- qualification.subCategories: pelo menos 1 item; prefira termos da amostra/vocabulario fechado do prompt; uma palavra, sem espacos internos. Maquiagem/beleza so com evidencia na bio ou amostras.',
-        '- qualification.contentPillars: pelo menos 1 item; cada item UMA palavra sem espacos (NUNCA frases tipo "recepcao de cafe"). Pilares so com base no texto do perfil/amostras; PROIBIDO "dicas", "moto", "receitas" sem aparecer nos dados. PROIBIDO lista SOMENTE com rotulos de Beleza (beleza, maquiagem, skincare, unhas…) se nada na bio/amostras falar de estetica/make; troque por pilares do nicho real (ex.: direito, negocios, humor, familia).',
+        `- qualification.contentPillars: pelo menos 1 item; cada item UMA palavra sem espacos (NUNCA frases tipo "recepcao de cafe"). Pilares so com base no texto do perfil/amostras; PROIBIDO "dicas", "moto", "receitas" sem aparecer nos dados. PROIBIDO lista SOMENTE com rotulos de Beleza (beleza, maquiagem, skincare, unhas…) se nada na bio/amostras falar de estetica/make; troque por pilares do nicho real (ex.: direito, negocios, humor, familia). Se nao houver tema concreto evidenciado, use ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
         `- qualification.mainCategory OBRIGATORIO: copie LITERAL um unico rotulo da LISTA FECHADA do prompt (uma palavra, sem " & "); nao invente sinonimos nem traducoes.`,
         '- qualification.personaSummary: descricao agregada em terceira pessoa; PROIBIDO @, handle, nome publico, copiar biografia, links, metricas ou texto identico ao JSON; PROIBIDO templates tipo "recepcao de cafe" ou "periodo de tempo dedicado"; se o prompt original trouxer "amostras_textos_publicacoes", use só como pista (nao copie legendas).',
         '- qualification.profileType: marca D2C (cosmeticos/skincare/linha de produtos, voz institucional, ingredientes) → marca, nao criador; criador só quando a pessoa for o centro do posicionamento.',
@@ -1103,7 +1494,7 @@ function buildPrompt(profile, options = {}) {
     if (postSamples.length > 0) {
         compact.amostras_textos_publicacoes = postSamples;
     }
-    const profileTypeSignals = 'pessoal: sem voz de marca/comercial na bio. marca: D2C/propria — cosmeticos/skincare/suplementos/roupa com nome da marca, bio institucional, loja/comprar, ingredientes; se o foco e MARCA/PRODUTO, nao criador. empresa: cafe/restaurante/bar/doceria, marca de comida/bebida, varejo B2B, pedidos+link, orgao publico (PM, exercito, bombeiros, ministerio) → empresa ou midia, nunca pessoal. discovered_* nao manda se o texto for de marca. criador: pessoa no centro do conteudo. clinica/B2B/agencia → empresa.';
+    const profileTypeSignals = 'pessoal: sem voz de marca/comercial na bio. marca: D2C/propria — cosmeticos/skincare/suplementos/roupa/limpeza/detergente/sabao (linhas Roupas/Louca/Casa), bio institucional ("Marca acredita que…", "rende mais"), loja/e-commerce/comprar; se o foco e MARCA/PRODUTO, nao criador. empresa: cafe/restaurante/bar/doceria, marca de comida/bebida, varejo B2B, pedidos+link, orgao publico (PM, exercito, bombeiros, ministerio), liga/federacao/associacao, "Empresa de X", divisoes (Eventos/Licenciamento/Media) → empresa ou midia, nunca pessoal/criador. discovered_* nao manda se o texto for de marca. criador: pessoa fisica no centro do conteudo — musico/cantor/compositor/violonista/DJ/banda/integrante de grupo/artista/atleta/influencer → criador, NUNCA empresa (liga/evento corporativo NAO e criador). clinica/B2B/agencia → empresa.';
     const profileTypeRule = includePostSamples
         ? `profileType: inferir a partir de handle, full_name, biography e amostras_textos_publicacoes (legendas/hashtags). ${profileTypeSignals}`
         : `profileType: inferir a partir de handle, full_name e biography (texto publico do perfil). ${profileTypeSignals}`;
@@ -1128,7 +1519,7 @@ function buildPrompt(profile, options = {}) {
         'confidence/status: sem base em texto autoral para nicho/persona → status "insufficient_data" e confidence baixo (0.2-0.45). Nunca 1.0 com bio+nome vazios ou só emoji/link.',
         'Arrays nunca vazios.',
         'subCategories, contentPillars e audienceType: uma palavra macro por item (sem frases compostas).',
-        'contentPillars: só temas presentes em "Dados do perfil"; uma palavra. Nao invente; nao copie palavras deste prompt. Evite "dicas","moto","receitas","bastidores","stories" como padrao — só se o texto mostrar (ex.: moto = moto/trilha/grau). Nao repita mainCategory como pillar.',
+        `contentPillars: só temas presentes em "Dados do perfil"; uma palavra. Nao invente; nao copie palavras deste prompt. Evite "dicas","moto","receitas","bastidores","stories" como padrao — só se o texto mostrar (ex.: moto = moto/trilha/grau). Nao repita mainCategory como pillar. Sem tema definivel nos dados → ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
         'contentPillars Beleza (validacao): sem gender feminino, PROIBIDO usar APENAS rotulos de vitrine Beleza (beleza, maquiagem, skincare, unhas, estetica, cosmeticos, maquiador...) se NENHUMA bio nem amostra citar make/cosmeticos/salao/pele/tutorial/autocuidado ligado a estetica. Com gender feminino o servidor aceita pilares so Beleza mesmo sem essas palavras. Perfil juridico (adv., OAB, lei, tribunal, escritorio), saude, negocios, fitness sem estetica e sem feminino → pilares = tema REAL do conteudo, nunca "beleza+maquiagem" por estereotipo.',
         'subCategories: fonte do nicho; devem existir no mapa fechado (amostra acima). Ordem: mais especifico primeiro; pt-BR ou EN se no mapa (tv, dj). Maquiagem/beleza/skincare: com evidencia na bio/amostras, ou com gender feminino (servidor aceita sem menção explicita). Maternidade sozinha nao dispensa evidencia. Perfil adv./OAB/juridico sem cosmeticos e sem feminino → subs do oficio (direito, advocacia…), nunca maquiagem. Fora do vocabulario → falha de classificacao.',
         'mainCategory: copiar LITERAL um rotulo da lista (uma palavra). Orientar pelas subCategories (ex.: maquiagem→Beleza; receitas→Alimentacao; viagem→Viagens; tatuagem→Lifestyle, nao Musica; futebol/futsal/esporte→Esportes; video game/gaming/jogos eletronicos→Games, nao só "jogos" que em pt-BR costuma ser esporte). Vaquejada/festa com som→Musica; Esportes só hipismo competitivo sem pilar musical. Ambiguo: macro mais comercial da lista. So rotulos da lista.',
@@ -1138,8 +1529,8 @@ function buildPrompt(profile, options = {}) {
         personaRule,
         'subCategories: prefira nicho comercial especifico; evite "variedades","geral","conteudo" se houver termo melhor no mapa.',
         includePostSamples
-            ? 'Incerteza: pouco texto para nicho — outros campos evite geral/desconhecido salvo necessario.'
-            : 'Incerteza: bio curta — outros campos evite geral/desconhecido salvo necessario.',
+            ? `Incerteza: pouco texto para nicho — contentPillars use ["${CONTENT_PILLAR_FALLBACK_LABEL}"] se nao der para nomear temas; demais campos evite geral/desconhecido salvo necessario.`
+            : `Incerteza: bio curta — contentPillars use ["${CONTENT_PILLAR_FALLBACK_LABEL}"] se nao der para nomear temas; demais campos evite geral/desconhecido salvo necessario.`,
         'Estrutura obrigatoria:',
         '{',
         '  "confidence": 0.0-1.0 (vagos→<0.5; sem chute em 1.0),',
@@ -1278,7 +1669,15 @@ async function fetchJson(url, init, timeoutMs, retries = 2) {
         }
         catch (error) {
             const err = error instanceof Error ? error : new Error(String(error));
-            if (attempt < retries && (err.name === 'AbortError' || err.message.includes('fetch failed'))) {
+            if (err.name === 'AbortError') {
+                const timeoutErr = new Error(`Timeout da API apos ${timeoutMs}ms`);
+                if (attempt < retries) {
+                    lastError = timeoutErr;
+                    continue;
+                }
+                throw timeoutErr;
+            }
+            if (attempt < retries && err.message.includes('fetch failed')) {
                 lastError = err;
                 continue;
             }
@@ -1582,6 +1981,31 @@ function buildAutoExclusionReason(qualification) {
     }
     return `Exclusao automatica: profileType deve ser pessoal ou criador (recebido: ${profileT || '(vazio)'})`;
 }
+/** Politica da fila: idioma pt-br + profileType pessoal|criador (para UI e checagens pos-LLM). */
+function qualificationMatchesAutoExclusionPolicy(qualification) {
+    return shouldExcludeByLanguageAndCreatorRules(qualification);
+}
+function resolveAutoExclusionReason(qualification, profile) {
+    const mismatch = tryExcludeByAuthorialLanguageMismatch(qualification, profile);
+    if (mismatch)
+        return mismatch;
+    if (shouldExcludeByLanguageAndCreatorRules(qualification)) {
+        return buildAutoExclusionReason(qualification);
+    }
+    return null;
+}
+async function purgeProfileForAutoExclusion(apiBase, ingestKey, handle, reason, llm, qual, emitLog, startedAt) {
+    emitLog(`@${handle} | EXCLUINDO | ${reason}`);
+    const via = getOptionalAdminBearerForPurge() != null
+        ? 'DELETE admin/influencers (JWT)'
+        : 'POST crawl/collector-delete-profile (X-Collector-Key)';
+    emitLog(`@${handle} | >> API crawl: ${via}...`);
+    const delT0 = Date.now();
+    await deleteProfileAfterAutoExclusion(apiBase, ingestKey, handle);
+    const delMs = Date.now() - delT0;
+    const totalMs = Date.now() - startedAt;
+    emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms | total ${totalMs}ms`);
+}
 /** True se o registro ja tinha classificacao LLM persistida — nunca auto-excluir; tambem skip pre-Ollama no modo sem_llm. */
 function profileRecordAlreadyHasLlm(profile) {
     const llm = profile.llm;
@@ -1684,6 +2108,7 @@ function qualificationProfileTypeIsEmpresa(llm) {
 async function classifyProfile(profile, model, maxReasoning, promptOverride, onLog, postCtx) {
     const ollamaClient = getOllamaClient();
     const handleTag = postCtx?.logHandle ?? toHandle(profile.handle ?? '');
+    const ollamaTag = `[${model}]`;
     const logStep = (msg) => onLog?.(handleTag ? `@${handleTag} | ${msg}` : msg);
     let workingProfile = { ...profile };
     let languageFromFranc = resolveLanguageFromFrancProfile(workingProfile);
@@ -1693,17 +2118,18 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
             includePostSamples: hasPostSamples,
         });
     const runInitialGeneration = async () => {
-        logStep('>> Ollama: geracao inicial (1a resposta)...');
+        logStep(`>> Ollama ${ollamaTag}: geracao inicial (1a resposta)...`);
         const response = await ollamaClient.chat({
             model,
             messages: [
                 {
                     role: 'system',
-                    content: 'Voce responde somente JSON valido. Textos descritivos (personaSummary, rotulos de categoria) em portugues do Brasil. Nao inclua chave "language" no JSON. contentPillars: sem gender feminino, nao preencha só com beleza/maquiagem se a bio e amostras nao citarem estetica ou make; com gender feminino o validador aceita.',
+                    content: `Voce responde somente JSON valido. Textos descritivos (personaSummary, rotulos de categoria) em portugues do Brasil. Nao inclua chave "language" no JSON. contentPillars: sem gender feminino, nao preencha só com beleza/maquiagem se a bio e amostras nao citarem estetica ou make; com gender feminino o validador aceita. Sem tema claro nos dados → ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
                 },
                 { role: 'user', content: prompt },
             ],
             stream: false,
+            options: getOllamaChatOptions(),
         });
         const content = response.message?.content?.trim() ?? '';
         let parsed = tryParseJsonObject(content);
@@ -1715,7 +2141,7 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
             }
         }
         if (!parsed) {
-            logStep('>> Ollama: 2a chamada (corrigir JSON invalido)...');
+            logStep(`>> Ollama ${ollamaTag}: 2a chamada (corrigir JSON invalido)...`);
             const retry = await ollamaClient.chat({
                 model,
                 messages: [
@@ -1734,6 +2160,7 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
                     },
                 ],
                 stream: false,
+                options: getOllamaChatOptions(),
             });
             const retryContent = retry.message?.content?.trim() ?? '';
             parsed = tryParseJsonObject(retryContent);
@@ -1751,9 +2178,14 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
         logStep('>> ok: qualification valida (sem reparo LLM)');
         return llm;
     }
-    if (qualificationProfileTypeIsEmpresa(llm)) {
-        logStep('>> local: empresa ja na 1a passagem (normalizacao/regras locais) — sem reparo LLM; fila aplica exclusao automatica');
+    const qualAfterNorm = asObject(llm.qualification);
+    if (qualificationProfileTypeTriggersAutoExclusion(qualAfterNorm) &&
+        hasStrongEmpresaSignalsInProfile(workingProfile)) {
+        logStep(`>> local: ${String(qualAfterNorm.profileType ?? 'empresa')} confirmado na bio — sem reparo LLM; fila aplica exclusao automatica`);
         return llm;
+    }
+    if (qualificationProfileTypeIsEmpresa(llm)) {
+        logStep('>> local: empresa sem sinais fortes na bio — tentando reparo LLM (possivel falso positivo do modelo)');
     }
     let attemptedPostFetch = false;
     for (let attempt = 1; attempt <= DEFAULT_LLM_REPAIR_ATTEMPTS; attempt++) {
@@ -1781,7 +2213,7 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
                 includePostSamples: usePostsInPrompt,
             });
         }
-        logStep(`>> Ollama: reparo validacao #${attempt}/${DEFAULT_LLM_REPAIR_ATTEMPTS}...`);
+        logStep(`>> Ollama ${ollamaTag}: reparo validacao #${attempt}/${DEFAULT_LLM_REPAIR_ATTEMPTS}...`);
         const repairPrompt = buildRepairPrompt(prompt, parsed, validationErrors);
         const repair = await ollamaClient.chat({
             model,
@@ -1793,6 +2225,7 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
                 { role: 'user', content: repairPrompt },
             ],
             stream: false,
+            options: getOllamaChatOptions(),
         });
         const repairContent = repair.message?.content?.trim() ?? '';
         const repairedParsed = tryParseJsonObject(repairContent);
@@ -1809,12 +2242,22 @@ async function classifyProfile(profile, model, maxReasoning, promptOverride, onL
             return llm;
         }
     }
+    if (validationErrorsMentionContentPillars(validationErrors)) {
+        const qualFallback = asObject(llm.qualification);
+        qualFallback.contentPillars = [CONTENT_PILLAR_FALLBACK_LABEL];
+        llm = { ...llm, qualification: qualFallback };
+        validationErrors = validateLlmClassification(llm, workingProfile);
+        if (validationErrors.length === 0) {
+            logStep(`>> ok: contentPillars fallback "${CONTENT_PILLAR_FALLBACK_LABEL}" apos reparo`);
+            return llm;
+        }
+    }
     throw new LlmValidationExhaustedError(`Saida LLM invalida apos reprocessamento: ${validationErrors.join('; ')}`, llm);
 }
 async function runBatch(options = {}) {
     const apiBase = getApiBaseOrThrow();
     const ingestKey = getIngestKeyOrThrow();
-    const model = process.env.OLLAMA_MODEL?.trim() || DEFAULT_MODEL;
+    const model = getOllamaModel();
     const batchSize = Math.max(1, Number(process.env.QUALIFY_BATCH_SIZE ?? DEFAULT_BATCH_SIZE) || DEFAULT_BATCH_SIZE);
     const maxReasoning = Math.max(1, Number(process.env.QUALIFY_MAX_REASONING ?? DEFAULT_MAX_REASONING) || DEFAULT_MAX_REASONING);
     const concurrency = Math.max(1, Math.min(16, Math.floor(Number(options.concurrency ?? process.env.QUALIFY_CONCURRENCY ?? 1)) || 1));
@@ -1857,6 +2300,7 @@ async function runBatch(options = {}) {
         console.log(line);
         options.onLog?.(msg);
     };
+    logOllamaConfig(emitLog);
     if (firstBatch.items.length === 0 && queueOffset > 0) {
         emitLog(`Aviso: pagina vazia com offset inicial ${queueOffset}; tentando offset 0 (fila pode ter mudado vs estatistica inicial).`);
         listOffset = 0;
@@ -1952,8 +2396,8 @@ async function runBatch(options = {}) {
                     return;
                 processedHandles.add(handle);
                 progress.total = Math.max(targetTotal, processedHandles.size);
+                const startedAt = Date.now();
                 try {
-                    const startedAt = Date.now();
                     const postCtx = {
                         apiBase,
                         ingestKey,
@@ -2023,53 +2467,21 @@ async function runBatch(options = {}) {
                     }
                     const llm = await classifyProfile(item.profile, model, maxReasoning, undefined, emitLog, postCtx);
                     const qualOk = asObject(llm.qualification);
-                    const authorialMismatchReason = tryExcludeByAuthorialLanguageMismatch(qualOk, item.profile);
-                    const langExclude = shouldExcludeByLanguageAndCreatorRules(qualOk);
-                    if (authorialMismatchReason || langExclude) {
-                        const reason = authorialMismatchReason ?? buildAutoExclusionReason(qualOk);
-                        const hadPriorLlm = profileRecordAlreadyHasLlm(item.profile);
-                        if (hadPriorLlm) {
-                            const keepMsg = `NAO EXCLUI | perfil ja tinha LLM persistido — mantido na base | ${reason}`;
-                            emitLog(`@${handle} | ${keepMsg}`);
-                            progress.failed++;
-                            const totalMs = Date.now() - startedAt;
-                            emitLog(`@${handle} | ERRO (mantido) | total ${totalMs}ms`);
-                            options.onResult?.({
-                                handle,
-                                result: 'erro',
-                                llmStatus: String(llm.status ?? 'erro'),
-                                confidence: llm.confidence,
-                                mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
-                                brandSafety: pickBrandSafetyFromQualification(qualOk),
-                                qualification: qualOk,
-                                processedAt: new Date().toISOString(),
-                                error: keepMsg,
-                            });
-                        }
-                        else {
-                            emitLog(`@${handle} | EXCLUINDO | ${reason}`);
-                            const via = getOptionalAdminBearerForPurge() != null
-                                ? 'DELETE admin/influencers (JWT)'
-                                : 'POST crawl/collector-delete-profile (X-Collector-Key)';
-                            emitLog(`@${handle} | >> API crawl: ${via}...`);
-                            const delT0 = Date.now();
-                            await deleteProfileAfterAutoExclusion(apiBase, ingestKey, handle);
-                            const delMs = Date.now() - delT0;
-                            const totalMs = Date.now() - startedAt;
-                            emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms | total ${totalMs}ms`);
-                            progress.excluded++;
-                            options.onResult?.({
-                                handle,
-                                result: 'excluido',
-                                llmStatus: llm.status,
-                                confidence: llm.confidence,
-                                mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
-                                brandSafety: pickBrandSafetyFromQualification(qualOk),
-                                qualification: qualOk,
-                                processedAt: new Date().toISOString(),
-                                error: reason,
-                            });
-                        }
+                    const autoExclusionReason = resolveAutoExclusionReason(qualOk, item.profile);
+                    if (autoExclusionReason) {
+                        await purgeProfileForAutoExclusion(apiBase, ingestKey, handle, autoExclusionReason, llm, qualOk, emitLog, startedAt);
+                        progress.excluded++;
+                        options.onResult?.({
+                            handle,
+                            result: 'excluido',
+                            llmStatus: llm.status,
+                            confidence: llm.confidence,
+                            mainCategory: parseMainCategory(qualOk.mainCategory) ?? String(qualOk.mainCategory ?? ''),
+                            brandSafety: pickBrandSafetyFromQualification(qualOk),
+                            qualification: qualOk,
+                            processedAt: new Date().toISOString(),
+                            error: autoExclusionReason,
+                        });
                     }
                     else {
                         emitLog(`@${handle} | >> API collector: ingest LLM (POST)...`);
@@ -2111,10 +2523,24 @@ async function runBatch(options = {}) {
                     if (error instanceof LlmValidationExhaustedError) {
                         const llmBad = error.lastLlm;
                         const qualBad = asObject(llmBad.qualification);
-                        const reason = `Exclusao automatica: LLM sem classificacao valida apos ${DEFAULT_LLM_REPAIR_ATTEMPTS} reparo(s) — ${truncateLogLine(error.message, 220)}`;
-                        const hadPriorLlm = profileRecordAlreadyHasLlm(item.profile);
-                        if (hadPriorLlm) {
-                            const keepMsg = `NAO EXCLUI | perfil ja tinha LLM persistido — mantido na base | ${reason}`;
+                        const policyReason = resolveAutoExclusionReason(qualBad, item.profile);
+                        if (policyReason) {
+                            await purgeProfileForAutoExclusion(apiBase, ingestKey, handle, policyReason, llmBad, qualBad, emitLog, startedAt);
+                            progress.excluded++;
+                            options.onResult?.({
+                                handle,
+                                result: 'excluido',
+                                llmStatus: llmBad.status,
+                                confidence: llmBad.confidence,
+                                mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? ''),
+                                brandSafety: pickBrandSafetyFromQualification(qualBad),
+                                qualification: qualBad,
+                                processedAt: new Date().toISOString(),
+                                error: policyReason,
+                            });
+                        }
+                        else {
+                            const keepMsg = `MANTIDO | LLM sem classificacao valida apos ${DEFAULT_LLM_REPAIR_ATTEMPTS} reparo(s) — perfil permanece na base | ${truncateLogLine(error.message, 200)}`;
                             emitLog(`@${handle} | ${keepMsg}`);
                             progress.failed++;
                             options.onResult?.({
@@ -2129,48 +2555,6 @@ async function runBatch(options = {}) {
                                 error: keepMsg,
                             });
                             emitLog(`@${handle} | ERRO (mantido) | ${truncateLogLine(keepMsg, 240)}`);
-                        }
-                        else {
-                            emitLog(`@${handle} | EXCLUINDO | ${reason}`);
-                            const via = getOptionalAdminBearerForPurge() != null
-                                ? 'DELETE admin/influencers (JWT)'
-                                : 'POST crawl/collector-delete-profile (X-Collector-Key)';
-                            emitLog(`@${handle} | >> API crawl: ${via}...`);
-                            try {
-                                const delT0 = Date.now();
-                                await deleteProfileAfterAutoExclusion(apiBase, ingestKey, handle);
-                                const delMs = Date.now() - delT0;
-                                emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms`);
-                                progress.excluded++;
-                                options.onResult?.({
-                                    handle,
-                                    result: 'excluido',
-                                    llmStatus: llmBad.status,
-                                    confidence: llmBad.confidence,
-                                    mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? ''),
-                                    brandSafety: pickBrandSafetyFromQualification(qualBad),
-                                    qualification: qualBad,
-                                    processedAt: new Date().toISOString(),
-                                    error: reason,
-                                });
-                            }
-                            catch (purgeErr) {
-                                progress.failed++;
-                                const purgeMsg = purgeErr instanceof Error ? purgeErr.message : String(purgeErr);
-                                const message = `${error.message} | purge falhou: ${purgeMsg}`;
-                                options.onResult?.({
-                                    handle,
-                                    result: 'erro',
-                                    llmStatus: 'erro',
-                                    confidence: null,
-                                    mainCategory: '-',
-                                    brandSafety: null,
-                                    qualification: null,
-                                    processedAt: new Date().toISOString(),
-                                    error: message,
-                                });
-                                emitLog(`@${handle} | ERRO | ${truncateLogLine(message, 240)}`);
-                            }
                         }
                     }
                     else {
@@ -2219,6 +2603,21 @@ async function runBatch(options = {}) {
         stopped: false,
     };
 }
+function getOllamaModel() {
+    return process.env.OLLAMA_MODEL?.trim() || DEFAULT_MODEL;
+}
+function formatOllamaConfigMessage() {
+    const host = process.env.OLLAMA_HOST?.trim() || DEFAULT_OLLAMA_HOST;
+    const opts = getOllamaChatOptions();
+    const ctx = opts.num_ctx ?? DEFAULT_OLLAMA_NUM_CTX;
+    const predict = opts.num_predict ?? DEFAULT_OLLAMA_NUM_PREDICT;
+    return `Ollama LLM: ${getOllamaModel()} @ ${host} (num_ctx=${ctx}, num_predict=${predict})`;
+}
+function logOllamaConfig(onLog) {
+    const line = formatOllamaConfigMessage();
+    console.log(`[qualify] ${line}`);
+    onLog?.(line);
+}
 let cachedOllamaClient = null;
 function getOllamaClient() {
     if (cachedOllamaClient)
@@ -2226,6 +2625,27 @@ function getOllamaClient() {
     const host = process.env.OLLAMA_HOST?.trim() || DEFAULT_OLLAMA_HOST;
     cachedOllamaClient = new Ollama({ host });
     return cachedOllamaClient;
+}
+function readPositiveIntEnv(name, fallback, min, max) {
+    const raw = process.env[name]?.trim();
+    if (!raw)
+        return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0)
+        return fallback;
+    return Math.max(min, Math.min(max, Math.floor(n)));
+}
+/** Opcoes de inferencia repassadas ao Ollama (num_ctx, threads CPU, limite de saida). */
+function getOllamaChatOptions() {
+    const opts = {
+        num_ctx: readPositiveIntEnv('OLLAMA_NUM_CTX', DEFAULT_OLLAMA_NUM_CTX, 1024, 8192),
+        num_predict: readPositiveIntEnv('OLLAMA_NUM_PREDICT', DEFAULT_OLLAMA_NUM_PREDICT, 128, 4096),
+        temperature: 0.15,
+    };
+    const threads = readPositiveIntEnv('OLLAMA_NUM_THREAD', 0, 1, 64);
+    if (threads > 0)
+        opts.num_thread = threads;
+    return opts;
 }
 function getUiPort() {
     const n = Number(process.env.QUALIFY_UI_PORT ?? DEFAULT_UI_PORT);
@@ -2410,11 +2830,20 @@ function renderUiHtml() {
         if(!Number.isFinite(n)) return rawValue(c);
         return String(Math.round(n * 1000) / 1000);
       };
+      const normLang = (v)=>String(v ?? '').trim().toLowerCase().replace(/_/g, '-');
+      const matchesAutoExclusionPolicy = (q)=>{
+        const lang = normLang(q.language);
+        const pt = String(q.profileType ?? '').trim().toLowerCase();
+        if(lang && lang !== 'pt-br') return true;
+        if(pt && pt !== 'pessoal' && pt !== 'criador') return true;
+        return false;
+      };
       for(let j = 0; j < list.length; j++){
         const r = list[j];
         const q = r.qualification && typeof r.qualification === 'object' ? r.qualification : {};
+        const policyExcl = matchesAutoExclusionPolicy(q);
         const tr = document.createElement('tr');
-        if(r.result === 'excluido') tr.className = 'row-excluido';
+        if(r.result === 'excluido' || policyExcl) tr.className = 'row-excluido';
         const tdHandle = document.createElement('td');
         const slug = String(r.handle ?? '').trim().replace(/^@/, '').split(/[/?#]/)[0];
         if(slug){
@@ -2430,11 +2859,12 @@ function renderUiHtml() {
         }
         tr.appendChild(tdHandle);
         const tdExcl = document.createElement('td');
-        tdExcl.className = 'td-excl-regra';
-        if(r.result === 'excluido'){
-          tdExcl.className = 'td-excl-regra excluido';
+        tdExcl.className = 'td-excl-regra' + (policyExcl ? ' excluido' : '');
+        if(r.result === 'excluido' || policyExcl){
           tdExcl.textContent = 'Sim';
-          tdExcl.title = String(r.error || 'Removido: language diferente de pt-br ou profileType diferente de pessoal/criador');
+          tdExcl.title = r.result === 'excluido'
+            ? String(r.error || 'Removido da base')
+            : 'Regra: language deve ser pt-br e profileType pessoal ou criador';
         }else{
           tdExcl.textContent = 'Não';
         }
@@ -2701,7 +3131,7 @@ async function startUiServer() {
             return;
         statsRefreshInFlight = true;
         try {
-            const stats = await fetchLlmCoverageStatsCached(getApiBaseOrThrow(), getIngestKeyOrThrow(), forceRefresh || state.running);
+            const stats = await fetchLlmCoverageStatsCached(getApiBaseOrThrow(), getIngestKeyOrThrow(), forceRefresh);
             state.withLlm = stats.withLlm;
             state.withoutLlm = stats.withoutLlm;
             state.totalProfiles = stats.totalProfiles;
@@ -2732,6 +3162,7 @@ async function startUiServer() {
         state.results = [];
         state.lastStartedAt = new Date().toISOString();
         pushLog('Execucao iniciada.');
+        pushLog(formatOllamaConfigMessage());
         const runStartedAtMs = Date.now();
         const elapsedTicker = setInterval(() => {
             if (!state.running)
@@ -2782,7 +3213,7 @@ async function startUiServer() {
                 },
             });
             pushLog(`Execucao finalizada. done=${summary.done} excluded=${summary.excluded} failed=${summary.failed} stopped=${summary.stopped}`);
-            await refreshCoverageStats();
+            await refreshCoverageStats(true);
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -2836,10 +3267,10 @@ async function startUiServer() {
             return;
         }
         if (method === 'GET' && url.pathname === '/api/status') {
-            // Durante execucao tambem precisa atualizar com/sem LLM (antes ficava congelado ate parar o lote).
-            const statsIntervalMs = state.running ? 5000 : 10000;
+            // Durante execucao atualiza com/sem LLM via cache (sem refresh=1 — evita recount pesado no servidor).
+            const statsIntervalMs = state.running ? 30000 : 10000;
             if (Date.now() - statsLastRefreshAt > statsIntervalMs)
-                void refreshCoverageStats(state.running);
+                void refreshCoverageStats();
             res.writeHead(200, {
                 'Content-Type': 'application/json; charset=utf-8',
                 'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -2883,6 +3314,7 @@ async function startUiServer() {
         server.listen(port, '0.0.0.0', () => resolve());
     });
     console.log(`[qualify-ui] Painel em http://localhost:${port}`);
+    logOllamaConfig();
 }
 async function main() {
     const mode = (process.argv[2] ?? '').trim().toLowerCase();

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './loadEnv.js';
 export type MainCategory = string;
 export declare function isMainCategoryValue(value: string): boolean;
 /**

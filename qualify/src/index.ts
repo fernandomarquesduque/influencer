@@ -690,6 +690,22 @@ const GENERIC_CONTENT_PILLAR_FOLDS: ReadonlySet<string> = new Set(
   ].map((w) => foldMainCategoryKey(w))
 );
 
+const CONTENT_PILLAR_FALLBACK_LABEL = 'Outros';
+
+/** Pilares vazios ou incoerentes com os dados: servidor/modelo usam rotulo neutro. */
+function ensureContentPillarsFallback(qualification: JsonRecord): void {
+  const pillars = asStringArray(qualification.contentPillars, 100);
+  if (pillars.length === 0) {
+    qualification.contentPillars = [CONTENT_PILLAR_FALLBACK_LABEL];
+  } else {
+    qualification.contentPillars = pillars;
+  }
+}
+
+function validationErrorsMentionContentPillars(errors: string[]): boolean {
+  return errors.some((e) => e.toLowerCase().includes('contentpillars'));
+}
+
 function validateContentPillarsNotTooGeneric(contentPillars: string[]): string[] {
   if (contentPillars.length === 0) return [];
   let gen = 0;
@@ -1473,6 +1489,8 @@ function normalizeClassification(
     qualification.language = 'pt-br';
   }
 
+  ensureContentPillarsFallback(qualification);
+
   return {
     qualifiedAt: new Date().toISOString(),
     model,
@@ -1584,7 +1602,7 @@ function buildRepairPrompt(originalPrompt: string, invalidJson: JsonRecord, erro
     '- retorne apenas JSON valido',
     '- mantenha todos os campos obrigatorios',
     '- qualification.subCategories: pelo menos 1 item; prefira termos da amostra/vocabulario fechado do prompt; uma palavra, sem espacos internos. Maquiagem/beleza so com evidencia na bio ou amostras.',
-    '- qualification.contentPillars: pelo menos 1 item; cada item UMA palavra sem espacos (NUNCA frases tipo "recepcao de cafe"). Pilares so com base no texto do perfil/amostras; PROIBIDO "dicas", "moto", "receitas" sem aparecer nos dados. PROIBIDO lista SOMENTE com rotulos de Beleza (beleza, maquiagem, skincare, unhas…) se nada na bio/amostras falar de estetica/make; troque por pilares do nicho real (ex.: direito, negocios, humor, familia).',
+    `- qualification.contentPillars: pelo menos 1 item; cada item UMA palavra sem espacos (NUNCA frases tipo "recepcao de cafe"). Pilares so com base no texto do perfil/amostras; PROIBIDO "dicas", "moto", "receitas" sem aparecer nos dados. PROIBIDO lista SOMENTE com rotulos de Beleza (beleza, maquiagem, skincare, unhas…) se nada na bio/amostras falar de estetica/make; troque por pilares do nicho real (ex.: direito, negocios, humor, familia). Se nao houver tema concreto evidenciado, use ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
     `- qualification.mainCategory OBRIGATORIO: copie LITERAL um unico rotulo da LISTA FECHADA do prompt (uma palavra, sem " & "); nao invente sinonimos nem traducoes.`,
     '- qualification.personaSummary: descricao agregada em terceira pessoa; PROIBIDO @, handle, nome publico, copiar biografia, links, metricas ou texto identico ao JSON; PROIBIDO templates tipo "recepcao de cafe" ou "periodo de tempo dedicado"; se o prompt original trouxer "amostras_textos_publicacoes", use só como pista (nao copie legendas).',
     '- qualification.profileType: marca D2C (cosmeticos/skincare/linha de produtos, voz institucional, ingredientes) → marca, nao criador; criador só quando a pessoa for o centro do posicionamento.',
@@ -1644,7 +1662,7 @@ function buildPrompt(profile: JsonRecord, options: { includePostSamples?: boolea
     'confidence/status: sem base em texto autoral para nicho/persona → status "insufficient_data" e confidence baixo (0.2-0.45). Nunca 1.0 com bio+nome vazios ou só emoji/link.',
     'Arrays nunca vazios.',
     'subCategories, contentPillars e audienceType: uma palavra macro por item (sem frases compostas).',
-    'contentPillars: só temas presentes em "Dados do perfil"; uma palavra. Nao invente; nao copie palavras deste prompt. Evite "dicas","moto","receitas","bastidores","stories" como padrao — só se o texto mostrar (ex.: moto = moto/trilha/grau). Nao repita mainCategory como pillar.',
+    `contentPillars: só temas presentes em "Dados do perfil"; uma palavra. Nao invente; nao copie palavras deste prompt. Evite "dicas","moto","receitas","bastidores","stories" como padrao — só se o texto mostrar (ex.: moto = moto/trilha/grau). Nao repita mainCategory como pillar. Sem tema definivel nos dados → ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
     'contentPillars Beleza (validacao): sem gender feminino, PROIBIDO usar APENAS rotulos de vitrine Beleza (beleza, maquiagem, skincare, unhas, estetica, cosmeticos, maquiador...) se NENHUMA bio nem amostra citar make/cosmeticos/salao/pele/tutorial/autocuidado ligado a estetica. Com gender feminino o servidor aceita pilares so Beleza mesmo sem essas palavras. Perfil juridico (adv., OAB, lei, tribunal, escritorio), saude, negocios, fitness sem estetica e sem feminino → pilares = tema REAL do conteudo, nunca "beleza+maquiagem" por estereotipo.',
     'subCategories: fonte do nicho; devem existir no mapa fechado (amostra acima). Ordem: mais especifico primeiro; pt-BR ou EN se no mapa (tv, dj). Maquiagem/beleza/skincare: com evidencia na bio/amostras, ou com gender feminino (servidor aceita sem menção explicita). Maternidade sozinha nao dispensa evidencia. Perfil adv./OAB/juridico sem cosmeticos e sem feminino → subs do oficio (direito, advocacia…), nunca maquiagem. Fora do vocabulario → falha de classificacao.',
     'mainCategory: copiar LITERAL um rotulo da lista (uma palavra). Orientar pelas subCategories (ex.: maquiagem→Beleza; receitas→Alimentacao; viagem→Viagens; tatuagem→Lifestyle, nao Musica; futebol/futsal/esporte→Esportes; video game/gaming/jogos eletronicos→Games, nao só "jogos" que em pt-BR costuma ser esporte). Vaquejada/festa com som→Musica; Esportes só hipismo competitivo sem pilar musical. Ambiguo: macro mais comercial da lista. So rotulos da lista.',
@@ -1654,8 +1672,8 @@ function buildPrompt(profile: JsonRecord, options: { includePostSamples?: boolea
     personaRule,
     'subCategories: prefira nicho comercial especifico; evite "variedades","geral","conteudo" se houver termo melhor no mapa.',
     includePostSamples
-      ? 'Incerteza: pouco texto para nicho — outros campos evite geral/desconhecido salvo necessario.'
-      : 'Incerteza: bio curta — outros campos evite geral/desconhecido salvo necessario.',
+      ? `Incerteza: pouco texto para nicho — contentPillars use ["${CONTENT_PILLAR_FALLBACK_LABEL}"] se nao der para nomear temas; demais campos evite geral/desconhecido salvo necessario.`
+      : `Incerteza: bio curta — contentPillars use ["${CONTENT_PILLAR_FALLBACK_LABEL}"] se nao der para nomear temas; demais campos evite geral/desconhecido salvo necessario.`,
     'Estrutura obrigatoria:',
     '{',
     '  "confidence": 0.0-1.0 (vagos→<0.5; sem chute em 1.0),',
@@ -2401,7 +2419,7 @@ async function classifyProfile(
         {
           role: 'system',
           content:
-            'Voce responde somente JSON valido. Textos descritivos (personaSummary, rotulos de categoria) em portugues do Brasil. Nao inclua chave "language" no JSON. contentPillars: sem gender feminino, nao preencha só com beleza/maquiagem se a bio e amostras nao citarem estetica ou make; com gender feminino o validador aceita.',
+            `Voce responde somente JSON valido. Textos descritivos (personaSummary, rotulos de categoria) em portugues do Brasil. Nao inclua chave "language" no JSON. contentPillars: sem gender feminino, nao preencha só com beleza/maquiagem se a bio e amostras nao citarem estetica ou make; com gender feminino o validador aceita. Sem tema claro nos dados → ["${CONTENT_PILLAR_FALLBACK_LABEL}"].`,
         },
         { role: 'user', content: prompt },
       ],
@@ -2544,6 +2562,17 @@ async function classifyProfile(
     validationErrors = validateLlmClassification(llm, workingProfile);
     if (validationErrors.length === 0) {
       logStep('>> ok: qualification valida apos reparo');
+      return llm;
+    }
+  }
+
+  if (validationErrorsMentionContentPillars(validationErrors)) {
+    const qualFallback = asObject(llm.qualification);
+    qualFallback.contentPillars = [CONTENT_PILLAR_FALLBACK_LABEL];
+    llm = { ...llm, qualification: qualFallback };
+    validationErrors = validateLlmClassification(llm, workingProfile);
+    if (validationErrors.length === 0) {
+      logStep(`>> ok: contentPillars fallback "${CONTENT_PILLAR_FALLBACK_LABEL}" apos reparo`);
       return llm;
     }
   }
