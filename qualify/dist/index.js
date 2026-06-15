@@ -982,6 +982,8 @@ function personaSummaryIsGenericBoilerplate(personaSummary) {
         t.length < 120) {
         return !/\b(apresentador|jornalist|ator|humor|chef|nutri|advogad|medico|influencer|digital|podcast|novela|serie|receita|treino|viagem)\b/iu.test(t);
     }
+    if (/^(criador|criadora)\s+de\s+conte[uú]do\b/i.test(t))
+        return true;
     return false;
 }
 function correctMisclassifiedFoodOrGenericWhenMusicaArtist(profile, qualification) {
@@ -1321,7 +1323,7 @@ function validatePersonaSummaryQuality(personaSummary) {
         errors.push('personaSummary: frase quebrada (preposicao ou artigo sem complemento) — reescreva em portugues natural, sem buracos');
     }
     if (personaSummaryIsGenericBoilerplate(t)) {
-        errors.push('personaSummary: descreva o nicho e o tipo de conteudo do influenciador (temas, formato, publico), sem frases genericas de template');
+        errors.push('personaSummary: descreva nicho, formato e publico diretamente — evite abrir com "Criador(a) de conteudo" ou frases genericas de template');
     }
     if (/\b(da|do|de)\s*,/iu.test(t) || /\brevista\s*,/iu.test(t)) {
         errors.push('personaSummary: frase incompleta ou com buraco editorial — reescreva em portugues natural');
@@ -1329,7 +1331,112 @@ function validatePersonaSummaryQuality(personaSummary) {
     if (personaSummaryHasEditorialHoles(personaSummary)) {
         errors.push('personaSummary: frase incompleta ou com buraco editorial — reescreva em portugues natural, sem virgulas vazias ou artigos soltos');
     }
+    if (/^que\s+\p{L}/iu.test(personaSummary.trim())) {
+        errors.push('personaSummary: nao comece com "Que ..." — use verbo direto (ex.: "Compartilha jogos e entretenimento...")');
+    }
     return errors;
+}
+/** Tokens de nome/handle que nao podem aparecer no personaSummary (ex. Kaique em cantorkaique). */
+function collectPublicNameTokensForPersonaGuard(profile) {
+    const seen = new Set();
+    const add = (raw) => {
+        const c = String(raw ?? '')
+            .replace(/[^\p{L}\p{N}]/gu, '')
+            .trim();
+        if (c.length < 3)
+            return;
+        const f = foldAsciiWs(c);
+        if (f.length >= 3)
+            seen.add(f);
+    };
+    const fullName = String(profile.full_name ?? '').trim();
+    for (const token of fullName.split(/\s+/))
+        add(token);
+    const handle = toHandle(profile.handle ?? '');
+    const h = foldAsciiWs(handle);
+    if (h.length >= 3)
+        add(h);
+    for (const seg of h.split(/[._-]+/))
+        add(seg);
+    const peelPrefixes = [
+        'cantor',
+        'cantora',
+        'oficial',
+        'realtor',
+        'personal',
+        'coach',
+        'blog',
+        'loja',
+        'banda',
+        'duo',
+        'insta',
+    ];
+    for (const p of peelPrefixes) {
+        if (h.startsWith(p) && h.length > p.length + 2)
+            add(h.slice(p.length));
+    }
+    return [...seen];
+}
+function personaSummaryContainsPublicNameToken(personaSummary, profile) {
+    const psFold = foldAsciiWs(personaSummary);
+    if (!psFold)
+        return false;
+    const padded = ` ${psFold} `;
+    for (const tok of collectPublicNameTokensForPersonaGuard(profile)) {
+        if (tok.length < 3)
+            continue;
+        if (padded.includes(` ${tok} `))
+            return true;
+    }
+    return false;
+}
+function repairPersonaSummaryAfterNameStripped(s) {
+    let t = s.trim().replace(/\s+/g, ' ');
+    t = t.replace(/^\s*é\s+um(a)?\s+/iu, '');
+    t = t.replace(/^\s*um(a)?\s+/iu, '');
+    if (t.length > 0) {
+        t = t.charAt(0).toUpperCase() + t.slice(1);
+    }
+    return t;
+}
+/** Remove abertura redundante — profileType ja indica criador/pessoal. */
+function stripRedundantCriadorDeConteudoLead(personaSummary) {
+    let t = personaSummary.trim().replace(/\s+/g, ' ');
+    const lead = t.match(/^(criador|criadora)\s+de\s+conte[uú]do\s+/iu);
+    if (!lead)
+        return t;
+    let rest = t.slice(lead[0].length).trim();
+    rest = rest.replace(/^sobre\s+/iu, '');
+    if (!rest)
+        return t;
+    return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+/** Apos remover sujeito/nome, sobra "Que compartilha..." — vira frase direta. */
+function repairPersonaSummaryOrphanRelativeLead(personaSummary) {
+    const t = personaSummary.trim();
+    const m = t.match(/^que\s+(\p{L}[\p{L}\p{M}]+)\s*/iu);
+    if (!m)
+        return t;
+    const verb = m[1];
+    const rest = t.slice(m[0].length).trim();
+    const head = verb.charAt(0).toUpperCase() + verb.slice(1);
+    return rest ? `${head} ${rest}` : head;
+}
+function stripPublicNameTokensFromPersonaSummary(personaSummary, profile) {
+    let s = personaSummary.trim();
+    for (const tok of collectPublicNameTokensForPersonaGuard(profile)) {
+        if (tok.length < 3)
+            continue;
+        try {
+            s = s.replace(new RegExp(`^\\s*${escapeRegexChars(tok)}\\s+é\\s+`, 'iu'), '');
+            s = s.replace(new RegExp(`\\b${escapeRegexChars(tok)}\\b`, 'giu'), ' ');
+        }
+        catch {
+            /* ignore */
+        }
+    }
+    s = s.replace(/\s+/g, ' ').trim();
+    return repairPersonaSummaryAfterNameStripped(s);
 }
 /** Garante personaSummary descritivo, sem copiar dados brutos do perfil. */
 function validatePersonaSummaryAgainstProfile(personaSummary, profile) {
@@ -1348,21 +1455,9 @@ function validatePersonaSummaryAgainstProfile(personaSummary, profile) {
         if (fnNorm.length >= 4 && normalizeWs(ps).includes(fnNorm)) {
             errors.push('personaSummary nao pode repetir o nome completo publico do perfil');
         }
-        for (const token of fullName.split(/\s+/)) {
-            const cleaned = token.replace(/[^\p{L}\p{N}]/gu, '');
-            if (cleaned.length < 4)
-                continue;
-            try {
-                const re = new RegExp(`\\b${escapeRegexChars(cleaned)}\\b`, 'iu');
-                if (re.test(ps)) {
-                    errors.push('personaSummary nao pode incluir o nome publico do criador; use descricao agregada (ex.: "criadora de conteudo sobre...")');
-                    break;
-                }
-            }
-            catch {
-                /* ignore token que quebra regex */
-            }
-        }
+    }
+    if (personaSummaryContainsPublicNameToken(ps, profile)) {
+        errors.push('personaSummary nao pode incluir o nome publico do criador; descreva o nicho em terceira pessoa sem nome proprio');
     }
     const bio = String(profile.biography ?? '').trim();
     const bioNorm = normalizeWs(bio);
@@ -1436,6 +1531,7 @@ function personaSummaryHasEditorialHoles(personaSummary) {
 }
 function repairPersonaSummaryBrokenPhrasing(s) {
     let t = s
+        .replace(/^que\s+(\p{L}[\p{L}\p{M}]+)\s*/iu, (_, verb) => `${verb.charAt(0).toUpperCase()}${verb.slice(1)} `)
         .replace(/\bde\s*,/giu, ',')
         .replace(/\bdo\s*,/giu, ',')
         .replace(/\bda\s*,/giu, ',')
@@ -1488,7 +1584,7 @@ function sanitizePersonaSummaryForProfile(personaSummary, profile) {
         }
         for (const token of fullName.split(/\s+/)) {
             const cleaned = token.replace(/[^\p{L}\p{N}]/gu, '');
-            if (cleaned.length < 4)
+            if (cleaned.length < 3)
                 continue;
             try {
                 s = s.replace(new RegExp(`\\b${escapeRegexChars(cleaned)}\\b`, 'giu'), ' ');
@@ -1498,6 +1594,9 @@ function sanitizePersonaSummaryForProfile(personaSummary, profile) {
             }
         }
     }
+    s = stripPublicNameTokensFromPersonaSummary(s, profile);
+    s = stripRedundantCriadorDeConteudoLead(s);
+    s = repairPersonaSummaryOrphanRelativeLead(s);
     s = repairPersonaSummaryBrokenPhrasing(s.replace(/\s+/g, ' ').trim());
     if (personaSummaryHasEditorialHoles(s)) {
         return '';
@@ -2172,7 +2271,7 @@ function buildRepairPrompt(originalPrompt, invalidJson, errors) {
         '- qualification.subCategories: pelo menos 1 item; prefira termos da amostra/vocabulario fechado do prompt; uma palavra, sem espacos internos. Maquiagem/beleza so com evidencia na bio ou amostras.',
         `- qualification.contentPillars: pelo menos 1 item; cada item UMA palavra sem espacos (NUNCA frases tipo "recepcao de cafe"). Pilares so com base no texto do perfil/amostras; PROIBIDO "dicas", "moto", "receitas" sem aparecer nos dados. PROIBIDO lista SOMENTE com rotulos de Beleza (beleza, maquiagem, skincare, unhas…) se nada na bio/amostras falar de estetica/make; troque por pilares do nicho real (ex.: direito, negocios, humor, familia). NUNCA use "${CONTENT_PILLAR_FALLBACK_LABEL}" nesta correcao — escolha temas concretos; o servidor so aplica "${CONTENT_PILLAR_FALLBACK_LABEL}" na ultima tentativa se esgotar reparos.`,
         `- qualification.mainCategory OBRIGATORIO: copie LITERAL um unico rotulo da LISTA FECHADA do prompt (uma palavra, sem " & "); nao invente sinonimos nem traducoes.`,
-        '- qualification.personaSummary: SOMENTE o modelo escreve este campo — descricao em terceira pessoa do influenciador (papel + nicho concreto + publico); PROIBIDO templates ("alinhado ao nicho publico", "tom editorial" sem tema); PROIBIDO @, handle, nome publico, copiar biografia; use amostras como pista.',
+        '- qualification.personaSummary: SOMENTE o modelo escreve — terceira pessoa, nicho+formato+publico; PROIBIDO nome proprio, @, handle; PROIBIDO comecar com "Criador(a) de conteudo" (redundante); va direto ao tema (ex.: "Humor e musica sertaneja para publico jovem").',
         '- qualification.profileType: marca D2C (cosmeticos/skincare/linha de produtos, voz institucional, ingredientes) → marca, nao criador; criador só quando a pessoa for o centro do posicionamento.',
         '- nao explique nada',
         '',
@@ -2205,8 +2304,8 @@ function buildPrompt(profile, options = {}) {
         ? `profileType: inferir a partir de handle, full_name, biography e amostras_textos_publicacoes (legendas/hashtags). ${profileTypeSignals}`
         : `profileType: inferir a partir de handle, full_name e biography (texto publico do perfil). ${profileTypeSignals}`;
     const personaRule = includePostSamples
-        ? 'personaSummary: editorial em terceira pessoa — QUEM e o criador (papel: apresentador, humorista, chef…) e EM QUE nicho atua (temas concretos: novela, futebol, receitas…); tom e publico. PROIBIDO frases vagas ("alinhado ao nicho publico", "tom editorial"). PROIBIDO: @, handle, nome publico literal, copiar bio/legendas/URLs/numeros de seguidores ou trechos iguais ao JSON. Amostras só como pista; reescreva.'
-        : 'personaSummary: editorial em terceira pessoa — papel do criador e nicho concreto (temas do perfil), tom e publico; sem frases genericas de template. PROIBIDO: @, handle, nome publico literal, copiar bio, seguidores, URLs, trechos iguais ao JSON. Bio curta: infira com cautela de handle+nome, sem fatos inventados.';
+        ? 'personaSummary: terceira pessoa, SEM nome proprio e SEM abrir com "Criador(a) de conteudo" — descreva direto o nicho, tom e publico (ex.: "Psicologia e mentalidade com dicas para o dia a dia"). PROIBIDO: @, handle, copiar bio/legendas.'
+        : 'personaSummary: terceira pessoa, direto ao nicho e publico — sem "Criador de conteudo" nem nome proprio. PROIBIDO: @, handle, copiar bio.';
     const postsLeadWhenBioWeak = postSamples.length > 0
         ? 'Com amostras_textos_publicacoes: se biography for curta, vaga, só slogan ou nao definir o nicho, defina profileType, subCategories (ordem: tema dominante primeiro), contentPillars e mainCategory (UMA palavra, nome de vitrine) pelo TEMA DOMINANTE nas amostras; bio e handle apenas apoiam.'
         : null;
