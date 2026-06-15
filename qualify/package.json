@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "qualify": "tsx src/index.ts",
+    "reprocess": "tsx src/index.ts reprocess",
     "ui": "tsx src/index.ts ui"
   },
   "engines": {

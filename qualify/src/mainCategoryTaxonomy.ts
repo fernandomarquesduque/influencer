@@ -759,6 +759,7 @@ const SUBCATEGORY_TO_MAIN_RAW: Record<string, MainCategoryCanonical> = {
   bolsa: 'Finanças',
   financas: 'Finanças',
   finanças: 'Finanças',
+  finfluencer: 'Finanças',
   investimento: 'Finanças',
   investidor: 'Finanças',
   investidora: 'Finanças',
@@ -1683,6 +1684,7 @@ const RAW_ALIASES: Record<string, string> = {
   // Finanças
   financas: 'Finanças',
   finanças: 'Finanças',
+  finfluencer: 'Finanças',
   investimentos: 'Finanças',
   investimento: 'Finanças',
   investidor: 'Finanças',

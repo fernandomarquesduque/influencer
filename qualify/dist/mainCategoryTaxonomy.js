@@ -734,6 +734,7 @@ const SUBCATEGORY_TO_MAIN_RAW = {
     bolsa: 'Finanças',
     financas: 'Finanças',
     finanças: 'Finanças',
+    finfluencer: 'Finanças',
     investimento: 'Finanças',
     investidor: 'Finanças',
     investidora: 'Finanças',
@@ -1639,6 +1640,7 @@ const RAW_ALIASES = {
     // Finanças
     financas: 'Finanças',
     finanças: 'Finanças',
+    finfluencer: 'Finanças',
     investimentos: 'Finanças',
     investimento: 'Finanças',
     investidor: 'Finanças',

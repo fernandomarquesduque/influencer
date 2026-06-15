@@ -49,5 +49,6 @@ npm run qualify -- ui
 - `QUALIFY_BATCH_SIZE` (default: `20`)
 - `QUALIFY_MAX_REASONING` (default: `3`)
 - `QUALIFY_API_TIMEOUT_MS` (default: `30000`)
-- `QUALIFY_MEDIA_CONTEXT_LIMIT` (legendas na 2a fase LLM quando personaSummary falha validacao)
+- `QUALIFY_MEDIA_CONTEXT_LIMIT` (quantidade de legendas por perfil no prompt)
+- `QUALIFY_QUEUE_INCLUDE_CONTENT` (default ligado: fila ja manda posts na 1a passagem; `0` desliga)
 - `QUALIFY_SHARD` ou `QUALIFY_SHARD_INDEX` + `QUALIFY_SHARD_COUNT` — particao da fila entre maquinas (ex.: `0/2` e `1/2`)
