@@ -359,7 +359,7 @@ function hasDistinctiveSpanishSignals(low: string): boolean {
     /\b(ti\s+misma|tu\s+momento|puedes\s+usar|contáctanos|contactanos|contáctenos|ubicación|ubicacion|tiendas\s+a\s+nivel|nivel\s+nacional|regalos|mañana|manana|para\s+las|solo\s+para\s+las|síguenos|siguenos|es\s+tu\s+momento|la\s+mejor\s+pieza|en\s+ti\s+misma)\b/iu.test(
       low
     ) ||
-    /\b(confianza|contáct|ubicaci|regalos|premios|mañana|también|información|construyamos|construir|escena|electr[oó]nica|entre\s+todos|confirmado|festival|septiembre|patria|música|musica|nosotros|santiago|chile|bogot[aá]|méxico|mexico|argentina|colombia|per[uú]|caracas|lima)\b/iu.test(
+    /\b(confianza|contáct|ubicaci|regalos|premios|mañana|también|información|construyamos|construir|escena|electr[oó]nica|entre\s+todos|confirmado|festival|septiembre|patria|nosotros|santiago|chile|bogot[aá]|méxico|mexico|argentina|colombia|per[uú]|caracas|lima)\b/iu.test(
       low
     ) ||
     (/\bsantiago\b/iu.test(low) && /\bcl\b/iu.test(low))
@@ -371,8 +371,33 @@ function hasDistinctivePortugueseSignals(low: string): boolean {
     /\b(você|voce|não|nao|são|sao|também|tambem|obrigad|beleza|seguidores|brasil|parabéns|parabens|gratidão|gratidao|corinthiano|pagode|futebol|vocês|voces)\b/iu.test(
       low
     ) ||
-    hasBrazilianFinancasAuthorialSignals(low)
+    hasBrazilianFinancasAuthorialSignals(low) ||
+    hasWeakBrazilianPortugueseSignals(low)
   );
+}
+
+/** Sinais leves de PT-BR (bios curtas / mistura com ES do franc). */
+function hasWeakBrazilianPortugueseSignals(low: string): boolean {
+  const t = foldAsciiWs(stripInvisibleFromString(low));
+  if (t.length < 10) return false;
+  if (/[ãõâêôçáíóú]/iu.test(low)) return true;
+  return /\b(voc[eê]|nao|não|pra\b|pro\b|t[aá]\b|tô\b|né\b|aí\b|gente|minha|nosso|nossa|seu|sua|msg|whatsapp|parceria|publi|link\s+na\s+bio|direct|directs|dm\b|agenda|contato|orçamento|orcamento|entrega|frete)\b/iu.test(
+    t
+  );
+}
+
+function shouldPreferPtBrOverFrancSpanish(blob: string, handle: string, ranked: [string, number][]): boolean {
+  if (shouldPreferPtBrOverFrancEnglish(blob, handle, ranked)) return true;
+  const low = stripInvisibleFromString(blob).toLowerCase();
+  if (hasDistinctivePortugueseSignals(low) || hasWeakBrazilianPortugueseSignals(low)) return true;
+  if (authorialTextLikelyBrazilianPortuguese(low)) return true;
+  const porScore = francScoreForIso3(ranked, 'por') ?? 0;
+  const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
+  if (porScore >= 0.32 && porScore >= spaScore - FRANC_POR_SPA_MARGIN) return true;
+  if (!hasDistinctiveSpanishSignals(low) && languageHintFromHandle(handle) !== 'es' && porScore >= 0.25) {
+    return true;
+  }
+  return false;
 }
 
 /** Bio/posts claramente em ingles (evita default pt-br em texto curto). */
@@ -409,11 +434,11 @@ function shouldPreferPtBrOverFrancEnglish(blob: string, handle: string, ranked: 
 /** Texto com funcoes gramaticais PT (comum em bios/posts BR mesmo com termos EN). */
 function authorialTextLikelyBrazilianPortuguese(low: string): boolean {
   const t = foldAsciiWs(low);
-  if (t.length < 24) return false;
+  if (t.length < 18) return hasWeakBrazilianPortugueseSignals(low);
   const ptFunc =
     /\b(de|da|do|das|dos|com|para|que|não|nao|uma|um|uns|umas|os|as|em|no|na|nos|nas|por|mais|muito|também|tambem|você|voce|revista|moda|beleza|brasil)\b/giu;
   const hits = t.match(ptFunc);
-  return (hits?.length ?? 0) >= 4;
+  return (hits?.length ?? 0) >= 3;
 }
 
 /** Heuristica lexical quando franc devolve idioma nao mapeado (ex.: sco) ou ambiguo. */
@@ -430,7 +455,7 @@ function detectLanguageHeuristicFromBlob(blob: string, handle?: string): string 
   const enStrong = hasDistinctiveEnglishSignals(low);
   const esStrong =
     hasDistinctiveSpanishSignals(low) ||
-    /\b(restaurante|noticias|información|informacion|más información|también|síguenos|pedidos|pero\b|más\b)\b/iu.test(low);
+    /\b(información|informacion|más información|síguenos|pedidos|pero\b|más\b|ustedes|usted)\b/iu.test(low);
   const frStrong = /\b(boulangerie|restaurant|commander|suivez|paris|merci)\b/iu.test(low);
 
   if (itStrong && !ptStrong) return 'it';
@@ -458,9 +483,9 @@ function resolveMappedLanguageFromFrancRanked(
   if (topCode === 'por') {
     const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
     if (spaScore > topScore - FRANC_POR_SPA_MARGIN) {
+      if (hasWeakBrazilianPortugueseSignals(low) || hasDistinctivePortugueseSignals(low)) return 'pt-br';
       const h = detectLanguageHeuristicFromBlob(blob, handle);
-      if (h === 'es') return 'es';
-      if (hasDistinctiveSpanishSignals(low)) return 'es';
+      if (h === 'es' && hasDistinctiveSpanishSignals(low)) return 'es';
     }
     return 'pt-br';
   }
@@ -471,7 +496,7 @@ function resolveMappedLanguageFromFrancRanked(
       const h = detectLanguageHeuristicFromBlob(blob, handle);
       if (h === 'pt-br' || hasDistinctivePortugueseSignals(low)) return 'pt-br';
     }
-    if (shouldPreferPtBrOverFrancEnglish(blob, handle, ranked)) return 'pt-br';
+    if (shouldPreferPtBrOverFrancSpanish(blob, handle, ranked)) return 'pt-br';
     return 'es';
   }
 
@@ -511,10 +536,19 @@ function resolveMappedLanguageFromFrancRanked(
     if (!code || code === 'und' || score < FRANC_ALT_MAPPED_MIN_SCORE) continue;
     if (code === 'por') {
       const spaScore = francScoreForIso3(ranked, 'spa') ?? 0;
-      if (spaScore > score - FRANC_POR_SPA_MARGIN && hasDistinctiveSpanishSignals(low)) return 'es';
+      if (
+        spaScore > score - FRANC_POR_SPA_MARGIN &&
+        hasDistinctiveSpanishSignals(low) &&
+        !hasWeakBrazilianPortugueseSignals(low)
+      ) {
+        return 'es';
+      }
       return 'pt-br';
     }
-    if (code === 'spa') return 'es';
+    if (code === 'spa') {
+      if (shouldPreferPtBrOverFrancSpanish(blob, handle, ranked)) return 'pt-br';
+      return 'es';
+    }
     if (code === 'eng') {
       const porScore = francScoreForIso3(ranked, 'por') ?? 0;
       if (porScore > score - FRANC_POR_ENG_MARGIN) return 'pt-br';
@@ -563,6 +597,9 @@ function resolveLanguageFromFrancProfile(profile: JsonRecord): string {
       if (spaScore > FRANC_ALT_MAPPED_MIN_SCORE || handleHint === 'es') return 'es';
     }
     if (fromFranc === 'en' && shouldPreferPtBrOverFrancEnglish(blob, handle, ranked)) {
+      return 'pt-br';
+    }
+    if (fromFranc === 'es' && shouldPreferPtBrOverFrancSpanish(blob, handle, ranked)) {
       return 'pt-br';
     }
     return fromFranc;
@@ -663,6 +700,10 @@ function tryExcludeByAuthorialLanguageMismatch(
           ? handleHint
           : null;
     if (intl) {
+      const ranked = francRankedForBlob(normalizeFrancInputBlob(blob), 10);
+      if (intl === 'es' && shouldPreferPtBrOverFrancSpanish(blob, handle, ranked)) {
+        return null;
+      }
       qualification.language = intl;
       return `Exclusao automatica: texto autoral indica idioma ${intl}, fora da politica pt-br`;
     }
@@ -1519,16 +1560,80 @@ function validatePersonaSummaryQuality(personaSummary: string): string[] {
   return errors;
 }
 
+/** Palavras comuns em nomes de marca/negocio — nao bloquear no personaSummary (evita falso positivo em PT). */
+const GENERIC_PERSONA_PUBLIC_NAME_TOKEN_FOLDS: ReadonlySet<string> = new Set(
+  [
+    'agencia',
+    'atelie',
+    'banda',
+    'blog',
+    'brasil',
+    'casa',
+    'casting',
+    'centro',
+    'cidade',
+    'clube',
+    'convento',
+    'cultura',
+    'duo',
+    'escola',
+    'espaco',
+    'eventos',
+    'festival',
+    'grupo',
+    'instituto',
+    'loja',
+    'midia',
+    'moda',
+    'music',
+    'musica',
+    'musical',
+    'oficial',
+    'orquestra',
+    'porto',
+    'producao',
+    'producoes',
+    'restaurante',
+    'rio',
+    'sao',
+    'show',
+    'studio',
+    'teatro',
+    'turismo',
+    'varejo',
+  ].map((w) => foldAsciiWs(w))
+);
+
+const PERSONA_PUBLIC_NAME_TOKEN_MIN_LEN = 4;
+
+function isDistinctivePublicNameToken(tok: string, forceFromHandlePeel = false): boolean {
+  if (forceFromHandlePeel) return tok.length >= 3;
+  if (tok.length < PERSONA_PUBLIC_NAME_TOKEN_MIN_LEN) return false;
+  if (GENERIC_PERSONA_PUBLIC_NAME_TOKEN_FOLDS.has(tok)) return false;
+  return true;
+}
+
+/** Remove palavras cujo fold coincide com tokens proibidos (acentos nao impedem o match). */
+function removePublicNameWordsFoldAware(text: string, tokensFold: string[]): string {
+  const tokenSet = new Set(tokensFold.filter((t) => t.length >= 3));
+  if (tokenSet.size === 0) return text.trim();
+  return text
+    .replace(/\p{L}[\p{L}\p{M}\p{N}]*/gu, (word) => (tokenSet.has(foldAsciiWs(word)) ? '' : word))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Tokens de nome/handle que nao podem aparecer no personaSummary (ex. Kaique em cantorkaique). */
 function collectPublicNameTokensForPersonaGuard(profile: JsonRecord): string[] {
   const seen = new Set<string>();
-  const add = (raw: string) => {
+  const add = (raw: string, forceFromHandlePeel = false) => {
     const c = String(raw ?? '')
       .replace(/[^\p{L}\p{N}]/gu, '')
       .trim();
     if (c.length < 3) return;
     const f = foldAsciiWs(c);
-    if (f.length >= 3) seen.add(f);
+    if (!isDistinctivePublicNameToken(f, forceFromHandlePeel)) return;
+    seen.add(f);
   };
 
   const fullName = String(profile.full_name ?? '').trim();
@@ -1536,7 +1641,7 @@ function collectPublicNameTokensForPersonaGuard(profile: JsonRecord): string[] {
 
   const handle = toHandle(profile.handle ?? '');
   const h = foldAsciiWs(handle);
-  if (h.length >= 3) add(h);
+  if (h.length >= PERSONA_PUBLIC_NAME_TOKEN_MIN_LEN) add(h);
   for (const seg of h.split(/[._-]+/)) add(seg);
 
   const peelPrefixes = [
@@ -1553,7 +1658,7 @@ function collectPublicNameTokensForPersonaGuard(profile: JsonRecord): string[] {
     'insta',
   ];
   for (const p of peelPrefixes) {
-    if (h.startsWith(p) && h.length > p.length + 2) add(h.slice(p.length));
+    if (h.startsWith(p) && h.length > p.length + 2) add(h.slice(p.length), true);
   }
 
   return [...seen];
@@ -1564,7 +1669,6 @@ function personaSummaryContainsPublicNameToken(personaSummary: string, profile: 
   if (!psFold) return false;
   const padded = ` ${psFold} `;
   for (const tok of collectPublicNameTokensForPersonaGuard(profile)) {
-    if (tok.length < 3) continue;
     if (padded.includes(` ${tok} `)) return true;
   }
   return false;
@@ -1604,11 +1708,12 @@ function repairPersonaSummaryOrphanRelativeLead(personaSummary: string): string 
 
 function stripPublicNameTokensFromPersonaSummary(personaSummary: string, profile: JsonRecord): string {
   let s = personaSummary.trim();
-  for (const tok of collectPublicNameTokensForPersonaGuard(profile)) {
+  const tokens = collectPublicNameTokensForPersonaGuard(profile);
+  s = removePublicNameWordsFoldAware(s, tokens);
+  for (const tok of tokens) {
     if (tok.length < 3) continue;
     try {
       s = s.replace(new RegExp(`^\\s*${escapeRegexChars(tok)}\\s+é\\s+`, 'iu'), '');
-      s = s.replace(new RegExp(`\\b${escapeRegexChars(tok)}\\b`, 'giu'), ' ');
     } catch {
       /* ignore */
     }
@@ -3180,10 +3285,14 @@ function promoteLanguageToPtBrWhenBrazilianProfileEvidence(
   if (!intl.has(langNorm)) return;
   const low = foldAsciiWs(profileAuthorialEvidenceLow(profile));
   const handle = toHandle(profile.handle ?? '');
+  const blob = authorialBlobStrippedForLanguage(profile);
+  const ranked = francRankedForBlob(normalizeFrancInputBlob(blob), 10);
   if (
     authorialTextLikelyBrazilianPortuguese(low) ||
     languageHintFromHandle(handle) === 'pt-br' ||
-    hasDistinctivePortugueseSignals(low)
+    hasDistinctivePortugueseSignals(low) ||
+    hasWeakBrazilianPortugueseSignals(low) ||
+    (langNorm === 'es' && shouldPreferPtBrOverFrancSpanish(blob, handle, ranked))
   ) {
     qualification.language = 'pt-br';
   }
@@ -3210,6 +3319,13 @@ function resolvePreLlmLanguageExclusionReason(profile: JsonRecord): string | nul
   }
 
   const langNorm = normalizeLanguageTagForExclusionRule(lang);
+  if (langNorm === 'es') {
+    const low = stripInvisibleFromString(authorialBlobStrippedForLanguage(profile)).toLowerCase();
+    const handle = toHandle(profile.handle ?? '');
+    if (!hasDistinctiveSpanishSignals(low) && languageHintFromHandle(handle) !== 'es') {
+      return null;
+    }
+  }
   if (langNorm && langNorm !== 'pt-br' && langNorm !== 'desconhecido') {
     return `Exclusao automatica (pre-LLM): language deve ser pt-br (recebido: ${lang})`;
   }
