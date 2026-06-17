@@ -293,6 +293,24 @@ function authorialBlobStrippedForLanguage(profile: JsonRecord): string {
   return blob;
 }
 
+function countCjkScriptLetters(s: string): number {
+  const m = s.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu);
+  return m ? m.length : 0;
+}
+
+function countLatinAsciiLetters(s: string): number {
+  const m = s.match(/[A-Za-z]/g);
+  return m ? m.length : 0;
+}
+
+/** Mais texto em Han/kana que em latim — tipico de contas HK/CN/JP (franc nao mapeia bem). */
+function authorialTextPredominantlyCjk(blob: string): boolean {
+  const cjk = countCjkScriptLetters(blob);
+  const latin = countLatinAsciiLetters(blob);
+  if (cjk < 8) return false;
+  return cjk >= latin && cjk >= 12;
+}
+
 /** ISO 639-3 (franc) → qualification.language; `por` tratado na funcao (sempre pt-br). */
 const FRANC_ISO6393_TO_BCP47: Readonly<Record<string, string>> = {
   eng: 'en',
@@ -317,6 +335,11 @@ const FRANC_ISO6393_TO_BCP47: Readonly<Record<string, string>> = {
   ron: 'ro',
   bul: 'bg',
   cat: 'ca-es',
+  cmn: 'zh',
+  zho: 'zh',
+  yue: 'zh',
+  jpn: 'ja',
+  kor: 'ko',
 };
 
 /** Quando franc coloca `eng` no topo mas `por` vem perto, assume pt-BR (bios PT com termos em ingles). */
@@ -348,6 +371,13 @@ function languageHintFromHandle(handle: string): string | null {
     /\.(ve|mx|ar|cl|pe|uy|py|bo|ec|gt|cr|pa|do|hn|ni|sv|cu|pr|co)\b/i.test(h);
   if (latamEs) return 'es';
   if (/\.(br|com\.br)\b/i.test(h) || /(?:^|[._-])br(?:$|[._-])/i.test(h)) return 'pt-br';
+  if (
+    /\.(uk|com\.uk|com\.hk|com\.sg|com\.au)\b/i.test(h) ||
+    /(?:^|[._-])(hk|uk|us|sg|au|nz|ie|tw|jp|kr|cn)(?:$|[._-])/i.test(h) ||
+    /(hk|uk|us|sg|au|tw|jp|kr|cn)$/i.test(h)
+  ) {
+    return 'en';
+  }
   if (/\.(it|com\.it)\b/i.test(h)) return 'it';
   if (/\.(fr|com\.fr)\b/i.test(h)) return 'fr';
   if (/\.(de|com\.de)\b/i.test(h)) return 'de';
@@ -575,6 +605,7 @@ function resolveLanguageFromFrancProfile(profile: JsonRecord): string {
 
   if (letters < minFr || blobLetters < minFr) {
     const low = stripInvisibleFromString(blob).toLowerCase();
+    if (authorialTextPredominantlyCjk(blob)) return 'zh';
     if (hasDistinctiveEnglishSignals(low)) return 'en';
     const h = detectLanguageHeuristicFromBlob(blob, handle);
     if (h && normalizeLanguageTagForExclusionRule(h) !== 'pt-br') return h;
@@ -607,6 +638,8 @@ function resolveLanguageFromFrancProfile(profile: JsonRecord): string {
 
   const fromHeuristic = detectLanguageHeuristicFromBlob(blob, handle);
   if (fromHeuristic) return fromHeuristic;
+
+  if (authorialTextPredominantlyCjk(blob)) return 'zh';
 
   return handleHint ?? 'pt-br';
 }
@@ -677,9 +710,32 @@ function tryExcludeByAuthorialLanguageMismatch(
 ): string | null {
   const langRaw = String(qualification.language ?? '').trim();
   const lang = normalizeLanguageTagForExclusionRule(langRaw);
-  if (!lang || lang === 'desconhecido') return null;
-
   const blob = authorialBlobStrippedForLanguage(profile);
+  const low = stripInvisibleFromString(blob).toLowerCase();
+  const handle = toHandle(profile.handle ?? '');
+
+  if (authorialTextPredominantlyCjk(blob)) {
+    const ptSignals =
+      hasDistinctivePortugueseSignals(low) ||
+      hasWeakBrazilianPortugueseSignals(low) ||
+      languageHintFromHandle(handle) === 'pt-br';
+    if (!ptSignals) {
+      qualification.language = 'zh';
+      return 'Exclusao automatica: texto autoral predominantemente CJK, fora da politica pt-br';
+    }
+  }
+
+  if (!lang || lang === 'desconhecido') {
+    if (
+      hasDistinctiveEnglishSignals(low) &&
+      !hasDistinctivePortugueseSignals(low) &&
+      languageHintFromHandle(handle) !== 'pt-br'
+    ) {
+      qualification.language = 'en';
+      return 'Exclusao automatica: texto autoral indica idioma en, fora da politica pt-br';
+    }
+    return null;
+  }
 
   if (/[\u0400-\u04FF]/u.test(blob) && isPortugueseLanguageTag(langRaw)) {
     qualification.language = 'ru';
@@ -3307,18 +3363,15 @@ function isPreLlmLanguageGateEnabled(): boolean {
 
 function resolvePreLlmLanguageExclusionReason(profile: JsonRecord): string | null {
   if (!isPreLlmLanguageGateEnabled()) return null;
-  let lang = resolveLanguageFromFrancProfile(profile);
+  const lang = resolveLanguageFromFrancProfile(profile);
   const qualStub: JsonRecord = { language: lang, profileType: 'criador' };
-  promoteLanguageToPtBrWhenBrazilianProfileEvidence(qualStub, profile);
-  lang = String(qualStub.language ?? lang).trim();
-  qualStub.language = lang;
 
   const mismatch = tryExcludeByAuthorialLanguageMismatch(qualStub, profile);
   if (mismatch) {
     return mismatch.replace('Exclusao automatica:', 'Exclusao automatica (pre-LLM):');
   }
 
-  const langNorm = normalizeLanguageTagForExclusionRule(lang);
+  const langNorm = normalizeLanguageTagForExclusionRule(String(qualStub.language ?? lang));
   if (langNorm === 'es') {
     const low = stripInvisibleFromString(authorialBlobStrippedForLanguage(profile)).toLowerCase();
     const handle = toHandle(profile.handle ?? '');
@@ -3328,6 +3381,28 @@ function resolvePreLlmLanguageExclusionReason(profile: JsonRecord): string | nul
   }
   if (langNorm && langNorm !== 'pt-br' && langNorm !== 'desconhecido') {
     return `Exclusao automatica (pre-LLM): language deve ser pt-br (recebido: ${lang})`;
+  }
+  if (langNorm === 'pt-br') {
+    const blob = authorialBlobStrippedForLanguage(profile);
+    const low = stripInvisibleFromString(blob).toLowerCase();
+    const handle = toHandle(profile.handle ?? '');
+    const handleHint = languageHintFromHandle(handle);
+    if (
+      handleHint &&
+      handleHint !== 'pt-br' &&
+      !hasDistinctivePortugueseSignals(low) &&
+      !hasWeakBrazilianPortugueseSignals(low)
+    ) {
+      return `Exclusao automatica (pre-LLM): language deve ser pt-br (recebido: ${handleHint} pelo handle)`;
+    }
+    if (
+      hasDistinctiveEnglishSignals(low) &&
+      !hasDistinctivePortugueseSignals(low) &&
+      !hasWeakBrazilianPortugueseSignals(low) &&
+      handleHint !== 'pt-br'
+    ) {
+      return 'Exclusao automatica (pre-LLM): language deve ser pt-br (recebido: en)';
+    }
   }
   return null;
 }
@@ -4237,6 +4312,36 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
   let currentBatch = shuffleQueueItems(firstBatch.items);
   /** Sem itens novos processados desde o ultimo wrap da fila (offset voltou ao base). */
   let queueWrapsWithoutWork = 0;
+  let queueSkipBurstPages = 0;
+  let queueSkipBurstProfiles = 0;
+  const flushQueueSkipBurst = () => {
+    if (queueSkipBurstPages === 0) return;
+    emitLog(
+      `(fila) ${queueSkipBurstPages} pagina(s), ${queueSkipBurstProfiles} perfil(is) ja visto(s) nesta execucao — offset agora ${listOffset}.`
+    );
+    queueSkipBurstPages = 0;
+    queueSkipBurstProfiles = 0;
+  };
+
+  const fetchQueuePage = async (offset: number, reason: string) => {
+    emitLog(`(fila) ${reason} — consultando API offset ${offset} (limite ${fetchBatchSize})…`);
+    const t0 = Date.now();
+    const batch = await fetchPendingFromApi(
+      apiBase,
+      ingestKey,
+      fetchBatchSize,
+      offset,
+      refreshAll,
+      useCategoryFilter ? mainCategoryFilter : undefined,
+      undefined,
+      queueIncludeContent
+    );
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    emitLog(
+      `(fila) offset ${offset}: ${batch.items.length} perfil(is) nesta pagina (~${batch.totalPending} pendentes no total) em ${sec}s`
+    );
+    return batch;
+  };
 
   while (true) {
     if (options.shouldStop?.()) {
@@ -4255,9 +4360,14 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
       return Boolean(handle) && !processedHandles.has(handle) && handleBelongsToShard(handle, shard);
     });
 
+    if (todo.length > 0) {
+      flushQueueSkipBurst();
+    }
+
     if (todo.length === 0) {
       if (currentBatch.length === 0) {
         if (listOffset > queueOffset) {
+          flushQueueSkipBurst();
           queueWrapsWithoutWork++;
           if (queueWrapsWithoutWork >= 2) {
             emitLog(
@@ -4266,16 +4376,7 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
             break;
           }
           listOffset = queueOffset;
-          const wrapBatch = await fetchPendingFromApi(
-            apiBase,
-            ingestKey,
-            fetchBatchSize,
-            listOffset,
-            refreshAll,
-            useCategoryFilter ? mainCategoryFilter : undefined,
-            undefined,
-            queueIncludeContent
-          );
+          const wrapBatch = await fetchQueuePage(listOffset, 'volta ao inicio da fila');
           if (!onlyWithLlm) progress.total = Math.max(progress.total, wrapBatch.totalPending);
           currentBatch = shuffleQueueItems(wrapBatch.items);
           continue;
@@ -4283,19 +4384,20 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
         break;
       }
       listOffset += currentBatch.length;
-      emitLog(
-        `(fila) ${currentBatch.length} perfil(is) nesta janela ja processado(s) nesta execucao — avancando offset para ${listOffset}.`
-      );
-      const skippedBatch = await fetchPendingFromApi(
-        apiBase,
-        ingestKey,
-        fetchBatchSize,
-        listOffset,
-        refreshAll,
-        useCategoryFilter ? mainCategoryFilter : undefined,
-        undefined,
-        queueIncludeContent
-      );
+      queueSkipBurstPages++;
+      queueSkipBurstProfiles += currentBatch.length;
+      const shardHandlesOnPage = currentBatch
+        .map((item) => toHandle(item.handle || item.profile.handle))
+        .filter((h) => Boolean(h) && handleBelongsToShard(h, shard));
+      if (shard.active && shardHandlesOnPage.length === 0 && isQualifyVerboseLog()) {
+        emitLog(
+          `(fila) pagina sem perfis desta particao ${formatShardLabel(shard)} — offset ${listOffset}.`
+        );
+      }
+      if (queueSkipBurstPages >= 8) {
+        flushQueueSkipBurst();
+      }
+      const skippedBatch = await fetchQueuePage(listOffset, 'pagina ja vista ou fora da particao');
       if (!onlyWithLlm) progress.total = Math.max(progress.total, skippedBatch.totalPending);
       currentBatch = shuffleQueueItems(skippedBatch.items);
       continue;
@@ -4430,18 +4532,25 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     }
 
     queueWrapsWithoutWork = 0;
-    listOffset = queueOffset;
-    const nextBatch = await fetchPendingFromApi(
-      apiBase,
-      ingestKey,
-      fetchBatchSize,
-      listOffset,
-      refreshAll,
-      useCategoryFilter ? mainCategoryFilter : undefined,
-      undefined,
-      queueIncludeContent
-    );
+    if (onlyWithLlm || shard.active) {
+      listOffset += currentBatch.length;
+    } else {
+      listOffset = queueOffset;
+    }
+    let nextBatch = await fetchQueuePage(listOffset, 'proximo lote apos processamento');
     if (!onlyWithLlm) progress.total = Math.max(progress.total, nextBatch.totalPending);
+    if (onlyWithLlm && nextBatch.items.length === 0 && listOffset > queueOffset) {
+      flushQueueSkipBurst();
+      queueWrapsWithoutWork++;
+      if (queueWrapsWithoutWork >= 2) {
+        emitLog(
+          '(fila) encerrando: varreu o fim da fila duas vezes sem processar nenhum perfil novo (fila vazia ou estagnada).'
+        );
+        break;
+      }
+      listOffset = queueOffset;
+      nextBatch = await fetchQueuePage(listOffset, 'fim da fila — reconsulta do inicio');
+    }
     currentBatch = shuffleQueueItems(nextBatch.items);
   }
 
@@ -5099,6 +5208,8 @@ async function startUiServer(): Promise<void> {
             state.currentHandle = 'Carregando fila na API…';
           } else if (message.startsWith('Consultando estatisticas')) {
             state.currentHandle = 'Consultando estatísticas…';
+          } else if (message.startsWith('(fila)') && message.includes('consultando API')) {
+            state.currentHandle = 'Consultando fila na API…';
           }
         },
         onProgress: (p) => {
@@ -5297,6 +5408,16 @@ async function startUiServer(): Promise<void> {
   });
   console.log(`[qualify-ui] Painel em http://localhost:${port}`);
   logOllamaConfig();
+
+  process.on('uncaughtException', (err) => {
+    console.error('[qualify-ui] uncaughtException:', err instanceof Error ? err.stack : err);
+    pushLog(`Erro interno (processo continua): ${err instanceof Error ? err.message : String(err)}`);
+  });
+  process.on('unhandledRejection', (reason) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    console.error('[qualify-ui] unhandledRejection:', reason);
+    pushLog(`Promise rejeitada (processo continua): ${truncateLogLine(message, 240)}`);
+  });
 }
 
 async function main(): Promise<void> {
