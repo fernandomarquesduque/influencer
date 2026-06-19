@@ -111,6 +111,12 @@ export class CompositeStorage {
     return this.rocks.getByBucket<T>(bucket, keyPrefix, opts);
   }
 
+  async forEachProfileInBucket(
+    fn: (handle: string, profile: Record<string, unknown>) => void | Promise<void>
+  ): Promise<void> {
+    return this.rocks.forEachProfileInBucket(fn);
+  }
+
   async listKeys(bucket: string): Promise<string[]> {
     return this.rocks.listKeys(bucket);
   }
@@ -252,6 +258,10 @@ export class CompositeStorage {
 
   countProfileSearchAuxWithLlm(): number {
     return this.sqlite.countProfileSearchAuxWithLlm();
+  }
+
+  listProfileSearchAuxHandlesWithoutLlm(limit: number, offset: number): string[] {
+    return this.sqlite.listProfileSearchAuxHandlesWithoutLlm(limit, offset);
   }
 
   aggregateLlmMainCategoryLabelCounts(): { label: string; count: number }[] {

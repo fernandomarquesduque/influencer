@@ -537,6 +537,32 @@ export class SqliteSync {
     return row?.c ?? 0;
   }
 
+  /** Handles no índice ainda sem LLM persistido (atalho para fila qualify; ordem por handle). */
+  listProfileSearchAuxHandlesWithoutLlm(limit: number, offset: number): string[] {
+    const lim = Math.max(1, Math.min(500, Math.floor(limit)));
+    const off = Math.max(0, Math.floor(offset));
+    const rows = this.db
+      .prepare(
+        `SELECT handle FROM profile_search_aux
+         WHERE NOT (
+           json_valid(llm_qualification_json)
+           AND llm_qualification_json IS NOT NULL
+           AND length(trim(llm_qualification_json)) > 2
+         )
+         ORDER BY handle COLLATE NOCASE
+         LIMIT ? OFFSET ?`
+      )
+      .all(lim, off) as { handle: string }[];
+    return rows
+      .map((r) =>
+        String(r.handle ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/^@/, '')
+      )
+      .filter(Boolean);
+  }
+
   /**
    * Agrega mainCategory por perfil com LLM indexado (`llm_qualification_json`).
    * Retorna rótulos brutos/canônicos antes do snap final (feito no caller).

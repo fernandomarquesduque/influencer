@@ -249,6 +249,27 @@ export class RocksDBStorage {
     return sort ? items.sort((a, b) => a.key.localeCompare(b.key)) : items;
   }
 
+  /**
+   * Itera perfis do bucket profile sem materializar o bucket inteiro (valor carregado um a um).
+   */
+  async forEachProfileInBucket(
+    fn: (handle: string, profile: Record<string, unknown>) => void | Promise<void>
+  ): Promise<void> {
+    const db = await this.getDb();
+    const prefix = 'profile:';
+    const stream = db.iterator({ gte: prefix, lt: prefix + '\xff' });
+    try {
+      for await (const [fullKey, value] of stream) {
+        const k = parseKey(fullKey, 'profile');
+        if (k == null) continue;
+        if (value == null || typeof value !== 'object' || Array.isArray(value)) continue;
+        await fn(k, value as Record<string, unknown>);
+      }
+    } finally {
+      await stream.close();
+    }
+  }
+
   estimatePayloadSize(obj: unknown): number {
     return estimatePayloadSize(obj);
   }

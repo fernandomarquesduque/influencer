@@ -33,7 +33,7 @@ const DEFAULT_OLLAMA_HOST = 'http://localhost:11434';
 const DEFAULT_OLLAMA_NUM_CTX = 2048;
 /** Saida JSON de classificacao; limitar evita geracao longa e lenta. */
 const DEFAULT_OLLAMA_NUM_PREDICT = 700;
-const DEFAULT_BATCH_SIZE = 20;
+const DEFAULT_BATCH_SIZE = 1;
 const DEFAULT_MAX_REASONING = 3;
 const DEFAULT_API_TIMEOUT_MS = 30000;
 /** POST /collector-ingest-llm pode demorar mais que GETs; padrao 120s para evitar abort apos LLM OK. */
@@ -4201,6 +4201,209 @@ interface BatchOptions {
   concurrency?: number;
 }
 
+/** Fila leve: 1 GET (limit=1, offset=0) por perfil, sem estatistica inicial nem paginacao. */
+async function runOneAtATimeBatch(
+  options: BatchOptions,
+  ctx: {
+    apiBase: string;
+    ingestKey: string;
+    model: string;
+    maxReasoning: number;
+    queueIncludeContent: boolean;
+    shard: QualifyShardConfig;
+  }
+): Promise<BatchSummary> {
+  const { apiBase, ingestKey, model, maxReasoning, queueIncludeContent, shard } = ctx;
+  const runStartedAtMs = Date.now();
+  const progress: BatchProgress = {
+    total: 0,
+    processed: 0,
+    done: 0,
+    failed: 0,
+    excluded: 0,
+    currentHandle: 'Buscando proximo perfil na API…',
+    runStartedAt: new Date(runStartedAtMs).toISOString(),
+    elapsedMs: 0,
+    estimatedRemainingMs: null,
+    onlyWithLlm: false,
+    mainCategoryFilter: null,
+    shardLabel: shard.active ? formatShardLabel(shard) : null,
+  };
+  options.onProgress?.(progress);
+  const emitLog = (msg: string) => {
+    if (options.onLog) options.onLog(msg);
+    else printQualifyLog(msg);
+  };
+  logOllamaConfig(emitLog);
+  emitLog(
+    `Modo fila leve: 1 perfil por requisicao${shard.active ? ` (${formatShardLabel(shard)})` : ''}.`
+  );
+
+  let skipOffset = 0;
+
+  while (true) {
+    if (options.shouldStop?.()) {
+      emitLog('Interrompido por solicitacao do usuario.');
+      return {
+        total: progress.total,
+        done: progress.done,
+        failed: progress.failed,
+        excluded: progress.excluded,
+        stopped: true,
+      };
+    }
+
+    progress.currentHandle = 'Consultando API (1 perfil)…';
+    options.onProgress?.(progress);
+    const t0 = Date.now();
+    const batch = await fetchPendingFromApi(
+      apiBase,
+      ingestKey,
+      1,
+      skipOffset,
+      false,
+      undefined,
+      undefined,
+      queueIncludeContent
+    );
+    emitLog(`(fila) proximo pendente em ${((Date.now() - t0) / 1000).toFixed(1)}s (offset=${skipOffset})`);
+    if (batch.items.length === 0) {
+      if (skipOffset > 0) {
+        skipOffset = 0;
+        continue;
+      }
+      progress.currentHandle = 'Fila vazia';
+      options.onProgress?.(progress);
+      break;
+    }
+    if (progress.total === 0) {
+      progress.total = Math.max(1, batch.totalPending);
+    }
+
+    const item = batch.items[0];
+    const handle = toHandle(item.handle || item.profile.handle);
+    if (!handle) {
+      skipOffset++;
+      continue;
+    }
+    if (!handleBelongsToShard(handle, shard)) {
+      skipOffset++;
+      emitLog(`(fila) @${handle} fora da particao ${formatShardLabel(shard)} — proximo.`);
+      continue;
+    }
+
+    progress.currentHandle = handle;
+    options.onProgress?.(progress);
+
+    let skippedThisRound = false;
+
+    try {
+      if (profileRecordAlreadyHasLlm(item.profile)) {
+        skippedThisRound = true;
+        const disp = displayFieldsFromProfileForResultRow(item.profile);
+        emitLog(`@${handle} | PULADO | LLM ja persistido na base (sem reprocessamento)`);
+        options.onResult?.({
+          handle,
+          result: 'ok',
+          llmStatus: disp.llmStatus || 'done',
+          confidence: disp.confidence,
+          mainCategory: disp.mainCategory,
+          brandSafety: disp.brandSafety,
+          qualification: disp.qualification,
+          processedAt: new Date().toISOString(),
+          error: 'Pulado: LLM ja persistido',
+        });
+      } else {
+        const freshProfile = await fetchPendingProfileByHandle(apiBase, ingestKey, handle, false);
+        if (!freshProfile) {
+          skippedThisRound = true;
+          emitLog(`@${handle} | PULADO | LLM ja concluido por outro worker`);
+          options.onResult?.({
+            handle,
+            result: 'ok',
+            llmStatus: 'done',
+            confidence: null,
+            mainCategory: '-',
+            brandSafety: null,
+            qualification: null,
+            processedAt: new Date().toISOString(),
+            error: 'Pulado: outro worker concluiu',
+          });
+        } else if (profileRecordAlreadyHasLlm(freshProfile)) {
+          skippedThisRound = true;
+          const disp = displayFieldsFromProfileForResultRow(freshProfile);
+          emitLog(`@${handle} | PULADO | LLM ja persistido na base (consulta API)`);
+          options.onResult?.({
+            handle,
+            result: 'ok',
+            llmStatus: disp.llmStatus || 'done',
+            confidence: disp.confidence,
+            mainCategory: disp.mainCategory,
+            brandSafety: disp.brandSafety,
+            qualification: disp.qualification,
+            processedAt: new Date().toISOString(),
+            error: 'Pulado: LLM ja persistido',
+          });
+        } else {
+          skipOffset = 0;
+          const { row, counters } = await runLlmQualifyAndPersist({
+            handle,
+            profile: freshProfile,
+            apiBase,
+            ingestKey,
+            model,
+            maxReasoning,
+            refreshAll: false,
+            emitLog,
+          });
+          progress.done += counters.done;
+          progress.excluded += counters.excluded;
+          progress.failed += counters.failed;
+          options.onResult?.(row);
+        }
+      }
+    } catch (error) {
+      progress.failed++;
+      const message = error instanceof Error ? error.message : String(error);
+      options.onResult?.({
+        handle,
+        result: 'erro',
+        llmStatus: 'erro',
+        confidence: null,
+        mainCategory: '-',
+        brandSafety: null,
+        qualification: null,
+        processedAt: new Date().toISOString(),
+        error: message,
+      });
+      emitLog(`@${handle} | ERRO | ${truncateLogLine(message, 240)}`);
+    } finally {
+      if (skippedThisRound) skipOffset++;
+      else skipOffset = 0;
+      progress.processed++;
+      progress.elapsedMs = Math.max(0, Date.now() - runStartedAtMs);
+      if (progress.processed > 0 && progress.total > progress.processed) {
+        const avgMsPerItem = progress.elapsedMs / progress.processed;
+        progress.estimatedRemainingMs = Math.max(
+          0,
+          Math.round((progress.total - progress.processed) * avgMsPerItem)
+        );
+      } else {
+        progress.estimatedRemainingMs = 0;
+      }
+      options.onProgress?.(progress);
+    }
+  }
+
+  return {
+    total: progress.total,
+    done: progress.done,
+    failed: progress.failed,
+    excluded: progress.excluded,
+    stopped: false,
+  };
+}
+
 async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
   const apiBase = getApiBaseOrThrow();
   const ingestKey = getIngestKeyOrThrow();
@@ -4215,7 +4418,6 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
     Math.min(16, Math.floor(Number(options.concurrency ?? process.env.QUALIFY_CONCURRENCY ?? 1)) || 1)
   );
   const shard = getQualifyShardConfig();
-  const fetchBatchSize = shard.active ? batchSize * shard.count : batchSize;
 
   const onlyWithLlm = options.onlyWithLlm === true;
   const mainCategoryFilter = String(options.mainCategory ?? '').trim();
@@ -4223,6 +4425,29 @@ async function runBatch(options: BatchOptions = {}): Promise<BatchSummary> {
   const queueIncludeContent = isQualifyQueueIncludeContentEnabled();
   const refreshAll = onlyWithLlm;
   const needsCoverageForOffset = onlyWithLlm && !useCategoryFilter;
+
+  const useOneAtATimeQueue =
+    concurrency === 1 &&
+    !onlyWithLlm &&
+    !useCategoryFilter &&
+    !envFlagTrue('QUALIFY_LEGACY_QUEUE');
+
+  const fetchBatchSize = useOneAtATimeQueue
+    ? 1
+    : shard.active
+      ? batchSize * shard.count
+      : batchSize;
+
+  if (useOneAtATimeQueue) {
+    return runOneAtATimeBatch(options, {
+      apiBase,
+      ingestKey,
+      model,
+      maxReasoning,
+      queueIncludeContent,
+      shard,
+    });
+  }
 
   const runStartedAtMs = Date.now();
   const progress: BatchProgress = {
@@ -4919,8 +5144,11 @@ function renderUiHtml(): string {
           el.innerHTML = '<a class="ig-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(ch) + '</a>';
         })();
         document.getElementById('parallel').textContent = s.parallelThreads ?? 1;
-        document.getElementById('withLlm').textContent = s.withLlm ?? 0;
-        document.getElementById('withoutLlm').textContent = s.withoutLlm ?? 0;
+        (function(){
+          const fmt = (n) => (s.statsLoading && !s.statsLastOkAt ? '…' : String(n ?? 0));
+          document.getElementById('withLlm').textContent = fmt(s.withLlm);
+          document.getElementById('withoutLlm').textContent = fmt(s.withoutLlm);
+        })();
         const pct = s.total > 0 ? Math.min(100, Math.round((s.processed / s.total) * 100)) : 0;
         document.getElementById('progressBar').style.width = pct + '%';
         const etaMs = Number(s.estimatedRemainingMs ?? NaN);
@@ -4958,9 +5186,12 @@ function renderUiHtml(): string {
         document.getElementById('startBtn').disabled = s.reprocessRunning === true;
         renderResults(s.results || []);
         document.getElementById('meta').textContent =
-          'Ultimo inicio: ' + (s.lastStartedAt || '-') + ' | Ultimo fim: ' + (s.lastEndedAt || '-') +
+          'API remota: ' + (s.apiBaseUsed || '-') +
+          (s.statsLoading ? ' | Contagem LLM: carregando…' : (s.statsError ? ' | Contagem LLM: ERRO' : (s.statsLastOkAt ? ' | Contagem LLM ok ' + s.statsLastOkAt : ' | Contagem LLM: aguardando'))) +
+          ' | Ultimo inicio: ' + (s.lastStartedAt || '-') + ' | Ultimo fim: ' + (s.lastEndedAt || '-') +
           (s.mainCategoryFilter ? ' | Filtro categoria: ' + s.mainCategoryFilter : '') +
-          (s.shardLabel ? ' | Particao: ' + s.shardLabel : '');
+          (s.shardLabel ? ' | Particao: ' + s.shardLabel : '') +
+          (s.statsError ? ' | Erro stats: ' + s.statsError : '');
         document.getElementById('logs').textContent = (s.logs || []).join('\\n') || 'Sem logs';
       }catch(e){
         document.getElementById('logs').textContent = 'Erro ao atualizar: ' + e.message;
@@ -5136,6 +5367,11 @@ async function startUiServer(): Promise<void> {
     withLlm: 0,
     withoutLlm: 0,
     totalProfiles: 0,
+    /** Contagem com/sem LLM na API remota (nao e warm-up do painel :3600). */
+    statsLoading: false,
+    statsError: null as string | null,
+    statsLastOkAt: null as string | null,
+    apiBaseUsed: getApiBaseOrThrow(),
     resultsDisplaySeed: '',
     results: [] as ExtractedResultRow[],
     lastStartedAt: null as string | null,
@@ -5155,9 +5391,12 @@ async function startUiServer(): Promise<void> {
   const refreshCoverageStats = async (forceRefresh = false) => {
     if (statsRefreshInFlight) return;
     statsRefreshInFlight = true;
+    state.statsLoading = true;
+    state.statsError = null;
+    state.apiBaseUsed = getApiBaseOrThrow();
     try {
       const stats = await fetchLlmCoverageStatsCached(
-        getApiBaseOrThrow(),
+        state.apiBaseUsed,
         getIngestKeyOrThrow(),
         forceRefresh
       );
@@ -5165,10 +5404,14 @@ async function startUiServer(): Promise<void> {
       state.withoutLlm = stats.withoutLlm;
       state.totalProfiles = stats.totalProfiles;
       statsLastRefreshAt = Date.now();
+      state.statsLastOkAt = new Date(statsLastRefreshAt).toISOString();
+      state.statsError = null;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      pushLog(`Falha ao atualizar contagem com/sem LLM: ${message}`);
+      state.statsError = message;
+      pushLog(`Falha ao atualizar contagem com/sem LLM (${state.apiBaseUsed}): ${message}`);
     } finally {
+      state.statsLoading = false;
       statsRefreshInFlight = false;
     }
   };
@@ -5208,8 +5451,12 @@ async function startUiServer(): Promise<void> {
             state.currentHandle = 'Carregando fila na API…';
           } else if (message.startsWith('Consultando estatisticas')) {
             state.currentHandle = 'Consultando estatísticas…';
+          } else if (message.includes('Consultando API (1 perfil)') || message.startsWith('Modo fila leve')) {
+            state.currentHandle = 'Buscando 1 perfil na API…';
           } else if (message.startsWith('(fila)') && message.includes('consultando API')) {
             state.currentHandle = 'Consultando fila na API…';
+          } else if (message.startsWith('(fila)') && message.includes('proximo pendente')) {
+            state.currentHandle = 'Resposta da API recebida…';
           }
         },
         onProgress: (p) => {
@@ -5407,7 +5654,12 @@ async function startUiServer(): Promise<void> {
     server.listen(port, '0.0.0.0', () => resolve());
   });
   console.log(`[qualify-ui] Painel em http://localhost:${port}`);
+  console.log(`[qualify-ui] API remota (QUALIFY_API_BASE): ${state.apiBaseUsed}`);
   logOllamaConfig();
+  pushLog(
+    `Painel local :${port} — dados de perfil vêm de ${state.apiBaseUsed} (nao confundir com a API Node em :3500).`
+  );
+  void refreshCoverageStats();
 
   process.on('uncaughtException', (err) => {
     console.error('[qualify-ui] uncaughtException:', err instanceof Error ? err.stack : err);

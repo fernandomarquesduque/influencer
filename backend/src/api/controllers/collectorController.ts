@@ -14,6 +14,7 @@ import type { SlimProfile } from '../../utils/slimProfile.js';
 import { mergeProfilePreservingLlm } from '../../utils/preserveLlmOnProfileMerge.js';
 import { foldMainCategoryKey, snapMainCategoryToTaxonomy } from '../../lib/mainCategoryTaxonomy.js';
 import { syncProfileSearchIndexForHandle } from '../profileSearchIndexSync.js';
+import { streamLlmPendingPage } from '../llmPendingQueue.js';
 
 /** Mesma regra que em `bumpFacetMainCategory` (busca): canônico ou texto bruto se o snap falhar. */
 function llmMainCategoryBucket(raw: string): string | null {
@@ -61,8 +62,8 @@ function invalidateLlmCollectorStatsCaches(): void {
 }
 
 async function getLlmCoverageCountsFromStorage(storage: CompositeStorage): Promise<LlmCoverageCounts> {
-  const totalProfiles = await storage.countKeysInBucket('profile');
   const withLlm = storage.countProfileSearchAuxWithLlm();
+  const totalProfiles = storage.countProfileSearchAuxRows();
   const withoutLlm = Math.max(0, totalProfiles - withLlm);
   return { totalProfiles, withoutLlm, withLlm };
 }
@@ -82,16 +83,14 @@ async function getLlmCoverageCountsCached(
 }
 
 function isLlmPendingStatsOnlyRequest(opts: {
+  pendingTotalOnly: boolean;
   includeContent: boolean;
-  limit: number;
-  offset: number;
   handleFilter: string;
   mainCategoryRaw: string;
 }): boolean {
   return (
+    opts.pendingTotalOnly &&
     !opts.includeContent &&
-    opts.limit <= 1 &&
-    opts.offset === 0 &&
     !opts.handleFilter &&
     !opts.mainCategoryRaw
   );
@@ -137,11 +136,6 @@ export interface CollectorIngestFullResponse extends CollectorIngestResponse {
 export interface CollectorLlmPendingItem {
   handle: string;
   profile: Record<string, unknown>;
-}
-
-interface LlmQueueCandidate extends CollectorLlmPendingItem {
-  missingLlmInfo: boolean;
-  qualifiedAtMs: number;
 }
 
 /** Nó já chegou normalizado pelo coletor (evita segundo parse de GraphQL gigante no servidor). */
@@ -536,6 +530,9 @@ export function createCollectorController(storage: CompositeStorage) {
           String(req.query.refresh ?? '').trim().toLowerCase() === 'true';
         const coverageStatsRaw = String(req.query.coverageStats ?? '').trim().toLowerCase();
         const coverageStats = coverageStatsRaw === '1' || coverageStatsRaw === 'true' || coverageStatsRaw === 'yes';
+        const pendingTotalOnlyRaw = String(req.query.pendingTotalOnly ?? '').trim().toLowerCase();
+        const pendingTotalOnly =
+          pendingTotalOnlyRaw === '1' || pendingTotalOnlyRaw === 'true' || pendingTotalOnlyRaw === 'yes';
 
         if (coverageStats) {
           const counts = await getLlmCoverageCountsCached(storage, forceRefresh);
@@ -551,9 +548,8 @@ export function createCollectorController(storage: CompositeStorage) {
 
         if (
           isLlmPendingStatsOnlyRequest({
+            pendingTotalOnly,
             includeContent,
-            limit,
-            offset,
             handleFilter,
             mainCategoryRaw,
           })
@@ -571,51 +567,19 @@ export function createCollectorController(storage: CompositeStorage) {
           return;
         }
 
-        const profiles = await storage.getByBucket<Record<string, unknown>>('profile');
-        const pending: LlmQueueCandidate[] = [];
-        for (const { key, value } of profiles) {
-          const profile = value as Record<string, unknown>;
-          const llm = profile.llm;
-          const llmObj =
-            llm != null && typeof llm === 'object' && !Array.isArray(llm) ? (llm as Record<string, unknown>) : null;
-          const llmStatus = llmObj != null ? String(llmObj.status ?? '') : '';
-          const qualifiedAtRaw = llmObj != null ? String(llmObj.qualifiedAt ?? '') : '';
-          const qualifiedAtMs = qualifiedAtRaw ? Date.parse(qualifiedAtRaw) : Number.NaN;
-          const hasValidQualifiedAt = Number.isFinite(qualifiedAtMs);
-          const missingLlmInfo = llmStatus !== 'done' || !hasValidQualifiedAt;
-          if (!refreshAll && !missingLlmInfo) continue;
-          const handle = String(profile.handle ?? key ?? '')
-            .trim()
-            .toLowerCase()
-            .replace(/^@/, '');
-          if (!handle) continue;
-          pending.push({
-            handle,
-            profile: { ...profile, handle },
-            missingLlmInfo,
-            qualifiedAtMs: hasValidQualifiedAt ? qualifiedAtMs : 0,
-          });
-        }
-
-        pending.sort((a, b) => {
-          if (a.missingLlmInfo !== b.missingLlmInfo) return a.missingLlmInfo ? -1 : 1;
-          if (a.qualifiedAtMs !== b.qualifiedAtMs) return a.qualifiedAtMs - b.qualifiedAtMs;
-          return a.handle.localeCompare(b.handle, 'pt-BR');
+        const streamed = await streamLlmPendingPage(storage, {
+          refreshAll,
+          handleFilter,
+          mainCategoryRaw,
+          offset,
+          limit,
         });
-
-        let afterMainCategory = pending;
-        if (mainCategoryRaw) {
-          afterMainCategory = pending.filter((item) => {
-            const q = getLlmQualification(item.profile);
-            if (!q) return false;
-            const rawMc = String(q.mainCategory ?? '').trim();
-            return llmMainCategoryBucketsMatch(rawMc, mainCategoryRaw);
-          });
-        }
-
-        const filtered = handleFilter ? afterMainCategory.filter((p) => p.handle === handleFilter) : afterMainCategory;
-        const totalPending = filtered.length;
-        const page = filtered.slice(offset, offset + limit);
+        const withLlmQuick = storage.countProfileSearchAuxWithLlm();
+        const auxRowsQuick = storage.countProfileSearchAuxRows();
+        const totalPending = refreshAll
+          ? auxRowsQuick
+          : Math.max(0, auxRowsQuick - withLlmQuick);
+        const page = streamed.items;
         const items: CollectorLlmPendingItem[] = [];
         for (const item of page) {
           if (!includeContent) {
@@ -639,6 +603,7 @@ export function createCollectorController(storage: CompositeStorage) {
           offset,
           items,
         });
+        return;
       } catch (e) {
         console.error('[collectorController.listLlmPending]', e instanceof Error ? e.stack : e);
         res.status(500).json({
