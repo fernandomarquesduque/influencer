@@ -1778,6 +1778,19 @@ function stripPublicNameTokensFromPersonaSummary(personaSummary: string, profile
   return repairPersonaSummaryAfterNameStripped(s);
 }
 
+/** Handle como palavra/@mention — alinhado a sanitizePersonaSummaryForProfile (nao substring, ex. "art" em "compartilha"). */
+function personaSummaryContainsProfileHandleText(ps: string, handleRaw: string): boolean {
+  const handle = toHandle(handleRaw);
+  if (handle.length < 2) return false;
+  const lower = ps.toLowerCase();
+  if (lower.includes(`@${handle}`)) return true;
+  try {
+    return new RegExp(`\\b${escapeRegexChars(handle)}\\b`, 'iu').test(ps);
+  } catch {
+    return lower.includes(handle);
+  }
+}
+
 /** Garante personaSummary descritivo, sem copiar dados brutos do perfil. */
 function validatePersonaSummaryAgainstProfile(personaSummary: string, profile: JsonRecord): string[] {
   const errors: string[] = [];
@@ -1786,7 +1799,7 @@ function validatePersonaSummaryAgainstProfile(personaSummary: string, profile: J
     errors.push('personaSummary nao pode conter @ nem mencoes a usuarios');
   }
   const handle = toHandle(profile.handle ?? '');
-  if (handle.length >= 2 && ps.toLowerCase().includes(handle)) {
+  if (personaSummaryContainsProfileHandleText(ps, handle)) {
     errors.push('personaSummary nao pode conter o handle do perfil');
   }
   const fullName = String(profile.full_name ?? '').trim();
@@ -4296,6 +4309,7 @@ async function runOneAtATimeBatch(
     options.onProgress?.(progress);
 
     let skippedThisRound = false;
+    let failedQualifyThisRound = false;
 
     try {
       if (profileRecordAlreadyHasLlm(item.profile)) {
@@ -4359,10 +4373,12 @@ async function runOneAtATimeBatch(
           progress.done += counters.done;
           progress.excluded += counters.excluded;
           progress.failed += counters.failed;
+          if (row.result === 'erro') failedQualifyThisRound = true;
           options.onResult?.(row);
         }
       }
     } catch (error) {
+      failedQualifyThisRound = true;
       progress.failed++;
       const message = error instanceof Error ? error.message : String(error);
       options.onResult?.({
@@ -4378,7 +4394,7 @@ async function runOneAtATimeBatch(
       });
       emitLog(`@${handle} | ERRO | ${truncateLogLine(message, 240)}`);
     } finally {
-      if (skippedThisRound) skipOffset++;
+      if (skippedThisRound || failedQualifyThisRound) skipOffset++;
       else skipOffset = 0;
       progress.processed++;
       progress.elapsedMs = Math.max(0, Date.now() - runStartedAtMs);

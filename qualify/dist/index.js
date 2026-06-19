@@ -1587,6 +1587,21 @@ function stripPublicNameTokensFromPersonaSummary(personaSummary, profile) {
     s = s.replace(/\s+/g, ' ').trim();
     return repairPersonaSummaryAfterNameStripped(s);
 }
+/** Handle como palavra/@mention — alinhado a sanitizePersonaSummaryForProfile (nao substring, ex. "art" em "compartilha"). */
+function personaSummaryContainsProfileHandleText(ps, handleRaw) {
+    const handle = toHandle(handleRaw);
+    if (handle.length < 2)
+        return false;
+    const lower = ps.toLowerCase();
+    if (lower.includes(`@${handle}`))
+        return true;
+    try {
+        return new RegExp(`\\b${escapeRegexChars(handle)}\\b`, 'iu').test(ps);
+    }
+    catch {
+        return lower.includes(handle);
+    }
+}
 /** Garante personaSummary descritivo, sem copiar dados brutos do perfil. */
 function validatePersonaSummaryAgainstProfile(personaSummary, profile) {
     const errors = [];
@@ -1595,7 +1610,7 @@ function validatePersonaSummaryAgainstProfile(personaSummary, profile) {
         errors.push('personaSummary nao pode conter @ nem mencoes a usuarios');
     }
     const handle = toHandle(profile.handle ?? '');
-    if (handle.length >= 2 && ps.toLowerCase().includes(handle)) {
+    if (personaSummaryContainsProfileHandleText(ps, handle)) {
         errors.push('personaSummary nao pode conter o handle do perfil');
     }
     const fullName = String(profile.full_name ?? '').trim();
@@ -3663,6 +3678,7 @@ async function runOneAtATimeBatch(options, ctx) {
         progress.currentHandle = handle;
         options.onProgress?.(progress);
         let skippedThisRound = false;
+        let failedQualifyThisRound = false;
         try {
             if (profileRecordAlreadyHasLlm(item.profile)) {
                 skippedThisRound = true;
@@ -3728,11 +3744,14 @@ async function runOneAtATimeBatch(options, ctx) {
                     progress.done += counters.done;
                     progress.excluded += counters.excluded;
                     progress.failed += counters.failed;
+                    if (row.result === 'erro')
+                        failedQualifyThisRound = true;
                     options.onResult?.(row);
                 }
             }
         }
         catch (error) {
+            failedQualifyThisRound = true;
             progress.failed++;
             const message = error instanceof Error ? error.message : String(error);
             options.onResult?.({
@@ -3749,7 +3768,7 @@ async function runOneAtATimeBatch(options, ctx) {
             emitLog(`@${handle} | ERRO | ${truncateLogLine(message, 240)}`);
         }
         finally {
-            if (skippedThisRound)
+            if (skippedThisRound || failedQualifyThisRound)
                 skipOffset++;
             else
                 skipOffset = 0;
