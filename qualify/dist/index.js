@@ -1,5 +1,7 @@
 import './loadEnv.js';
 import process from 'node:process';
+import fs from 'node:fs';
+import path from 'node:path';
 import http from 'node:http';
 import { francAll } from 'franc';
 import { Ollama } from 'ollama';
@@ -19,6 +21,8 @@ const DEFAULT_UI_PORT = 3600;
 /** Max de linhas no painel e no JSON de /api/status (mais recentes primeiro; reduz payload). */
 const QUALIFY_UI_RESULTS_MAX = 100;
 const DEFAULT_LLM_REPAIR_ATTEMPTS = 2;
+/** Apos N falhas de qualificacao (erro/MANTIDO), remove o perfil da base via collector-delete. */
+const DEFAULT_LLM_FAIL_PURGE_AT = 2;
 /**
  * Validacao ainda falha apos todas as tentativas de reparo LLM.
  * O batch mantém o perfil na base (falha operacional), sem purge automatico.
@@ -3089,6 +3093,55 @@ function resolveAutoExclusionReason(qualification, profile) {
     }
     return null;
 }
+function getQualifyLlmFailPurgeAt() {
+    const n = Number(process.env.QUALIFY_LLM_FAIL_PURGE_AT ?? DEFAULT_LLM_FAIL_PURGE_AT);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_LLM_FAIL_PURGE_AT;
+}
+function getQualifyFailTrackerPath() {
+    const custom = process.env.QUALIFY_FAIL_TRACKER_FILE?.trim();
+    if (custom)
+        return custom;
+    return path.join(process.cwd(), 'data', 'llm-qualify-failures.json');
+}
+function readQualifyFailTracker() {
+    try {
+        const p = getQualifyFailTrackerPath();
+        if (!fs.existsSync(p))
+            return {};
+        const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed))
+            return {};
+        return parsed;
+    }
+    catch {
+        return {};
+    }
+}
+function writeQualifyFailTracker(data) {
+    const p = getQualifyFailTrackerPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, `${JSON.stringify(data)}\n`, 'utf8');
+}
+function clearQualifyFailCount(handle) {
+    const h = toHandle(handle);
+    if (!h)
+        return;
+    const tracker = readQualifyFailTracker();
+    if (!tracker[h])
+        return;
+    delete tracker[h];
+    writeQualifyFailTracker(tracker);
+}
+function incrementQualifyFailCount(handle) {
+    const h = toHandle(handle);
+    if (!h)
+        return 1;
+    const tracker = readQualifyFailTracker();
+    const next = (tracker[h]?.count ?? 0) + 1;
+    tracker[h] = { count: next, lastAt: new Date().toISOString() };
+    writeQualifyFailTracker(tracker);
+    return next;
+}
 async function purgeProfileForAutoExclusion(apiBase, ingestKey, handle, reason, llm, qual, emitLog, startedAt) {
     emitLog(`@${handle} | EXCLUINDO | ${reason}`);
     const via = getOptionalAdminBearerForPurge() != null
@@ -3100,6 +3153,7 @@ async function purgeProfileForAutoExclusion(apiBase, ingestKey, handle, reason, 
     const delMs = Date.now() - delT0;
     const totalMs = Date.now() - startedAt;
     emitLog(`@${handle} | EXCLUIDO OK | perfil removido da base | delete ${delMs}ms | total ${totalMs}ms`);
+    clearQualifyFailCount(handle);
 }
 /** True se o registro ja tinha classificacao LLM persistida — nunca auto-excluir; tambem skip pre-Ollama no modo sem_llm. */
 function profileRecordAlreadyHasLlm(profile) {
@@ -3177,6 +3231,49 @@ async function fetchProfileForReprocess(apiBase, ingestKey, handle, includePostC
     if (!profile || typeof profile !== 'object' || Array.isArray(profile))
         return null;
     return { ...profile, handle: toHandle(first.handle) || h };
+}
+async function finalizeQualifyFailureWithRepeatPurgePolicy(params) {
+    const { handle, apiBase, ingestKey, model, emitLog, startedAt, errorDetail, zero } = params;
+    const purgeAt = getQualifyLlmFailPurgeAt();
+    const failCount = incrementQualifyFailCount(handle);
+    const qualBad = params.qualBad ?? { profileType: 'criador', language: 'desconhecido' };
+    const llmBad = params.llmBad ??
+        buildPreLlmPolicyExclusionLlm(qualBad, model);
+    if (failCount >= purgeAt) {
+        const reason = `Exclusao automatica: falhou qualificacao LLM ${failCount} vez(es) — removido da base | ${truncateLogLine(errorDetail, 160)}`;
+        await purgeProfileForAutoExclusion(apiBase, ingestKey, handle, reason, llmBad, qualBad, emitLog, startedAt);
+        return {
+            counters: { ...zero, excluded: 1 },
+            row: {
+                handle,
+                result: 'excluido',
+                llmStatus: llmBad.status,
+                confidence: llmBad.confidence,
+                mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? '-'),
+                brandSafety: pickBrandSafetyFromQualification(qualBad),
+                qualification: qualBad,
+                processedAt: new Date().toISOString(),
+                error: reason,
+            },
+        };
+    }
+    const keepMsg = `MANTIDO | falha LLM ${failCount}/${purgeAt} — proxima falha remove da base | ${truncateLogLine(errorDetail, 200)}`;
+    emitLog(`@${handle} | ${keepMsg}`);
+    emitLog(`@${handle} | ERRO (mantido) | ${truncateLogLine(keepMsg, 240)}`);
+    return {
+        counters: { ...zero, failed: 1 },
+        row: {
+            handle,
+            result: 'erro',
+            llmStatus: String(llmBad.status ?? 'erro'),
+            confidence: llmBad.confidence ?? null,
+            mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? '-'),
+            brandSafety: pickBrandSafetyFromQualification(qualBad),
+            qualification: qualBad,
+            processedAt: new Date().toISOString(),
+            error: keepMsg,
+        },
+    };
 }
 /** Ollama + regras de exclusao + ingest (compartilhado entre fila e reprocessamento unitario). */
 async function runLlmQualifyAndPersist(params) {
@@ -3256,6 +3353,7 @@ async function runLlmQualifyAndPersist(params) {
         const ingestMs = Date.now() - ingestT0;
         if (ingestOutcome === 'already_completed') {
             emitLog(`@${handle} | PULADO | ingest recusou: LLM ja concluido por outro worker | ${ingestMs}ms`);
+            clearQualifyFailCount(handle);
             return {
                 counters: zero,
                 row: {
@@ -3274,6 +3372,7 @@ async function runLlmQualifyAndPersist(params) {
         const totalMs = Date.now() - startedAt;
         emitLog(`@${handle} | ok | ${Math.round(llm.confidence * 100)}% | ingest ${ingestMs}ms | total ${totalMs}ms`);
         logQualificationSummaryForHandle(handle, qualOk, emitLog);
+        clearQualifyFailCount(handle);
         return {
             counters: { ...zero, done: 1 },
             row: {
@@ -3311,40 +3410,30 @@ async function runLlmQualifyAndPersist(params) {
                     },
                 };
             }
-            const keepMsg = `MANTIDO | LLM sem classificacao valida apos ${DEFAULT_LLM_REPAIR_ATTEMPTS} reparo(s) — perfil permanece na base | ${truncateLogLine(error.message, 200)}`;
-            emitLog(`@${handle} | ${keepMsg}`);
-            emitLog(`@${handle} | ERRO (mantido) | ${truncateLogLine(keepMsg, 240)}`);
-            return {
-                counters: { ...zero, failed: 1 },
-                row: {
-                    handle,
-                    result: 'erro',
-                    llmStatus: String(llmBad.status ?? 'erro'),
-                    confidence: llmBad.confidence,
-                    mainCategory: parseMainCategory(qualBad.mainCategory) ?? String(qualBad.mainCategory ?? ''),
-                    brandSafety: pickBrandSafetyFromQualification(qualBad),
-                    qualification: qualBad,
-                    processedAt: new Date().toISOString(),
-                    error: keepMsg,
-                },
-            };
+            return finalizeQualifyFailureWithRepeatPurgePolicy({
+                handle,
+                apiBase,
+                ingestKey,
+                model,
+                emitLog,
+                startedAt,
+                errorDetail: `LLM sem classificacao valida apos ${DEFAULT_LLM_REPAIR_ATTEMPTS} reparo(s) | ${error.message}`,
+                llmBad,
+                qualBad,
+                zero,
+            });
         }
         const message = error instanceof Error ? error.message : String(error);
-        emitLog(`@${handle} | ERRO | ${truncateLogLine(message, 240)}`);
-        return {
-            counters: { ...zero, failed: 1 },
-            row: {
-                handle,
-                result: 'erro',
-                llmStatus: 'erro',
-                confidence: null,
-                mainCategory: '-',
-                brandSafety: null,
-                qualification: null,
-                processedAt: new Date().toISOString(),
-                error: message,
-            },
-        };
+        return finalizeQualifyFailureWithRepeatPurgePolicy({
+            handle,
+            apiBase,
+            ingestKey,
+            model,
+            emitLog,
+            startedAt,
+            errorDetail: message,
+            zero,
+        });
     }
 }
 /** Requalifica um @ especifico (substitui LLM na API com allowLlmReplace). */
@@ -3772,7 +3861,8 @@ async function runOneAtATimeBatch(options, ctx) {
                 skipOffset++;
             else
                 skipOffset = 0;
-            progress.processed++;
+            if (!skippedThisRound || failedQualifyThisRound)
+                progress.processed++;
             progress.elapsedMs = Math.max(0, Date.now() - runStartedAtMs);
             if (progress.processed > 0 && progress.total > progress.processed) {
                 const avgMsPerItem = progress.elapsedMs / progress.processed;
@@ -4798,14 +4888,21 @@ async function startUiServer() {
                     state.mainCategoryFilter = p.mainCategoryFilter ?? null;
                 },
                 onResult: (row) => {
-                    state.results.unshift(row);
-                    if (state.results.length > QUALIFY_UI_RESULTS_MAX)
-                        state.results.length = QUALIFY_UI_RESULTS_MAX;
-                    if (row.result === 'ok') {
+                    const pulado = row.error != null &&
+                        (String(row.error).startsWith('Pulado:') || String(row.error).includes('ja persistido'));
+                    if (!pulado) {
+                        state.results.unshift(row);
+                        if (state.results.length > QUALIFY_UI_RESULTS_MAX)
+                            state.results.length = QUALIFY_UI_RESULTS_MAX;
+                    }
+                    if (row.result === 'ok' && !pulado) {
                         pushLog(`@${row.handle} | OK | ${row.mainCategory} | ${row.brandSafety ?? '-'} | ${row.confidence != null ? `${Math.round(row.confidence * 100)}%` : '-'}`);
                     }
                     else if (row.result === 'excluido') {
                         /* Linhas EXCLUINDO / API / EXCLUIDO OK ja foram enviadas por emitLog no runBatch. */
+                    }
+                    else if (pulado) {
+                        /* PULADO ja logado em emitLog no runBatch — nao rotular como ERRO. */
                     }
                     else {
                         pushLog(`@${row.handle} | ERRO | ${truncateLogLine(row.error ?? '', 200)}`);

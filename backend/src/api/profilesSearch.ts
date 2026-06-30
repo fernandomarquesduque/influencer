@@ -331,6 +331,20 @@ export function hasCompletedLlmProfile(record: Record<string, unknown>): boolean
   return q != null && Object.keys(q).length > 0;
 }
 
+/**
+ * Mesma regra do qualify antes do Ollama: não reenfileirar se o RocksDB já tem LLM utilizável
+ * (status done ou qualification preenchida), mesmo quando o índice SQLite ainda está desatualizado.
+ */
+export function profileWouldSkipLlmQualify(record: Record<string, unknown>): boolean {
+  if (hasCompletedLlmProfile(record)) return true;
+  const llm = record.llm;
+  if (llm == null || typeof llm !== 'object' || Array.isArray(llm)) return false;
+  const lo = llm as Record<string, unknown>;
+  if (String(lo.status ?? '').trim().toLowerCase() === 'done') return true;
+  const q = lo.qualification;
+  return q != null && typeof q === 'object' && !Array.isArray(q) && Object.keys(q).length > 0;
+}
+
 function bumpFacetString(map: Map<string, number>, raw: string): void {
   const k = raw.trim().toLowerCase();
   if (!k) return;

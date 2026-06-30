@@ -1,5 +1,9 @@
 import type { CompositeStorage } from '../storage/compositeStorage.js';
-import { getLlmQualification } from './profilesSearch.js';
+import {
+  getLlmQualification,
+  profileWouldSkipLlmQualify,
+} from './profilesSearch.js';
+import { syncProfileSearchIndexForHandle } from './profileSearchIndexSync.js';
 import { foldMainCategoryKey, snapMainCategoryToTaxonomy } from '../lib/mainCategoryTaxonomy.js';
 
 function llmMainCategoryBucket(raw: string): string | null {
@@ -87,11 +91,11 @@ export interface StreamLlmPendingOpts {
 /** Fila sem LLM via SQLite + load pontual no RocksDB (O(limit), nao varre 40k perfis). */
 async function streamLlmPendingFromSearchIndex(
   storage: CompositeStorage,
-  offset: number,
-  limit: number
+  opts: { offset: number; limit: number; refreshAll: boolean }
 ): Promise<CollectorLlmPendingItem[]> {
+  const limit = Math.max(1, Math.floor(opts.limit));
   const items: CollectorLlmPendingItem[] = [];
-  let sqlOffset = Math.max(0, Math.floor(offset));
+  let sqlOffset = Math.max(0, Math.floor(opts.offset));
   const maxSqlSteps = 80;
   for (let step = 0; step < maxSqlSteps && items.length < limit; step++) {
     const handles = storage.listProfileSearchAuxHandlesWithoutLlm(
@@ -103,7 +107,12 @@ async function streamLlmPendingFromSearchIndex(
     for (const handle of handles) {
       const existing = await storage.loadByHandle(handle);
       if (!existing || typeof existing !== 'object' || Array.isArray(existing)) continue;
-      const cand = candidateFromProfile(existing as Record<string, unknown>, handle);
+      const profileRec = existing as Record<string, unknown>;
+      if (!opts.refreshAll && profileWouldSkipLlmQualify(profileRec)) {
+        await syncProfileSearchIndexForHandle(storage, handle);
+        continue;
+      }
+      const cand = candidateFromProfile(profileRec, handle);
       if (!cand) continue;
       items.push({ handle: cand.handle, profile: cand.profile });
       if (items.length >= limit) break;
@@ -128,7 +137,7 @@ async function streamLlmPendingFullScan(
   await storage.forEachProfileInBucket(async (key, profile) => {
     const cand = candidateFromProfile(profile, key);
     if (!cand) return;
-    if (!opts.refreshAll && !cand.missingLlmInfo) return;
+    if (!opts.refreshAll && profileWouldSkipLlmQualify(profile)) return;
     if (mainCategoryRaw && !matchesMainCategory(cand.profile, mainCategoryRaw)) return;
     updateTopK(top, cand, need);
   });
@@ -153,7 +162,10 @@ export async function streamLlmPendingPage(
     }
     const cand = candidateFromProfile(existing as Record<string, unknown>, handleFilter);
     if (!cand) return { items: [], scannedAll: true };
-    if (!opts.refreshAll && !cand.missingLlmInfo) return { items: [], scannedAll: true };
+    if (!opts.refreshAll && profileWouldSkipLlmQualify(existing as Record<string, unknown>)) {
+      await syncProfileSearchIndexForHandle(storage, handleFilter);
+      return { items: [], scannedAll: true };
+    }
     if (mainCategoryRaw && !matchesMainCategory(cand.profile, mainCategoryRaw)) {
       return { items: [], scannedAll: true };
     }
@@ -161,7 +173,11 @@ export async function streamLlmPendingPage(
   }
 
   if (!opts.refreshAll && !mainCategoryRaw) {
-    const indexedItems = await streamLlmPendingFromSearchIndex(storage, offset, limit);
+    const indexedItems = await streamLlmPendingFromSearchIndex(storage, {
+      offset,
+      limit,
+      refreshAll: opts.refreshAll,
+    });
     return { items: indexedItems, scannedAll: true };
   }
 

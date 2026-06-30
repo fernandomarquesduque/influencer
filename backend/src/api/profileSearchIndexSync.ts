@@ -3,11 +3,16 @@ import {
   buildProfileSearchIndexPayload,
   hasCompletedLlmProfile,
 } from './profilesSearch.js';
-import { upsertInfluencerToMeilisearch } from '../search/meilisearchProfile.js';
+import {
+  deleteInfluencerFromMeilisearch,
+  upsertInfluencerToMeilisearch,
+} from '../search/meilisearchProfile.js';
 import { getCostTierFromPricing, getSuggestedPricingFromFollowers } from '../utils/suggestedPricing.js';
 
 /**
- * Atualiza FTS + tabela auxiliar para um handle (lê perfil + posts só deste handle no RocksDB).
+ * Atualiza FTS + `profile_search_aux` para um handle (lê perfil + posts no RocksDB).
+ * Perfis sem LLM concluído permanecem no índice com `llm_qualification_json` vazio
+ * (fila/cobertura do qualify); a busca pública exige `requireIndexedLlm`.
  */
 export async function syncProfileSearchIndexForHandle(
   db: CompositeStorage,
@@ -16,8 +21,9 @@ export async function syncProfileSearchIndexForHandle(
   const h = handle.toLowerCase().replace(/^@/, '');
   if (!h) return;
   const profile = await db.get<Record<string, unknown>>('profile', h);
-  if (!profile || !hasCompletedLlmProfile(profile)) {
+  if (!profile) {
     db.deleteProfileSearchIndex(h);
+    void deleteInfluencerFromMeilisearch(h).catch(() => {});
     return;
   }
   const postsRaw = await db.getByBucket<Record<string, unknown>>('post', `${h}:`);
@@ -31,9 +37,13 @@ export async function syncProfileSearchIndexForHandle(
     );
   }
   db.upsertProfileSearchIndexFromPayload(h, { ...payload, costTier });
-  void upsertInfluencerToMeilisearch(h, profile, payload).catch((e) =>
-    console.warn('[meilisearch] sync:', h, e instanceof Error ? e.message : e)
-  );
+  if (hasCompletedLlmProfile(profile)) {
+    void upsertInfluencerToMeilisearch(h, profile, payload).catch((e) =>
+      console.warn('[meilisearch] sync:', h, e instanceof Error ? e.message : e)
+    );
+  } else {
+    void deleteInfluencerFromMeilisearch(h).catch(() => {});
+  }
 }
 
 /** Reindexa todos os perfis do RocksDB (útil após migração ou reparo). */

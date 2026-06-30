@@ -320,6 +320,7 @@ export function createCollectorController(storage: CompositeStorage) {
         await storage.save(merged as Entity & { handle: string }, { skipSearchInvalidation: true });
 
         await storage.finalizeSearchAfterHandlePersist(handle);
+        invalidateLlmCollectorStatsCaches();
         scheduleSearchCacheRewarmDebounced(storage);
 
         const payload: CollectorIngestResponse = {
@@ -415,6 +416,7 @@ export function createCollectorController(storage: CompositeStorage) {
         await pruneStalePostMediaAfterSave(storage, handle, keepKeys);
 
         await storage.finalizeSearchAfterHandlePersist(handle);
+        invalidateLlmCollectorStatsCaches();
         scheduleSearchCacheRewarmDebounced(storage);
 
         const payload: CollectorIngestFullResponse = {
