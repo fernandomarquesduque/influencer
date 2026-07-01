@@ -3,7 +3,9 @@ import {
   getLlmQualification,
   profileWouldSkipLlmQualify,
 } from './profilesSearch.js';
-import { syncProfileSearchIndexForHandle } from './profileSearchIndexSync.js';
+import {
+  patchProfileSearchIndexLlmFromProfile,
+} from './profileSearchIndexSync.js';
 import { foldMainCategoryKey, snapMainCategoryToTaxonomy } from '../lib/mainCategoryTaxonomy.js';
 
 function llmMainCategoryBucket(raw: string): string | null {
@@ -96,10 +98,10 @@ async function streamLlmPendingFromSearchIndex(
   const limit = Math.max(1, Math.floor(opts.limit));
   const items: CollectorLlmPendingItem[] = [];
   let sqlOffset = Math.max(0, Math.floor(opts.offset));
-  const maxSqlSteps = 80;
+  const maxSqlSteps = 120;
   for (let step = 0; step < maxSqlSteps && items.length < limit; step++) {
     const handles = storage.listProfileSearchAuxHandlesWithoutLlm(
-      Math.max(limit * 4, 24),
+      Math.max(limit * 32, 64),
       sqlOffset
     );
     if (handles.length === 0) break;
@@ -109,7 +111,7 @@ async function streamLlmPendingFromSearchIndex(
       if (!existing || typeof existing !== 'object' || Array.isArray(existing)) continue;
       const profileRec = existing as Record<string, unknown>;
       if (!opts.refreshAll && profileWouldSkipLlmQualify(profileRec)) {
-        await syncProfileSearchIndexForHandle(storage, handle);
+        patchProfileSearchIndexLlmFromProfile(storage, handle, profileRec);
         continue;
       }
       const cand = candidateFromProfile(profileRec, handle);
@@ -163,7 +165,7 @@ export async function streamLlmPendingPage(
     const cand = candidateFromProfile(existing as Record<string, unknown>, handleFilter);
     if (!cand) return { items: [], scannedAll: true };
     if (!opts.refreshAll && profileWouldSkipLlmQualify(existing as Record<string, unknown>)) {
-      await syncProfileSearchIndexForHandle(storage, handleFilter);
+      patchProfileSearchIndexLlmFromProfile(storage, handleFilter, existing as Record<string, unknown>);
       return { items: [], scannedAll: true };
     }
     if (mainCategoryRaw && !matchesMainCategory(cand.profile, mainCategoryRaw)) {

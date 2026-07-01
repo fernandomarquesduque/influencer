@@ -2705,6 +2705,55 @@ function isQualifyQueueIncludeContentEnabled() {
         return false;
     return true;
 }
+/** Busca o proximo da fila em paralelo enquanto o Ollama qualifica o perfil atual (padrao: ligado). */
+function isQualifyQueuePrefetchEnabled() {
+    const raw = process.env.QUALIFY_QUEUE_PREFETCH?.trim().toLowerCase();
+    if (raw === '0' || raw === 'false' || raw === 'no')
+        return false;
+    return true;
+}
+/** GET da fila com limit>1 nunca traz legendas (API lenta/timeout); legendas vêm no pre-LLM por @. */
+function includeContentForPendingFetch(batchLimit) {
+    if (batchLimit > 1)
+        return false;
+    return isQualifyQueueIncludeContentEnabled();
+}
+function getPendingFetchTimeoutMs(batchLimit) {
+    const base = getTimeoutMs();
+    const raw = process.env.QUALIFY_QUEUE_API_TIMEOUT_MS?.trim();
+    if (raw) {
+        const n = Number(raw);
+        if (Number.isFinite(n) && n > 0)
+            return Math.floor(n);
+    }
+    void batchLimit;
+    return Math.max(base, 300_000);
+}
+function getApiFetchRetries() {
+    const n = Number(process.env.QUALIFY_API_FETCH_RETRIES ?? 4);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 4;
+}
+function sleepMs(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/** Repete chamadas à API (fila/stats) até sucesso ou shouldStop — não derruba o worker. */
+async function withResilientApiFetch(emitLog, shouldStop, context, fn) {
+    let attempt = 0;
+    while (true) {
+        if (shouldStop?.())
+            return { ok: false, stopped: true };
+        try {
+            return { ok: true, value: await fn() };
+        }
+        catch (error) {
+            attempt++;
+            const message = error instanceof Error ? error.message : String(error);
+            const waitMs = Math.min(120_000, 5_000 + attempt * 5_000);
+            emitLog(`(${context}) erro na API: ${truncateLogLine(message, 160)} — tentativa ${attempt}, nova tentativa em ${Math.round(waitMs / 1000)}s`);
+            await sleepMs(waitMs);
+        }
+    }
+}
 async function ensurePostContextOnProfileForLlm(profile, postCtx, options) {
     if (options.promptOverride != null || !postCtx || profileHasPostTextSamples(profile)) {
         return profile;
@@ -2741,7 +2790,7 @@ async function fetchPendingFromApi(apiBase, ingestKey, limit, offset = 0, refres
         headers: {
             'X-Collector-Key': ingestKey,
         },
-    }, getTimeoutMs());
+    }, getPendingFetchTimeoutMs(limit), getApiFetchRetries());
     const itemsRaw = Array.isArray(data.items) ? data.items : [];
     const totalPendingRaw = Number(data.totalPending ?? itemsRaw.length);
     const items = [];
@@ -3724,7 +3773,42 @@ async function runOneAtATimeBatch(options, ctx) {
     };
     logOllamaConfig(emitLog);
     emitLog(`Modo fila leve: 1 perfil por requisicao${shard.active ? ` (${formatShardLabel(shard)})` : ''}.`);
+    if (isQualifyQueuePrefetchEnabled()) {
+        emitLog('Prefetch da fila: proximo perfil e buscado na API enquanto o Ollama processa o atual.');
+    }
     let skipOffset = 0;
+    let queuePrefetch = null;
+    const invalidateQueuePrefetch = () => {
+        queuePrefetch = null;
+    };
+    const startQueuePrefetch = (offset) => {
+        if (!isQualifyQueuePrefetchEnabled())
+            return;
+        invalidateQueuePrefetch();
+        const startedAtMs = Date.now();
+        queuePrefetch = withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, 1, offset, false, undefined, undefined, queueIncludeContent)).then((res) => ({ offset, startedAtMs, res }));
+    };
+    const pullQueueBatch = async (offset, fromPrefetch) => {
+        if (queuePrefetch) {
+            const slot = await queuePrefetch;
+            queuePrefetch = null;
+            if (slot.offset === offset) {
+                if (slot.res.ok) {
+                    const sec = ((Date.now() - slot.startedAtMs) / 1000).toFixed(1);
+                    const tag = fromPrefetch ? ' (prefetch durante Ollama)' : '';
+                    emitLog(`(fila) proximo pendente em ${sec}s (offset=${offset})${tag}`);
+                }
+                return slot.res;
+            }
+        }
+        const t0 = Date.now();
+        const res = await withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, 1, offset, false, undefined, undefined, queueIncludeContent));
+        if (res.ok) {
+            emitLog(`(fila) proximo pendente em ${((Date.now() - t0) / 1000).toFixed(1)}s (offset=${offset})`);
+        }
+        return res;
+    };
+    let nextPullUsesPrefetch = false;
     while (true) {
         if (options.shouldStop?.()) {
             emitLog('Interrompido por solicitacao do usuario.');
@@ -3738,11 +3822,23 @@ async function runOneAtATimeBatch(options, ctx) {
         }
         progress.currentHandle = 'Consultando API (1 perfil)…';
         options.onProgress?.(progress);
-        const t0 = Date.now();
-        const batch = await fetchPendingFromApi(apiBase, ingestKey, 1, skipOffset, false, undefined, undefined, queueIncludeContent);
-        emitLog(`(fila) proximo pendente em ${((Date.now() - t0) / 1000).toFixed(1)}s (offset=${skipOffset})`);
+        const fromPrefetch = nextPullUsesPrefetch;
+        nextPullUsesPrefetch = false;
+        const pendingRes = await pullQueueBatch(skipOffset, fromPrefetch);
+        if (!pendingRes.ok) {
+            emitLog('Interrompido por solicitacao do usuario.');
+            return {
+                total: progress.total,
+                done: progress.done,
+                failed: progress.failed,
+                excluded: progress.excluded,
+                stopped: true,
+            };
+        }
+        const batch = pendingRes.value;
         if (batch.items.length === 0) {
             if (skipOffset > 0) {
+                invalidateQueuePrefetch();
                 skipOffset = 0;
                 continue;
             }
@@ -3756,10 +3852,12 @@ async function runOneAtATimeBatch(options, ctx) {
         const item = batch.items[0];
         const handle = toHandle(item.handle || item.profile.handle);
         if (!handle) {
+            invalidateQueuePrefetch();
             skipOffset++;
             continue;
         }
         if (!handleBelongsToShard(handle, shard)) {
+            invalidateQueuePrefetch();
             skipOffset++;
             emitLog(`(fila) @${handle} fora da particao ${formatShardLabel(shard)} — proximo.`);
             continue;
@@ -3820,6 +3918,8 @@ async function runOneAtATimeBatch(options, ctx) {
                 }
                 else {
                     skipOffset = 0;
+                    startQueuePrefetch(0);
+                    nextPullUsesPrefetch = true;
                     const { row, counters } = await runLlmQualifyAndPersist({
                         handle,
                         profile: freshProfile,
@@ -3857,10 +3957,13 @@ async function runOneAtATimeBatch(options, ctx) {
             emitLog(`@${handle} | ERRO | ${truncateLogLine(message, 240)}`);
         }
         finally {
-            if (skippedThisRound || failedQualifyThisRound)
+            if (skippedThisRound || failedQualifyThisRound) {
+                invalidateQueuePrefetch();
                 skipOffset++;
-            else
+            }
+            else {
                 skipOffset = 0;
+            }
             if (!skippedThisRound || failedQualifyThisRound)
                 progress.processed++;
             progress.elapsedMs = Math.max(0, Date.now() - runStartedAtMs);
@@ -3893,7 +3996,6 @@ async function runBatch(options = {}) {
     const onlyWithLlm = options.onlyWithLlm === true;
     const mainCategoryFilter = String(options.mainCategory ?? '').trim();
     const useCategoryFilter = mainCategoryFilter.length > 0 && onlyWithLlm;
-    const queueIncludeContent = isQualifyQueueIncludeContentEnabled();
     const refreshAll = onlyWithLlm;
     const needsCoverageForOffset = onlyWithLlm && !useCategoryFilter;
     const useOneAtATimeQueue = concurrency === 1 &&
@@ -3905,6 +4007,7 @@ async function runBatch(options = {}) {
         : shard.active
             ? batchSize * shard.count
             : batchSize;
+    const queueIncludeContent = includeContentForPendingFetch(fetchBatchSize);
     if (useOneAtATimeQueue) {
         return runOneAtATimeBatch(options, {
             apiBase,
@@ -3931,16 +4034,6 @@ async function runBatch(options = {}) {
         shardLabel: shard.active ? formatShardLabel(shard) : null,
     };
     options.onProgress?.(progress);
-    let coverage = { totalProfiles: 0, withoutLlm: 0, withLlm: 0 };
-    if (needsCoverageForOffset) {
-        options.onLog?.('Consultando estatisticas da base (pode levar ~1 min)…');
-        coverage = await fetchLlmCoverageStatsCached(apiBase, ingestKey);
-    }
-    const queueOffset = useCategoryFilter ? 0 : onlyWithLlm ? coverage.withoutLlm : 0;
-    const processedHandles = new Set();
-    let listOffset = queueOffset;
-    options.onLog?.('Carregando primeiros perfis da fila (pode levar ~1 min)…');
-    let firstBatch = await fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent);
     const emitLog = (msg) => {
         if (options.onLog) {
             options.onLog(msg);
@@ -3949,11 +4042,51 @@ async function runBatch(options = {}) {
             printQualifyLog(msg);
         }
     };
+    let coverage = { totalProfiles: 0, withoutLlm: 0, withLlm: 0 };
+    if (needsCoverageForOffset) {
+        emitLog('Consultando estatisticas da base (pode levar ~1 min)…');
+        const covRes = await withResilientApiFetch(emitLog, options.shouldStop, 'stats', () => fetchLlmCoverageStatsCached(apiBase, ingestKey));
+        if (!covRes.ok) {
+            return {
+                total: progress.total,
+                done: progress.done,
+                failed: progress.failed,
+                excluded: progress.excluded,
+                stopped: true,
+            };
+        }
+        coverage = covRes.value;
+    }
+    const queueOffset = useCategoryFilter ? 0 : onlyWithLlm ? coverage.withoutLlm : 0;
+    const processedHandles = new Set();
+    let listOffset = queueOffset;
+    emitLog('Carregando primeiros perfis da fila (pode levar ~1 min)…');
+    const firstBatchRes = await withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent));
+    if (!firstBatchRes.ok) {
+        return {
+            total: progress.total,
+            done: progress.done,
+            failed: progress.failed,
+            excluded: progress.excluded,
+            stopped: true,
+        };
+    }
+    let firstBatch = firstBatchRes.value;
     logOllamaConfig(emitLog);
     if (firstBatch.items.length === 0 && queueOffset > 0) {
         emitLog(`Aviso: pagina vazia com offset inicial ${queueOffset}; tentando offset 0 (fila pode ter mudado vs estatistica inicial).`);
         listOffset = 0;
-        firstBatch = await fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent);
+        const retryBatchRes = await withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, listOffset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent));
+        if (!retryBatchRes.ok) {
+            return {
+                total: progress.total,
+                done: progress.done,
+                failed: progress.failed,
+                excluded: progress.excluded,
+                stopped: true,
+            };
+        }
+        firstBatch = retryBatchRes.value;
     }
     const rawTargetTotal = onlyWithLlm
         ? useCategoryFilter
@@ -3989,7 +4122,11 @@ async function runBatch(options = {}) {
     const fetchQueuePage = async (offset, reason) => {
         emitLog(`(fila) ${reason} — consultando API offset ${offset} (limite ${fetchBatchSize})…`);
         const t0 = Date.now();
-        const batch = await fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, offset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent);
+        const pageRes = await withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, fetchBatchSize, offset, refreshAll, useCategoryFilter ? mainCategoryFilter : undefined, undefined, queueIncludeContent));
+        if (!pageRes.ok) {
+            return null;
+        }
+        const batch = pageRes.value;
         const sec = ((Date.now() - t0) / 1000).toFixed(1);
         emitLog(`(fila) offset ${offset}: ${batch.items.length} perfil(is) nesta pagina (~${batch.totalPending} pendentes no total) em ${sec}s`);
         return batch;
@@ -4023,6 +4160,15 @@ async function runBatch(options = {}) {
                     }
                     listOffset = queueOffset;
                     const wrapBatch = await fetchQueuePage(listOffset, 'volta ao inicio da fila');
+                    if (!wrapBatch) {
+                        return {
+                            total: progress.total,
+                            done: progress.done,
+                            failed: progress.failed,
+                            excluded: progress.excluded,
+                            stopped: true,
+                        };
+                    }
                     if (!onlyWithLlm)
                         progress.total = Math.max(progress.total, wrapBatch.totalPending);
                     currentBatch = shuffleQueueItems(wrapBatch.items);
@@ -4043,6 +4189,15 @@ async function runBatch(options = {}) {
                 flushQueueSkipBurst();
             }
             const skippedBatch = await fetchQueuePage(listOffset, 'pagina ja vista ou fora da particao');
+            if (!skippedBatch) {
+                return {
+                    total: progress.total,
+                    done: progress.done,
+                    failed: progress.failed,
+                    excluded: progress.excluded,
+                    stopped: true,
+                };
+            }
             if (!onlyWithLlm)
                 progress.total = Math.max(progress.total, skippedBatch.totalPending);
             currentBatch = shuffleQueueItems(skippedBatch.items);
@@ -4181,6 +4336,15 @@ async function runBatch(options = {}) {
             listOffset = queueOffset;
         }
         let nextBatch = await fetchQueuePage(listOffset, 'proximo lote apos processamento');
+        if (!nextBatch) {
+            return {
+                total: progress.total,
+                done: progress.done,
+                failed: progress.failed,
+                excluded: progress.excluded,
+                stopped: true,
+            };
+        }
         if (!onlyWithLlm)
             progress.total = Math.max(progress.total, nextBatch.totalPending);
         if (onlyWithLlm && nextBatch.items.length === 0 && listOffset > queueOffset) {
@@ -4192,6 +4356,15 @@ async function runBatch(options = {}) {
             }
             listOffset = queueOffset;
             nextBatch = await fetchQueuePage(listOffset, 'fim da fila — reconsulta do inicio');
+            if (!nextBatch) {
+                return {
+                    total: progress.total,
+                    done: progress.done,
+                    failed: progress.failed,
+                    excluded: progress.excluded,
+                    stopped: true,
+                };
+            }
         }
         currentBatch = shuffleQueueItems(nextBatch.items);
     }
@@ -4851,66 +5024,81 @@ async function startUiServer() {
             state.elapsedMs = Math.max(0, Date.now() - runStartedAtMs);
         }, 1000);
         try {
-            state.currentHandle = 'Consultando fila na API…';
-            const summary = await runBatch({
-                shouldStop: () => state.stopRequested,
-                onlyWithLlm: state.onlyWithLlm,
-                mainCategory: state.mainCategoryFilter ?? undefined,
-                concurrency: state.parallelThreads,
-                onLog: (message) => {
-                    pushLog(message);
-                    if (message.startsWith('Carregando primeiros perfis')) {
-                        state.currentHandle = 'Carregando fila na API…';
-                    }
-                    else if (message.startsWith('Consultando estatisticas')) {
-                        state.currentHandle = 'Consultando estatísticas…';
-                    }
-                    else if (message.includes('Consultando API (1 perfil)') || message.startsWith('Modo fila leve')) {
-                        state.currentHandle = 'Buscando 1 perfil na API…';
-                    }
-                    else if (message.startsWith('(fila)') && message.includes('consultando API')) {
-                        state.currentHandle = 'Consultando fila na API…';
-                    }
-                    else if (message.startsWith('(fila)') && message.includes('proximo pendente')) {
-                        state.currentHandle = 'Resposta da API recebida…';
-                    }
-                },
-                onProgress: (p) => {
-                    state.total = p.total;
-                    state.processed = p.processed;
-                    state.done = p.done;
-                    state.excluded = p.excluded;
-                    state.failed = p.failed;
-                    state.currentHandle = p.currentHandle;
-                    state.estimatedRemainingMs = p.estimatedRemainingMs;
-                    if (p.processed > 0)
-                        state.elapsedMs = p.elapsedMs;
-                    state.mainCategoryFilter = p.mainCategoryFilter ?? null;
-                },
-                onResult: (row) => {
-                    const pulado = row.error != null &&
-                        (String(row.error).startsWith('Pulado:') || String(row.error).includes('ja persistido'));
-                    if (!pulado) {
-                        state.results.unshift(row);
-                        if (state.results.length > QUALIFY_UI_RESULTS_MAX)
-                            state.results.length = QUALIFY_UI_RESULTS_MAX;
-                    }
-                    if (row.result === 'ok' && !pulado) {
-                        pushLog(`@${row.handle} | OK | ${row.mainCategory} | ${row.brandSafety ?? '-'} | ${row.confidence != null ? `${Math.round(row.confidence * 100)}%` : '-'}`);
-                    }
-                    else if (row.result === 'excluido') {
-                        /* Linhas EXCLUINDO / API / EXCLUIDO OK ja foram enviadas por emitLog no runBatch. */
-                    }
-                    else if (pulado) {
-                        /* PULADO ja logado em emitLog no runBatch — nao rotular como ERRO. */
-                    }
-                    else {
-                        pushLog(`@${row.handle} | ERRO | ${truncateLogLine(row.error ?? '', 200)}`);
-                    }
-                },
-            });
-            pushLog(`Execucao finalizada. done=${summary.done} excluded=${summary.excluded} failed=${summary.failed} stopped=${summary.stopped}`);
-            await refreshCoverageStats(true);
+            while (!state.stopRequested) {
+                try {
+                    state.currentHandle = 'Consultando fila na API…';
+                    const summary = await runBatch({
+                        shouldStop: () => state.stopRequested,
+                        onlyWithLlm: state.onlyWithLlm,
+                        mainCategory: state.mainCategoryFilter ?? undefined,
+                        concurrency: state.parallelThreads,
+                        onLog: (message) => {
+                            pushLog(message);
+                            if (message.startsWith('Carregando primeiros perfis')) {
+                                state.currentHandle = 'Carregando fila na API…';
+                            }
+                            else if (message.startsWith('Consultando estatisticas')) {
+                                state.currentHandle = 'Consultando estatísticas…';
+                            }
+                            else if (message.includes('Consultando API (1 perfil)') || message.startsWith('Modo fila leve')) {
+                                state.currentHandle = 'Buscando 1 perfil na API…';
+                            }
+                            else if (message.startsWith('(fila)') && message.includes('consultando API')) {
+                                state.currentHandle = 'Consultando fila na API…';
+                            }
+                            else if (message.startsWith('(fila)') && message.includes('proximo pendente')) {
+                                state.currentHandle = 'Resposta da API recebida…';
+                            }
+                            else if (message.startsWith('(fila)') && message.includes('erro na API')) {
+                                state.currentHandle = 'Aguardando retentativa da API…';
+                            }
+                        },
+                        onProgress: (p) => {
+                            state.total = p.total;
+                            state.processed = p.processed;
+                            state.done = p.done;
+                            state.excluded = p.excluded;
+                            state.failed = p.failed;
+                            state.currentHandle = p.currentHandle;
+                            state.estimatedRemainingMs = p.estimatedRemainingMs;
+                            if (p.processed > 0)
+                                state.elapsedMs = p.elapsedMs;
+                            state.mainCategoryFilter = p.mainCategoryFilter ?? null;
+                        },
+                        onResult: (row) => {
+                            const pulado = row.error != null &&
+                                (String(row.error).startsWith('Pulado:') || String(row.error).includes('ja persistido'));
+                            if (!pulado) {
+                                state.results.unshift(row);
+                                if (state.results.length > QUALIFY_UI_RESULTS_MAX)
+                                    state.results.length = QUALIFY_UI_RESULTS_MAX;
+                            }
+                            if (row.result === 'ok' && !pulado) {
+                                pushLog(`@${row.handle} | OK | ${row.mainCategory} | ${row.brandSafety ?? '-'} | ${row.confidence != null ? `${Math.round(row.confidence * 100)}%` : '-'}`);
+                            }
+                            else if (row.result === 'excluido') {
+                                /* Linhas EXCLUINDO / API / EXCLUIDO OK ja foram enviadas por emitLog no runBatch. */
+                            }
+                            else if (pulado) {
+                                /* PULADO ja logado em emitLog no runBatch — nao rotular como ERRO. */
+                            }
+                            else {
+                                pushLog(`@${row.handle} | ERRO | ${truncateLogLine(row.error ?? '', 200)}`);
+                            }
+                        },
+                    });
+                    pushLog(`Execucao finalizada. done=${summary.done} excluded=${summary.excluded} failed=${summary.failed} stopped=${summary.stopped}`);
+                    await refreshCoverageStats(true);
+                    break;
+                }
+                catch (error) {
+                    if (state.stopRequested)
+                        break;
+                    const message = error instanceof Error ? error.message : String(error);
+                    pushLog(`Erro inesperado: ${truncateLogLine(message, 200)} — retomando em 30s`);
+                    await sleepMs(30_000);
+                }
+            }
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -5095,8 +5283,18 @@ async function main() {
         console.log(JSON.stringify(row, null, 2));
         process.exit(row.result === 'ok' ? 0 : 1);
     }
-    const summary = await runBatch(batchOptionsFromEnv());
-    printQualifyLog(`Finalizado. done=${summary.done} excluded=${summary.excluded} failed=${summary.failed} stopped=${summary.stopped}`);
+    while (true) {
+        try {
+            const summary = await runBatch(batchOptionsFromEnv());
+            printQualifyLog(`Finalizado. done=${summary.done} excluded=${summary.excluded} failed=${summary.failed} stopped=${summary.stopped}`);
+            return;
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            printQualifyLog(`Erro: ${truncateLogLine(message, 200)} — nova tentativa em 30s`);
+            await sleepMs(30_000);
+        }
+    }
 }
 main().catch((error) => {
     console.error('[qualify] Falha fatal:', error instanceof Error ? error.stack : error);

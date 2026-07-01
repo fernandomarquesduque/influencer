@@ -448,6 +448,24 @@ export class SqliteSync {
     this.db.prepare('DELETE FROM profile_search_aux WHERE handle = ?').run(h);
   }
 
+  /** Atualiza só colunas LLM do aux (fila qualify — evita reindex FTS/posts). */
+  patchProfileSearchAuxLlmFields(
+    handle: string,
+    llmQualificationJson: string | null,
+    llmBrandLevel: string | null
+  ): void {
+    const h = handle.toLowerCase().replace(/^@/, '');
+    if (!h) return;
+    const llmQ = llmQualificationJson?.trim() ? llmQualificationJson : null;
+    const llmBrand =
+      llmBrandLevel != null && typeof llmBrandLevel === 'string' && llmBrandLevel.trim()
+        ? llmBrandLevel.trim().toLowerCase()
+        : null;
+    this.db
+      .prepare(`UPDATE profile_search_aux SET llm_qualification_json = ?, llm_brand_level = ? WHERE handle = ?`)
+      .run(llmQ, llmBrand, h);
+  }
+
   /**
    * Busca por FTS na coluna `content`. bm25 menor = mais relevante.
    * MATCH inválido retorna lista vazia (não propaga erro).

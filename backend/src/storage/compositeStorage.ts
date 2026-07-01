@@ -173,6 +173,14 @@ export class CompositeStorage {
     return this.sqlite.getActivationsBatch(handles);
   }
 
+  patchProfileSearchAuxLlmFields(
+    handle: string,
+    llmQualificationJson: string | null,
+    llmBrandLevel: string | null
+  ): void {
+    this.sqlite.patchProfileSearchAuxLlmFields(handle, llmQualificationJson, llmBrandLevel);
+  }
+
   upsertProfileSearchIndexFromPayload(
     handle: string,
     payload: ProfileSearchIndexPayload & { costTier?: string | null }

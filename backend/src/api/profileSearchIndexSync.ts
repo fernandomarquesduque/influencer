@@ -1,13 +1,41 @@
 import type { CompositeStorage } from '../storage/compositeStorage.js';
 import {
   buildProfileSearchIndexPayload,
+  getLlmQualification,
   hasCompletedLlmProfile,
+  normalizeBrandSafetyLevel,
 } from './profilesSearch.js';
+import { snapMainCategoryToTaxonomy } from '../lib/mainCategoryTaxonomy.js';
 import {
   deleteInfluencerFromMeilisearch,
   upsertInfluencerToMeilisearch,
 } from '../search/meilisearchProfile.js';
 import { getCostTierFromPricing, getSuggestedPricingFromFollowers } from '../utils/suggestedPricing.js';
+
+/**
+ * Corrige só `llm_qualification_json` no SQLite a partir do perfil já carregado do RocksDB.
+ * Usado na fila LLM quando o índice está atrasado — não recarrega posts nem reindexa FTS.
+ */
+export function patchProfileSearchIndexLlmFromProfile(
+  db: CompositeStorage,
+  handle: string,
+  profile: Record<string, unknown>
+): void {
+  const h = handle.toLowerCase().replace(/^@/, '');
+  if (!h) return;
+  const qual = getLlmQualification(profile);
+  let llmQualificationJson: string | null = null;
+  let llmBrandLevel: string | null = null;
+  if (qual) {
+    const mc = snapMainCategoryToTaxonomy(String(qual.mainCategory ?? '').trim());
+    llmQualificationJson = JSON.stringify({
+      ...qual,
+      mainCategoryCanonical: mc ?? null,
+    });
+    llmBrandLevel = normalizeBrandSafetyLevel(qual.brandSafety);
+  }
+  db.patchProfileSearchAuxLlmFields(h, llmQualificationJson, llmBrandLevel);
+}
 
 /**
  * Atualiza FTS + `profile_search_aux` para um handle (lê perfil + posts no RocksDB).
