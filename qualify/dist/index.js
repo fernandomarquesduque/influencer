@@ -2626,6 +2626,14 @@ function formatShardLabel(shard) {
         return '';
     return `${shard.index}/${shard.count}`;
 }
+/** Com particao ativa, quantos pendentes pedir por GET (filtra @ no cliente). */
+function getQualifyQueueScanLimit(shardActive) {
+    if (!shardActive)
+        return 1;
+    const raw = Number(process.env.QUALIFY_QUEUE_SCAN_LIMIT ?? 32);
+    const n = Number.isFinite(raw) ? Math.floor(raw) : 32;
+    return Math.max(8, Math.min(64, n));
+}
 function getIngestPushTimeoutMs() {
     const raw = process.env.QUALIFY_INGEST_TIMEOUT_MS?.trim();
     if (raw) {
@@ -3772,8 +3780,13 @@ async function runOneAtATimeBatch(options, ctx) {
             printQualifyLog(msg);
     };
     logOllamaConfig(emitLog);
-    emitLog(`Modo fila leve: 1 perfil por requisicao${shard.active ? ` (${formatShardLabel(shard)})` : ''}.`);
-    if (isQualifyQueuePrefetchEnabled()) {
+    const queueFetchLimit = getQualifyQueueScanLimit(shard.active);
+    const queueIncludeContentFetch = includeContentForPendingFetch(queueFetchLimit);
+    const queuePrefetchEnabled = isQualifyQueuePrefetchEnabled() && queueFetchLimit === 1;
+    emitLog(shard.active && queueFetchLimit > 1
+        ? `Modo fila leve: ate ${queueFetchLimit} pendentes por GET (${formatShardLabel(shard)}).`
+        : `Modo fila leve: 1 perfil por requisicao${shard.active ? ` (${formatShardLabel(shard)})` : ''}.`);
+    if (queuePrefetchEnabled) {
         emitLog('Prefetch da fila: proximo perfil e buscado na API enquanto o Ollama processa o atual.');
     }
     let skipOffset = 0;
@@ -3782,11 +3795,11 @@ async function runOneAtATimeBatch(options, ctx) {
         queuePrefetch = null;
     };
     const startQueuePrefetch = (offset) => {
-        if (!isQualifyQueuePrefetchEnabled())
+        if (!queuePrefetchEnabled)
             return;
         invalidateQueuePrefetch();
         const startedAtMs = Date.now();
-        queuePrefetch = withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, 1, offset, false, undefined, undefined, queueIncludeContent)).then((res) => ({ offset, startedAtMs, res }));
+        queuePrefetch = withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, queueFetchLimit, offset, false, undefined, undefined, queueIncludeContentFetch)).then((res) => ({ offset, startedAtMs, res }));
     };
     const pullQueueBatch = async (offset, fromPrefetch) => {
         if (queuePrefetch) {
@@ -3802,9 +3815,9 @@ async function runOneAtATimeBatch(options, ctx) {
             }
         }
         const t0 = Date.now();
-        const res = await withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, 1, offset, false, undefined, undefined, queueIncludeContent));
+        const res = await withResilientApiFetch(emitLog, options.shouldStop, 'fila', () => fetchPendingFromApi(apiBase, ingestKey, queueFetchLimit, offset, false, undefined, undefined, queueIncludeContentFetch));
         if (res.ok) {
-            emitLog(`(fila) proximo pendente em ${((Date.now() - t0) / 1000).toFixed(1)}s (offset=${offset})`);
+            emitLog(`(fila) proximo pendente em ${((Date.now() - t0) / 1000).toFixed(1)}s (offset=${offset}, limit=${queueFetchLimit})`);
         }
         return res;
     };
@@ -3820,7 +3833,8 @@ async function runOneAtATimeBatch(options, ctx) {
                 stopped: true,
             };
         }
-        progress.currentHandle = 'Consultando API (1 perfil)…';
+        progress.currentHandle =
+            queueFetchLimit > 1 ? `Consultando API (ate ${queueFetchLimit} pendentes)…` : 'Consultando API (1 perfil)…';
         options.onProgress?.(progress);
         const fromPrefetch = nextPullUsesPrefetch;
         nextPullUsesPrefetch = false;
@@ -3849,17 +3863,29 @@ async function runOneAtATimeBatch(options, ctx) {
         if (progress.total === 0) {
             progress.total = Math.max(1, batch.totalPending);
         }
-        const item = batch.items[0];
+        let item = null;
+        let pickedIndex = -1;
+        for (let i = 0; i < batch.items.length; i++) {
+            const cand = batch.items[i];
+            const h = toHandle(cand.handle || cand.profile.handle);
+            if (!h || !handleBelongsToShard(h, shard))
+                continue;
+            item = cand;
+            pickedIndex = i;
+            break;
+        }
+        if (!item || pickedIndex < 0) {
+            invalidateQueuePrefetch();
+            skipOffset += batch.items.length;
+            if (shard.active) {
+                emitLog(`(fila) ${batch.items.length} perfil(s) fora da particao ${formatShardLabel(shard)} — avancando offset ${skipOffset}.`);
+            }
+            continue;
+        }
         const handle = toHandle(item.handle || item.profile.handle);
         if (!handle) {
             invalidateQueuePrefetch();
-            skipOffset++;
-            continue;
-        }
-        if (!handleBelongsToShard(handle, shard)) {
-            invalidateQueuePrefetch();
-            skipOffset++;
-            emitLog(`(fila) @${handle} fora da particao ${formatShardLabel(shard)} — proximo.`);
+            skipOffset += batch.items.length;
             continue;
         }
         progress.currentHandle = handle;
@@ -3959,7 +3985,7 @@ async function runOneAtATimeBatch(options, ctx) {
         finally {
             if (skippedThisRound || failedQualifyThisRound) {
                 invalidateQueuePrefetch();
-                skipOffset++;
+                skipOffset += pickedIndex + 1;
             }
             else {
                 skipOffset = 0;

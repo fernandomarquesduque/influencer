@@ -96,14 +96,14 @@ async function streamLlmPendingFromSearchIndex(
   opts: { offset: number; limit: number; refreshAll: boolean }
 ): Promise<CollectorLlmPendingItem[]> {
   const limit = Math.max(1, Math.floor(opts.limit));
+  const skip = Math.max(0, Math.floor(opts.offset));
   const items: CollectorLlmPendingItem[] = [];
-  let sqlOffset = Math.max(0, Math.floor(opts.offset));
+  let sqlOffset = 0;
+  let skippedValid = 0;
+  const sqlPage = Math.max(limit * 32, 64);
   const maxSqlSteps = 120;
   for (let step = 0; step < maxSqlSteps && items.length < limit; step++) {
-    const handles = storage.listProfileSearchAuxHandlesWithoutLlm(
-      Math.max(limit * 32, 64),
-      sqlOffset
-    );
+    const handles = storage.listProfileSearchAuxHandlesWithoutLlm(sqlPage, sqlOffset);
     if (handles.length === 0) break;
     sqlOffset += handles.length;
     for (const handle of handles) {
@@ -116,6 +116,10 @@ async function streamLlmPendingFromSearchIndex(
       }
       const cand = candidateFromProfile(profileRec, handle);
       if (!cand) continue;
+      if (skippedValid < skip) {
+        skippedValid++;
+        continue;
+      }
       items.push({ handle: cand.handle, profile: cand.profile });
       if (items.length >= limit) break;
     }
