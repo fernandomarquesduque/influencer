@@ -51,6 +51,8 @@ async function runHttpSmoke(): Promise<void> {
     assert.equal(typeof d.excludeBusinessProfiles, 'boolean');
     assert.equal(typeof d.skipIfAlreadyInRemoteDb, 'boolean');
     assert.equal(typeof d.remoteIngestConfigured, 'boolean');
+    assert.equal(typeof d.unregisteredMentionsApiReady, 'boolean');
+    assert.equal(typeof d.adminTokenConfigured, 'boolean');
 
     r = await fetch(`${base}/api/status`);
     assert.equal(r.ok, true);
@@ -63,6 +65,7 @@ async function runHttpSmoke(): Promise<void> {
     const html = await r.text();
     assert.ok(html.includes('btnStart'), 'HTML deve conter botão Iniciar');
     assert.ok(html.includes('/api/start'), 'HTML deve chamar /api/start');
+    assert.ok(html.includes('unregistered'), 'HTML deve oferecer modo menções sem cadastro');
     assert.ok(html.includes('startRequestInFlight'), 'lógica anti-corrida do clique');
     assert.ok(html.includes('rowsColetados'), 'três tabelas: coletados');
     assert.ok(html.includes('rowsIntegrados'), 'três tabelas: integrados');

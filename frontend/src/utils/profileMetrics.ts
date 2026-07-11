@@ -105,6 +105,19 @@ export function getFollowersCountFromProfile(
   return 0
 }
 
+/**
+ * Seguidores para card da busca (post-matches): API + estimativa pelo post quando o slim veio sem contagem.
+ * Alinhado ao detalhe (`getFollowersCountFromProfile` + posts do perfil).
+ */
+export function resolveFollowersCountForPostCard(post: PostItem): number {
+  const raw = post.influencer?.followers_count
+  const fromApi = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+  if (fromApi > 0) return fromApi
+  const estimated = estimateFollowersFromPosts([post])
+  if (estimated > 0) return estimated
+  return fromApi
+}
+
 /** Engajamento: recalcula com posts quando há seguidores; senão usa `engagement` embutido na resposta da API. */
 export function resolveEngagementForProfile(
   profile: ProfileItem | null | undefined,

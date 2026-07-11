@@ -274,6 +274,15 @@ function getFollowers(profile: Record<string, unknown>): number {
   return toNum(edge?.count);
 }
 
+/** Mesma resolução de seguidores que `getProfileSummary` (aux + engagement + posts). */
+export function resolveProfileFollowersCount(
+  profile: Record<string, unknown>,
+  aux?: { followers_count?: number; engagement_json?: string },
+  posts?: Record<string, unknown>[]
+): number {
+  return resolveFollowersCountForProfile(profile, getFollowers, aux, posts);
+}
+
 /** Extrai handle do perfil. */
 function getHandle(profile: Record<string, unknown>, key: string): string {
   const h = profile.handle ?? profile.username ?? getDataUser(profile)?.username ?? key;

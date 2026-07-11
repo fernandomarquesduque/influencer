@@ -16,6 +16,11 @@ import {
 import type { DiscoveryMode } from './discovery.js';
 import { coletaLog } from './coletaLog.js';
 import { resetHandlesCompletedSession, setListQueueProgress } from './processingStatus.js';
+import {
+  fetchUnregisteredMentionHandles,
+  getAdminTokenFromEnv,
+  sleepMs,
+} from './unregisteredMentions.js';
 let collecting = false;
 /** true entre “Iniciar” na API e o runCollection de fato começar — evita duplo clique e libera a resposta HTTP antes do Playwright. */
 let collectionStartScheduled = false;
@@ -100,6 +105,21 @@ export interface StartOptions {
   googleQuery?: string;
   /** Modo handles: lista de @arrobas para extrair direto. */
   handles?: string[];
+  /**
+   * Modo unregistered: Bearer JWT admin (scope adm) para GET unregistered-mentions.
+   * Se omitido, usa COLLECTOR_ADMIN_TOKEN do .env.
+   */
+  adminToken?: string;
+  /** Modo unregistered: amostra de perfis/posts no relatório (padrão 800). */
+  unregisteredSample?: number;
+  /** Modo unregistered: máx. @ retornados por rodada (padrão 500). */
+  unregisteredLimit?: number;
+  /** Modo unregistered: máx. posts por perfil na estratégia profiles (padrão 15). */
+  unregisteredMaxPostsPerProfile?: number;
+  /** Modo unregistered: pausa entre rodadas da API (ms, padrão 8000). */
+  unregisteredPauseMs?: number;
+  /** Modo unregistered: estratégia do relatório (padrão profiles). */
+  unregisteredStrategy?: 'profiles' | 'posts';
   /** Modo google: máx. páginas SERP por consulta. */
   maxSerpPages?: number;
   /** Modo google: tipos de SERP a buscar — ex. ['39', '7', ''] para udm=39, udm=7 e busca geral. */
@@ -266,6 +286,108 @@ export async function runCollection(
         );
         statusMessage = `Arrobas — ${handlesRaw.length} perfil(is) · ${parallelProfileTabs} aba(s) paralela(s)`;
         result = await discoverByHandles(client, pageRef.page, discoveryOptions);
+      }
+    } else if (options.mode === 'unregistered') {
+      const adminToken = (options.adminToken?.trim() || getAdminTokenFromEnv() || '').trim();
+      if (!adminToken) {
+        coletaLog(
+          'Modo Menções sem cadastro: informe o token admin na UI ou COLLECTOR_ADMIN_TOKEN no .env.'
+        );
+        statusMessage =
+          'Erro: token admin ausente (UI ou COLLECTOR_ADMIN_TOKEN) para consultar unregistered-mentions.';
+        result = { saved: 0, processed: 0 };
+      } else {
+        const sample = Math.max(1, Math.min(3_000, Math.floor(options.unregisteredSample ?? 800) || 800));
+        const batchLimit = Math.max(
+          1,
+          Math.min(2_000, Math.floor(options.unregisteredLimit ?? 500) || 500)
+        );
+        const maxPostsPerProfile = Math.max(
+          1,
+          Math.min(40, Math.floor(options.unregisteredMaxPostsPerProfile ?? 15) || 15)
+        );
+        const pauseMs = Math.max(
+          0,
+          Math.min(300_000, Math.floor(options.unregisteredPauseMs ?? 8_000) || 8_000)
+        );
+        const strategy = options.unregisteredStrategy === 'posts' ? 'posts' : 'profiles';
+        const seenThisRun = new Set<string>();
+        let totalSaved = 0;
+        let totalProcessed = 0;
+        let round = 0;
+        let emptyStreak = 0;
+        const maxEmptyStreak = 5;
+        coletaLog(
+          `Modo MENÇÕES SEM CADASTRO (loop) — sample=${sample} limit/rodada=${batchLimit} ` +
+            `strategy=${strategy} pausa=${pauseMs}ms | limite salvar=${maxProfiles} | ${parallelProfileTabs} aba(s)`
+        );
+        statusMessage = `Menções sem cadastro — consultando API…`;
+
+        while (!shouldAbort() && totalSaved < maxProfiles) {
+          round += 1;
+          statusMessage = `Menções sem cadastro — rodada ${round}: consultando API…`;
+          let batch: string[] = [];
+          try {
+            const report = await fetchUnregisteredMentionHandles({
+              adminToken,
+              strategy,
+              sample,
+              limit: batchLimit,
+              maxPostsPerProfile,
+            });
+            batch = report.handles.filter((h) => {
+              if (seenThisRun.has(h)) return false;
+              if (sessionTriedHandles.has(h)) return false;
+              return true;
+            });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            coletaLog(`Menções sem cadastro rodada ${round}: falha na API — ${msg}`);
+            statusMessage = `Erro: ${msg}`;
+            break;
+          }
+
+          if (batch.length === 0) {
+            emptyStreak += 1;
+            coletaLog(
+              `Menções sem cadastro rodada ${round}: nenhum @ novo (streak vazio ${emptyStreak}/${maxEmptyStreak}).`
+            );
+            if (emptyStreak >= maxEmptyStreak) {
+              coletaLog(
+                'Menções sem cadastro: várias rodadas sem @ novos — encerrando loop (Parar e reiniciar depois se quiser).'
+              );
+              break;
+            }
+            statusMessage = `Menções sem cadastro — sem @ novos; pausa antes da próxima consulta…`;
+            await sleepMs(pauseMs, shouldAbort);
+            continue;
+          }
+
+          emptyStreak = 0;
+          for (const h of batch) seenThisRun.add(h);
+          const remaining = maxProfiles - totalSaved;
+          setListQueueProgress({ kind: 'handles', index: 0, total: batch.length });
+          coletaLog(
+            `Menções sem cadastro rodada ${round}: ${batch.length} @ novos — extraindo (restam salvar até ${remaining}).`
+          );
+          statusMessage = `Menções sem cadastro — rodada ${round}: ${batch.length} @ · ${parallelProfileTabs} aba(s)`;
+          const r = await discoverByHandles(client, pageRef.page, {
+            ...discoveryOptions,
+            mode: 'handles',
+            handles: batch,
+            maxProfiles: remaining,
+          });
+          totalSaved += r.saved;
+          totalProcessed += r.processed;
+          coletaLog(
+            `Menções sem cadastro rodada ${round} → +${r.saved} salvos | acumulado ${totalSaved} salvos, ${totalProcessed} processados.`
+          );
+          if (shouldAbort() || totalSaved >= maxProfiles) break;
+          statusMessage = `Menções sem cadastro — pausa ${Math.round(pauseMs / 1000)}s antes da próxima rodada…`;
+          await sleepMs(pauseMs, shouldAbort);
+        }
+
+        result = { saved: totalSaved, processed: totalProcessed };
       }
     } else {
       coletaLog(`Modo EXPLORE — limite ${maxProfiles}`);

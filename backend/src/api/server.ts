@@ -72,6 +72,7 @@ import {
   sortScratchRowsWithinBoostPriority,
   sortPostMatchScratchRowsForResponse,
   parseOriginPostSort,
+  resolveProfileFollowersCount,
   httpQueryStrList,
   httpQueryBool01,
   type HandleFacetBoostMeta,
@@ -5327,14 +5328,21 @@ app.get('/api/me/favorite-posts/feed', async (req: RequestWithAuth, res: Respons
         })
         .filter(Boolean)
     );
-    const influencerByHandle = new Map<string, ReturnType<typeof influencerFieldsFromProfile>>();
+    const influencerByHandle = new Map<string, InfluencerPostCardFields>();
+    const auxByHandle = new Map(
+      db.getProfileSearchAuxRowsForHandles([...handlesInSlice]).map((r) => [normalizeHandle(r.handle), r])
+    );
     await Promise.all(
       [...handlesInSlice].map(async (h) => {
         const profile = await db.loadByHandle(h);
-        const fields = influencerFieldsFromProfile(profile as Record<string, unknown> | null);
         const postsRaw = await db.getByBucket<Record<string, unknown>>('post', `${h}:`, { sort: false });
-        const posts_per_week = computePostsPerWeek(postsRaw.map(({ value }) => value));
-        influencerByHandle.set(h, { ...fields, posts_per_week });
+        const posts = postsRaw.map(({ value }) => value);
+        const fields = await influencerFieldsForPostCard(db, h, profile as Record<string, unknown> | null, {
+          aux: auxByHandle.get(h),
+          posts,
+          posts_per_week: computePostsPerWeek(posts),
+        });
+        influencerByHandle.set(h, fields);
       })
     );
     for (const row of slice) {
@@ -7321,6 +7329,45 @@ function influencerFieldsFromProfile(profile: Record<string, unknown> | null | u
   };
 }
 
+type ProfileSearchAuxRow = ReturnType<CompositeStorage['getProfileSearchAuxRowsForHandles']>[number];
+
+/** Seguidores para cards de post (busca/favoritos) — mesmo critério que `getProfileSummary` no detalhe. */
+async function influencerFieldsForPostCard(
+  db: CompositeStorage,
+  handle: string,
+  profile: Record<string, unknown> | null | undefined,
+  opts?: {
+    aux?: ProfileSearchAuxRow;
+    posts?: Record<string, unknown>[];
+    posts_per_week?: number;
+  }
+): Promise<ReturnType<typeof influencerFieldsFromProfile> & { posts_per_week?: number }> {
+  const fields = influencerFieldsFromProfile(profile);
+  if (!profile) {
+    if (opts?.posts_per_week != null) return { ...fields, posts_per_week: opts.posts_per_week };
+    return fields;
+  }
+  let posts_per_week = opts?.posts_per_week;
+  let posts = opts?.posts;
+  const direct = fields.followers_count;
+  let resolved = resolveProfileFollowersCount(profile, opts?.aux, posts);
+  if (resolved <= 0 && direct <= 0) {
+    if (!posts) {
+      const hk = normalizeHandle(handle);
+      const postsRaw = await db.getByBucket<Record<string, unknown>>('post', `${hk}:`, { sort: false });
+      posts = postsRaw.map(({ value }) => value);
+      if (posts_per_week == null) posts_per_week = computePostsPerWeek(posts);
+    }
+    resolved = resolveProfileFollowersCount(profile, opts?.aux, posts);
+  }
+  const followers_count = Math.max(direct, resolved);
+  const merged = followers_count > 0 ? { ...fields, followers_count } : fields;
+  if (posts_per_week != null) return { ...merged, posts_per_week };
+  return merged;
+}
+
+type InfluencerPostCardFields = Awaited<ReturnType<typeof influencerFieldsForPostCard>>;
+
 const POST_MATCHES_HANDLE_BATCH = 32;
 const POST_MATCHES_FTS_HANDLE_LIMIT = Math.max(
   200,
@@ -8080,10 +8127,10 @@ async function runPostMatchesForHandles(
       const ph = (row as Record<string, unknown>).profile_handle;
       if (typeof ph === 'string' && ph.trim()) handlesInSlice.add(normalizeHandle(ph));
     }
-    const influencerByHandle = new Map<
-      string,
-      ReturnType<typeof influencerFieldsFromProfile>
-    >();
+    const influencerByHandle = new Map<string, InfluencerPostCardFields>();
+    const auxByHandle = new Map(
+      db.getProfileSearchAuxRowsForHandles([...handlesInSlice]).map((r) => [normalizeHandle(r.handle), r])
+    );
     const ppwByHandle = db.getProfilePostsPerWeekForHandles([...handlesInSlice]);
     const handlesNeedingPpwCompute: string[] = [];
     for (const h of handlesInSlice) {
@@ -8103,9 +8150,11 @@ async function runPostMatchesForHandles(
     await Promise.all(
       [...handlesInSlice].map(async (h) => {
         const profile = await db.loadByHandle(h);
-        const fields = influencerFieldsFromProfile(profile as Record<string, unknown> | null);
-        const posts_per_week = ppwByHandle.get(h) ?? 0;
-        influencerByHandle.set(h, { ...fields, posts_per_week });
+        const fields = await influencerFieldsForPostCard(db, h, profile as Record<string, unknown> | null, {
+          aux: auxByHandle.get(h),
+          posts_per_week: ppwByHandle.get(h) ?? 0,
+        });
+        influencerByHandle.set(h, fields);
       })
     );
     for (const row of slice) {

@@ -411,7 +411,13 @@ const profileHrefRe = /^\/[^/]+\/?$/;
 const isProfileHref = (h: string) =>
   profileHrefRe.test(h.replace(/\?.*$/, '')) && !h.includes('/p/') && !h.includes('/reel/');
 
-export type DiscoveryMode = 'hashtag' | 'feed' | 'explore' | 'google' | 'handles';
+export type DiscoveryMode =
+  | 'hashtag'
+  | 'feed'
+  | 'explore'
+  | 'google'
+  | 'handles'
+  | 'unregistered';
 
 export interface DiscoveryOptions {
   mode: DiscoveryMode;

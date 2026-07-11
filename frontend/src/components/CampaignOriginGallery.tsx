@@ -32,6 +32,7 @@ import { PostPreviewMedia } from './PostPreviewCard'
 import ProfileAvatar from './ProfileAvatar'
 import { METRIC_TOOLTIPS } from '../constants/metricTooltips'
 import { getInfluencerTierShort } from '../utils/influencerTier'
+import { resolveFollowersCountForPostCard } from '../utils/profileMetrics'
 import InfluencerTierPill from './InfluencerTierPill'
 import HighlightedSearchText from './HighlightedSearchText'
 import { getCaptionSnippetForSearch } from '../utils/queryRelevance'
@@ -259,14 +260,14 @@ function InfluencerIdentityHeading({
 
 function postToConnectSnapshot(post: PostItem): InfluencerConnectSnapshot {
   const bar = influencerBarData(post)
-  const fc = post.influencer?.followers_count
+  const fc = resolveFollowersCountForPostCard(post)
   const ppw = getInfluencerPostsPerWeek(post)
   const headline = influencerCardHeadline(post, bar)
   return {
     displayName: bar.displayName,
     profilePicUrl: bar.avatarSrc,
     stableProfilePicUrl: bar.avatarStable,
-    followersCount: typeof fc === 'number' && Number.isFinite(fc) ? fc : undefined,
+    followersCount: fc > 0 ? fc : undefined,
     postsPerWeek: ppw ?? undefined,
     llmDescription: headline || undefined,
   }
@@ -872,7 +873,7 @@ export default function CampaignOriginGallery({
                 const handle = bar.handleKey
                 const headline = influencerCardHeadline(post, bar)
                 const openInfluencerDetail = () => runOpenInfluencerDetail(bar.profileRef, postToConnectSnapshot(post))
-                const followersCount = post.influencer?.followers_count
+                const followersCount = resolveFollowersCountForPostCard(post)
                 const mediaShellStyle: CSSProperties = {
                   position: 'relative',
                   width: '100%',
@@ -974,7 +975,7 @@ export default function CampaignOriginGallery({
                 const headline = influencerCardHeadline(post, bar)
                 const ct = (post.content_type || 'post') as MediaKind
                 const postsPerWeek = getInfluencerPostsPerWeek(post)
-                const fc = post.influencer?.followers_count
+                const fc = resolveFollowersCountForPostCard(post)
                 const followersLabel = formatFollowersShort(fc)
                 const postsPerWeekLabel = postsPerWeek != null ? `${formatPostsPerWeekShort(postsPerWeek)} posts/sem` : null
                 const openInfluencerDetail = () => runOpenInfluencerDetail(bar.profileRef, postToConnectSnapshot(post))
