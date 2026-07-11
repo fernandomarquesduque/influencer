@@ -25,6 +25,7 @@ app.use('/api/crawl', createCollectorCrawlRouter(collectorController));
 | `POST` | `/api/crawl/collector-ingest-profile` | Só perfil slim |
 | `POST` | `/api/crawl/collector-ingest-full` | Perfil + `feedMedia`, `reelMedia`, `taggedMedia` (nós GraphQL) → posts/reels no RocksDB (métricas/ER no site) |
 | `GET` ou `POST` | `/api/crawl/collector-verify-profile` | Confirma se o `@` está no RocksDB após ingest. Query `?handle=usuario` ou body `{ "handle": "usuario" }`. Mesmo header `X-Collector-Key`. |
+| `GET` | `/api/crawl/collector-unregistered-mentions` | Relatório de @ citados em posts sem cadastro (mesmo payload do admin). Query: `strategy`, `sample`, `limit`, `maxPostsPerProfile`. Header `X-Collector-Key`. |
 
 **Resposta quando encontrado (200):** `{ "ok": true, "found": true, "handle", "full_name", "followers_count", "_collected_at", "mediaCounts": { "post", "reel", "tagged" } }`  
 **Quando não existe (200):** `{ "ok": true, "found": false, "message": "..." }`

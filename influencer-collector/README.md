@@ -50,7 +50,7 @@ npm run collect
 4. Abra esse link no navegador.
 5. Ajuste **regras da coleta** na interface (mín. seguidores, curtidas, posts, limite de perfis, excluir empresas) — os valores iniciais vêm do `.env`.
 6. Modo **Hashtag**: informe **várias tags** (uma por linha ou separadas por vírgula). O **limite de perfis** vale para a rodada inteira (distribuído entre as tags). Feed/Explore ignoram o campo de tags.
-7. Modo **Menções sem cadastro (loop)**: consulta em loop o relatório admin `GET /api/admin/reports/unregistered-mentions` e processa os `@` retornados. Exige `COLLECTOR_API_BASE` e token admin (`COLLECTOR_ADMIN_TOKEN` no `.env` ou campo na UI).
+7. Modo **Menções sem cadastro (loop)**: consulta em loop `GET /api/crawl/collector-unregistered-mentions` com a mesma chave do ingest (`COLLECTOR_INGEST_KEY` / `X-Collector-Key`) e processa os `@` retornados.
 8. Clique em **Iniciar coleta**. A coleta roda até **Parar coleta** ou até o limite.
 
 Os influenciadores coletados ficam **só em memória** (não há banco nem arquivo). Ao fechar o processo, a lista é perdida.
@@ -76,7 +76,7 @@ O login é gravado automaticamente no arquivo indicado por `AUTH_STATE_PATH` (pa
 | `COLLECTOR_REQUIRE_BIO_PT_BR` | Exigir bio em português brasileiro com `franc` + heurísticas (padrão: ligado; `false` desliga) |
 | `HEADLESS` | `true` para rodar sem mostrar o browser (padrão: janela visível) |
 | `COLLECTOR_UI_PORT` | Porta da interface (padrão 3967) |
-| `COLLECTOR_ADMIN_TOKEN` | JWT admin (scope `adm`) para o modo Menções sem cadastro |
+| `COLLECTOR_INGEST_KEY` | Chave `X-Collector-Key` (igual a `COLLECTOR_INGEST_SECRET` no servidor) — ingest e menções sem cadastro |
 | `COLLECTOR_UNREGISTERED_TIMEOUT_MS` | Timeout da consulta do relatório (padrão 180000) |
 
 ## Estrutura do projeto

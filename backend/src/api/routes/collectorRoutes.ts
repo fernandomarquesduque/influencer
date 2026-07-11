@@ -69,5 +69,12 @@ export function createCollectorCrawlRouter(controller: CollectorController): Rou
     asyncHandler((req, res) => controller.verifyProfile(req, res))
   );
 
+  /** Relatório de @ citados sem cadastro — mesma lógica do admin, auth X-Collector-Key. */
+  router.get(
+    '/collector-unregistered-mentions',
+    requireCollectorIngestSecret,
+    asyncHandler((req, res) => controller.unregisteredMentions(req, res))
+  );
+
   return router;
 }

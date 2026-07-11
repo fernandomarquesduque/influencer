@@ -1,14 +1,12 @@
 /**
- * Busca @ citados em posts mas sem cadastro (GET /admin/reports/unregistered-mentions).
- * Usado pelo modo autónomo do coletor.
+ * Busca @ citados em posts mas sem cadastro
+ * (GET /crawl/collector-unregistered-mentions, X-Collector-Key).
  */
 
-import { getCollectorApiBase } from './serverIngest.js';
+import { getCollectorApiBase, isRemoteIngestConfigured } from './serverIngest.js';
 import { coletaLog } from './coletaLog.js';
 
 export type UnregisteredMentionsFetchOptions = {
-  /** Bearer JWT com scope adm (UI ou COLLECTOR_ADMIN_TOKEN). */
-  adminToken: string;
   strategy?: 'profiles' | 'posts';
   sample?: number;
   limit?: number;
@@ -31,34 +29,18 @@ function normalizeHandle(raw: string): string | null {
   return h;
 }
 
-export function getAdminTokenFromEnv(): string | null {
-  const t = process.env.COLLECTOR_ADMIN_TOKEN?.trim();
-  return t ? stripBearerPrefix(t) : null;
-}
-
-function stripBearerPrefix(raw: string): string {
-  const s = raw.trim();
-  if (/^bearer\s+/i.test(s)) return s.replace(/^bearer\s+/i, '').trim();
-  return s;
-}
-
 export function isUnregisteredMentionsApiReady(): boolean {
-  return Boolean(getCollectorApiBase());
+  return isRemoteIngestConfigured();
 }
 
 export async function fetchUnregisteredMentionHandles(
-  options: UnregisteredMentionsFetchOptions
+  options: UnregisteredMentionsFetchOptions = {}
 ): Promise<UnregisteredMentionsFetchResult> {
   const base = getCollectorApiBase();
-  if (!base) {
+  const key = process.env.COLLECTOR_INGEST_KEY?.trim();
+  if (!base || !key) {
     throw new Error(
-      'COLLECTOR_API_BASE não configurado — necessário para consultar menções sem cadastro.'
-    );
-  }
-  const token = stripBearerPrefix(options.adminToken || '');
-  if (!token) {
-    throw new Error(
-      'Token admin ausente — cole o Bearer JWT na UI ou defina COLLECTOR_ADMIN_TOKEN no .env.'
+      'COLLECTOR_API_BASE e COLLECTOR_INGEST_KEY necessários para consultar menções sem cadastro (mesma chave do ingest).'
     );
   }
 
@@ -82,7 +64,7 @@ export async function fetchUnregisteredMentionHandles(
     params.set('maxPostsPerProfile', String(maxPostsPerProfile));
   }
 
-  const url = `${base}/admin/reports/unregistered-mentions?${params}`;
+  const url = `${base}/crawl/collector-unregistered-mentions?${params}`;
   const timeoutMs = Math.min(
     parseInt(process.env.COLLECTOR_UNREGISTERED_TIMEOUT_MS ?? '', 10) || 180_000,
     600_000
@@ -92,14 +74,14 @@ export async function fetchUnregisteredMentionHandles(
 
   try {
     coletaLog(
-      `API → unregistered-mentions strategy=${strategy} sample=${sample} limit=${limit}` +
+      `API → collector-unregistered-mentions strategy=${strategy} sample=${sample} limit=${limit}` +
         (strategy === 'profiles' ? ` maxPostsPerProfile=${maxPostsPerProfile}` : '')
     );
     const res = await fetch(url, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
+        'X-Collector-Key': key,
       },
       signal: ctrl.signal,
     });
@@ -109,7 +91,7 @@ export async function fetchUnregisteredMentionHandles(
       json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
     } catch {
       throw new Error(
-        `Resposta inválida de unregistered-mentions (HTTP ${res.status}): ${text.slice(0, 120)}`
+        `Resposta inválida de collector-unregistered-mentions (HTTP ${res.status}): ${text.slice(0, 120)}`
       );
     }
     if (!res.ok) {
@@ -117,7 +99,7 @@ export async function fetchUnregisteredMentionHandles(
         (typeof json.error === 'string' && json.error) ||
         (typeof json.message === 'string' && json.message) ||
         `HTTP ${res.status}`;
-      throw new Error(`unregistered-mentions falhou: ${err}`);
+      throw new Error(`collector-unregistered-mentions falhou: ${err}`);
     }
 
     const rawList = Array.isArray(json.notRegistered) ? json.notRegistered : [];
@@ -144,7 +126,7 @@ export async function fetchUnregisteredMentionHandles(
         : 0;
 
     coletaLog(
-      `API ← unregistered-mentions: ${handles.length} @ na lista` +
+      `API ← collector-unregistered-mentions: ${handles.length} @ na lista` +
         (notRegisteredCount > handles.length ? ` (${notRegisteredCount} na amostra)` : '') +
         ` · ${profilesInDb} perfis no DB · ${postsScanned} posts vistos`
     );
@@ -153,7 +135,7 @@ export async function fetchUnregisteredMentionHandles(
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
       throw new Error(
-        `Timeout ao consultar unregistered-mentions após ${Math.round(timeoutMs / 1000)}s`
+        `Timeout ao consultar collector-unregistered-mentions após ${Math.round(timeoutMs / 1000)}s`
       );
     }
     throw e;

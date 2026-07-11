@@ -52,7 +52,6 @@ async function runHttpSmoke(): Promise<void> {
     assert.equal(typeof d.skipIfAlreadyInRemoteDb, 'boolean');
     assert.equal(typeof d.remoteIngestConfigured, 'boolean');
     assert.equal(typeof d.unregisteredMentionsApiReady, 'boolean');
-    assert.equal(typeof d.adminTokenConfigured, 'boolean');
 
     r = await fetch(`${base}/api/status`);
     assert.equal(r.ok, true);

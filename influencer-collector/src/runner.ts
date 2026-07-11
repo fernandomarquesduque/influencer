@@ -18,7 +18,7 @@ import { coletaLog } from './coletaLog.js';
 import { resetHandlesCompletedSession, setListQueueProgress } from './processingStatus.js';
 import {
   fetchUnregisteredMentionHandles,
-  getAdminTokenFromEnv,
+  isUnregisteredMentionsApiReady,
   sleepMs,
 } from './unregisteredMentions.js';
 let collecting = false;
@@ -105,12 +105,7 @@ export interface StartOptions {
   googleQuery?: string;
   /** Modo handles: lista de @arrobas para extrair direto. */
   handles?: string[];
-  /**
-   * Modo unregistered: Bearer JWT admin (scope adm) para GET unregistered-mentions.
-   * Se omitido, usa COLLECTOR_ADMIN_TOKEN do .env.
-   */
-  adminToken?: string;
-  /** Modo unregistered: amostra de perfis/posts no relatório (padrão 800). */
+  /** Modo unregistered: amostra de perfis/posts no relatório (padrão 800). Usa COLLECTOR_INGEST_KEY. */
   unregisteredSample?: number;
   /** Modo unregistered: máx. @ retornados por rodada (padrão 500). */
   unregisteredLimit?: number;
@@ -288,13 +283,12 @@ export async function runCollection(
         result = await discoverByHandles(client, pageRef.page, discoveryOptions);
       }
     } else if (options.mode === 'unregistered') {
-      const adminToken = (options.adminToken?.trim() || getAdminTokenFromEnv() || '').trim();
-      if (!adminToken) {
+      if (!isUnregisteredMentionsApiReady()) {
         coletaLog(
-          'Modo Menções sem cadastro: informe o token admin na UI ou COLLECTOR_ADMIN_TOKEN no .env.'
+          'Modo Menções sem cadastro: defina COLLECTOR_API_BASE e COLLECTOR_INGEST_KEY no .env (mesma chave do ingest).'
         );
         statusMessage =
-          'Erro: token admin ausente (UI ou COLLECTOR_ADMIN_TOKEN) para consultar unregistered-mentions.';
+          'Erro: COLLECTOR_API_BASE / COLLECTOR_INGEST_KEY ausentes para consultar collector-unregistered-mentions.';
         result = { saved: 0, processed: 0 };
       } else {
         const sample = Math.max(1, Math.min(3_000, Math.floor(options.unregisteredSample ?? 800) || 800));
@@ -329,7 +323,6 @@ export async function runCollection(
           let batch: string[] = [];
           try {
             const report = await fetchUnregisteredMentionHandles({
-              adminToken,
               strategy,
               sample,
               limit: batchLimit,

@@ -23,10 +23,7 @@ import type { Page } from 'playwright';
 import { freePortForUi } from './freeUiPort.js';
 import { isRemoteIngestConfigured } from './serverIngest.js';
 import { countIntegrationOkRows } from './issuesSqlite.js';
-import {
-  getAdminTokenFromEnv,
-  isUnregisteredMentionsApiReady,
-} from './unregisteredMentions.js';
+import { isUnregisteredMentionsApiReady } from './unregisteredMentions.js';
 
 const PORT = Number(process.env.COLLECTOR_UI_PORT) || 3967;
 
@@ -96,7 +93,6 @@ export function createCollectorRequestHandler(
         /** Sem isso, «Pular @ se já estiver no banco» não consulta a API (fica sem efeito). */
         remoteIngestConfigured: isRemoteIngestConfigured(),
         unregisteredMentionsApiReady: isUnregisteredMentionsApiReady(),
-        adminTokenConfigured: Boolean(getAdminTokenFromEnv()),
         unregisteredSample: 800,
         unregisteredLimit: 500,
         unregisteredMaxPostsPerProfile: 15,
@@ -153,10 +149,6 @@ export function createCollectorRequestHandler(
           const n = typeof v === 'number' ? v : parseInt(String(v), 10);
           return Number.isFinite(n) ? n : fallback;
         };
-        const adminToken =
-          typeof body.adminToken === 'string' && body.adminToken.trim()
-            ? body.adminToken.trim()
-            : undefined;
         const unregisteredSample = num(body.unregisteredSample, 800);
         const unregisteredLimit = num(body.unregisteredLimit, 500);
         const unregisteredMaxPostsPerProfile = num(body.unregisteredMaxPostsPerProfile, 15);
@@ -206,15 +198,7 @@ export function createCollectorRequestHandler(
             sendJson(res, 200, {
               started: false,
               error:
-                'COLLECTOR_API_BASE não configurado — necessário para consultar /admin/reports/unregistered-mentions.',
-            });
-            return;
-          }
-          if (!adminToken && !getAdminTokenFromEnv()) {
-            sendJson(res, 200, {
-              started: false,
-              error:
-                'Token admin ausente — cole o Bearer JWT no modo Menções sem cadastro ou defina COLLECTOR_ADMIN_TOKEN no .env.',
+                'COLLECTOR_API_BASE e COLLECTOR_INGEST_KEY necessários — mesma chave do ingest (X-Collector-Key).',
             });
             return;
           }
@@ -224,7 +208,6 @@ export function createCollectorRequestHandler(
           tag,
           tags,
           handles,
-          adminToken,
           unregisteredSample: Math.max(1, Math.min(3_000, unregisteredSample)),
           unregisteredLimit: Math.max(1, Math.min(2_000, unregisteredLimit)),
           unregisteredMaxPostsPerProfile: Math.max(1, Math.min(40, unregisteredMaxPostsPerProfile)),
@@ -534,11 +517,8 @@ export function createCollectorRequestHandler(
     <textarea id="handlesInput" rows="4" placeholder="@perfil1&#10;perfil2&#10;@perfil_3"></textarea>
     <span class="hint" style="display:block;margin-top:0.35rem">Enquanto a coleta roda, cada @ já tratado (extraído, ignorado ou duplicado) é removido desta lista.</span></label>
     <div id="unregisteredLabel" style="display:none;flex:1 0 100%;flex-direction:column;gap:0.5rem;width:100%;">
-      <p class="hint" style="margin:0">Consulta em loop <code>GET /api/admin/reports/unregistered-mentions</code> (mesmo relatório do admin) e processa os @ retornados até <strong>Parar</strong> ou atingir o limite de perfis. Exige <code>COLLECTOR_API_BASE</code> e token admin (Bearer JWT com scope <code>adm</code>).</p>
-      <label style="display:block;width:100%;">Token admin (Bearer) — opcional se <code>COLLECTOR_ADMIN_TOKEN</code> estiver no .env:
-        <input type="password" id="adminToken" autocomplete="off" placeholder="eyJhbGciOi…" style="width:100%;max-width:100%;box-sizing:border-box;padding:0.45rem 0.6rem;border-radius:6px;border:1px solid #444;background:#1a1a1a;color:#eee;font-family:ui-monospace,monospace;font-size:0.85rem;">
-      </label>
-      <p id="adminTokenHint" class="hint" style="margin:0;display:none;"></p>
+      <p class="hint" style="margin:0">Consulta em loop <code>GET /api/crawl/collector-unregistered-mentions</code> (mesma lógica do relatório admin) e processa os @ retornados até <strong>Parar</strong> ou atingir o limite de perfis. Usa <code>COLLECTOR_API_BASE</code> + <code>COLLECTOR_INGEST_KEY</code> (header <code>X-Collector-Key</code>), igual ao ingest — sem JWT.</p>
+      <p id="unregisteredApiHint" class="hint" style="margin:0;display:none;"></p>
       <div class="rules-grid" style="margin-top:0.25rem;">
         <label>Amostra (sample) <input type="number" id="unregisteredSample" min="50" max="3000" step="50" value="800"></label>
         <label>Máx. @ por rodada (limit) <input type="number" id="unregisteredLimit" min="10" max="2000" step="10" value="500"></label>
@@ -652,7 +632,6 @@ export function createCollectorRequestHandler(
     var unregisteredLabel = document.getElementById('unregisteredLabel');
     var qdrLabel = document.getElementById('qdrLabel');
     var btnStartEl = document.getElementById('btnStart');
-    var adminTokenConfigured = false;
     var unregisteredMentionsApiReady = false;
     function syncModePanels(modeVal) {
       var m = modeVal || (modeEl && modeEl.value) || 'hashtag';
@@ -668,24 +647,18 @@ export function createCollectorRequestHandler(
       var searchLinesWrap = document.getElementById('searchLinesWrap');
       if (searchLinesWrap) searchLinesWrap.style.display = m === 'google' ? '' : 'none';
     }
-    function updateAdminTokenHint() {
-      var h = document.getElementById('adminTokenHint');
+    function updateUnregisteredApiHint() {
+      var h = document.getElementById('unregisteredApiHint');
       if (!h) return;
       if (!unregisteredMentionsApiReady) {
         h.style.display = 'block';
         h.style.color = '#f59e0b';
-        h.textContent = 'COLLECTOR_API_BASE não configurado — este modo não consegue chamar a API.';
-        return;
-      }
-      if (adminTokenConfigured) {
-        h.style.display = 'block';
-        h.style.color = '#86efac';
-        h.textContent = 'Token admin já configurado no .env (COLLECTOR_ADMIN_TOKEN). Campo abaixo é opcional (sobrescreve).';
+        h.textContent = 'API remota não configurada — defina COLLECTOR_API_BASE e COLLECTOR_INGEST_KEY no .env (igual ao ingest) e reinicie.';
         return;
       }
       h.style.display = 'block';
-      h.style.color = '#94a3b8';
-      h.textContent = 'Cole o JWT admin (Authorization Bearer) — o mesmo do painel /app/admin. Não compartilhe o token.';
+      h.style.color = '#86efac';
+      h.textContent = 'Auth pronta: usará X-Collector-Key do .env (mesma do ingest).';
     }
     if (!modeEl || !tagLabel || !btnStartEl) {
       showApiErr('Erro interno: recarregue a página (Ctrl+F5).');
@@ -729,7 +702,6 @@ export function createCollectorRequestHandler(
           tags: tagsEl ? String(tagsEl.value) : '',
           googleQuery: (document.getElementById('googleQuery') && document.getElementById('googleQuery').value) || '',
           handlesInput: (document.getElementById('handlesInput') && document.getElementById('handlesInput').value) || '',
-          adminToken: (document.getElementById('adminToken') && document.getElementById('adminToken').value) || '',
           unregisteredSample: document.getElementById('unregisteredSample') && document.getElementById('unregisteredSample').value,
           unregisteredLimit: document.getElementById('unregisteredLimit') && document.getElementById('unregisteredLimit').value,
           unregisteredMaxPostsPerProfile: document.getElementById('unregisteredMaxPostsPerProfile') && document.getElementById('unregisteredMaxPostsPerProfile').value,
@@ -846,10 +818,6 @@ export function createCollectorRequestHandler(
         var hi = document.getElementById('handlesInput');
         if (hi) hi.value = s.handlesInput;
       }
-      if (typeof s.adminToken === 'string') {
-        var at = document.getElementById('adminToken');
-        if (at) at.value = s.adminToken;
-      }
       setNum('unregisteredSample', s.unregisteredSample);
       setNum('unregisteredLimit', s.unregisteredLimit);
       setNum('unregisteredMaxPostsPerProfile', s.unregisteredMaxPostsPerProfile);
@@ -888,8 +856,6 @@ export function createCollectorRequestHandler(
       if (gqEl) gqEl.addEventListener('input', saveUiFilters);
       var hiEl = document.getElementById('handlesInput');
       if (hiEl) hiEl.addEventListener('input', saveUiFilters);
-      var adminTok = document.getElementById('adminToken');
-      if (adminTok) adminTok.addEventListener('input', saveUiFilters);
       var unregStrat = document.getElementById('unregisteredStrategy');
       if (unregStrat) unregStrat.addEventListener('change', saveUiFilters);
       var qdrEl = document.getElementById('qdr');
@@ -942,8 +908,7 @@ export function createCollectorRequestHandler(
         var pauseMs = typeof d.unregisteredPauseMs === 'number' ? d.unregisteredPauseMs : 8000;
         setNum('unregisteredPauseSec', Math.round(pauseMs / 1000), 8);
         unregisteredMentionsApiReady = d.unregisteredMentionsApiReady === true;
-        adminTokenConfigured = d.adminTokenConfigured === true;
-        updateAdminTokenHint();
+        updateUnregisteredApiHint();
         var ex = document.getElementById('excludeBusiness');
         if (ex) ex.checked = d.excludeBusinessProfiles !== false;
         var rb = document.getElementById('requireBioPtBr');
@@ -955,7 +920,7 @@ export function createCollectorRequestHandler(
         var saved = loadUiFilters();
         if (saved) applyUiFilters(saved);
         updateRemoteSkipWarning();
-        updateAdminTokenHint();
+        updateUnregisteredApiHint();
       })
       .catch(function() {
         showApiErr('Não foi possível carregar regras do servidor — usando valores exibidos nos campos. Verifique se o app (npm start) está rodando.');
@@ -1344,20 +1309,12 @@ export function createCollectorRequestHandler(
           st.textContent = 'Preencha ao menos uma arroba válida (@perfil) para o modo Arrobas.';
           return;
         }
-        var adminTokVal = (document.getElementById('adminToken') && document.getElementById('adminToken').value || '').trim();
         if (mode === 'unregistered') {
           if (!unregisteredMentionsApiReady) {
             startRequestInFlight = false;
             btnS.disabled = false;
             st.className = 'status idle';
-            st.textContent = 'COLLECTOR_API_BASE não configurado — não dá para consultar menções sem cadastro.';
-            return;
-          }
-          if (!adminTokVal && !adminTokenConfigured) {
-            startRequestInFlight = false;
-            btnS.disabled = false;
-            st.className = 'status idle';
-            st.textContent = 'Cole o token admin (Bearer JWT) ou defina COLLECTOR_ADMIN_TOKEN no .env.';
+            st.textContent = 'COLLECTOR_API_BASE / COLLECTOR_INGEST_KEY não configurados — igual ao ingest.';
             return;
           }
         }
@@ -1371,7 +1328,6 @@ export function createCollectorRequestHandler(
           mode: mode,
           tags: tags.length ? tags : undefined,
           handles: mode === 'handles' ? handles : undefined,
-          adminToken: mode === 'unregistered' && adminTokVal ? adminTokVal : undefined,
           unregisteredSample: mode === 'unregistered' ? numFromInput('unregisteredSample', 800) : undefined,
           unregisteredLimit: mode === 'unregistered' ? numFromInput('unregisteredLimit', 500) : undefined,
           unregisteredMaxPostsPerProfile: mode === 'unregistered' ? numFromInput('unregisteredMaxPostsPerProfile', 15) : undefined,

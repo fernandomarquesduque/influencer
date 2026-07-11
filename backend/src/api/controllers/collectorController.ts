@@ -15,6 +15,7 @@ import { mergeProfilePreservingLlm } from '../../utils/preserveLlmOnProfileMerge
 import { foldMainCategoryKey, snapMainCategoryToTaxonomy } from '../../lib/mainCategoryTaxonomy.js';
 import { syncProfileSearchIndexForHandle } from '../profileSearchIndexSync.js';
 import { streamLlmPendingPage } from '../llmPendingQueue.js';
+import { getUnregisteredMentionsReport } from '../adminUnregisteredMentions.js';
 
 /** Mesma regra que em `bumpFacetMainCategory` (busca): canônico ou texto bruto se o snap falhar. */
 function llmMainCategoryBucket(raw: string): string | null {
@@ -745,6 +746,23 @@ export function createCollectorController(storage: CompositeStorage) {
         res.status(500).json({
           error: e instanceof Error ? e.message : String(e),
           code: 'COLLECTOR_LLM_INGEST_ERROR',
+        });
+      }
+    },
+
+    /**
+     * Mesmo relatório de GET /api/admin/reports/unregistered-mentions,
+     * autenticado com X-Collector-Key (máquina local / qualify-style).
+     */
+    async unregisteredMentions(req: Request, res: Response): Promise<void> {
+      try {
+        const report = await getUnregisteredMentionsReport(storage, req.query);
+        res.status(200).json(report);
+      } catch (e) {
+        console.error('[collectorController.unregisteredMentions]', e instanceof Error ? e.stack : e);
+        res.status(500).json({
+          error: e instanceof Error ? e.message : String(e),
+          code: 'COLLECTOR_UNREGISTERED_MENTIONS_ERROR',
         });
       }
     },
