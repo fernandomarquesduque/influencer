@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Spin,
@@ -43,6 +43,7 @@ import { getCostTier } from '../utils/pricing'
 import { PRICING_FIELD_KEYS, PRICING_FIELD_LABELS, type PricingFieldKey } from '../constants/pricingBuckets'
 import { DETAIL_SECTION_ORDER, type DetailSectionId } from '../constants/detailLayout'
 import { useAuth } from '../contexts/AuthContext'
+import { useAccessMode } from '../contexts/AccessModeContext'
 import { reportTokens as t } from './reportTokens'
 import {
   ReportHero,
@@ -227,6 +228,7 @@ export default function InfluencerDetail({
   }, [requireCampaignId, campaignId, params.campaignId, navigate])
 
   const { user, isPublic, canEditProfile, isAdm, loading: authLoading } = useAuth()
+  const { openAccess } = useAccessMode()
 
   const mediaKitPath = profileRef ? `/app/influencer/${encodeURIComponent(profileRef)}/media-kit` : '/app'
   const canEdit = profileRef ? canEditProfile(profileRef) : false
@@ -255,9 +257,9 @@ export default function InfluencerDetail({
   const [allBasePreview, setAllBasePreview] = useState(false)
   const [previewEngagement, setPreviewEngagement] = useState<EngagementStats | null>(null)
   const [previewSummaryFollowers, setPreviewSummaryFollowers] = useState<number | null>(null)
-  /** Prévia sem dados completos (API: _all_base_preview ou scope public). */
-  const isPreviewLocked = allBasePreview || isPublic
-  const isRedacted = dataRedacted && !!user && !allBasePreview
+  /** Prévia sem dados completos (API: _all_base_preview ou scope public). Em open access, nunca trava. */
+  const isPreviewLocked = !openAccess && (allBasePreview || isPublic)
+  const isRedacted = !openAccess && dataRedacted && !!user && !allBasePreview
   const isProfileLocked = isPreviewLocked || isRedacted
   const isLimitedView = isProfileLocked
   const [failedPostImages, setFailedPostImages] = useState<Set<string>>(new Set())
@@ -281,6 +283,10 @@ export default function InfluencerDetail({
   }, [])
 
   useEffect(() => {
+    if (openAccess) {
+      setPlanActive(true)
+      return
+    }
     if (authLoading || !user) {
       setPlanActive(false)
       return
@@ -300,7 +306,7 @@ export default function InfluencerDetail({
     return () => {
       cancelled = true
     }
-  }, [authLoading, user, isAdm])
+  }, [authLoading, user, isAdm, openAccess])
 
   const refreshPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -392,7 +398,8 @@ export default function InfluencerDetail({
 
   useEffect(() => {
     if (!profileRef || authLoading) return
-    if (!user || isPreviewLocked) {
+    // Em open access carrega posts mesmo sem login; em gated só com acesso completo.
+    if (isPreviewLocked) {
       setPosts([])
       setPostsTotal(0)
       setPostsLoading(false)
@@ -412,11 +419,12 @@ export default function InfluencerDetail({
       .catch(() => { if (!cancelled) setPosts([]) })
       .finally(() => { if (!cancelled) setPostsLoading(false) })
     return () => { cancelled = true }
-  }, [profileRef, campaignId, authLoading, user, isPreviewLocked])
+  }, [profileRef, campaignId, authLoading, isPreviewLocked])
 
   useEffect(() => {
     if (!profileRef || authLoading) return
-    const needsPreviewMetrics = allBasePreview || isPublic || (dataRedacted && !!user)
+    const needsPreviewMetrics =
+      !openAccess && (allBasePreview || isPublic || (dataRedacted && !!user))
     if (!needsPreviewMetrics) {
       setPreviewEngagement(null)
       setPreviewSummaryFollowers(null)
@@ -437,7 +445,7 @@ export default function InfluencerDetail({
         }
       })
     return () => { cancelled = true }
-  }, [profileRef, campaignId, authLoading, allBasePreview, isPublic, dataRedacted, user])
+  }, [profileRef, campaignId, authLoading, openAccess, allBasePreview, isPublic, dataRedacted, user])
 
   const startRefreshPolling = useRef<(h: string) => void>(() => { })
   startRefreshPolling.current = (h: string) => {
@@ -626,15 +634,15 @@ export default function InfluencerDetail({
 
   const instagramProfileUrl = useMemo(() => {
     if (!profile || isLimitedView) return null
-    if (user?.scope === 'assinante' && !isAdm && !planActive) return null
+    if (!openAccess && user?.scope === 'assinante' && !isAdm && !planActive) return null
     const url = (profile.instagram_profile_url ?? '').trim()
     if (url) return url
-    if (isAdm) {
+    if (isAdm || openAccess) {
       const h = (profile.handle ?? profile.username ?? '').toString().replace(/^@/, '').trim()
       if (h && !isProfileRef(h)) return `https://www.instagram.com/${encodeURIComponent(h)}/`
     }
     return null
-  }, [profile, isLimitedView, isAdm, planActive, user?.scope])
+  }, [profile, isLimitedView, isAdm, planActive, user?.scope, openAccess])
 
   const showSkeleton = (profileLoading && !profile) || (postsLoading && posts.length === 0)
   if (showSkeleton) {

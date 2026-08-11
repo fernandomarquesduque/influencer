@@ -10,6 +10,7 @@ import BuscaInfluencerPlansModal from '../BuscaInfluencerPlansModal/BuscaInfluen
 import { trackPlansIntent } from '../../utils/metaPixelFunnel'
 import { fetchMySubscription, proxyImageUrl } from '../../api'
 import { useAuth } from '../../contexts/AuthContext'
+import { useAccessMode } from '../../contexts/AccessModeContext'
 import { AGENCY_WHATSAPP_DIGITS } from '../../constants/agencyContact'
 import { useLockPageScroll } from '../../utils/useLockPageScroll'
 import './InfluencerConnectModal.css'
@@ -103,6 +104,7 @@ export default function InfluencerConnectModal({
   campaignId = null,
 }: InfluencerConnectModalProps) {
   const { user, isAdm } = useAuth()
+  const { openAccess } = useAccessMode()
   const [form] = Form.useForm<HireFormValues>()
   const [plansModalOpen, setPlansModalOpen] = useState(false)
   const [fullProfileLoading, setFullProfileLoading] = useState(false)
@@ -144,7 +146,7 @@ export default function InfluencerConnectModal({
   }
 
   const onViewFullProfileClick = () => {
-    if (isAdm) {
+    if (isAdm || openAccess) {
       openFullProfile()
       return
     }
@@ -156,7 +158,7 @@ export default function InfluencerConnectModal({
     setFullProfileLoading(true)
     void fetchMySubscription()
       .then((sub) => {
-        if (sub.active) openFullProfile()
+        if (sub.active || sub.openAccess) openFullProfile()
         else {
           trackPlansIntent('modal_open', { source: 'connect_modal_no_subscription' })
           setPlansModalOpen(true)

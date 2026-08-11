@@ -13,6 +13,7 @@
   width: fit-content;
   max-width: 100%;
   border-radius: 10px;
+  margin-inline: auto;
 }
 
 .hero-info-strip--inline.hero-info-strip--compact .hero-info-strip-cell {

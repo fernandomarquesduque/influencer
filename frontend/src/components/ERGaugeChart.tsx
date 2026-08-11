@@ -3,10 +3,9 @@
  * Escala 0–8%, 4 faixas de qualidade (Baixo, Bom, Excelente, Viral).
  */
 import { reportTokens as t } from '../pages/reportTokens'
+import './ERGaugeChart.css'
 
-const s = t.spacing
 const c = t.colors
-const typ = t.typography
 
 export type ERQualidadeBanda = { min: number; max: number; label: string; color: string }
 
@@ -34,8 +33,8 @@ const ER_GAUGE_STROKE = 18
 const ER_GAUGE_CX = 80
 const ER_GAUGE_CY = 62
 const ER_GAUGE_VIEW_WIDTH = 165
-const ER_GAUGE_VIEW_HEIGHT = 88
-const ER_GAUGE_VIEW_Y_OFFSET = 12
+const ER_GAUGE_VIEW_HEIGHT = 100
+const ER_GAUGE_VIEW_Y_OFFSET = 18
 const ER_GAUGE_TICK_OFFSET = 12
 const ER_GAUGE_PCT_INSIDE_R = 35
 /** Escala fixa do gauge (0–8%). Valores acima de 8% mostram a agulha no máximo. */
@@ -64,14 +63,19 @@ export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
   const rad = (angle * Math.PI) / 180
   const needleX = ER_GAUGE_CX + (ER_GAUGE_R - 2) * Math.cos(rad)
   const needleY = ER_GAUGE_CY - (ER_GAUGE_R - 2) * Math.sin(rad)
-  const bandaAtual = ER_QUALIDADE_BANDAS.find((b) => value >= b.min && value < b.max) ?? ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]
+  const bandaAtual =
+    ER_QUALIDADE_BANDAS.find((b) => value >= b.min && value < b.max) ??
+    ER_QUALIDADE_BANDAS[ER_QUALIDADE_BANDAS.length - 1]
 
   return (
-    <div className="er-gauge-chart" style={{ display: 'flex', flexDirection: 'column', gap: 0, width: '100%' }}>
-      <div className="er-gauge-chart__row" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: s.sm, width: '100%' }}>
-        <div style={{ flex: '0 0 auto', minWidth: 0, display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
-          <div style={{ position: 'relative', width: 165, height: ER_GAUGE_VIEW_HEIGHT }}>
-            <svg viewBox={`0 ${-ER_GAUGE_VIEW_Y_OFFSET} ${ER_GAUGE_VIEW_WIDTH} ${ER_GAUGE_VIEW_HEIGHT}`} style={{ width: '100%', height: '100%', overflow: 'visible' }} aria-hidden>
+    <div className="er-gauge-chart">
+      <div className="er-gauge-chart__row">
+        <div className="er-gauge-chart__gauge">
+          <div className="er-gauge-chart__gauge-frame">
+            <svg
+              viewBox={`0 ${-ER_GAUGE_VIEW_Y_OFFSET} ${ER_GAUGE_VIEW_WIDTH} ${ER_GAUGE_VIEW_HEIGHT}`}
+              aria-hidden
+            >
               <path
                 d={`M ${ER_GAUGE_CX - ER_GAUGE_R} ${ER_GAUGE_CY} A ${ER_GAUGE_R} ${ER_GAUGE_R} 0 0 1 ${ER_GAUGE_CX + ER_GAUGE_R} ${ER_GAUGE_CY}`}
                 fill="none"
@@ -101,7 +105,15 @@ export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
                   />
                 )
               })}
-              <line x1={ER_GAUGE_CX} y1={ER_GAUGE_CY} x2={needleX} y2={needleY} stroke={c.text} strokeWidth={3} strokeLinecap="round" />
+              <line
+                x1={ER_GAUGE_CX}
+                y1={ER_GAUGE_CY}
+                x2={needleX}
+                y2={needleY}
+                stroke={c.text}
+                strokeWidth={3}
+                strokeLinecap="round"
+              />
               <circle cx={ER_GAUGE_CX} cy={ER_GAUGE_CY} r={5} fill={c.text} />
               {ticks.map((pct) => {
                 const a = erToAngle(pct, scaleMax)
@@ -109,7 +121,16 @@ export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
                 const x = ER_GAUGE_CX + ER_GAUGE_PCT_INSIDE_R * Math.cos(rRad)
                 const y = ER_GAUGE_CY - ER_GAUGE_PCT_INSIDE_R * Math.sin(rRad)
                 return (
-                  <text key={pct} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fill={c.textMuted} fontSize={8} fontFamily="inherit">
+                  <text
+                    key={pct}
+                    x={x}
+                    y={y}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill={c.textMuted}
+                    fontSize={8}
+                    fontFamily="inherit"
+                  >
                     {pct}%
                   </text>
                 )
@@ -122,7 +143,17 @@ export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
                 const x = ER_GAUGE_CX + labelR * Math.cos(rRad)
                 const y = ER_GAUGE_CY - labelR * Math.sin(rRad)
                 return (
-                  <text key={b.label} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fill={b.color} fontSize={9} fontFamily="inherit" fontWeight={600}>
+                  <text
+                    key={b.label}
+                    x={x}
+                    y={y}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill={b.color}
+                    fontSize={9}
+                    fontFamily="inherit"
+                    fontWeight={600}
+                  >
                     {b.label}
                   </text>
                 )
@@ -130,14 +161,18 @@ export function ERGaugeChart({ value, count, title }: ERGaugeChartProps) {
             </svg>
           </div>
         </div>
-        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'row', gap: s.md, alignItems: 'center', minWidth: 0, justifyContent: 'center' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 auto', minWidth: 90, alignItems: 'center', textAlign: 'center' }}>
-            <div className="er-gauge-chart__title" style={{ ...typ.caption, color: c.textMuted, fontSize: 13, fontWeight: 600 }}>{title}</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: bandaAtual.color, margin: 0, lineHeight: 1.2 }}>{value.toFixed(2)}%</div>
+        <div className="er-gauge-chart__meta">
+          <div className="er-gauge-chart__value-block">
+            <div className="er-gauge-chart__title">{title}</div>
+            <div className="er-gauge-chart__value" style={{ color: bandaAtual.color }}>
+              {value.toFixed(2)}%
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '0 0 auto', alignItems: 'flex-end', textAlign: 'right' }}>
-            <div style={{ ...typ.caption, fontSize: 14, color: bandaAtual.color, fontWeight: 600 }}>{bandaAtual.label}</div>
-            <div style={{ ...typ.caption, fontSize: 13, color: c.textMuted }}>{count} itens</div>
+          <div className="er-gauge-chart__band">
+            <div className="er-gauge-chart__band-label" style={{ color: bandaAtual.color }}>
+              {bandaAtual.label}
+            </div>
+            <div className="er-gauge-chart__count">{count} itens</div>
           </div>
         </div>
       </div>

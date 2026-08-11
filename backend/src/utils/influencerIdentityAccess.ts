@@ -1,5 +1,6 @@
 import type { RequestWithAuth } from '../auth/middleware.js';
 import { isCampaignIdGuid } from '../storage/creditsCampaignsDb.js';
+import { isOpenAccess } from '../config/accessMode.js';
 
 type PlanSubscriptionCheck = (userId: number) => boolean;
 type CampaignPaidCheck = (campaignId: string, userId: number) => boolean;
@@ -16,11 +17,12 @@ export function registerInfluencerIdentityAccessChecks(opts: {
   checkCampaignPaid = opts.isCampaignPaidForUser;
 }
 
-/** Adm ou assinante pagante (plano ativo ou campanha paga) — expõe @/handle na API. */
+/** Adm, modo open, ou assinante pagante (plano ativo ou campanha paga) — expõe @/handle na API. */
 export function shouldIncludeHandleInApi(
   req: RequestWithAuth | undefined,
   ctx?: { campaignId?: string }
 ): boolean {
+  if (isOpenAccess()) return true;
   if (!req?.user) return false;
   if (req.user.scope === 'adm') return true;
   if (req.user.scope !== 'assinante') return false;

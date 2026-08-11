@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { Spin } from 'antd'
 import { useAuth } from '../contexts/AuthContext'
+import { useAccessMode } from '../contexts/AccessModeContext'
 import { fetchMySubscription } from '../api'
 
 const PAYMENTS_PATH = '/app/payments'
@@ -13,9 +14,10 @@ type RequireActiveSubscriptionProps = {
   children: ReactNode
 }
 
-/** Assinantes só acessam o app com plano pago; demais perfis passam direto. */
+/** Assinantes só acessam o app com plano pago; demais perfis passam direto. Em ACCESS_MODE=open, libera tudo. */
 export function RequireActiveSubscription({ children }: RequireActiveSubscriptionProps) {
   const { user, loading: authLoading, isAdm } = useAuth()
+  const { openAccess, loading: accessLoading } = useAccessMode()
   const location = useLocation()
   const [checking, setChecking] = useState(true)
   const [active, setActive] = useState(false)
@@ -29,10 +31,16 @@ export function RequireActiveSubscription({ children }: RequireActiveSubscriptio
   const isFavoritesPage =
     location.pathname === FAVORITES_PATH || location.pathname.startsWith(`${FAVORITES_PATH}/`)
   const exempt =
-    isAdm || user?.scope !== 'assinante' || isPaymentsPage || isSearchPage || isProfilePage || isFavoritesPage
+    openAccess ||
+    isAdm ||
+    user?.scope !== 'assinante' ||
+    isPaymentsPage ||
+    isSearchPage ||
+    isProfilePage ||
+    isFavoritesPage
 
   useEffect(() => {
-    if (authLoading) return
+    if (authLoading || accessLoading) return
     if (!user || exempt) {
       setActive(true)
       setChecking(false)
@@ -57,9 +65,9 @@ export function RequireActiveSubscription({ children }: RequireActiveSubscriptio
     return () => {
       cancelled = true
     }
-  }, [authLoading, user, exempt])
+  }, [authLoading, accessLoading, user, exempt])
 
-  if ((authLoading && !isSearchLanding) || (!exempt && checking)) {
+  if ((authLoading && !isSearchLanding) || accessLoading || (!exempt && checking)) {
     return (
       <div style={{ padding: 48, textAlign: 'center' }}>
         <Spin size="large" />

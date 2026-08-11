@@ -368,7 +368,16 @@ export function ReportHero({
                   {typeof headline === 'string' ? <p style={{ margin: 0 }}>{headline}</p> : headline}
                 </div>
               )}
-              <div className="report-hero-metrics-row" style={{ marginTop: compact ? undefined : s.xs, width: '100%' }}>
+              <div
+                className="report-hero-metrics-row"
+                style={{
+                  marginTop: compact ? undefined : s.xs,
+                  width: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: isMobile || compact ? 'center' : 'stretch',
+                }}
+              >
                 <ReportHeroMetricsStrip highlights={highlights} blurHighlights={blurHighlights} isMobile={isMobile} compact={compact} />
                 {secondaryMetrics && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? s.xs : s.sm, alignItems: 'center', justifyContent: isMobile ? 'center' : undefined, ...typ.bodySmall, color: c.textSecondary, marginTop: 4, marginBottom: scoreValue != null ? 4 : 6, fontSize: 12 }}>

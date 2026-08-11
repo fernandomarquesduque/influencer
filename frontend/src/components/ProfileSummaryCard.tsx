@@ -27,6 +27,7 @@ import { getSuggestedPricingFromFollowers } from '../constants/pricingBuckets'
 import type { PricingData } from '../api'
 import ProfileAvatar from './ProfileAvatar'
 import { getInfluencerTierGradientCss, getInfluencerTierShort } from '../utils/influencerTier'
+import { seoInfluencerPath } from '../constants/profilePaths'
 
 const { Text } = Typography
 
@@ -64,6 +65,11 @@ interface ProfileSummaryCardProps {
   item: ProfileSummaryCardItem
   variant?: 'list' | 'detail'
   onClick?: () => void
+  /**
+   * URL pública crawlável (SEO). Se omitido, deriva de `item.handle` / `item.key`
+   * quando não for UUID.
+   */
+  seoHref?: string | null
   /** Chamado quando a foto falha e um refresh é enfileirado; recebe o handle para a listagem atualizar só esse item. */
   onImageRefreshQueued?: (handle: string) => void
   /** Se false, não exibe métricas (usuário não logado). */
@@ -74,7 +80,30 @@ interface ProfileSummaryCardProps {
   onFavoriteToggle?: (handle: string) => void
 }
 
-export default function ProfileSummaryCard({ item, variant = 'list', onClick, onImageRefreshQueued, showMetrics = true, isFavorite = false, onFavoriteToggle }: ProfileSummaryCardProps) {
+function resolveSeoHref(item: ProfileSummaryCardItem, seoHref?: string | null): string | null {
+  if (seoHref === null) return null
+  if (typeof seoHref === 'string' && seoHref.trim()) return seoHref.trim()
+  const raw = String(item.handle ?? item.key ?? '')
+    .replace(/^@/, '')
+    .trim()
+  if (!raw) return null
+  // Não usar profile_ref UUID como slug SEO
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) {
+    return null
+  }
+  return seoInfluencerPath(raw)
+}
+
+export default function ProfileSummaryCard({
+  item,
+  variant = 'list',
+  onClick,
+  seoHref,
+  onImageRefreshQueued,
+  showMetrics = true,
+  isFavorite = false,
+  onFavoriteToggle,
+}: ProfileSummaryCardProps) {
   const pic = proxyImageUrl(getProfilePicUrl(item as unknown as Record<string, unknown>))
   const stablePic = getStableProfilePicUrl(item as unknown as Record<string, unknown>)
   const name = (item.full_name || item.handle) as string
@@ -552,7 +581,8 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
   }
 
   if (variant === 'list' && onClick) {
-    return (
+    const href = resolveSeoHref(item, seoHref)
+    const card = (
       <Card
         hoverable
         onClick={onClick}
@@ -570,6 +600,20 @@ export default function ProfileSummaryCard({ item, variant = 'list', onClick, on
       >
         {cardContent}
       </Card>
+    )
+    if (!href) return card
+    return (
+      <a
+        href={href}
+        style={{ color: 'inherit', textDecoration: 'none', display: 'block', height: '100%' }}
+        onClick={(e) => {
+          // Mantém modal/SPA; o href existe para crawlers e abrir em nova aba.
+          e.preventDefault()
+          onClick()
+        }}
+      >
+        {card}
+      </a>
     )
   }
 

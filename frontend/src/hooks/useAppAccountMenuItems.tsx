@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useAccessMode } from '../contexts/AccessModeContext'
 import { useAgencySignupModal } from '../contexts/AgencySignupModalContext'
 import { useFavoritePostsOptional } from '../contexts/FavoritePostsContext'
 import type { AuthUser } from '../contexts/AuthContext'
@@ -73,6 +74,7 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout, isAdm } = useAuth()
+  const { openAccess } = useAccessMode()
   const { openSignupModal } = useAgencySignupModal()
   const favoritePosts = useFavoritePostsOptional()
   const [plansModalOpen, setPlansModalOpen] = useState(false)
@@ -119,15 +121,19 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
             openSignupModal()
           },
         },
-        {
-          key: 'invoice',
-          icon: <CreditCardOutlined aria-hidden />,
-          label: 'Assinatura',
-          onClick: () => {
-            trackPlansIntent('modal_open', { source: 'account_menu_guest' })
-            setPlansModalOpen(true)
-          },
-        },
+        ...(openAccess
+          ? []
+          : [
+              {
+                key: 'invoice',
+                icon: <CreditCardOutlined aria-hidden />,
+                label: 'Assinatura',
+                onClick: () => {
+                  trackPlansIntent('modal_open', { source: 'account_menu_guest' })
+                  setPlansModalOpen(true)
+                },
+              },
+            ]),
         {
           key: 'favorites',
           icon: <HeartOutlined aria-hidden />,
@@ -228,6 +234,7 @@ export function useAppAccountMenuItems(options: UseAppAccountMenuItemsOptions = 
     openSignupModal,
     favoritesMenuLabel,
     favoritePosts,
+    openAccess,
   ])
 
   const accountLabel = user ? getAccountMenuLabel(user) : ''

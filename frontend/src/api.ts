@@ -18,6 +18,33 @@ export function authHeaders(): Record<string, string> {
 /** Erro 429 da API (`code: RATE_LIMIT`) — distinto de busca sem resultados. */
 export type ApiClientErrorCode = 'RATE_LIMIT' | 'PUBLIC_SEARCH_LIMIT'
 
+export type AppAccessMode = 'open' | 'gated'
+
+export type AppPublicConfig = {
+  accessMode: AppAccessMode
+  openAccess: boolean
+}
+
+/** Flags públicas do produto (ACCESS_MODE no servidor). */
+export async function fetchAppConfig(options?: { signal?: AbortSignal }): Promise<AppPublicConfig> {
+  const res = await fetch(`${API_BASE}/config`, {
+    headers: { Accept: 'application/json' },
+    signal: options?.signal,
+  })
+  if (!res.ok) {
+    return { accessMode: 'open', openAccess: true }
+  }
+  const data = (await res.json().catch(() => ({}))) as {
+    accessMode?: string
+    openAccess?: boolean
+  }
+  const accessMode: AppAccessMode = data.accessMode === 'gated' ? 'gated' : 'open'
+  return {
+    accessMode,
+    openAccess: data.openAccess === true || accessMode === 'open',
+  }
+}
+
 export function isRateLimitError(e: unknown): e is Error & { code: 'RATE_LIMIT'; retryAfterSeconds?: number } {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'RATE_LIMIT'
 }
@@ -716,6 +743,8 @@ export async function fetchMyPendingPayment(options?: { signal?: AbortSignal }):
 
 export interface MySubscriptionStatus {
   active: boolean
+  /** Presente quando ACCESS_MODE=open no servidor. */
+  openAccess?: boolean
   planId: string | null
   subscriptionId: string | null
   /** Recorrência cancelada; pagamentos já feitos permanecem confirmados. */

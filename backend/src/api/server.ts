@@ -128,6 +128,7 @@ import { getAdminStatsSnapshot } from './adminStats.js';
 import { getUnregisteredMentionsReport } from './adminUnregisteredMentions.js';
 import { createCollectorController } from './controllers/collectorController.js';
 import { createCollectorCrawlRouter } from './routes/collectorRoutes.js';
+import { createSeoRouter } from './routes/seoRoutes.js';
 import { requireCollectorIngestSecret } from './middleware/collectorIngestAuth.js';
 import {
   pickAdminQualificationPatch,
@@ -138,6 +139,7 @@ import { sendVerificationEmail } from '../email/sendVerificationEmail.js';
 import { sendPasswordResetCode } from '../email/sendPasswordResetCode.js';
 import { logS3StartupStatus, wipeInfluencerS3Prefix } from '../s3/influencerProfileStorage.js';
 import { campaignAccessDurationDays, defaultCampaignExpiresAtIso } from '../config/campaignAccess.js';
+import { getAccessMode, isOpenAccess } from '../config/accessMode.js';
 import { ProfileRefDb } from '../storage/profileRefDb.js';
 import { streamProfileAvatarMedia, streamProfileCoverMedia } from './profileMedia.js';
 import {
@@ -293,6 +295,8 @@ const authDb = new AuthDb(sqlitePath);
 const profileRefDb = new ProfileRefDb(sqlitePath);
 const creditsCampaignsDb = new CreditsCampaignsDb(sqlitePath);
 const paymentsDb = new PaymentsDb(sqlitePath);
+
+app.use('/api/seo', createSeoRouter({ db, profileRefDb }));
 
 registerInfluencerIdentityAccessChecks({
   hasActivePlanSubscription: (userId) => paymentsDb.hasActivePlanSubscription(userId),
@@ -824,6 +828,19 @@ let crawlAbortRequested = false;
 
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
+});
+
+/**
+ * Público: flags de produto (fonte de verdade no backend).
+ * Front usa `accessMode` para esconder locks/CTAs de plano quando `open`.
+ */
+app.get('/api/config', (_req: Request, res: Response) => {
+  const accessMode = getAccessMode();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    accessMode,
+    openAccess: accessMode === 'open',
+  });
 });
 
 /**
@@ -2602,6 +2619,7 @@ function enforcePublicSearchHourlyLimit(
   q: string,
   opts?: { increment?: boolean }
 ): boolean {
+  if (isOpenAccess()) return true;
   if (!isPublicSearchSubject(req)) return true;
   const term = q.trim();
   if (!term) return true;
@@ -2965,7 +2983,8 @@ app.get('/api/profiles/search', rateLimitDataApiUnlessPublicSearch, async (req: 
     const isAdultContent = httpQueryBool01(req.query as Record<string, unknown>, 'adultContent', 'llmAdultContent');
 
     const quantitativosOnly = Number(req.query.limit) === 0;
-    const isPublicOrAnonymous = !quantitativosOnly && (!req.user || req.user.scope === 'public');
+    const isPublicOrAnonymous =
+      !isOpenAccess() && !quantitativosOnly && (!req.user || req.user.scope === 'public');
 
     if (!quantitativosOnly && isPublicOrAnonymous) {
       if (Number(req.query.offset) > 0) {
@@ -3047,6 +3066,7 @@ app.get('/api/profiles/search', rateLimitDataApiUnlessPublicSearch, async (req: 
     let restrictToHandles: string[] | undefined;
     let queryForSearch = query;
     const canSearchWithoutCampaign =
+      isOpenAccess() ||
       quantitativosOnly ||
       (req.user && (req.user.scope === 'adm' || req.user.scope === 'assinante' || req.user.scope === 'influencer'));
     if (!quantitativosOnly && req.user) {
@@ -3545,20 +3565,25 @@ app.get('/api/me/subscription', async (req: RequestWithAuth, res: Response) => {
       await syncPendingPaymentFromAsaasIfConfigured(pending);
     }
     await syncPlanSubscriptionFromAsaasIfConfigured(userId);
-    const active = paymentsDb.hasActivePlanSubscription(userId);
+    const active = isOpenAccess() || paymentsDb.hasActivePlanSubscription(userId);
     const latest = paymentsDb.getLatestPlanPayment(userId);
     const pendingAfter = paymentsDb.getFirstPendingForUser(userId);
     const subscriptionCancelled =
-      !active && paymentsDb.hasCancelledPlanSubscription(userId);
+      !active && !isOpenAccess() && paymentsDb.hasCancelledPlanSubscription(userId);
     const inTrial = Boolean(
-      active && latest && latest.status === 'PENDING' && planPaymentInTrialWindow(latest)
+      !isOpenAccess() &&
+        active &&
+        latest &&
+        latest.status === 'PENDING' &&
+        planPaymentInTrialWindow(latest)
     );
     res.json({
       active,
+      openAccess: isOpenAccess(),
       planId: latest?.plan_id ?? null,
       subscriptionId: latest?.asaas_subscription_id ?? null,
       subscriptionCancelled,
-      hasPendingPlanPayment: Boolean(pendingAfter?.plan_id),
+      hasPendingPlanPayment: Boolean(pendingAfter?.plan_id) && !isOpenAccess(),
       inTrial,
       planFirstInvoiceDue:
         inTrial && latest?.plan_first_due_date
@@ -5655,6 +5680,15 @@ app.get('/api/me/campaigns', async (req: RequestWithAuth, res: Response) => {
     const userId = Number(req.user.sub);
     const light = (req.query?.light ?? '') === '1' || (req.query?.light ?? '') === 'true';
     const rows = creditsCampaignsDb.listCampaigns(userId);
+    if (isOpenAccess()) {
+      for (const r of rows) {
+        if (r.payment_status === 'pending') {
+          ensureCampaignPaidIfOpenAccess(r.id, userId);
+          r.payment_status = 'paid';
+          r.credits_used = 0;
+        }
+      }
+    }
     if (light) {
       const campaigns = rows.map((r) => {
         const base: Record<string, unknown> = {
@@ -5775,7 +5809,7 @@ app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: R
       res.status(400).json({ error: 'Nenhum perfil no resultado da busca' });
       return;
     }
-    const creditsNeeded = finalHandles.length * CREDITS_PER_INFLUENCER;
+    const creditsNeeded = isOpenAccess() ? 0 : finalHandles.length * CREDITS_PER_INFLUENCER;
     const campaignName = (body?.name ?? '').toString().trim() || (query?.q ?? '').toString().trim() || undefined;
     let queryJson: string | null = null;
     try {
@@ -5784,6 +5818,9 @@ app.post('/api/campaigns', rateLimitDataApi, async (req: RequestWithAuth, res: R
       queryJson = null;
     }
     const campaignId = creditsCampaignsDb.createCampaign(userId, finalHandles, creditsNeeded, campaignName, expiresAt, queryJson);
+    if (isOpenAccess()) {
+      creditsCampaignsDb.setCampaignPaymentStatus(campaignId, userId, 'paid');
+    }
     res.status(201).json({ campaignId, handlesCount: finalHandles.length, creditsUsed: creditsNeeded });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -5836,6 +5873,7 @@ app.get('/api/campaigns/:id', async (req: RequestWithAuth, res: Response) => {
       return;
     }
     const userId = Number(req.user.sub);
+    ensureCampaignPaidIfOpenAccess(campaignId, userId);
     const campaign = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
     if (!campaign) {
       res.status(404).json({ error: 'Campanha não encontrada ou expirada' });
@@ -6197,6 +6235,12 @@ app.post('/api/campaigns/:id/pay-with-credits', async (req: RequestWithAuth, res
       res.status(400).json({ error: 'Esta campanha já foi paga.' });
       return;
     }
+    if (isOpenAccess()) {
+      creditsCampaignsDb.setCampaignCreditsUsed(campaignId, userId, 0);
+      creditsCampaignsDb.setCampaignPaymentStatus(campaignId, userId, 'paid');
+      res.json({ ok: true, creditsUsed: 0, openAccess: true });
+      return;
+    }
     const handlesList = creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
     if (!handlesList || handlesList.length === 0) {
       res.status(404).json({ error: 'Campanha sem perfis' });
@@ -6432,6 +6476,7 @@ function profileRefForHandle(handle: string): string {
 
 /** Acesso completo ao perfil (assinatura ativa, campanha paga com o handle, próprio perfil, favorito, adm). */
 function hasFullProfileDataAccess(req: RequestWithAuth, profileHandle: string): boolean {
+  if (isOpenAccess()) return true;
   const handle = normalizeHandle(profileHandle);
   if (!handle || !req.user) return false;
   const user = req.user;
@@ -6450,6 +6495,24 @@ function hasFullProfileDataAccess(req: RequestWithAuth, profileHandle: string): 
     if (handles?.some((h) => normalizeHandle(h) === handle)) return true;
   }
   return false;
+}
+
+/** Handles da campanha para leitura: em modo open, basta estar ativa (sem exigir pago). */
+function getCampaignHandlesForDataAccess(campaignId: string, userId: number): string[] | null {
+  if (isOpenAccess()) {
+    return creditsCampaignsDb.getCampaignHandlesIfActive(campaignId, userId);
+  }
+  return creditsCampaignsDb.getCampaignHandlesIfActiveAndPaid(campaignId, userId);
+}
+
+/** Em modo open, campanhas pendentes passam a paid sem débito (acesso livre). */
+function ensureCampaignPaidIfOpenAccess(campaignId: string, userId: number): void {
+  if (!isOpenAccess()) return;
+  const camp = creditsCampaignsDb.getCampaignIfActive(campaignId, userId);
+  if (camp && camp.payment_status === 'pending') {
+    creditsCampaignsDb.setCampaignCreditsUsed(campaignId, userId, 0);
+    creditsCampaignsDb.setCampaignPaymentStatus(campaignId, userId, 'paid');
+  }
 }
 
 /** Prévia pública (hero + LLM): anônimo ou sem direito de ver dados completos — logado ou não. */
@@ -6472,6 +6535,11 @@ function requireProfileOrCampaign(
 ) {
   const requireAuth = options?.requireAuth !== false;
   return (req: RequestWithAuth, res: Response, next: () => void): void => {
+    if (isOpenAccess()) {
+      (req as RequestWithAuth).allowedCampaignId = undefined;
+      next();
+      return;
+    }
     if (!req.user) {
       if (!requireAuth) {
         next();
@@ -6799,7 +6867,7 @@ app.get('/api/campaigns/:id/profiles/:handle', rateLimitDataApi, async (req: Req
     }
     const ref = profileRefForHandle(handle);
     const userId = Number(req.user.sub);
-    const handles = creditsCampaignsDb.getCampaignHandlesIfActiveAndPaid(campaignId, userId);
+    const handles = getCampaignHandlesForDataAccess(campaignId, userId);
     if (!handles || handles.length === 0) {
       res.status(404).json({ error: 'Campanha não encontrada, expirada, sem pagamento ou sem perfis' });
       return;
@@ -6880,7 +6948,7 @@ app.get('/api/campaigns/:id/profiles/:handle/activation', rateLimitDataApi, asyn
       return;
     }
     const userId = Number(req.user.sub);
-    const handles = creditsCampaignsDb.getCampaignHandlesIfActiveAndPaid(campaignId, userId);
+    const handles = getCampaignHandlesForDataAccess(campaignId, userId);
     if (!handles || handles.length === 0) {
       res.status(404).json({ error: 'Campanha não encontrada, expirada, sem pagamento ou sem perfis' });
       return;
@@ -8102,7 +8170,7 @@ async function runPostMatchesForHandles(
         q: qRaw || undefined,
         ...(scanMeta ? { scanMeta } : {}),
       };
-      if (!req.user) {
+      if (!req.user && !isOpenAccess()) {
         res.json({ ...payload, _redacted: true });
         return;
       }
@@ -8873,6 +8941,7 @@ app.get('/api-docs', (_req: Request, res: Response) => {
   app.listen(PORT, () => {
     logMemorySnapshot('HTTP listen ativo');
     console.log(`API: http://localhost:${PORT}`);
+    console.log(`[access] ACCESS_MODE=${getAccessMode()} (openAccess=${isOpenAccess()})`);
     console.log(`Swagger RocksDB: http://localhost:${PORT}/api-docs/rocksdb`);
     console.log(`Swagger SQLite: http://localhost:${PORT}/api-docs/sqlite`);
     logS3StartupStatus({ envPath: BACKEND_ENV_PATH, backendRoot: BACKEND_ROOT });

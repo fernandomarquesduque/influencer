@@ -36,6 +36,7 @@ import { CONTENT_TYPE_LABELS } from '../constants/contentTypes'
 import { facetOptionLabel } from '../utils/facetLabels'
 import { PRICE_BUCKETS } from '../constants/pricingBuckets'
 import { useAuth } from '../contexts/AuthContext'
+import { useAccessMode } from '../contexts/AccessModeContext'
 import { useListCache } from '../contexts/ListCacheContext'
 import SearchWizard, { STEP_QUERY } from '../components/SearchWizard/SearchWizard'
 import ReportDashboard from '../components/ReportDashboard/ReportDashboard'
@@ -217,6 +218,7 @@ export default function InfluencerList() {
   const location = useLocation()
   const { handle: urlHandle } = useParams<{ handle?: string }>()
   const { user, isPublic } = useAuth()
+  const { openAccess } = useAccessMode()
   const { getCache, saveCache } = useListCache()
   const isLimitedView = !user || isPublic
   const urlParamsMerged = useMemo(() => getMergedUrlParams(location), [location.search, location.hash])
@@ -902,7 +904,7 @@ export default function InfluencerList() {
                     variant="list"
                     onClick={() => openDetail(item.handle ?? item.key)}
                     onImageRefreshQueued={(handle) => addHandleForImageUpdate.current(handle)}
-                    showMetrics={!!user}
+                    showMetrics={openAccess || !!user}
                   />
                 </Col>
               ))}
@@ -1473,7 +1475,7 @@ export default function InfluencerList() {
                     variant="list"
                     onClick={() => openDetail(item.handle ?? item.key)}
                     onImageRefreshQueued={(handle) => addHandleForImageUpdate.current(handle)}
-                    showMetrics={!!user}
+                    showMetrics={openAccess || !!user}
                   />
                 </Col>
               ))}

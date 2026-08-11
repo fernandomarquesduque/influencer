@@ -35,6 +35,27 @@ export function activatePath(profileRef: string): string {
   return `/activate/${encodeURIComponent(profileRef)}`
 }
 
+/** URL pública SEO (HTML no servidor): /p/{handle} */
+export function seoInfluencerPath(handle: string): string {
+  const h = String(handle ?? '')
+    .replace(/^@/, '')
+    .trim()
+    .toLowerCase()
+  if (!h) return '/influenciadores'
+  return `/p/${encodeURIComponent(h)}`
+}
+
+/** URL pública SEO do post: /p/{handle}/{shortcode} */
+export function seoPostPath(handle: string, shortcode: string): string {
+  const h = String(handle ?? '')
+    .replace(/^@/, '')
+    .trim()
+    .toLowerCase()
+  const sc = String(shortcode ?? '').trim()
+  if (!h || !sc) return seoInfluencerPath(h)
+  return `/p/${encodeURIComponent(h)}/${encodeURIComponent(sc)}`
+}
+
 /** URL absoluta de avatar/capa servida pela API (path já inclui /api quando necessário). */
 export function resolveMediaUrl(pathOrUrl: string | undefined): string | undefined {
   if (!pathOrUrl || typeof pathOrUrl !== 'string') return undefined

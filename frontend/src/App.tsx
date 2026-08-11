@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { SEARCH_ROUTE_PATH } from './constants/searchRoute'
 import { AuthProvider } from './contexts/AuthContext'
+import { AccessModeProvider } from './contexts/AccessModeContext'
 import { FavoritePostsProvider } from './contexts/FavoritePostsContext'
 import { AgencySignupModalProvider } from './contexts/AgencySignupModalContext'
 import { CreditsProvider } from './contexts/CreditsContext'
@@ -86,6 +87,7 @@ function SearchLegacyRedirect() {
 
 export default function App() {
   return (
+    <AccessModeProvider>
     <AuthProvider>
       <FavoritePostsProvider>
       <AgencySignupModalProvider>
@@ -196,6 +198,7 @@ export default function App() {
       </CreditsProvider>
       </AgencySignupModalProvider>
       </FavoritePostsProvider>
-    </AuthProvider >
+    </AuthProvider>
+    </AccessModeProvider>
   )
 }

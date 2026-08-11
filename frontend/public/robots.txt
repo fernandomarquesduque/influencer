@@ -1,4 +1,11 @@
 User-agent: *
 Allow: /
+Allow: /p/
+Allow: /influenciadores
+Allow: /api/media/
+Disallow: /app/
+Disallow: /api/
 
 Sitemap: https://buscainfluencer.com.br/sitemap.xml
+Sitemap: https://buscainfluencer.com.br/sitemap-influencers.xml
+Sitemap: https://buscainfluencer.com.br/sitemap-posts.xml

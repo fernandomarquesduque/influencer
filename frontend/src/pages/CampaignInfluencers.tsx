@@ -8,6 +8,7 @@ import { Row, Col, Typography, Button, Spin, Empty, Tooltip, Input, Space, Modal
 import type { MenuProps } from 'antd'
 import { AppstoreOutlined, UnorderedListOutlined, FilterOutlined, SearchOutlined, CaretUpOutlined, CaretDownOutlined, EditOutlined, HeartOutlined, HeartFilled, DownOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
+import { useAccessMode } from '../contexts/AccessModeContext'
 import { isSearchRoute as checkIsSearchRoute, isSearchLandingHome } from '../constants/searchRoute'
 import {
   trackInfluencerSearch,
@@ -66,6 +67,7 @@ import { campaignLlmBadgeStyles, getLlmContentPillarLabels, getLlmGenderBadge, g
 import InfluencerTierPill from '../components/InfluencerTierPill'
 import ProfileSummaryCard from '../components/ProfileSummaryCard'
 import ProfileAvatar from '../components/ProfileAvatar'
+import { seoInfluencerPath } from '../constants/profilePaths'
 import CampaignBIPanel from '../components/CampaignBIPanel/CampaignBIPanel'
 import CampaignPaymentCart from '../components/CampaignPaymentCart/CampaignPaymentCart'
 import BuyCreditsModal from '../components/BuyCreditsModal/BuyCreditsModal'
@@ -346,6 +348,11 @@ function CampaignListRow({
   const llmRow = getLlmDescriptionLine(item)
   const profileTypeBadge = getLlmProfileTypeBadge(item)
   const genderBadge = getLlmGenderBadge(item)
+  const handleForSeo = String(item.handle ?? '')
+    .replace(/^@/, '')
+    .trim()
+    .toLowerCase()
+  const seoHref = handleForSeo ? seoInfluencerPath(handleForSeo) : null
   return (
     <tr
       role="button"
@@ -485,12 +492,34 @@ function CampaignListRow({
               }}
             >
               <Tooltip title={name}>
-                <div
-                  className="campaign-list-profile-name"
-                  style={{ fontWeight: 600, fontSize: 14, color: 'var(--app-text)', lineHeight: 1.35, wordBreak: 'break-word', minWidth: 0 }}
-                >
-                  {name}
-                </div>
+                {seoHref ? (
+                  <a
+                    href={seoHref}
+                    className="campaign-list-profile-name"
+                    style={{
+                      fontWeight: 600,
+                      fontSize: 14,
+                      color: 'var(--app-text)',
+                      lineHeight: 1.35,
+                      wordBreak: 'break-word',
+                      minWidth: 0,
+                      textDecoration: 'none',
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      onClick()
+                    }}
+                  >
+                    {name}
+                  </a>
+                ) : (
+                  <div
+                    className="campaign-list-profile-name"
+                    style={{ fontWeight: 600, fontSize: 14, color: 'var(--app-text)', lineHeight: 1.35, wordBreak: 'break-word', minWidth: 0 }}
+                  >
+                    {name}
+                  </div>
+                )}
               </Tooltip>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 14, paddingTop: 2 }}>
@@ -607,6 +636,7 @@ export default function CampaignInfluencers() {
       : null
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
+  const { openAccess } = useAccessMode()
   const showFavoriteColumn = !!user && user.scope !== 'influencer'
   const creditsContext = useCreditsOptional()
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT)
@@ -2119,7 +2149,7 @@ export default function CampaignInfluencers() {
                                   openInfluencerFromCard(item.profile_ref ?? item.key, profileItemToConnectSnapshot(item))
                                 }
                                 onImageRefreshQueued={(handle) => addHandleForImageUpdate.current?.(handle)}
-                                showMetrics={!!user}
+                                showMetrics={openAccess || !!user}
                                 isFavorite={user ? favoriteHandles.has((item.profile_ref ?? '').trim()) : false}
                                 onFavoriteToggle={user && user.scope !== 'influencer' ? handleFavoriteToggle : undefined}
                               />
